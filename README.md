@@ -31,15 +31,25 @@ Waterfalls are emitted wherever a watercourse steps down a metre; basins fill as
 1.25 m. Grass (0.3–0.9 m) and water are never voxelised — both are shader-driven, with wind,
 a trample radius around every character, and flow-advected foam.
 
-Eight systems drive the generator rather than a list of special cases: **span columns** (a
+### Traversability
+
+The movement budget is the contract between the generator and the character controller:
+step up 1 m, vault 2 m, jump a 2.5 m gap, survive a 6 m drop, wade 0.75 m (river beds sit
+exactly there), swim anything deeper, and magma is lethal and impassable. Trails are routed
+with A* over those costs and the ground is then graded under them so no step along a route
+exceeds a metre; crossings are placed only where a route actually meets water, with both
+banks dry. A reach pass floods from the spawn under the same rules and marks what it cannot
+get to — a generator test, not a debug view. Arm Reach on the plate to see it.
+
+Nine systems drive the generator rather than a list of special cases: **span columns** (a
 pseudo-3D field cuts caves before rims undercut them), a **flow field and water table**
 (downhill vector per cell; hollows flood until they spill), an **erosion pass** (talus at
 cliff feet, banks cut back above water), **trails** (routes drawn between sites before
 anything is built), an **accumulation pass** (snow and ash settle on up-facing surfaces by
 biome and slope), **one wind field** (shared by grass and water), **destructible terrain**
-(carve voxels live — arm Carve on the plate and click), and **chunk-scale landmarks** (an
+(carve voxels live — arm Carve on the plate and click), **chunk-scale landmarks** (an
 obelisk, hive tree, wrecked machine or standing stones on the highest flat ground, chosen to
-suit the biome).
+suit the biome), and **routing and reach** (above).
 
 Clutter is voxelised on the same lattice and derived from the terrain where possible: scree
 falls out of every 2 m drop, and bushes, stumps, fallen trunks, fences, lamp posts, ruined

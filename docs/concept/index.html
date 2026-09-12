@@ -62,7 +62,7 @@
   .tile .ds{font-size:13px;color:var(--muted)}
 
   .split{display:grid;grid-template-columns:minmax(280px,0.95fr) 1.15fr;gap:34px;align-items:start}
-  .panel{background:var(--ink2);border:1px solid var(--line);padding:22px}
+  .panel{background:var(--ink2);border:1px solid var(--line);padding:22px;position:sticky;top:24px}
   .panel svg{width:100%;height:auto;display:block}
   .panel .cap{font-size:13px;color:var(--dim);margin-top:14px}
   .survey{display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
@@ -178,13 +178,14 @@
       <div class="fallback" id="fallback">This browser could not start WebGL, so the diorama can't draw. The rules, biomes and socket system below describe the same design.</div>
     </div>
     <div class="stagebar">
-      <p class="cap">Four chunks (64 × 64 m) of a seeded world. Live render: span columns with caves and undercut rims, whole-metre waterfalls, trails, a landmark, and one wind field driving grass and water. Arm <b>Carve</b> and click the terrain to take a bite out of it.</p>
+      <p class="cap">Four chunks (64 × 64 m) of a seeded world. Live render: span columns with caves and undercut rims, whole-metre waterfalls, trails, a landmark, and one wind field driving grass and water. Arm <b>Carve</b> and click the terrain to take a bite out of it, or <b>Reach</b> to tint everything the movement rules cannot get to.</p>
       <span class="seedbox"><label for="seedin">Seed</label><input id="seedin" value="QUARTERSTONE" spellcheck="false" autocomplete="off"></span>
       <button class="ctl" id="regen" type="button">Generate</button>
       <button class="ctl" id="rotl" type="button" title="Rotate view left">&#8634;</button>
       <button class="ctl" id="rotr" type="button" title="Rotate view right">&#8635;</button>
       <button class="ctl" id="togc" type="button" aria-pressed="false">Chunks</button>
       <button class="ctl" id="carve" type="button" aria-pressed="false">Carve</button>
+      <button class="ctl" id="reach" type="button" aria-pressed="false">Reach</button>
       <button class="ctl" id="toga" type="button" aria-pressed="true">Callouts</button>
     </div>
   </section>
@@ -222,10 +223,37 @@
         <div class="row"><p class="f">Pond<span class="tag in">in build</span></p><p class="m">1.25 m deep</p><p class="d">Basins that sit below the local mean fill and hold. Deeper than a river, so the depth ramp in the water shader has something to read.</p></div>
         <div class="row"><p class="f">Cave<span class="tag in">in build</span></p><p class="m">1 m cells · opens on faces</p><p class="d">Cut from the column before anything else runs. Mostly hidden under an isometric camera — which is the point: you find them by their mouths in a canyon wall.</p></div>
         <div class="row"><p class="f">Talus<span class="tag in">in build</span></p><p class="m">+1 m at cliff feet</p><p class="d">The erosion pass raises ground under a 3 m drop and cuts a metre off banks standing high over water. Cliffs stop meeting the floor at a right angle.</p></div>
-        <div class="row"><p class="f">Trail<span class="tag in">in build</span></p><p class="m">1–3 m wide</p><p class="d">Routed between sites before anything is built, on packed earth with the grass worn off. Fences, lamps and the bridge are placed along it.</p></div>
+        <div class="row"><p class="f">Trail<span class="tag in">in build</span></p><p class="m">3 m wide · steps &le; 1 m</p><p class="d">Routed with A* over the movement costs, then the ground is graded under it so no step exceeds a metre and the shoulders are pulled in. Packed earth, grass worn off, and fences, lamps and crossings placed along it.</p></div>
         <div class="row"><p class="f">Landmark<span class="tag in">in build</span></p><p class="m">9–12 m tall</p><p class="d">One per region on the highest flat ground: obelisk, hive tree, wrecked machine or standing stones. Navigation for two players without a map.</p></div>
         <div class="row"><p class="f">Scree<span class="tag in">in build</span></p><p class="m">1–2 voxel chips</p><p class="d">Derived, not scattered: every drop of 2 m or more sheds rubble at its base, in the rock colour of the cell above it.</p></div>
         <div class="row"><p class="f">Grass</p><p class="m">0.3–0.9 m blades</p><p class="d">Not voxels at all. Two sine bands of wind plus a trample radius around every character, biome-tinted and biome-dense.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Traversability</p>
+      <h2>What a player can cross, and proving the world allows it</h2>
+      <p class="note">Whole-metre features exist so that movement can be stated in whole metres too. The budget below is the contract between the generator and the character controller: if the generator produces something outside it, the world is wrong, not the player.</p>
+    </div>
+    <div class="split">
+      <div class="survey">
+        <div class="row head"><span>Move</span><span>Budget</span><span>Note</span></div>
+        <div class="row"><p class="f">Step up</p><p class="m">1 m</p><p class="d">Free, and it is the grid unit. Every authored feature height is a whole number of these.</p></div>
+        <div class="row"><p class="f">Vault</p><p class="m">2 m</p><p class="d">Costs momentum and puts your hands on the ledge. The ceiling for climbing without gear.</p></div>
+        <div class="row"><p class="f">Jump gap</p><p class="m">2.5 m</p><p class="d">Paired overhangs across a canyon are tuned to leave exactly this — a gap that looks impossible and isn't.</p></div>
+        <div class="row"><p class="f">Drop</p><p class="m">6 m</p><p class="d">Survivable. Past that it costs health, which is what the 16 m ceiling is really measuring.</p></div>
+        <div class="row"><p class="f">Wade</p><p class="m">0.75 m</p><p class="d">River beds sit exactly here, so a river is always crossable on foot and a pond at 1.25 m is not.</p></div>
+        <div class="row"><p class="f">Swim</p><p class="m">deeper</p><p class="d">Slow, no attacks, and your partner reaches the far bank before you do.</p></div>
+        <div class="row"><p class="f">Magma</p><p class="m">lethal</p><p class="d">Impassable at infinite cost, so no route, bridge or built thing is ever placed across it.</p></div>
+      </div>
+      <div class="panel">
+        <h3 style="font-family:var(--display);font-size:20px;font-weight:500;margin-bottom:10px">The reach pass</h3>
+        <p style="font-size:13.5px;color:var(--muted)">After the world is built, a flood fill runs from the spawn using exactly the budget on the left — step, vault, the two-metre hop, wade — and marks every cell it can get to. Arm <b>Reach</b> on the diorama and everything it could not reach turns red.</p>
+        <p style="font-size:13.5px;color:var(--muted);margin-top:12px">It is a generator test rather than a debug view. A mesa top that comes back red is not a bug in the overlay: it means the erosion pass left no ramp, and the fix belongs in generation. Ledges, talus and undercut rims exist partly to keep that from happening.</p>
+        <p style="font-size:13.5px;color:var(--muted);margin-top:12px">Isolated ground is not automatically wrong — an island in a river or a shelf reachable only by hookline is content. What the pass catches is the case nobody meant: a site, a landmark or a crossing that no player can get to.</p>
+        <p class="cap" style="margin-top:14px"><b>Next:</b> repair rather than report — when a site comes back unreachable, cut a ramp to it in whole metres and re-run the fill until it passes.</p>
       </div>
     </div>
   </section>
@@ -399,8 +427,8 @@ var CLUTTER=[
   {n:'Ruined walls',s:'in',r:'0.5 m thick, gapped, height modulated so no run reads as a straight line.'},
   {n:'Pillars',s:'in',r:'2–4 m with broken tops and a base slab.'},
   {n:'Huts',s:'in',r:'3 × 3 m, doorway gap, part-collapsed roof.'},
-  {n:'Deck bridges',s:'in',r:'Placed where the trail meets water and both banks sit within a metre of each other.'},
-  {n:'Trails',s:'in',r:'Routed between sites before anything is built; fences, lamps and bridges follow them.'},
+  {n:'Deck bridges',s:'in',r:'Placed only where a route actually meets water, with both banks dry and out of the magma.'},
+  {n:'Trails',s:'in',r:'A* routed over movement cost and graded to walkable steps; fences, lamps and crossings follow them.'},
   {n:'Natural arcs',s:'in',r:'Stone spans across canyons — bridge above, covered fight below.'},
   {n:'Rope bridges',s:'next',r:'Same wind field as the grass, so they sway with it.'},
   {n:'Ladders and climbing pegs',s:'next',r:'Authored verticality where the terrain refuses to provide it.'},
@@ -426,6 +454,7 @@ var PROPOSALS=[
  {k:'Surface',n:'Accumulation pass',d:'Snow and ash settle as an extra voxel on up-facing surfaces, weighted by biome and slope. Steep faces stay bare rock because nothing settles on them.',w:'Drifts on ledges, bare stone on the faces — from one rule.'},
  {k:'Motion',n:'One wind field',d:'A single direction and gust strength drive the grass bend and the water advection, and the direction turns slowly over time. A gust front crosses the whole scene rather than each system wobbling on its own clock.',w:'Grass and water now move together.'},
  {k:'Play',n:'Destructible clutter',d:'Arm Carve on the diorama and click the terrain: every voxel within 0.6 m is removed, live. This is what the lodestone flail assumes, and the clearest argument for voxels in the first place.',w:'Try it on the plate above.'},
+ {k:'Movement',n:'Routing and reach',d:'Trails are routed with A* over the movement costs — climbing is expensive, water is worse, magma is impassable — then the ground is graded so no step along the route exceeds a metre. A flood fill from the spawn then reports what the rules can actually get to.',w:'Enabled trails that read as cuttings, and crossings only where a route meets water.'},
  {k:'Co-op',n:'Chunk-scale landmarks',d:'One landmark per region, placed on the highest flat ground: an obelisk with a lit tip, a hive tree, a wrecked machine or a ring of standing stones. Eleven metres of the sixteen-metre ceiling.',w:'Two players can agree where to meet without a map.'}
 ];
 /* ============================== hex helpers ============================== */
@@ -757,7 +786,8 @@ function mixHex(h1,h2,t){
 
   /* ---------- world build ---------- */
   var CBOX=new THREE.Color();
-  var SNOW=[0xe7eef4,0xdae3ec,0xf1f6fa], ASHFALL=[0x6b635c,0x746c64,0x5c554f];
+  var SNOW=[0xe7eef4,0xdae3ec,0xf1f6fa], ASHFALL=[0x6b635c,0x746c64,0x5c554f],
+      PATH=[0x9a7c54,0x8d7049,0xa68960,0x7f6641];
   function pickFrom(arr,r){return arr[(r()*arr.length)|0];}
   function rouletteBiome(w,r){var p=[],t=0,i;
     for(i=0;i<w.length;i++){var e=w[i]*w[i]*w[i]*w[i]*w[i];p.push(e);t+=e;}
@@ -791,6 +821,134 @@ function mixHex(h1,h2,t){
         else if(nearW&&c0.H>=3&&R()<0.3) Hn[a*M+b]=c0.H-1;
       }
       for(a=0;a<M*M;a++) cells[a].H=clamp(Hn[a],0,CEIL);
+    })();
+    /* --- movement model: what a player can actually cross --- */
+    var MOVE={step:1,vault:2,jump:2.5,wade:0.75,fall:6};
+    function passCost(a,b){
+      if(b.magma) return -1;
+      var dh=b.H-a.H;
+      if(dh>MOVE.vault) return -1;
+      var c=1+(dh>0?dh*3.2:(-dh)*1.1);
+      if(b.water) c+=((b.wl-b.H)>MOVE.wade)?38:11;
+      if(b.sp&&b.sp.length>1) c+=2;
+      return c;
+    }
+    function routeAStar(a0,b0,a1,b1){
+      var N2=M*M,dist=new Float32Array(N2),prev=new Int32Array(N2),seen=new Uint8Array(N2),q;
+      for(q=0;q<N2;q++){dist[q]=1e9;prev[q]=-1;}
+      var st=a0*M+b0, gl=a1*M+b1, heap=[];
+      function push(pr,v){heap.push([pr,v]);var i2=heap.length-1;
+        while(i2>0){var pi=(i2-1)>>1;if(heap[pi][0]<=heap[i2][0])break;
+          var t=heap[pi];heap[pi]=heap[i2];heap[i2]=t;i2=pi;}}
+      function pop(){var top=heap[0],last=heap.pop();
+        if(heap.length){heap[0]=last;var i2=0;
+          for(;;){var l=i2*2+1,r=l+1,sm=i2;
+            if(l<heap.length&&heap[l][0]<heap[sm][0])sm=l;
+            if(r<heap.length&&heap[r][0]<heap[sm][0])sm=r;
+            if(sm===i2)break;var t=heap[sm];heap[sm]=heap[i2];heap[i2]=t;i2=sm;}}
+        return top;}
+      dist[st]=0; push(0,st);
+      while(heap.length){
+        var cu=pop()[1];
+        if(seen[cu]) continue; seen[cu]=1;
+        if(cu===gl) break;
+        var cx=(cu/M)|0, cz=cu%M;
+        for(var d1=0;d1<4;d1++){
+          var nx=cx+DIRS4[d1][0], nz=cz+DIRS4[d1][1];
+          if(nx<1||nz<1||nx>=M-1||nz>=M-1) continue;
+          var nk=nx*M+nz; if(seen[nk]) continue;
+          var cst=passCost(cells[cu],cells[nk]); if(cst<0) continue;
+          var nd=dist[cu]+cst;
+          if(nd<dist[nk]){ dist[nk]=nd; prev[nk]=cu; push(nd,nk); }
+        }
+      }
+      if(gl!==st&&prev[gl]<0) return null;
+      var path=[],p2=gl,g2=0;
+      while(p2>=0&&g2++<5000){ path.push(p2); if(p2===st) break; p2=prev[p2]; }
+      return path.reverse();
+    }
+    /* --- sites, routes, grading: the path comes first and the ground is cut for it --- */
+    var TRAIL=new Uint8Array(M*M), sites=[], bridges=[], trailPath=[];
+    function flatAt(pi,pj,r){
+      var cp=cells[pi*M+pj]; if(!cp||cp.water||cp.magma) return false;
+      for(var a=-r;a<=r;a++)for(var b=-r;b<=r;b++){
+        var cq=cells[(pi+a)*M+(pj+b)];
+        if(!cq||cq.water||cq.magma||Math.abs(cq.H-cp.H)>1) return false;
+      }
+      return true;
+    }
+    for(var ts=0;ts<800&&sites.length<2;ts++){
+      var si2=7+((R()*(M-14))|0), sj2=7+((R()*(M-14))|0);
+      if(!flatAt(si2,sj2,2)) continue;
+      var far=true;
+      for(var q0=0;q0<sites.length;q0++)
+        if(Math.abs(sites[q0][0]-si2)+Math.abs(sites[q0][1]-sj2)<12) far=false;
+      if(far) sites.push([si2,sj2]);
+    }
+    function gradePath(path){
+      if(!path) return;
+      var q,it2,A,B;
+      for(it2=0;it2<3;it2++){
+        for(q=1;q<path.length;q++){
+          A=cells[path[q-1]]; B=cells[path[q]];
+          if(A.water||B.water) continue;
+          if(B.H-A.H>MOVE.step) B.H=A.H+MOVE.step;
+          else if(A.H-B.H>MOVE.step) B.H=A.H-MOVE.step;
+        }
+        for(q=path.length-2;q>=0;q--){
+          A=cells[path[q+1]]; B=cells[path[q]];
+          if(A.water||B.water) continue;
+          if(B.H-A.H>MOVE.step) B.H=A.H+MOVE.step;
+          else if(A.H-B.H>MOVE.step) B.H=A.H-MOVE.step;
+        }
+      }
+      /* pull the shoulders in so the route is a cutting, not a trench */
+      for(q=0;q<path.length;q++){
+        var pi=(path[q]/M)|0, pj=path[q]%M, hp=cells[path[q]].H;
+        for(var d2=0;d2<4;d2++){
+          var nc=cells[(pi+DIRS4[d2][0])*M+(pj+DIRS4[d2][1])];
+          if(!nc||nc.water||nc.magma) continue;
+          if(nc.H-hp>2) nc.H=hp+2; else if(hp-nc.H>2) nc.H=hp-2;
+        }
+      }
+    }
+    function markPath(path){
+      if(!path) return;
+      for(var q=0;q<path.length;q++){
+        var pi=(path[q]/M)|0, pj=path[q]%M;
+        for(var a=-1;a<=1;a++)for(var b=-1;b<=1;b++){
+          var ii=pi+a, jj=pj+b;
+          if(ii<1||jj<1||ii>=M-1||jj>=M-1) continue;
+          if(Math.abs(a)+Math.abs(b)<=1&&!cells[ii*M+jj].magma) TRAIL[ii*M+jj]=1;
+        }
+        trailPath.push(path[q]);
+      }
+      /* a crossing only where the route actually meets water */
+      var w=0;
+      while(w<path.length){
+        if(!cells[path[w]].water){ w++; continue; }
+        var st2=w;
+        while(w<path.length&&cells[path[w]].water) w++;
+        var len=w-st2;
+        if(len<=7){
+          var pre=path[Math.max(0,st2-1)], post=path[Math.min(path.length-1,w)];
+          var pc=cells[pre], qc=cells[post];
+          if(!pc.magma&&!qc.magma&&!pc.water&&!qc.water){
+            var pi0=(pre/M)|0, pj0=pre%M, pi1=(post/M)|0, pj1=post%M;
+            var di=(pi1>pi0)?1:((pi1<pi0)?-1:0), dj=(pj1>pj0)?1:((pj1<pj0)?-1:0);
+            if(di&&dj) dj=0;
+            if(!di&&!dj) di=1;
+            bridges.push([(pi0+pi1)/2-half,(pj0+pj1)/2-half,di,dj,len+3,
+                          Math.max(pc.H,qc.H,cells[path[st2]].wl+0.5)]);
+          }
+        }
+      }
+    }
+    (function(){
+      var mid=(M/2)|0, r1=null, r2=null;
+      if(sites.length>0) r1=routeAStar(mid,mid,sites[0][0],sites[0][1]);
+      if(sites.length>1) r2=routeAStar(sites[0][0],sites[0][1],sites[1][0],sites[1][1]);
+      gradePath(r1); gradePath(r2); markPath(r1); markPath(r2);
     })();
     /* --- span columns: caves cut first, then rims undercut over them --- */
     var ovhPos=null;
@@ -844,42 +1002,6 @@ function mixHex(h1,h2,t){
       var gl=Math.hypot(gx,gz);
       if(gl<0.001){ cf.fx=0.7; cf.fz=0.7; } else { cf.fx=-gx/gl; cf.fz=-gz/gl; }
     }
-    /* --- sites and trails: the route comes first, built things follow it --- */
-    var TRAIL=new Uint8Array(M*M), sites=[];
-    function flatAt(pi,pj,r){
-      var cp=cells[pi*M+pj]; if(!cp||cp.water||cp.magma) return false;
-      for(var a=-r;a<=r;a++)for(var b=-r;b<=r;b++){
-        var cq=cells[(pi+a)*M+(pj+b)];
-        if(!cq||cq.water||cq.sp.length>1||Math.abs(cq.H-cp.H)>1) return false;
-      }
-      return true;
-    }
-    for(var ts=0;ts<700&&sites.length<2;ts++){
-      var si2=7+((R()*(M-14))|0), sj2=7+((R()*(M-14))|0);
-      if(!flatAt(si2,sj2,2)) continue;
-      var far=true;
-      for(var q0=0;q0<sites.length;q0++)
-        if(Math.abs(sites[q0][0]-si2)+Math.abs(sites[q0][1]-sj2)<12) far=false;
-      if(far) sites.push([si2,sj2]);
-    }
-    function markTrail(i0,j0){
-      for(var a=-1;a<=1;a++)for(var b=-1;b<=1;b++){
-        var ii=i0+a,jj=j0+b;
-        if(ii<0||jj<0||ii>=M||jj>=M||Math.abs(a)+Math.abs(b)>1) continue;
-        TRAIL[ii*M+jj]=1;
-      }
-    }
-    function routeTrail(a0,b0,a1,b1){
-      var x0=a0,z0=b0,g=0;
-      while((x0!==a1||z0!==b1)&&g++<600){
-        var dx=(a1>x0)?1:((a1<x0)?-1:0), dz=(b1>z0)?1:((b1<z0)?-1:0);
-        if(Math.abs(a1-x0)>Math.abs(b1-z0)){ if(R()<0.82||dz===0) x0+=dx; else z0+=dz; }
-        else { if(R()<0.82||dx===0) z0+=dz; else x0+=dx; }
-        markTrail(x0,z0);
-      }
-    }
-    if(sites.length>0) routeTrail((M/2)|0,(M/2)|0,sites[0][0],sites[0][1]);
-    if(sites.length>1) routeTrail(sites[0][0],sites[0][1],sites[1][0],sites[1][1]);
     var NX=Math.round(S/V), NZ=NX;
     var Hs=new Float32Array(NX*NZ), BOT=new Float32Array(NX*NZ), WL=new Float32Array(NX*NZ),
         DOM=new Uint8Array(NX*NZ), FLG=new Uint8Array(NX*NZ);
@@ -895,6 +1017,7 @@ function mixHex(h1,h2,t){
       } }
     /* voxels */
     var pos=[],col=[],mpos=[],mcol=[],y,hh,mn,slope;
+    var TOPI=new Int32Array(NX*NZ);
     for(i=0;i<NX;i++){ x=-half+i*V+V/2;
       for(j=0;j<NZ;j++){ z=-half+j*V+V/2; k=i*NZ+j; hh=Hs[k];
         var n0=i>0?Hs[k-NZ]:hh-2, n1=i<NX-1?Hs[k+NZ]:hh-2,
@@ -904,10 +1027,11 @@ function mixHex(h1,h2,t){
         var b=BIOMES[rouletteBiome(c.w,R)], topc;
         if(FLG[k]&2){ mpos.push(x,hh-V/2,z); var mc=new THREE.Color(R()<0.5?0xff6a1e:0xffa23c); mcol.push(mc.r,mc.g,mc.b); topc=0x2b2422; }
         else if(FLG[k]&1) topc=pickFrom(b.bed,R);
-        else if(FLG[k]&4) topc=pickFrom(b.soil,R);
+        else if(FLG[k]&4) topc=pickFrom(PATH,R);
         else if(slope>0.9) topc=pickFrom(b.rock,R);
         else topc=pickFrom(b.surf,R);
-        CBOX.set(topc).multiplyScalar(((FLG[k]&4)?1.16:1)*(0.88+R()*0.24));
+        CBOX.set(topc).multiplyScalar(0.9+R()*0.2);
+        TOPI[k]=pos.length/3;
         pos.push(x,hh-V/2,z); col.push(CBOX.r,CBOX.g,CBOX.b);
         /* accumulation: snow and ash settle on whatever faces up */
         if(!(FLG[k]&1)&&!(FLG[k]&4)){
@@ -1142,27 +1266,11 @@ function mixHex(h1,h2,t){
       var lp=lamp(-half+tcq[0]+0.6,-half+tcq[1]+0.6);
       if(lp) lamps.push(lp);
     }
-    /* a crossing where the trail meets water, or where both banks sit level */
-    (function(){
-      var order=[],tb;
-      for(i=3;i<M-3;i++)for(j=3;j<M-3;j++)
-        if(cells[i*M+j].water) order.push([i,j,TRAIL[i*M+j]?0:1]);
-      order.sort(function(a,b){return a[2]-b[2];});
-      for(tb=0;tb<order.length;tb++){
-        var bi=order[tb][0], bj=order[tb][1], cb=cells[bi*M+bj];
-        for(var ddd=0;ddd<2;ddd++){
-          var di2=ddd?0:1, dj2=ddd?1:0;
-          for(var s4=2;s4<=5;s4++){
-            var ca=cells[(bi-di2*s4)*M+(bj-dj2*s4)], cbb=cells[(bi+di2*s4)*M+(bj+dj2*s4)];
-            if(!ca||!cbb) break;
-            if(!ca.water&&!cbb.water&&Math.abs(ca.H-cbb.H)<=1){
-              deckBridge(-half+bi,-half+bj,di2,dj2,s4*2+1,Math.max(ca.H,cbb.H,cb.wl+0.5));
-              return;
-            }
-          }
-        }
-      }
-    })();
+    /* crossings, placed where the route meets water */
+    for(var bq=0;bq<bridges.length;bq++){
+      var bd=bridges[bq];
+      deckBridge(bd[0],bd[1],bd[2],bd[3],bd[4],bd[5]);
+    }
     /* one landmark per region, tall enough to see from three chunks away */
     var lmPos=null;
     function landmarkStamp(px,pz,kind,dom,base){
@@ -1286,8 +1394,60 @@ function mixHex(h1,h2,t){
         wquad(q2,1,2,di3,dj3);
       }
     }
+    /* --- reach: flood from the spawn under the movement rules --- */
+    var REACH=new Uint8Array(M*M);
+    (function(){
+      var st=-1,q;
+      for(q=0;q<trailPath.length&&st<0;q++) if(!cells[trailPath[q]].water) st=trailPath[q];
+      if(st<0){
+        var mid=(M/2)|0;
+        for(var rr2=0;rr2<M&&st<0;rr2++)for(var a=1;a<M-1&&st<0;a++)for(var b=1;b<M-1;b++){
+          var cq=cells[a*M+b];
+          if(!cq.water&&!cq.magma){ st=a*M+b; break; }
+        }
+      }
+      if(st<0) return;
+      var queue=[st],head=0; REACH[st]=1;
+      function tryMove(from,nx,nz,mid2){
+        if(nx<0||nz<0||nx>=M||nz>=M) return;
+        var nk=nx*M+nz; if(REACH[nk]) return;
+        var cc=cells[from], nc=cells[nk];
+        if(nc.magma) return;
+        if(nc.water&&(nc.wl-nc.H)>1.5) return;
+        if(mid2!==null){
+          var mc=cells[mid2];
+          if(mc.magma) return;
+          if(!(mc.water||mc.H<=cc.H-1)) return;
+          if(Math.abs(nc.H-cc.H)>MOVE.step) return;
+        } else {
+          var dh=nc.H-cc.H;
+          if(dh>MOVE.vault||dh< -MOVE.fall) return;
+        }
+        REACH[nk]=1; queue.push(nk);
+      }
+      while(head<queue.length){
+        var cu=queue[head++], cx=(cu/M)|0, cz=cu%M;
+        for(var d3=0;d3<4;d3++){
+          var dx=DIRS4[d3][0], dz=DIRS4[d3][1];
+          tryMove(cu,cx+dx,cz+dz,null);
+          tryMove(cu,cx+dx*2,cz+dz*2,(cx+dx)*M+(cz+dz));
+        }
+      }
+    })();
+    var UNREACH=new Uint8Array(NX*NZ);
+    for(i=0;i<NX;i++)for(j=0;j<NZ;j++){
+      var ux=-half+i*V+V/2, uz=-half+j*V+V/2;
+      UNREACH[i*NZ+j]=REACH[ci(ux)*M+ci(uz)]?0:1;
+    }
     /* spawn point: flat dry ground near the middle */
     var spawn=null;
+    for(var tp=0;tp<trailPath.length&&!spawn;tp++){
+      var tc2=cells[trailPath[tp]];
+      if(tc2.water||tc2.magma) continue;
+      var tpi=(trailPath[tp]/M)|0, tpj=trailPath[tp]%M;
+      if(Math.abs(tpi-M/2)+Math.abs(tpj-M/2)>10) continue;
+      spawn=[-half+tpi,tc2.H,-half+tpj];
+    }
     for(var tries=0;tries<900&&!spawn;tries++){
       var si=((NX*0.5)|0)+((R()-0.5)*NX*0.4|0), sj=((NZ*0.5)|0)+((R()-0.5)*NZ*0.4|0);
       si=clamp(si,2,NX-3); sj=clamp(sj,2,NZ-3); k=si*NZ+sj;
@@ -1296,7 +1456,8 @@ function mixHex(h1,h2,t){
     }
     if(!spawn) spawn=[0,Hs[((NX/2)|0)*NZ+((NZ/2)|0)],0];
     return {pos:pos,col:col,mpos:mpos,mcol:mcol,grass:{p:gpos,ph:gph,ti:gtint,sc:gsc,yw:gyaw,c:gcol},
-            water:{v:wv,i:wi,d:wd,f:wf,fl:wfl},lamps:lamps,ovhPos:ovhPos,lmPos:lmPos,trail:TRAIL,Hs:Hs,FLG:FLG,NX:NX,NZ:NZ,half:half,cells:cells,M:M,spawn:spawn,size:S};
+            water:{v:wv,i:wi,d:wd,f:wf,fl:wfl},lamps:lamps,ovhPos:ovhPos,lmPos:lmPos,trail:TRAIL,
+            topi:TOPI,unreach:UNREACH,reach:REACH,bridges:bridges,Hs:Hs,FLG:FLG,NX:NX,NZ:NZ,half:half,cells:cells,M:M,spawn:spawn,size:S};
   }
 
   /* ---------- scene assembly ---------- */
@@ -1610,6 +1771,7 @@ function mixHex(h1,h2,t){
     built=buildHero(seedStr);
     if(old) disposeScene(old);
     if(chunkLines) chunkLines.visible=document.getElementById('togc').getAttribute('aria-pressed')==='true';
+    if(reachOn) applyReach(true);
   }
   resize();
   regen(document.getElementById('seedin').value||'QUARTERSTONE');
@@ -1649,6 +1811,24 @@ function mixHex(h1,h2,t){
       if(dx*dx+dy*dy+dz*dz<rad){ built.vox.setMatrixAt(q,zeroM); cut++; }
     }
     if(cut) built.vox.instanceMatrix.needsUpdate=true;
+  });
+
+  /* reach overlay: tint everything the movement rules cannot get to */
+  var reachOn=false, reachBtn=document.getElementById('reach'), rcol=new THREE.Color();
+  function applyReach(on){
+    if(!built||!built.data.topi) return;
+    var d=built.data, n=d.NX*d.NZ, ti, i2;
+    for(i2=0;i2<n;i2++){
+      if(!d.unreach[i2]) continue;
+      ti=d.topi[i2]; if(!ti) continue;
+      if(on) rcol.setRGB(0.58,0.05,0.13);
+      else rcol.setRGB(d.col[ti*3],d.col[ti*3+1],d.col[ti*3+2]);
+      built.vox.setColorAt(ti,rcol);
+    }
+    if(built.vox.instanceColor) built.vox.instanceColor.needsUpdate=true;
+  }
+  reachBtn.addEventListener('click',function(){
+    reachOn=!reachOn; reachBtn.setAttribute('aria-pressed',String(reachOn)); applyReach(reachOn);
   });
 
   var seedin=document.getElementById('seedin');
