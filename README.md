@@ -38,7 +38,9 @@ step up 1 m, vault 2 m, jump a 2.5 m gap, survive a 6 m drop, wade 0.75 m (river
 exactly there), swim anything deeper, and magma is lethal and impassable. Trails are routed
 with A* over those costs and the ground is then graded under them so no step along a route
 exceeds a metre; crossings are placed only where a route actually meets water, with both
-banks dry. A reach pass floods from the spawn under the same rules and marks what it cannot
+banks dry. When a world has water that no route happened to cross, the generator finds the
+narrowest ford — a short water run with dry, level banks — and takes the route over it, so
+water-bearing worlds always get a crossing and dry ones never get a pointless one. A reach pass floods from the spawn under the same rules and marks what it cannot
 get to — a generator test, not a debug view. Arm Reach on the plate to see it.
 
 Nine systems drive the generator rather than a list of special cases: **span columns** (a
