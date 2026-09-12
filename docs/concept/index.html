@@ -1,0 +1,673 @@
+<title>Quarterstone Concept Plate</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Archivo:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --ink:#0d1014; --ink2:#151a20; --ink3:#1c232b; --line:#2a333d; --line2:#3a4652;
+    --text:#e8e3d7; --muted:#98a3a6; --dim:#6f7a80;
+    --sand:#d9a25e; --sand-dim:#8a6338; --teal:#4fc3cd; --amber:#f0a72b; --moss:#7d9a4e;
+    --display:"Fraunces",Georgia,serif;
+    --body:"Archivo","Helvetica Neue",Arial,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--ink);color:var(--text);font-family:var(--body);
+       font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding-inline:20px;padding-block:40px 64px;
+        display:flex;flex-direction:column;gap:52px}
+  a{color:var(--sand)}
+  h1,h2,h3{margin:0;font-family:var(--display);font-weight:700;text-wrap:balance;line-height:1.12}
+  h1{font-size:clamp(42px,7.5vw,72px);letter-spacing:-0.02em}
+  h2{font-size:clamp(24px,3.4vw,31px);letter-spacing:-0.01em}
+  h3{font-size:17px;font-weight:500;letter-spacing:0.01em}
+  p{margin:0}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--sand);}
+  .lede{font-size:clamp(16px,2vw,19px);color:var(--muted);max-width:60ch}
+  .sec-head{display:flex;flex-direction:column;gap:10px;margin-bottom:22px}
+  .sec-head .note{color:var(--dim);font-size:14px;max-width:62ch}
+
+  /* header */
+  header{display:flex;flex-direction:column;gap:16px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+  .chip{font-family:var(--mono);font-size:11.5px;letter-spacing:0.04em;color:var(--muted);
+        border:1px solid var(--line);border-radius:2px;padding:5px 9px;background:var(--ink2)}
+  .chip b{color:var(--text);font-weight:500}
+
+  /* stage */
+  .stage{position:relative;width:100%;aspect-ratio:16/9;min-height:300px;max-height:72vh;
+         border:1px solid var(--line);border-radius:3px;overflow:hidden;
+         background:radial-gradient(120% 95% at 26% 8%, #33455a 0%, #1d2836 38%, #10161d 72%, #0b0f14 100%)}
+  .stage canvas{display:block;width:100%;height:100%}
+  .sun{position:absolute;left:18%;top:4%;width:38%;aspect-ratio:1;border-radius:50%;
+       background:radial-gradient(circle,rgba(255,214,150,.22),rgba(255,214,150,0) 62%);pointer-events:none}
+  .fallback{position:absolute;inset:0;display:none;place-items:center;text-align:center;padding:24px;color:var(--muted);font-size:14px}
+  .annos{position:absolute;inset:0;pointer-events:none}
+  .anno{position:absolute;top:0;left:0;will-change:transform}
+  .anno i{position:absolute;width:7px;height:7px;margin:-4px 0 0 -4px;border-radius:50%;
+          background:var(--sand);box-shadow:0 0 0 3px rgba(217,162,94,.22)}
+  .anno span{position:absolute;left:13px;bottom:6px;white-space:nowrap;
+             font-family:var(--mono);font-size:11px;letter-spacing:0.02em;color:var(--text);
+             background:rgba(10,13,17,.82);border:1px solid var(--line2);border-left:2px solid var(--sand);
+             padding:4px 8px;backdrop-filter:blur(3px)}
+  .anno span em{font-style:normal;color:var(--sand)}
+  .anno.flip span{left:auto;right:13px;border-left:1px solid var(--line2);border-right:2px solid var(--sand)}
+  .annos.off .anno{opacity:0;transition:opacity .2s}
+  .stagebar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px}
+  .stagebar .cap{font-size:13px;color:var(--dim);flex:1 1 240px;min-width:0}
+  button.ctl{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;
+             color:var(--muted);background:var(--ink2);border:1px solid var(--line);border-radius:2px;
+             padding:7px 11px;cursor:pointer}
+  button.ctl:hover{color:var(--text);border-color:var(--line2)}
+  button.ctl[aria-pressed="true"]{color:var(--ink);background:var(--sand);border-color:var(--sand)}
+  button.ctl:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+
+  /* survey list */
+  .survey{display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
+  .row{display:grid;grid-template-columns:minmax(120px,1.1fr) minmax(150px,1.1fr) 2.2fr;gap:18px;
+       background:var(--ink2);padding:16px 18px;align-items:baseline}
+  .row .f{font-family:var(--display);font-size:19px;font-weight:500}
+  .row .m{font-family:var(--mono);font-size:12.5px;color:var(--sand);font-variant-numeric:tabular-nums}
+  .row .d{font-size:14px;color:var(--muted)}
+  .row.head{background:var(--ink3);padding-block:9px}
+  .row.head span{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+
+  /* sockets */
+  .frame-grid{display:grid;grid-template-columns:minmax(240px,320px) 1fr;gap:34px;align-items:start}
+  .plate{background:var(--ink2);border:1px solid var(--line);padding:22px;display:flex;flex-direction:column;gap:14px}
+  .plate svg{width:100%;height:auto;display:block}
+  .plate .cap{font-size:13px;color:var(--dim)}
+  .mods{display:flex;flex-direction:column;gap:14px}
+  .modrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .mod{font-family:var(--mono);font-size:11.5px;padding:5px 9px;border-radius:2px;border:1px solid;letter-spacing:.02em}
+  .mod.tech{color:var(--amber);border-color:rgba(240,167,43,.4);background:rgba(240,167,43,.08)}
+  .mod.magic{color:var(--teal);border-color:rgba(79,195,205,.4);background:rgba(79,195,205,.08)}
+  .modlabel{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);width:100%}
+  .combos{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin-top:6px}
+  .combo{background:var(--ink2);padding:16px 17px;display:flex;flex-direction:column;gap:9px}
+  .combo .pair{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .combo .out{font-family:var(--display);font-size:18px;font-weight:500;color:var(--text)}
+  .combo .eff{font-size:13.5px;color:var(--muted)}
+  .combo .num{font-family:var(--mono);font-size:12px;color:var(--sand);font-variant-numeric:tabular-nums}
+
+  .rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:22px;margin-top:26px}
+  .rule{border-top:1px solid var(--line);padding-top:13px;display:flex;flex-direction:column;gap:6px}
+  .rule .n{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;color:var(--sand-dim);text-transform:uppercase}
+  .rule p{font-size:13.5px;color:var(--muted)}
+
+  footer{border-top:1px solid var(--line);padding-top:22px;display:flex;flex-direction:column;gap:8px}
+  footer .st{font-size:14px;color:var(--muted);max-width:66ch}
+  footer .sig{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+
+  @media (max-width:720px){
+    .frame-grid{grid-template-columns:1fr}
+    .row{grid-template-columns:1fr;gap:4px;padding:14px 15px}
+    .annos{display:none}
+    .stage{aspect-ratio:4/3}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Concept plate · v0.1 · pre-production</p>
+    <h1>Quarterstone</h1>
+    <p class="lede">A two-player online co-op action RPG seen at 45°. The world is a 1-metre grid carved from 25-centimetre voxels — every canyon wall, riverbed and arch is made of the same cubes, so terrain can be authored, deformed and streamed as one honest data structure. Grass and water are the exception: never voxelised, always moving.</p>
+    <div class="chips">
+      <span class="chip"><b>45°</b> orthographic isometric</span>
+      <span class="chip"><b>1 m</b> grid · <b>25 cm</b> voxel</span>
+      <span class="chip"><b>2P</b> online co-op</span>
+      <span class="chip">Steam appid <b>480</b></span>
+      <span class="chip">three.js · WebGL</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="stage" id="stage">
+      <div class="sun"></div>
+      <canvas id="cv"></canvas>
+      <div class="annos" id="annos"></div>
+      <div class="fallback" id="fallback">This browser could not start WebGL, so the diorama can't draw. The terrain vocabulary and socket system below describe the same design.</div>
+    </div>
+    <div class="stagebar">
+      <p class="cap">Live render — terrain, arch, trees and props are actual 25 cm voxels at spec scale; grass and water are shader-driven. Nothing here is painted.</p>
+      <button class="ctl" id="rotl" type="button" title="Rotate view left">&#8634; Rotate</button>
+      <button class="ctl" id="rotr" type="button" title="Rotate view right">Rotate &#8635;</button>
+      <button class="ctl" id="toga" type="button" aria-pressed="true">Callouts</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Terrain vocabulary</p>
+      <h2>Five shapes the generator is allowed to speak in</h2>
+      <p class="note">Every feature is cut from the same voxel field, so they compose: a river can run through a canyon, an arch can span either. Ranges below are the authoring limits the generator samples between.</p>
+    </div>
+    <div class="survey">
+      <div class="row head"><span>Feature</span><span>Metrics</span><span>Behaviour</span></div>
+      <div class="row"><p class="f">Canyon</p><p class="m">3–5 m wide · 3–4 m deep</p><p class="d">Cuts the mesa into two playfields. Walls expose banded strata one voxel at a time; ledges are legal footing, so verticality is combat space, not scenery.</p></div>
+      <div class="row"><p class="f">River</p><p class="m">1–4 m wide · 0.3 m bed</p><p class="d">Meanders on its own noise. Narrow enough to leap at 1 m, wide enough to need a log or arch at 4 m. Surface is a shader, not voxels — it drifts with the wind direction.</p></div>
+      <div class="row"><p class="f">Hills</p><p class="m">1–3 m rise</p><p class="d">The default ground state. Slopes over 45° auto-switch from grass to rock so the palette reads the traversal rule before the player tests it.</p></div>
+      <div class="row"><p class="f">Arc</p><p class="m">4–6 m span · 3–5 m rise</p><p class="d">A stone span left standing where the field eroded. Doubles as a bridge and a sniping perch; the underside is a covered fight.</p></div>
+      <div class="row"><p class="f">Props</p><p class="m">0.5–4 m</p><p class="d">Trees, boulders, fallen logs — all voxelised on the same 25 cm lattice, so they chip, topple and bridge using the terrain's own rules.</p></div>
+      <div class="row"><p class="f">Grass</p><p class="m">0.3–0.6 m blades</p><p class="d">Deliberately not voxels. Two sine bands of wind plus a trample radius around every character; the softness is what keeps the cubes from reading as a spreadsheet.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Gear system</p>
+      <h2>Frames and sockets</h2>
+      <p class="note">A weapon is not a stat block — it is a frame with base stats and a socket count. Tech and magic upgrades drop into the sockets, and adjacent upgrades read each other: a pairing produces a third behaviour neither has alone.</p>
+    </div>
+    <div class="frame-grid">
+      <div class="plate">
+        <svg viewBox="0 0 220 300" role="img" aria-label="Longblade frame with three sockets, and a cuirass frame with two sockets">
+          <g fill="none" stroke="#3a4652" stroke-width="1">
+            <path d="M20 8 H200 M20 292 H200" stroke-dasharray="2 5"/>
+          </g>
+          <!-- longblade frame -->
+          <g transform="translate(64,0)">
+            <path d="M0 18 L14 40 L14 168 L0 186 L-14 168 L-14 40 Z" fill="#1c232b" stroke="#8c959c" stroke-width="1.6"/>
+            <path d="M-30 176 H30 L24 190 H-24 Z" fill="#1c232b" stroke="#8c959c" stroke-width="1.6"/>
+            <rect x="-6" y="190" width="12" height="42" fill="#1c232b" stroke="#8c959c" stroke-width="1.6"/>
+            <path d="M-11 232 H11 L8 246 H-8 Z" fill="#1c232b" stroke="#8c959c" stroke-width="1.6"/>
+            <g stroke-width="1.4">
+              <path d="M0 52 l9 5 v10 l-9 5 l-9 -5 v-10 Z" fill="rgba(79,195,205,.14)" stroke="#4fc3cd"/>
+              <path d="M0 96 l9 5 v10 l-9 5 l-9 -5 v-10 Z" fill="rgba(240,167,43,.14)" stroke="#f0a72b"/>
+              <path d="M0 140 l9 5 v10 l-9 5 l-9 -5 v-10 Z" fill="#11161c" stroke="#5a646d" stroke-dasharray="3 3"/>
+            </g>
+            <g stroke="#3a4652" stroke-width="1">
+              <path d="M14 62 H62 M14 106 H62 M14 150 H62"/>
+            </g>
+          </g>
+          <g font-family="IBM Plex Mono, monospace" font-size="9" fill="#98a3a6">
+            <text x="130" y="65">socket 1 · magic</text>
+            <text x="130" y="109">socket 2 · tech</text>
+            <text x="130" y="153">socket 3 · empty</text>
+          </g>
+          <g font-family="IBM Plex Mono, monospace" font-size="9" fill="#6f7a80">
+            <text x="8" y="262">LONGBLADE FRAME</text>
+            <text x="8" y="276" fill="#d9a25e">12 dmg · 1.1 swing/s · 3 sockets</text>
+          </g>
+        </svg>
+        <p class="cap">Frames never level up. They gain reach, weight and socket count — everything else is what you bolt in.</p>
+      </div>
+
+      <div class="mods">
+        <div class="modrow">
+          <span class="modlabel">Tech upgrades — machined, finite, precise</span>
+          <span class="mod tech">Arc capacitor</span>
+          <span class="mod tech">Recoil damper</span>
+          <span class="mod tech">Servo edge</span>
+          <span class="mod tech">Kinetic battery</span>
+          <span class="mod tech">Range finder</span>
+        </div>
+        <div class="modrow">
+          <span class="modlabel">Magic upgrades — hungry, reactive, cheap to feed</span>
+          <span class="mod magic">Frostbind</span>
+          <span class="mod magic">Emberweft</span>
+          <span class="mod magic">Sap-siphon</span>
+          <span class="mod magic">Stoneblood</span>
+          <span class="mod magic">Echo rune</span>
+        </div>
+
+        <div class="combos">
+          <div class="combo">
+            <p class="pair"><span class="mod tech">Arc capacitor</span> + <span class="mod magic">Frostbind</span></p>
+            <p class="out">Chain-frost</p>
+            <p class="eff">The capacitor's discharge carries the bind along wet ground and standing water.</p>
+            <p class="num">3 targets · 18% slow · 2.5 s</p>
+          </div>
+          <div class="combo">
+            <p class="pair"><span class="mod tech">Servo edge</span> + <span class="mod magic">Sap-siphon</span></p>
+            <p class="out">Bleed engine</p>
+            <p class="eff">Faster swings feed the siphon; the siphon pays the servo's heat back as stamina.</p>
+            <p class="num">+22% swing · 1.4 hp/hit</p>
+          </div>
+          <div class="combo">
+            <p class="pair"><span class="mod magic">Stoneblood</span> + <span class="mod magic">Emberweft</span></p>
+            <p class="out">Slagform</p>
+            <p class="eff">Two magics stack instead of trading — armour gains mass and a contact burn, and loses dodge.</p>
+            <p class="num">+40 armour · −15% dodge</p>
+          </div>
+        </div>
+
+        <div class="rules">
+          <div class="rule"><p class="n">Adjacency</p><p>Only upgrades in neighbouring sockets combine, so socket order is a real decision, not an inventory formality.</p></div>
+          <div class="rule"><p class="n">Cross-discipline</p><p>Tech + magic pairs bend behaviour; same-discipline pairs amplify a stat and take a drawback.</p></div>
+          <div class="rule"><p class="n">Co-op reading</p><p>A socketed pair is visible on the weapon at iso distance — colour and silhouette — so your partner can read your build across the field.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p class="st"><b>Status:</b> concept only. No game code has been written yet — this plate exists to lock art direction, terrain metrics and the gear system before the engine, netcode and Steam integration (appid 480, Spacewar, for development) go in.</p>
+    <p class="sig">Quarterstone · isometric voxel co-op · plate 01 of 01</p>
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+  var stage=document.getElementById('stage'), cv=document.getElementById('cv'),
+      annosEl=document.getElementById('annos'), fb=document.getElementById('fallback');
+  if(!window.THREE){ fb.style.display='grid'; return; }
+  var reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---------- deterministic noise ---------- */
+  function hash2(x,y){var h=Math.sin(x*127.1+y*311.7)*43758.5453;return h-Math.floor(h);}
+  function vnoise(x,y){var xi=Math.floor(x),yi=Math.floor(y),xf=x-xi,yf=y-yi;
+    var u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf);
+    var a=hash2(xi,yi),b=hash2(xi+1,yi),c=hash2(xi,yi+1),d=hash2(xi+1,yi+1);
+    return (a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v;}
+  function fbm(x,y){var s=0,a=0.5,f=1;for(var i=0;i<4;i++){s+=a*vnoise(x*f,y*f);f*=2;a*=0.5;}return s;}
+  function clamp(v,a,b){return v<a?a:(v>b?b:v);}
+  function sstep(e0,e1,x){var t=clamp((x-e0)/(e1-e0),0,1);return t*t*(3-2*t);}
+  function mix(a,b,t){return a+(b-a)*t;}
+  var seed=99;function rnd(){seed=(seed*1664525+1013904223)&0x7fffffff;return seed/0x7fffffff;}
+
+  /* ---------- world spec (metres) ---------- */
+  var V=0.25, WATER=0.55, RX=17, RZ=14;
+  function island(x,z){
+    var d=Math.pow(Math.abs(x)/RX,4)+Math.pow(Math.abs(z)/RZ,4);
+    var n=(fbm(x*0.07+11,z*0.07+7)-0.5)*0.42;
+    return 1-(d+n);
+  }
+  function river(z){ return [-7.2+Math.sin(z*0.11)*2.4+Math.sin(z*0.041)*1.7, 0.7+(Math.sin(z*0.19+0.6)+1)*0.65]; }
+  function canyon(x){ return [-9.0+Math.sin(x*0.10)*1.9, 1.6+Math.sin(x*0.22+1.2)*0.7]; }
+  function terrainH(x,z){
+    var h=0.9+fbm(x*0.058+3.2,z*0.058+9.1)*2.5;
+    var mesa=sstep(-1.5,-7.5,z)*sstep(-6,-1,x);
+    h+=mesa*2.2;
+    var c=canyon(x), edge=sstep(-6.5,-4.0,x);
+    var dc=Math.abs(z-c[0]);
+    var tc=(1-sstep(c[1],c[1]+1.0,dc))*edge;
+    h=mix(h,0.35,tc);
+    var r=river(z), dr=Math.abs(x-r[0]);
+    var tr=1-sstep(r[1],r[1]+1.3,dr);
+    h=mix(h,0.20,tr);
+    return h;
+  }
+  function q(h){return Math.max(-1.2,Math.round(h/V)*V);}
+
+  /* ---------- palettes ---------- */
+  var C=THREE.Color;
+  var GRASS=[0x5f8f3e,0x6b9a45,0x557f36,0x71a04c],
+      SAND=[0xcbb187,0xd6bd94,0xbfa279],
+      ROCK=[0xb07a45,0xc08a52,0x9a6a3f,0xd1a06a],
+      DEEP=[0x584a3e,0x4a3f35,0x645444],
+      BARK=[0x5a4130,0x4c3728], LEAF=[0x4f7a3a,0x628f45,0x3f6630,0x8ea84b],
+      STONE=[0x7d7a72,0x8b877e,0x6d6a63];
+  function pick(a){return a[(rnd()*a.length)|0];}
+  function shade(hex,k){var c=new C(hex);c.multiplyScalar(k);return c;}
+  function strata(y){
+    if(y<-0.4) return pick(DEEP);
+    var band=Math.floor((y+2)/0.75);
+    return (band%2===0)?ROCK[1]:ROCK[2];
+  }
+
+  /* ---------- build voxel field ---------- */
+  var NX=Math.round(2*RX/V)+2, NZ=Math.round(2*RZ/V)+2;
+  var H=new Float32Array(NX*NZ), IN=new Uint8Array(NX*NZ), SURF=new Uint8Array(NX*NZ);
+  var ix,iz,x,z,i;
+  for(ix=0;ix<NX;ix++){ x=-RX+ix*V;
+    for(iz=0;iz<NZ;iz++){ z=-RZ+iz*V; i=ix*NZ+iz;
+      if(island(x,z)>0){ IN[i]=1; H[i]=q(terrainH(x,z)); } else { IN[i]=0; H[i]=-1.2; } } }
+
+  var pos=[], col=[];
+  function push(px,py,pz,c,k){ pos.push(px,py,pz); var cc=(c instanceof C)?c:new C(c); if(k!==undefined) cc=cc.clone().multiplyScalar(k); col.push(cc.r,cc.g,cc.b); }
+
+  for(ix=0;ix<NX;ix++){ x=-RX+ix*V;
+    for(iz=0;iz<NZ;iz++){ z=-RZ+iz*V; i=ix*NZ+iz;
+      if(!IN[i]) continue;
+      var h=H[i];
+      var nb=[ (ix>0?(IN[i-NZ]?H[i-NZ]:-1.3):-1.3), (ix<NX-1?(IN[i+NZ]?H[i+NZ]:-1.3):-1.3),
+               (iz>0?(IN[i-1]?H[i-1]:-1.3):-1.3), (iz<NZ-1?(IN[i+1]?H[i+1]:-1.3):-1.3) ];
+      var mn=Math.min(nb[0],nb[1],nb[2],nb[3]);
+      var slope=Math.max(h-nb[0],h-nb[1],h-nb[2],h-nb[3]);
+      var top;
+      if(h<=WATER+0.12){ top=pick(SAND); SURF[i]=2; }
+      else if(slope>0.8){ top=pick(ROCK); SURF[i]=0; }
+      else { top=pick(GRASS); SURF[i]=1; }
+      var jit=0.88+rnd()*0.24;
+      push(x,h-V/2,z,top,jit);
+      var bottom=Math.max(-1.2,Math.min(h-V,mn));
+      for(var y=h-1.5*V;y>bottom-0.001;y-=V){ push(x,y,z,strata(y),0.86+rnd()*0.22); }
+    } }
+
+  /* ---------- natural arc over the canyon ---------- */
+  (function(){
+    var ax=-1.0, c0=canyon(ax), z0=c0[0]-2.9, z1=c0[0]+2.9, rise=4.2, base=0.35;
+    for(var t=0;t<=1.0001;t+=0.012){
+      var zz=mix(z0,z1,t);
+      var yy=base+Math.sin(Math.PI*t)*rise;
+      var thick=0.55+0.45*(1-Math.sin(Math.PI*t))+0.2*Math.sin(t*19);
+      for(var dx=-0.75;dx<=0.75;dx+=V)
+        for(var dy=-thick;dy<=thick*0.55;dy+=V){
+          var px=Math.round((ax+dx)/V)*V, py=Math.round((yy+dy)/V)*V, pz=Math.round(zz/V)*V;
+          push(px,py,pz,strata(py),0.9+rnd()*0.2);
+        }
+    }
+  })();
+
+  /* ---------- props ---------- */
+  function grassAt(px,pz){
+    var a=Math.round((px+RX)/V), b=Math.round((pz+RZ)/V);
+    if(a<0||b<0||a>=NX||b>=NZ) return null;
+    var k=a*NZ+b; if(!IN[k]||SURF[k]!==1) return null; return H[k];
+  }
+  function tree(px,pz,scale){
+    var hgt=grassAt(px,pz); if(hgt===null) return;
+    var th=2.0+rnd()*1.4, bk=pick(BARK);
+    for(var y=0;y<th;y+=V) for(var dx=-V;dx<=V;dx+=V) for(var dz=-V;dz<=V;dz+=V)
+      if(Math.abs(dx)+Math.abs(dz)<=V) push(px+dx,hgt+y,pz+dz,bk,0.85+rnd()*0.3);
+    var r=(1.15+rnd()*0.55)*scale, cy=hgt+th+r*0.55;
+    for(var ax2=-r;ax2<=r;ax2+=V) for(var ay=-r*0.85;ay<=r*0.85;ay+=V) for(var az=-r;az<=r;az+=V){
+      var d=(ax2*ax2)/(r*r)+(ay*ay)/(r*r*0.72)+(az*az)/(r*r);
+      if(d<1.0-rnd()*0.25) push(Math.round((px+ax2)/V)*V,Math.round((cy+ay)/V)*V,Math.round((pz+az)/V)*V,pick(LEAF),0.8+rnd()*0.35);
+    }
+  }
+  function boulder(px,pz,r){
+    var hgt=grassAt(px,pz); if(hgt===null) hgt=terrainH(px,pz);
+    for(var ax2=-r;ax2<=r;ax2+=V) for(var ay=-r*0.6;ay<=r*0.8;ay+=V) for(var az=-r;az<=r;az+=V){
+      var d=(ax2*ax2)/(r*r)+(ay*ay)/(r*r*0.8)+(az*az)/(r*r*0.85);
+      if(d<1.0-rnd()*0.18) push(Math.round((px+ax2)/V)*V,Math.round((hgt+r*0.45+ay)/V)*V,Math.round((pz+az)/V)*V,pick(STONE),0.85+rnd()*0.3);
+    }
+  }
+  (function logOverRiver(){
+    var lz=1.2, r0=river(lz), cxr=r0[0], bk=BARK[0];
+    for(var dx=-3.0;dx<=3.0;dx+=V) for(var dy=-0.35;dy<=0.35;dy+=V) for(var dz=-0.35;dz<=0.35;dz+=V){
+      if(dy*dy+dz*dz>0.13) continue;
+      push(Math.round((cxr+dx)/V)*V,Math.round((WATER+0.55+dy)/V)*V,Math.round((lz+dz)/V)*V,bk,0.85+rnd()*0.25);
+    }
+  })();
+  var treeSpots=[[6.2,6.5],[9.4,2.0],[3.0,8.8],[-2.2,7.4],[11.6,-2.6],[7.8,-5.4],[-11.0,6.2],[-12.4,-1.0],[2.6,-3.2],[13.0,4.2],[-4.6,10.2],[8.6,9.6],[-9.5,-8.0],[0.5,11.4]];
+  for(i=0;i<treeSpots.length;i++) tree(treeSpots[i][0],treeSpots[i][1],0.85+rnd()*0.4);
+  var rockSpots=[[4.4,4.0,0.9],[-3.6,3.2,0.6],[10.2,6.6,1.1],[-5.4,-5.6,0.8],[1.6,-7.2,1.0],[12.4,-6.0,0.7],[-13.2,3.0,0.9],[5.6,-9.8,0.8],[-1.6,-11.0,0.6]];
+  for(i=0;i<rockSpots.length;i++) boulder(rockSpots[i][0],rockSpots[i][1],rockSpots[i][2]);
+
+  /* ---------- three.js scene ---------- */
+  var renderer;
+  try{ renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true}); }
+  catch(e){ fb.style.display='grid'; return; }
+  renderer.setClearColor(0x000000,0);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
+  renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+
+  var scene=new THREE.Scene();
+  var camera=new THREE.OrthographicCamera(-1,1,1,-1,0.1,240);
+  var target=new THREE.Vector3(0,1.1,0), yaw=Math.PI/4, yawTo=yaw;
+  function placeCam(){
+    var r=60, hy=Math.cos(Math.PI/4)*r;
+    camera.position.set(target.x+Math.sin(yaw)*hy, target.y+hy, target.z+Math.cos(yaw)*hy);
+    camera.lookAt(target);
+  }
+  scene.add(new THREE.HemisphereLight(0x9fc3e8,0x4a3a2c,0.62));
+  var sun=new THREE.DirectionalLight(0xfff0d2,1.05);
+  sun.position.set(-16,26,12); sun.castShadow=true;
+  sun.shadow.mapSize.set(2048,2048);
+  var sc=sun.shadow.camera; sc.left=-24; sc.right=24; sc.top=24; sc.bottom=-24; sc.near=1; sc.far=80;
+  sun.shadow.bias=-0.0006; sun.shadow.normalBias=0.04;
+  scene.add(sun); scene.add(sun.target);
+
+  /* voxel instanced mesh */
+  var box=new THREE.BoxGeometry(V,V,V);
+  var white=new Float32Array(box.attributes.position.count*3); white.fill(1);
+  box.setAttribute('color',new THREE.BufferAttribute(white,3));
+  var vmat=new THREE.MeshLambertMaterial({vertexColors:true});
+  var count=pos.length/3;
+  var vox=new THREE.InstancedMesh(box,vmat,count);
+  vox.castShadow=true; vox.receiveShadow=true;
+  var m4=new THREE.Matrix4(), tc=new THREE.Color();
+  for(i=0;i<count;i++){
+    m4.makeTranslation(pos[i*3],pos[i*3+1],pos[i*3+2]);
+    vox.setMatrixAt(i,m4);
+    tc.setRGB(col[i*3],col[i*3+1],col[i*3+2]);
+    vox.setColorAt(i,tc);
+  }
+  vox.instanceMatrix.needsUpdate=true; if(vox.instanceColor) vox.instanceColor.needsUpdate=true;
+  scene.add(vox);
+
+  /* ---------- grass (non-voxel) ---------- */
+  var bladeGeo=(function(){
+    var g=new THREE.BufferGeometry();
+    var w0=0.055,w1=0.040,w2=0.024;
+    var p=new Float32Array([-w0,0,0, w0,0,0, -w1,0.35,0, w1,0.35,0, -w2,0.70,0, w2,0.70,0, 0,1,0]);
+    g.setAttribute('position',new THREE.BufferAttribute(p,3));
+    g.setIndex([0,1,2, 1,3,2, 2,3,4, 3,5,4, 4,5,6]);
+    return g;
+  })();
+  var gpos=[], gph=[], gtint=[], gscale=[], gyaw=[];
+  for(ix=0;ix<NX;ix+=2){ x=-RX+ix*V;
+    for(iz=0;iz<NZ;iz+=2){ z=-RZ+iz*V; i=ix*NZ+iz;
+      if(!IN[i]||SURF[i]!==1) continue;
+      var n=2+((rnd()*3)|0);
+      for(var b=0;b<n;b++){
+        var jx=x+(rnd()-0.5)*0.5, jz=z+(rnd()-0.5)*0.5;
+        gpos.push(jx,H[i],jz); gph.push(rnd()*6.28);
+        gtint.push(rnd()<0.16?1:0); gscale.push(0.30+rnd()*0.30); gyaw.push(rnd()*3.14);
+      } } }
+  var gcount=gph.length;
+  var gmat=new THREE.ShaderMaterial({
+    side:THREE.DoubleSide,
+    uniforms:{uTime:{value:0},uP0:{value:new THREE.Vector3()},uP1:{value:new THREE.Vector3()},
+      uDark:{value:new THREE.Color(0x2f4a20)},uLight:{value:new THREE.Color(0x86ab4f)},uDry:{value:new THREE.Color(0xb6a35a)}},
+    vertexShader:[
+      'attribute float aPhase; attribute float aTint;',
+      'uniform float uTime; uniform vec3 uP0; uniform vec3 uP1;',
+      'varying float vH; varying float vT;',
+      'void main(){',
+      ' vec3 p=position; float h=p.y; vH=h; vT=aTint;',
+      ' vec4 wb=modelMatrix*instanceMatrix*vec4(0.0,0.0,0.0,1.0);',
+      ' float w=sin(uTime*1.5+wb.x*0.55+wb.z*0.38+aPhase)*0.55+sin(uTime*2.6+wb.x*0.95)*0.22;',
+      ' vec2 bend=vec2(w*0.30,w*0.13);',
+      ' vec2 d0=wb.xz-uP0.xz; float l0=length(d0);',
+      ' if(l0<1.15) bend+=normalize(d0+vec2(0.001))*(1.0-l0/1.15)*0.85;',
+      ' vec2 d1=wb.xz-uP1.xz; float l1=length(d1);',
+      ' if(l1<1.15) bend+=normalize(d1+vec2(0.001))*(1.0-l1/1.15)*0.85;',
+      ' vec4 wp=modelMatrix*instanceMatrix*vec4(p,1.0);',
+      ' float k=h*h; wp.xz+=bend*k; wp.y-=length(bend)*k*0.12;',
+      ' gl_Position=projectionMatrix*viewMatrix*wp;',
+      '}'].join('\n'),
+    fragmentShader:[
+      'uniform vec3 uDark; uniform vec3 uLight; uniform vec3 uDry;',
+      'varying float vH; varying float vT;',
+      'void main(){',
+      ' vec3 c=mix(uDark,uLight,vH*0.85+0.15);',
+      ' c=mix(c,uDry,vT*0.75);',
+      ' gl_FragColor=vec4(c,1.0);',
+      '}'].join('\n')
+  });
+  var grass=new THREE.InstancedMesh(bladeGeo,gmat,gcount);
+  (function(){
+    var m=new THREE.Matrix4(), qq=new THREE.Quaternion(), e=new THREE.Euler(), s=new THREE.Vector3(), t=new THREE.Vector3();
+    var ph=new Float32Array(gcount), ti=new Float32Array(gcount);
+    for(i=0;i<gcount;i++){
+      t.set(gpos[i*3],gpos[i*3+1],gpos[i*3+2]);
+      e.set(0,gyaw[i],0); qq.setFromEuler(e);
+      s.set(1,gscale[i],1);
+      m.compose(t,qq,s); grass.setMatrixAt(i,m);
+      ph[i]=gph[i]; ti[i]=gtint[i];
+    }
+    grass.instanceMatrix.needsUpdate=true;
+    bladeGeo.setAttribute('aPhase',new THREE.InstancedBufferAttribute(ph,1));
+    bladeGeo.setAttribute('aTint',new THREE.InstancedBufferAttribute(ti,1));
+  })();
+  grass.frustumCulled=false;
+  scene.add(grass);
+
+  /* ---------- water ribbon ---------- */
+  (function(){
+    var segs=[], zz, verts=[], idx=[], CW=6, rows=0;
+    for(zz=-RZ-0.4; zz<=RZ+0.4; zz+=0.35){
+      var r=river(zz), cx=r[0], hw=r[1]+0.38;
+      for(var c=0;c<=CW;c++){ verts.push(cx-hw+(2*hw)*(c/CW), 0, zz); }
+      rows++;
+    }
+    for(var rrow=0;rrow<rows-1;rrow++) for(var c2=0;c2<CW;c2++){
+      var a=rrow*(CW+1)+c2, b=a+1, d=a+(CW+1), e2=d+1;
+      idx.push(a,d,b, b,d,e2);
+    }
+    var wg=new THREE.BufferGeometry();
+    wg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(verts),3));
+    wg.setIndex(idx);
+    var wmat=new THREE.ShaderMaterial({
+      transparent:true, uniforms:{uTime:{value:0}},
+      vertexShader:['uniform float uTime; varying vec3 vP; varying float vW;',
+        'void main(){ vec3 p=position;',
+        ' float w=sin(uTime*1.25+p.z*1.9+p.x*1.1)*0.035+sin(uTime*2.15-p.z*3.4+p.x*0.6)*0.022;',
+        ' p.y+=w; vW=w; vP=p;',
+        ' gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);}'].join('\n'),
+      fragmentShader:['varying vec3 vP; varying float vW;',
+        'void main(){',
+        ' vec3 deep=vec3(0.10,0.29,0.35), shallow=vec3(0.25,0.58,0.60);',
+        ' vec3 c=mix(deep,shallow,smoothstep(-0.05,0.05,vW));',
+        ' float glint=pow(max(vW*14.0,0.0),3.0);',
+        ' c+=vec3(0.55,0.72,0.70)*clamp(glint,0.0,0.55);',
+        ' gl_FragColor=vec4(c,0.86);}'].join('\n')
+    });
+    var water=new THREE.Mesh(wg,wmat);
+    water.position.y=WATER; water.frustumCulled=false;
+    scene.add(water);
+    window.__water=wmat;
+  })();
+
+  /* ---------- characters ---------- */
+  function box3(w,h,d,color){ return new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshLambertMaterial({color:color})); }
+  function glow(w,h,d,color){ return new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshBasicMaterial({color:color})); }
+  function hero(cloth,skin,gem,techy){
+    var g=new THREE.Group();
+    var legs=box3(0.42,0.55,0.30,0x33302c); legs.position.y=0.28; g.add(legs);
+    var torso=box3(0.52,0.62,0.36,cloth); torso.position.y=0.87; g.add(torso);
+    var head=box3(0.34,0.32,0.32,skin); head.position.y=1.33; g.add(head);
+    var pack=box3(0.30,0.30,0.16,0x4a4038); pack.position.set(0,0.95,-0.24); g.add(pack);
+    var arm=box3(0.14,0.46,0.16,cloth); arm.position.set(0.33,0.92,0.02); g.add(arm);
+    var wpn=new THREE.Group();
+    if(techy){
+      var haft=box3(0.08,0.95,0.08,0x6b5a45); haft.position.y=0.2; wpn.add(haft);
+      var headb=box3(0.34,0.26,0.22,0x8b877e); headb.position.y=0.72; wpn.add(headb);
+      var s1=glow(0.10,0.10,0.24,0xf0a72b); s1.position.set(0,0.72,0.02); wpn.add(s1);
+    } else {
+      var blade=box3(0.07,1.05,0.16,0x9aa1a7); blade.position.y=0.42; wpn.add(blade);
+      var guard=box3(0.34,0.08,0.20,0x6b6660); guard.position.y=-0.12; wpn.add(guard);
+      var g1=glow(0.10,0.10,0.20,gem); g1.position.set(0,0.22,0.0); wpn.add(g1);
+      var g2=glow(0.09,0.09,0.18,0xf0a72b); g2.position.set(0,0.62,0.0); wpn.add(g2);
+    }
+    wpn.position.set(0.42,0.75,0.06); wpn.rotation.z=-0.22; g.add(wpn);
+    g.traverse(function(o){ if(o.isMesh){o.castShadow=true;} });
+    return {group:g,weapon:wpn};
+  }
+  var A=hero(0x2f6f7a,0xc99a6e,0x4fc3cd,false);
+  var B=hero(0xa5642a,0xb5855c,0xf0a72b,true);
+  A.group.scale.setScalar(1.4); B.group.scale.setScalar(1.4);
+  scene.add(A.group); scene.add(B.group);
+
+  /* campfire */
+  var fire=new THREE.Group();
+  (function(){
+    for(var a=0;a<5;a++){
+      var l=box3(0.60,0.14,0.14,0x4c3728);
+      l.rotation.y=a*1.25; l.position.y=0.08; l.castShadow=true; fire.add(l);
+    }
+    var f=glow(0.26,0.34,0.26,0xff9a3c); f.position.y=0.26; fire.add(f);
+    var f2=glow(0.14,0.20,0.14,0xffd88a); f2.position.y=0.42; fire.add(f2);
+  })();
+  var FIREP=[3.4,2.6];
+  fire.scale.setScalar(1.25);
+  fire.position.set(FIREP[0],terrainH(FIREP[0],FIREP[1]),FIREP[1]);
+  scene.add(fire);
+  var firelight=new THREE.PointLight(0xffa04a,1.1,9,2);
+  firelight.position.set(FIREP[0],fire.position.y+0.7,FIREP[1]);
+  scene.add(firelight);
+
+  /* dust motes */
+  var dust=(function(){
+    var n=90, p=new Float32Array(n*3);
+    for(var k=0;k<n;k++){ p[k*3]=(rnd()-0.5)*30; p[k*3+1]=0.6+rnd()*5; p[k*3+2]=(rnd()-0.5)*26; }
+    var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(p,3));
+    var m=new THREE.PointsMaterial({color:0xffe0a8,size:0.07,transparent:true,opacity:0.55,sizeAttenuation:true});
+    var pts=new THREE.Points(g,m); pts.frustumCulled=false; return pts;
+  })();
+  scene.add(dust);
+
+  /* ---------- annotations ---------- */
+  var annos=[
+    {p:[2.6,1.4,-9.2], t:'Canyon <em>4.2 m wide · 3.5 m deep</em>', flip:false},
+    {p:[-1.0,4.9,-9.0], t:'Natural arc <em>5.8 m span · 4.2 m rise</em>', flip:true},
+    {p:[-7.6,0.75,3.4], t:'River <em>1–4 m · wind-driven surface</em>', flip:true},
+    {p:[9.2,terrainH(9.2,8.6)+0.5,8.6], t:'Grass <em>non-voxel · sways + tramples</em>', flip:false},
+    {p:[2.2,3.0,1.8], t:'2-player online co-op', flip:true},
+    {p:[11.5,terrainH(11.5,-5.5)+0.6,-5.5], t:'Hills <em>1–3 m</em>', flip:false},
+    {p:[1.0,0.1,12.6], t:'25 cm voxels on a 1 m grid', flip:false}
+  ];
+  var annoEls=annos.map(function(a){
+    var d=document.createElement('div'); d.className='anno'+(a.flip?' flip':'');
+    d.innerHTML='<i></i><span>'+a.t+'</span>';
+    annosEl.appendChild(d);
+    return {el:d, v:new THREE.Vector3(a.p[0],a.p[1],a.p[2])};
+  });
+
+  /* ---------- loop ---------- */
+  var W=0,Hh=0;
+  function resize(){
+    var r=stage.getBoundingClientRect();
+    W=Math.max(1,r.width|0); Hh=Math.max(1,r.height|0);
+    renderer.setSize(W,Hh,false);
+    var aspect=W/Hh, D=Math.max(12.2, 23.0/aspect);
+    camera.left=-D*aspect; camera.right=D*aspect; camera.top=D; camera.bottom=-D;
+    camera.near=0.1; camera.far=240; camera.updateProjectionMatrix();
+  }
+  if(window.ResizeObserver){ new ResizeObserver(resize).observe(stage); } else { window.addEventListener('resize',resize); }
+  resize(); placeCam();
+
+  var t0=performance.now(), tm=0, visible=true;
+  if(window.IntersectionObserver){
+    new IntersectionObserver(function(es){ visible=es[0].isIntersecting; },{threshold:0.02}).observe(stage);
+  }
+  var pv=new THREE.Vector3();
+  function walk(o,cx,cz,rr,sp,ph,t){
+    var ang=t*sp+ph, px=cx+Math.cos(ang)*rr, pz=cz+Math.sin(ang)*rr*0.8;
+    var y=terrainH(px,pz);
+    o.group.position.set(px,y,pz);
+    o.group.rotation.y=-ang+Math.PI*0.5;
+    o.group.position.y=y+Math.abs(Math.sin(t*5.2+ph))*0.045;
+    o.weapon.rotation.z=-0.22+Math.sin(t*2.1+ph)*0.10;
+    return o.group.position;
+  }
+  function frame(){
+    requestAnimationFrame(frame);
+    if(!visible) return;
+    var now=performance.now();
+    if(!reduce) tm=(now-t0)/1000;
+    yaw+=(yawTo-yaw)*0.12;
+    placeCam();
+    gmat.uniforms.uTime.value=tm;
+    if(window.__water) window.__water.uniforms.uTime.value=tm;
+    var pa=walk(A,2.2,2.0,2.6,0.22,0,tm);
+    gmat.uniforms.uP0.value.copy(pa);
+    var pb=walk(B,4.6,1.2,1.9,-0.26,2.1,tm);
+    gmat.uniforms.uP1.value.copy(pb);
+    firelight.intensity=1.0+Math.sin(tm*9.1)*0.12+Math.sin(tm*17.3)*0.07;
+    dust.position.y=Math.sin(tm*0.25)*0.6;
+    dust.rotation.y=tm*0.012;
+    renderer.render(scene,camera);
+    for(var k=0;k<annoEls.length;k++){
+      pv.copy(annoEls[k].v).project(camera);
+      var sx=(pv.x*0.5+0.5)*W, sy=(-pv.y*0.5+0.5)*Hh;
+      annoEls[k].el.style.transform='translate('+sx.toFixed(1)+'px,'+sy.toFixed(1)+'px)';
+    }
+  }
+  frame();
+
+  document.getElementById('rotl').addEventListener('click',function(){ yawTo-=Math.PI/2; });
+  document.getElementById('rotr').addEventListener('click',function(){ yawTo+=Math.PI/2; });
+  var tog=document.getElementById('toga');
+  tog.addEventListener('click',function(){
+    var on=tog.getAttribute('aria-pressed')==='true';
+    tog.setAttribute('aria-pressed',String(!on));
+    annosEl.classList.toggle('off',on);
+  });
+})();
+</script>
