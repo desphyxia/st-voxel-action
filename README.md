@@ -22,6 +22,7 @@ plate that locks generation rules, biomes and the gear lattice.
 | Voxel | 25 cm. Used for surface detail, palette dithering and silhouette only |
 | Detail pass | ±2 voxels (±0.5 m), the only sub-metre operation |
 | Seeding | One string seed drives climate, heightfield, features and props, so co-op partners generate identical terrain without transferring it |
+| Columns | Stored as runs of solid spans, not a single height — caves, tunnels and true undercuts are the same case |
 
 Feature ranges: canyons 3–5 m wide and 3–4 m deep; rivers 1–4 m wide with the bed 1 m below
 the bank; hills 1–3 m; arcs 4–6 m span and 3–5 m rise; columns 2–4 m tall; overhangs undercut
@@ -29,6 +30,16 @@ a rim by 1–2 m, and paired across a canyon they leave a 2–3 m gap a player c
 Waterfalls are emitted wherever a watercourse steps down a metre; basins fill as ponds at
 1.25 m. Grass (0.3–0.9 m) and water are never voxelised — both are shader-driven, with wind,
 a trample radius around every character, and flow-advected foam.
+
+Eight systems drive the generator rather than a list of special cases: **span columns** (a
+pseudo-3D field cuts caves before rims undercut them), a **flow field and water table**
+(downhill vector per cell; hollows flood until they spill), an **erosion pass** (talus at
+cliff feet, banks cut back above water), **trails** (routes drawn between sites before
+anything is built), an **accumulation pass** (snow and ash settle on up-facing surfaces by
+biome and slope), **one wind field** (shared by grass and water), **destructible terrain**
+(carve voxels live — arm Carve on the plate and click), and **chunk-scale landmarks** (an
+obelisk, hive tree, wrecked machine or standing stones on the highest flat ground, chosen to
+suit the biome).
 
 Clutter is voxelised on the same lattice and derived from the terrain where possible: scree
 falls out of every 2 m drop, and bushes, stumps, fallen trunks, fences, lamp posts, ruined
