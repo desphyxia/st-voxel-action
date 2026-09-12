@@ -24,9 +24,17 @@ plate that locks generation rules, biomes and the gear lattice.
 | Seeding | One string seed drives climate, heightfield, features and props, so co-op partners generate identical terrain without transferring it |
 
 Feature ranges: canyons 3–5 m wide and 3–4 m deep; rivers 1–4 m wide with the bed 1 m below
-the bank (elevation changes become whole-metre cascades); hills 1–3 m; arcs 4–6 m span and
-3–5 m rise; columns 2–4 m tall. Grass (0.3–0.9 m) and water are never voxelised — both are
-shader-driven, with wind and a trample radius around every character.
+the bank; hills 1–3 m; arcs 4–6 m span and 3–5 m rise; columns 2–4 m tall; overhangs undercut
+a rim by 1–2 m, and paired across a canyon they leave a 2–3 m gap a player can clear.
+Waterfalls are emitted wherever a watercourse steps down a metre; basins fill as ponds at
+1.25 m. Grass (0.3–0.9 m) and water are never voxelised — both are shader-driven, with wind,
+a trample radius around every character, and flow-advected foam.
+
+Clutter is voxelised on the same lattice and derived from the terrain where possible: scree
+falls out of every 2 m drop, and bushes, stumps, fallen trunks, fences, lamp posts, ruined
+walls, pillars, huts and deck bridges are placed by terrain rules rather than scattered. Two
+points of interest per world — a ruin and a holding — are sited only on ground flat enough to
+have been built on.
 
 ### Biomes
 
@@ -38,9 +46,11 @@ Meadowlands · Redrock Mesa · Boreal Fen · Ashfall Barrens · Frostmoor
 
 ## Gear
 
-Weapons and armour are **frames**: base stats plus a cluster of hexagonal sockets. Frames
-never level up. Eight frames — longblade, paired knives, greataxe, warhammer, spear, recurve
-bow, bulwark, focus rod — differing in socket count and lattice shape.
+Weapons and armour are **frames**: base stats, an affinity, and a cluster of hexagonal
+sockets. Frames never level up. Seven of the eight are symbiotic rather than historical:
+longblade (the control case), splice gauntlet, hookline spool, emberpot censer, brood sling,
+tuning stake, lodestone flail, root bulwark. Seating two modules of a frame's own discipline
+wakes its trait.
 
 Nine modules across three disciplines: **tech** (arc capacitor, servo edge, kinetic battery),
 **magic** (frostbind, emberweft, echo rune), **biological** (sporeling, bonegraft, vinelash).

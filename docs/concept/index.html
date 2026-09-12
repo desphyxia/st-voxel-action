@@ -66,13 +66,33 @@
   .panel svg{width:100%;height:auto;display:block}
   .panel .cap{font-size:13px;color:var(--dim);margin-top:14px}
   .survey{display:grid;gap:1px;background:var(--line);border:1px solid var(--line)}
-  .row{display:grid;grid-template-columns:minmax(110px,1fr) minmax(160px,1.15fr) 2fr;gap:18px;background:var(--ink2);padding:15px 17px;align-items:baseline}
-  .row .f{font-family:var(--display);font-size:18px;font-weight:500}
+  .row{display:grid;grid-template-columns:minmax(150px,1.05fr) minmax(155px,1.1fr) 2fr;gap:18px;background:var(--ink2);padding:15px 17px;align-items:baseline}
+  .row .f{font-family:var(--display);font-size:18px;font-weight:500;display:flex;flex-wrap:wrap;align-items:baseline;gap:7px}
+  .row .f .tag{margin-left:0}
   .row .m{font-family:var(--mono);font-size:12.5px;color:var(--sand);font-variant-numeric:tabular-nums}
   .row .d{font-size:13.5px;color:var(--muted)}
   .row.head{background:var(--ink3);padding-block:9px}
   .row.head span{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
 
+  .tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+       padding:2px 6px;border-radius:2px;white-space:nowrap;vertical-align:2px;margin-left:8px}
+  .tag.in{background:var(--sand);color:var(--ink)}
+  .tag.next{border:1px solid var(--line2);color:var(--muted)}
+  .tag.prop{border:1px dashed var(--line2);color:var(--dim)}
+  .legend{display:flex;flex-wrap:wrap;gap:16px;margin-bottom:20px;align-items:center}
+  .legend span.l{font-family:var(--mono);font-size:11px;color:var(--dim)}
+  .cat{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1px;background:var(--line);border:1px solid var(--line)}
+  .catcol{background:var(--ink2);padding:18px 19px;display:flex;flex-direction:column;gap:14px}
+  .catcol h3{font-family:var(--mono);font-size:10.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--sand);font-weight:400}
+  .item{display:flex;flex-direction:column;gap:2px}
+  .item .n{font-family:var(--display);font-size:16.5px;font-weight:500;display:flex;flex-wrap:wrap;align-items:baseline;gap:7px}
+  .item .n .tag{margin-left:0}
+  .item .r{font-size:12.5px;color:var(--muted)}
+  .props{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1px;background:var(--line);border:1px solid var(--line)}
+  .prop{background:var(--ink2);padding:17px 18px;display:flex;flex-direction:column;gap:7px}
+  .prop .n{font-family:var(--display);font-size:18px;font-weight:500}
+  .prop .d{font-size:13px;color:var(--muted)}
+  .prop .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--sand-dim)}
   .climate{display:grid;grid-template-columns:minmax(260px,1fr) minmax(260px,1.1fr);gap:30px;align-items:start}
   .biolist{display:flex;flex-direction:column;gap:1px;background:var(--line);border:1px solid var(--line)}
   .bio{background:var(--ink2);padding:13px 15px;display:grid;grid-template-columns:16px 1fr;gap:12px;align-items:start}
@@ -89,6 +109,9 @@
   .frame svg{width:100%;height:auto;max-width:190px;display:block;margin:2px auto 0}
   .frame .st{font-family:var(--mono);font-size:11.5px;color:var(--sand);font-variant-numeric:tabular-nums}
   .frame .ds{font-size:13px;color:var(--muted)}
+  .frame .af{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;border:1px solid;border-radius:2px;padding:3px 7px;align-self:flex-start}
+  .frame .tr{font-size:12.5px;color:var(--muted);border-top:1px dashed var(--line2);padding-top:8px}
+  .frame .tr b{color:var(--text);font-weight:500}
 
   .mods{display:grid;grid-template-columns:repeat(auto-fit,minmax(172px,1fr));gap:1px;background:var(--line);border:1px solid var(--line)}
   .mod{background:var(--ink2);padding:16px;display:flex;flex-direction:column;gap:8px;align-items:flex-start}
@@ -139,7 +162,7 @@
       <span class="chip"><b>1 m</b> feature grid · <b>25 cm</b> voxel</span>
       <span class="chip"><b>5</b> biomes, blended</span>
       <span class="chip">seeded · endless</span>
-      <span class="chip"><b>8</b> frames · <b>9</b> modules</span>
+      <span class="chip"><b>8</b> frames · <b>9</b> modules · <b>36</b> pairings</span>
       <span class="chip">2P online co-op · Steam appid <b>480</b></span>
     </div>
   </header>
@@ -152,7 +175,7 @@
       <div class="fallback" id="fallback">This browser could not start WebGL, so the diorama can't draw. The rules, biomes and socket system below describe the same design.</div>
     </div>
     <div class="stagebar">
-      <p class="cap">Four chunks (64 × 64 m) of a seeded world, sitting on a meadowland–mesa boundary. Live render: real 25 cm voxels, shader grass and water.</p>
+      <p class="cap">Four chunks (64 × 64 m) of a seeded world. Live render: 25 cm voxels, undercut rims, whole-metre waterfalls, shader grass and flowing water.</p>
       <span class="seedbox"><label for="seedin">Seed</label><input id="seedin" value="QUARTERSTONE" spellcheck="false" autocomplete="off"></span>
       <button class="ctl" id="regen" type="button">Generate</button>
       <button class="ctl" id="rotl" type="button" title="Rotate view left">&#8634;</button>
@@ -190,9 +213,37 @@
         <div class="row"><p class="f">Arc</p><p class="m">4–6 m span · 3–5 m rise</p><p class="d">Placed where a canyon or river crosses a rock-heavy cell. Bridge above, covered fight below.</p></div>
         <div class="row"><p class="f">Column</p><p class="m">2–4 m tall · 1–2 m across</p><p class="d">Basalt in the barrens, hoodoos on the mesa. Vertical cover that reads instantly at iso distance.</p></div>
         <div class="row"><p class="f">Detail pass</p><p class="m">±2 voxels (±0.5 m)</p><p class="d">The only sub-metre operation. Chips edges, rounds boulders, scatters shelf rubble — the whole reason the world doesn't look like a spreadsheet.</p></div>
+        <div class="row"><p class="f">Overhang<span class="tag in">in build</span></p><p class="m">1–2 m undercut · 2–3 m gap</p><p class="d">Rims undercut where the drop is 2 m or more. Facing overhangs narrow a 5 m canyon to a gap you can clear on foot — the first reason to look up in an isometric game.</p></div>
+        <div class="row"><p class="f">Waterfall<span class="tag in">in build</span></p><p class="m">1 m per step</p><p class="d">Emitted automatically wherever a watercourse steps down a metre. Falling sheet, lip foam, and churn in the pool below; no authoring.</p></div>
+        <div class="row"><p class="f">Pond<span class="tag in">in build</span></p><p class="m">1.25 m deep</p><p class="d">Basins that sit below the local mean fill and hold. Deeper than a river, so the depth ramp in the water shader has something to read.</p></div>
+        <div class="row"><p class="f">Scree<span class="tag in">in build</span></p><p class="m">1–2 voxel chips</p><p class="d">Derived, not scattered: every drop of 2 m or more sheds rubble at its base, in the rock colour of the cell above it.</p></div>
         <div class="row"><p class="f">Grass</p><p class="m">0.3–0.9 m blades</p><p class="d">Not voxels at all. Two sine bands of wind plus a trample radius around every character, biome-tinted and biome-dense.</p></div>
       </div>
     </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Dressing</p>
+      <h2>Clutter, structures and points of interest</h2>
+      <p class="note">Everything here is voxelised on the same 25 cm lattice as the terrain, so it chips, topples and bridges under the same rules. Natural clutter is derived from the terrain wherever it can be — scree comes from the drop above it, stumps from where a trunk fell — because scattered dressing reads as scattered dressing.</p>
+    </div>
+    <div class="legend">
+      <span class="l">Status</span>
+      <span><span class="tag in">in build</span></span>
+      <span><span class="tag next">next</span></span>
+      <span><span class="tag prop">proposed</span></span>
+    </div>
+    <div class="cat" id="cat"></div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">Proposed</p>
+      <h2>Eight systems worth building before the content</h2>
+      <p class="note">These are the changes that make the dressing above cheap instead of endless. Each one replaces a pile of special cases with a rule the generator can apply everywhere.</p>
+    </div>
+    <div class="props" id="props"></div>
   </section>
 
   <section>
@@ -214,12 +265,13 @@
     <div class="sec-head">
       <p class="eyebrow">Gear system · frames</p>
       <h2>Eight frames, each a hex lattice</h2>
-      <p class="note">A weapon is a frame: base stats, a weight class, and a cluster of hexagonal sockets. Frames never level up. Everything else about a weapon is what you seat in the lattice — and where, because sockets that share an edge talk to each other.</p>
+      <p class="note">A weapon is a frame: base stats, an affinity, and a cluster of hexagonal sockets. Frames never level up. Seven of the eight are symbiotic rather than historical — grown, spliced, planted or magnetised — and each was designed around a discipline instead of around a silhouette. The longblade stays as the control case, because a set of oddities needs one plain thing to be measured against.</p>
     </div>
     <div class="frames" id="frames"></div>
     <div class="rules">
       <div class="rule"><p class="n">Adjacency</p><p>Two modules fuse only when their hexes share an edge. A hex has six neighbours, so a centre socket can anchor up to six fusions at once — the densest builds are the hardest to assemble.</p></div>
       <div class="rule"><p class="n">Shape is a stat</p><p>A line of three and a triangle of three hold the same modules and produce different weapons. Layout is the build, not decoration.</p></div>
+      <div class="rule"><p class="n">Affinity</p><p>Seat two modules of a frame's own discipline and its trait wakes up. A bio frame fed bio modules starts behaving like the thing it was grown from — which is not always what you wanted.</p></div>
       <div class="rule"><p class="n">Armour shares the lattice</p><p>Cuirass, greaves and helm frames use the same hexes and the same nine modules, so a fusion learned on a weapon transfers.</p></div>
     </div>
   </section>
@@ -265,14 +317,29 @@ var MODS=[
  {id:'VIN',nm:'Vinelash',d:'bio',ds:'Tendrils that hook a target and shorten. Reach without weight.',st:'3 m pull · 0.9 s'}
 ];
 var FRAMES=[
- {nm:'Longblade',sk:'3 · line',st:'12 dmg · 1.1 swing/s · 1.6 m',ds:'The reference frame. Three sockets in a spine, each adjacent to the next.',hx:[[0,0],[0,1],[0,2]]},
- {nm:'Paired knives',sk:'2 · pair',st:'6 + 6 dmg · 2.4 swing/s · 0.9 m',ds:'One socket per hand. A single fusion, and it fires twice as often as anything else.',hx:[[0,0],[1,0]]},
- {nm:'Greataxe',sk:'4 · rhombus',st:'28 dmg · 0.6 swing/s · 2.1 m',ds:'Five adjacencies across four sockets — the cheapest way to run a dense build.',hx:[[0,0],[1,0],[0,1],[1,1]]},
- {nm:'Warhammer',sk:'3 · triangle',st:'24 dmg · 0.7 swing/s · 1.9 m',ds:'All three sockets touch. Every module in it fuses with every other.',hx:[[0,0],[1,0],[0,1]]},
- {nm:'Spear',sk:'3 · rank',st:'14 dmg · 1.0 swing/s · 3.0 m',ds:'A flat run of three. Reach is the frame; the lattice stays simple.',hx:[[0,0],[1,0],[2,0]]},
- {nm:'Recurve bow',sk:'4 · arc',st:'11 dmg · 1.3 draw/s · 18 m',ds:'Three along the limb and one at the nock, so the shot carries one fusion of its own.',hx:[[0,0],[1,0],[2,0],[1,1]]},
- {nm:'Bulwark',sk:'4 · ring',st:'9 dmg · 40% block · 2.4 m face',ds:'A hollow ring. Nothing sits in the middle, so opposite sockets never speak.',hx:[[1,0],[0,1],[-1,1],[-1,0]],vd:[[0,0]]},
- {nm:'Focus rod',sk:'5 · rosette',st:'8 dmg · channelled · 12 m',ds:'A centre socket touching four others: one module can anchor four fusions at once.',hx:[[0,0],[1,0],[0,1],[-1,1],[-1,0]]}
+ {nm:'Longblade',sk:'3 · line',af:null,st:'12 dmg · 1.1 swing/s · 1.6 m',
+  ds:'The control frame, kept because everything else is measured against it. Three sockets in a spine, each adjacent to the next.',hx:[[0,0],[0,1],[0,2]]},
+ {nm:'Splice gauntlet',sk:'4 · rhombus',af:'bio',st:'9 dmg · 2.0 strike/s · 0.6 m',
+  tr:'Grafted|every fusion also runs on you at half strength, the ones you wanted and the ones you did not.',
+  ds:'Grown onto the forearm rather than held. Five adjacencies over four knuckles, and it never leaves your hand.',hx:[[0,0],[1,0],[0,1],[1,1]]},
+ {nm:'Hookline spool',sk:'3 · rank',af:'tech',st:'7 dmg · 22 m line · 0.9 s reel',
+  tr:'Winch|the line holds a second body. Anchor an overhang and both of you cross the canyon on it.',
+  ds:'A tech winch spliced to a living cord. Pulls you to the terrain, or the terrain to you.',hx:[[0,0],[1,0],[2,0]]},
+ {nm:'Emberpot censer',sk:'3 · triangle',af:'magic',st:'10 dmg · 0.9 swing/s · 2.2 m arc',
+  tr:'Decants|the fusion lands on the ground as a 3 m field for 6 s instead of on the target.',
+  ds:'A swung brazier on a chain. All three sockets touch, so everything in it fuses with everything else.',hx:[[0,0],[1,0],[0,1]]},
+ {nm:'Brood sling',sk:'4 · arc',af:'bio',st:'8 dmg · 1.6 shots/s · 14 m',
+  tr:'Clutch|ammunition regrows between fights, and each one steers toward what you last hit.',
+  ds:'A hive slung under the arm that throws its own young. Three along the limb, one at the nock.',hx:[[0,0],[1,0],[2,0],[1,1]]},
+ {nm:'Tuning stake',sk:'5 · rosette',af:'magic',st:'planted · 6 m field · 30 s',
+  tr:'Resonance|both players&rsquo; fusions run at +40% inside the field. Nobody is carrying it, so somebody is defending it.',
+  ds:'Driven into the ground and fought around. A centre socket touching four others: one module anchors four fusions.',hx:[[0,0],[1,0],[0,1],[-1,1],[-1,0]]},
+ {nm:'Lodestone flail',sk:'4 · rhombus',af:'tech',st:'18 dmg + material · 0.8 swing/s',
+  tr:'Quarry|tears a 25 cm voxel out of the ground and slings it. Basalt hits harder than sand, and the hole stays.',
+  ds:'A magnetic core on a chain that fights with the map. The only frame whose damage depends on the ground you are standing on.',hx:[[0,0],[1,0],[0,1],[1,1]]},
+ {nm:'Root bulwark',sk:'4 · ring',af:'bio',st:'6 dmg · 45% block · 2.4 m face',
+  tr:'Takes root|a blocked hit plants the seed and a 2 m root wall grows for 8 s. Cover you make mid-fight.',
+  ds:'A seed-shield with a hollow core: nothing sits in the middle, so opposite sockets never speak.',hx:[[1,0],[0,1],[-1,1],[-1,0]],vd:[[0,0]]}
 ];
 var FUSIONS=[
  {a:'ARC',b:'FRO',nm:'Chain-frost',ds:"The capacitor's discharge carries the bind along wet ground and standing water.",st:'3 targets · 18% slow · 2.5 s'},
@@ -302,6 +369,56 @@ var BIOMES=[
   gr:{d:0.45,c:0xc8d6de,dry:0x9fb4bf,h:[0.26,0.22]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
 ];
 
+var CLUTTER=[
+ {g:'Natural',items:[
+  {n:'Boulders',s:'in',r:'0.5–1.3 m, rock palette of the cell they sit on.'},
+  {n:'Trees, four kits',s:'in',r:'Broadleaf, conifer, scrub and burnt snag, chosen by biome weight rather than by zone.'},
+  {n:'Bushes',s:'in',r:'0.35–0.7 m, tinted to the biome — snow-grey in the moor, ash-black in the barrens.'},
+  {n:'Scree',s:'in',r:'Derived from geology: every 2 m drop sheds chips at its foot.'},
+  {n:'Fallen trunks',s:'in',r:'2–4 m, lying at a random bearing. A 1 m obstacle you vault or shelter behind.'},
+  {n:'Stumps',s:'in',r:'0.55 m, pale heartwood on the cut face.'},
+  {n:'Overhangs',s:'in',r:'Undercut rims; paired across a canyon they make the gap jumpable.'},
+  {n:'Waterfalls and ponds',s:'in',r:'One per metre step; basins fill to 1.25 m.'},
+  {n:'Reeds and lilies',s:'next',r:'A shallow-water variant of the grass shader, rooted at the bed.'},
+  {n:'Deadfall tangles',s:'next',r:'Trunk plus branch litter as one stamp, for blocking sightlines in the fen.'},
+  {n:'Snow drifts and ash banks',s:'next',r:'An accumulation pass on up-facing voxels rather than a separate prop.'},
+  {n:'Caves and tunnels',s:'prop',r:'Needs the span model. Overhangs are the cheap half of this.'},
+  {n:'Mudflats, salt crust, tar',s:'prop',r:'Surface states that change footing without changing height.'}
+ ]},
+ {g:'Built',items:[
+  {n:'Fences',s:'in',r:'1 m posts and two rails, stepping with the ground under them.'},
+  {n:'Lamp posts',s:'in',r:'2.5 m, emissive head and a real point light. The only warm light in a cold biome.'},
+  {n:'Ruined walls',s:'in',r:'0.5 m thick, gapped, height modulated so no run reads as a straight line.'},
+  {n:'Pillars',s:'in',r:'2–4 m with broken tops and a base slab.'},
+  {n:'Huts',s:'in',r:'3 × 3 m, doorway gap, part-collapsed roof.'},
+  {n:'Deck bridges',s:'in',r:'Placed where both banks of a watercourse sit within a metre of each other.'},
+  {n:'Natural arcs',s:'in',r:'Stone spans across canyons — bridge above, covered fight below.'},
+  {n:'Rope bridges',s:'next',r:'Same wind field as the grass, so they sway with it.'},
+  {n:'Ladders and climbing pegs',s:'next',r:'Authored verticality where the terrain refuses to provide it.'},
+  {n:'Watchtowers, palisades, aqueducts',s:'prop',r:'A kit of parts assembled by a small grammar, not modelled one by one.'},
+  {n:'Waystones and shrines',s:'prop',r:'Small, frequent, and the natural place to hang a socket vendor.'},
+  {n:'Co-op camps',s:'prop',r:'Shared respawn and socket-swap anchor. The one built thing with real rules attached.'}
+ ]},
+ {g:'Landmark and POI',items:[
+  {n:'Ruin site',s:'in',r:'Pillar row, wall run and rubble, placed only on ground flat enough to have been built on.'},
+  {n:'Holding',s:'in',r:'Hut, fence and a lit lamp — the smallest unit of "someone lived here".'},
+  {n:'Standing stones',s:'next',r:'A ring on a hilltop; cheap, readable at iso distance, good fight arena.'},
+  {n:'Wrecked machine',s:'prop',r:'Where tech modules come from. Half-buried, biome-agnostic, always worth the detour.'},
+  {n:'Hive tree',s:'prop',r:'Biological module source. Alive, hostile, and it regrows.'},
+  {n:'Obelisk',s:'prop',r:'Visible three chunks away so two players can agree where to meet without a map.'},
+  {n:'Quarry scar',s:'prop',r:'Terrain that has already been mined — lodestone flail ammunition, and a hint the world is destructible.'}
+ ]}
+];
+var PROPOSALS=[
+ {k:'Model',n:'Span columns, not a heightfield',d:'Store each column as a run of solid spans instead of one surface height. Caves, tunnels, true undercuts and floating rock all become the same case, and streaming stays cheap. Everything else on this list is easier afterwards.'},
+ {k:'Water',n:'Flow field and water table',d:'Give every water column a downhill gradient and every basin a table level. Rivers then route themselves, ponds fill, falls happen where the metre steps, and the shader can advect foam along a direction it was told instead of one it guessed.'},
+ {k:'Geology',n:'An erosion pass',d:'Run talus, undercut and meander over the finished heightfield. Scree, overhangs and river bends stop being three separate placement rules and become one consequence of the same pass.'},
+ {k:'Layout',n:'Trails and desire paths',d:'Route worn ground between points of interest, then let fences, lamps, bridges and walls follow it. Built things look reasoned the moment they line up with a route.'},
+ {k:'Surface',n:'Accumulation pass',d:'Settle snow, ash, moss or sand on up-facing voxels by biome and slope. One rule gives five biomes their surface read, and it updates when the terrain is cut.'},
+ {k:'Motion',n:'One wind field',d:'Grass, water, rope bridges, smoke, leaves and banners all sample the same vector. A gust should cross the whole scene, not each system separately.'},
+ {k:'Play',n:'Destructible clutter',d:'Fences, stumps, scree and thin walls chip away in 25 cm units. The lodestone flail already assumes this, and it is the clearest argument for voxels in the first place.'},
+ {k:'Co-op',n:'Chunk-scale landmarks',d:'One thing per few chunks tall enough to see from three chunks away. Two players navigating by landmark need no minimap and no waypoint chatter.'}
+];
 /* ============================== hex helpers ============================== */
 function hexPts(cx,cy,r){var p=[];for(var i=0;i<6;i++){var a=Math.PI/180*(60*i-90);p.push((cx+r*Math.cos(a)).toFixed(2)+','+(cy+r*Math.sin(a)).toFixed(2));}return p.join(' ');}
 function axial(q,r,size){return [size*Math.sqrt(3)*(q+r/2), size*1.5*r];}
@@ -343,9 +460,12 @@ function mixHex(h1,h2,t){
     var voids=(f.vd||[]).map(function(h){var p=axial(h[0],h[1],S);
       return '<polygon points="'+hexPts(p[0],p[1],S*0.78)+'" fill="none" stroke="#3a4652" stroke-width="1.2" stroke-dasharray="3 4"/>';}).join('');
     var d=document.createElement('div');d.className='frame';
+    var afc=f.af?DISC[f.af].c:'#6f7a80';
     d.innerHTML='<span class="top"><span class="nm">'+f.nm+'</span><span class="sk">'+f.sk+'</span></span>'+
+      '<span class="af" style="color:'+afc+';border-color:'+afc+'55">'+(f.af?DISC[f.af].nm+' affinity':'no affinity')+'</span>'+
       '<svg viewBox="'+minx.toFixed(1)+' '+miny.toFixed(1)+' '+w.toFixed(1)+' '+h.toFixed(1)+'" style="max-height:132px">'+voids+hexes+links+'</svg>'+
-      '<p class="st">'+f.st+'</p><p class="ds">'+f.ds+'</p>';
+      '<p class="st">'+f.st+'</p><p class="ds">'+f.ds+'</p>'+
+      (f.tr?'<p class="tr"><b>'+f.tr.split('|')[0]+'</b> \u2014 '+f.tr.split('|')[1]+'</p>':'');
     el.appendChild(d);
   });
 })();
@@ -403,6 +523,26 @@ function mixHex(h1,h2,t){
   });
 })();
 
+
+/* ============================== DOM: clutter + proposals ============================== */
+(function(){
+  var host=document.getElementById('cat');
+  CLUTTER.forEach(function(g){
+    var col=document.createElement('div');col.className='catcol';
+    var h='<h3>'+g.g+'</h3>';
+    g.items.forEach(function(it){
+      var lbl=it.s==='in'?'in build':(it.s==='next'?'next':'proposed');
+      h+='<span class="item"><span class="n">'+it.n+'<span class="tag '+it.s+'">'+lbl+'</span></span><span class="r">'+it.r+'</span></span>';
+    });
+    col.innerHTML=h;host.appendChild(col);
+  });
+  var ph=document.getElementById('props');
+  PROPOSALS.forEach(function(pr){
+    var d=document.createElement('div');d.className='prop';
+    d.innerHTML='<span class="k">'+pr.k+'</span><span class="n">'+pr.n+'</span><p class="d">'+pr.d+'</p>';
+    ph.appendChild(d);
+  });
+})();
 /* ============================== DOM: chunk diagram ============================== */
 (function(){
   var s='', ox=40, oy=210, W=220, Hh=110, TOP=150;
@@ -568,16 +708,21 @@ function mixHex(h1,h2,t){
         else if(c.d<c.w/2+2) H-=Math.round(c.dp*(1-(c.d-c.w/2)/2));
       }
       H+=pillarAt(x,z,colw);
-      var r=riverAt(x,z), rw=r.w+Math.round(w[2]*3), water=false, wl=0;
+      var r=riverAt(x,z), rw=r.w+Math.round(w[2]*3), water=false, pond=false, wl=0;
       if(r.d<rw/2){ H-=1; water=true; }
+      if(!water&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
+        var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
+        if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
+      }
       var magma=false;
       if(w[3]>0.5){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
         if(f<0.022){ H-=1; magma=true; water=false; } }
       H=clamp(H,0,CEIL);
-      if(water) wl=H+0.75;
+      if(water) wl=H+(pond?1.25:0.75);
       var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-      return {w:w,H:H,water:water,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw};
+      return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw};
     }
+    function rawH(x,z){ return macro(x,z,climate(x,z)); }
     function detail(x,z){ return (Math.round(N.d.fbm(x*0.62,z*0.62,2)*4)-2)*V; }
     return {cell:cell,detail:detail,climate:climate,rnd:rr,canyonAt:canyonAt,wsum:wsum};
   }
@@ -702,6 +847,178 @@ function mixHex(h1,h2,t){
         arcs++;
       }
     }
+    /* ---- overhangs, scree, clutter and points of interest ---- */
+    var lamps=[];
+    function slab(px,pz,di,dj,top,w,out,th,dom){
+      for(var a=0.5;a<=out+0.001;a+=V)for(var b=-w/2;b<=w/2+0.001;b+=V)for(var y2=top-th;y2<top-0.001;y2+=V)
+        addVox(px+di*a-dj*b,y2+V/2,pz+dj*a+di*b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25);
+    }
+    function scree(px,pz,dom,n){
+      for(var q=0;q<n;q++){
+        var sx=px+(R()-0.5)*2.4, sz=pz+(R()-0.5)*2.4, s=surfAt(sx,sz); if(s.f&1) continue;
+        var n2=(R()<0.3)?2:1;
+        for(var a=0;a<n2;a++)for(var b=0;b<n2;b++)for(var c2=0;c2<n2;c2++)
+          addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickFrom(BIOMES[dom].rock,R),0.8+R()*0.3);
+      }
+    }
+    function bush(px,pz,dom){
+      var s=surfAt(px,pz); if(s.f) return;
+      var r=0.35+R()*0.35;
+      var cols=(dom===4)?[0x6f8390,0x8aa3ad]:(dom===3?[0x3b332e,0x4a403a]:(dom===1?[0x6f7f42,0x87904a]:[0x3f6b34,0x4e7d3e,0x5d8c46]));
+      for(var ax=-r;ax<=r;ax+=V)for(var ay=0;ay<=r*1.5;ay+=V)for(var az=-r;az<=r;az+=V){
+        if((ax*ax+az*az)/(r*r)+((ay-r*0.65)*(ay-r*0.65))/(r*r*0.65)>1-R()*0.3) continue;
+        addVox(px+ax,s.y+ay+V/2,pz+az,pickFrom(cols,R),0.85+R()*0.3);
+      }
+    }
+    function stump(px,pz){
+      var s=surfAt(px,pz); if(s.f) return;
+      for(var y2=0;y2<0.55;y2+=V)for(var ax=-V;ax<=V;ax+=V)for(var az=-V;az<=V;az+=V)
+        if(Math.abs(ax)+Math.abs(az)<=V)
+          addVox(px+ax,s.y+y2+V/2,pz+az,(y2>0.3&&ax===0&&az===0)?0x8a6a4a:0x5a4130,0.9+R()*0.2);
+    }
+    function fallenTrunk(px,pz){
+      var s0=surfAt(px,pz); if(s0.f) return;
+      var ang=R()*Math.PI, dx=Math.cos(ang), dz=Math.sin(ang), L=2+R()*2.2;
+      for(var t2=-L/2;t2<=L/2;t2+=V)for(var ay=0;ay<=0.55;ay+=V)for(var b=-0.3;b<=0.3;b+=V){
+        if((ay-0.28)*(ay-0.28)+b*b>0.082) continue;
+        addVox(px+dx*t2-dz*b,s0.y+ay+V/2,pz+dz*t2+dx*b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25);
+      }
+    }
+    function fence(px,pz,ang,len){
+      var dx=Math.cos(ang),dz=Math.sin(ang);
+      for(var t2=0;t2<=len;t2+=1){
+        var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
+        for(var y2=0;y2<1.0;y2+=V) addVox(xx,s.y+y2+V/2,zz,0x6b5a45,0.9+R()*0.2);
+        if(t2<len) for(var u=0;u<1;u+=V){
+          addVox(xx+dx*u,s.y+0.8,zz+dz*u,0x5f5040,0.95);
+          addVox(xx+dx*u,s.y+0.4,zz+dz*u,0x5f5040,0.95);
+        }
+      }
+    }
+    function lamp(px,pz){
+      var s=surfAt(px,pz); if(s.f) return null;
+      for(var y2=0;y2<2.5;y2+=V) addVox(px,s.y+y2+V/2,pz,0x3f4650,0.9+R()*0.15);
+      addVox(px+V,s.y+2.5,pz,0x3f4650,0.95); addVox(px+2*V,s.y+2.5,pz,0x3f4650,0.95);
+      var lx=Math.round((px+2*V)/V)*V, ly=Math.round((s.y+2.25)/V)*V;
+      CBOX.set(0xffd08a); mpos.push(lx,ly,pz); mcol.push(CBOX.r,CBOX.g,CBOX.b);
+      return [lx,ly,pz];
+    }
+    function wallRun(px,pz,ang,len,h,dom){
+      var dx=Math.cos(ang),dz=Math.sin(ang);
+      for(var t2=0;t2<=len;t2+=V){
+        if(R()<0.05){ t2+=0.75; continue; }
+        var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
+        var hh2=h*(0.55+0.45*Math.abs(Math.sin(t2*0.7)));
+        for(var y2=0;y2<hh2;y2+=V)for(var b=-0.25;b<=0.25;b+=V)
+          addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2);
+      }
+    }
+    function pillarRuin(px,pz,h,dom){
+      var s=surfAt(px,pz); if(s.f) return;
+      for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V)
+        addVox(px+b1,s.y+V/2,pz+b2,pickFrom(BIOMES[dom].rock,R),0.95);
+      for(var y2=V;y2<h;y2+=V){
+        var rr2=(y2>h-0.6&&R()<0.5)?0.25:0.375;
+        for(var a1=-rr2;a1<=rr2;a1+=V)for(var a2=-rr2;a2<=rr2;a2+=V)
+          addVox(px+a1,s.y+y2+V/2,pz+a2,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.22);
+      }
+    }
+    function hut(px,pz,dom){
+      var s=surfAt(px,pz); if(s.f) return;
+      var w=3.0,h=2.25;
+      for(var a=-w/2;a<=w/2;a+=V)for(var b=-w/2;b<=w/2;b+=V){
+        if(Math.abs(a)<w/2-V&&Math.abs(b)<w/2-V) continue;
+        if(a>-0.6&&a<0.6&&b>w/2-V) continue;
+        var hh2=h*(R()<0.22?0.45+R()*0.4:1);
+        for(var y2=0;y2<hh2;y2+=V) addVox(px+a,s.y+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.2);
+      }
+      for(var a2=-w/2;a2<=w/2;a2+=V)for(var b2=-w/2;b2<=w/2;b2+=V)
+        if(R()<0.3) addVox(px+a2,s.y+h+V/2,pz+b2,0x5a4130,0.9);
+    }
+    function deckBridge(px,pz,di,dj,len,y){
+      for(var t2=-len/2;t2<=len/2;t2+=V)for(var b=-0.75;b<=0.75;b+=V)
+        addVox(px+di*t2-dj*b,y,pz+dj*t2+di*b,R()<0.25?0x6b5a45:0x5a4a38,0.9+R()*0.2);
+      for(var side=-1;side<=1;side+=2)for(var t3=-len/2;t3<=len/2;t3+=0.5)
+        addVox(px+di*t3-dj*side*0.75,y+0.5,pz+dj*t3+di*side*0.75,0x4c3f30,0.95);
+    }
+    /* rims that undercut; across a canyon they leave a jumpable gap */
+    var ovh=0, ovhPos=null, DIRS4=[[1,0],[-1,0],[0,1],[0,-1]];
+    for(i=2;i<M-2;i++){ if(ovh>=16) break;
+      for(j=2;j<M-2;j++){ if(ovh>=16) break;
+        var c0=cells[i*M+j], px0=-half+i, pz0=-half+j;
+        for(var dd=0;dd<4;dd++){
+          var di=DIRS4[dd][0], dj=DIRS4[dd][1], c1=cells[(i+di)*M+(j+dj)];
+          if(!c1) continue;
+          var drop=c0.H-c1.H;
+          if(drop<2) continue;
+          if(R()<0.30) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((R()*4)|0));
+          if(R()>0.12) break;
+          var wdt=1+Math.floor(R()*3), out=1+Math.floor(R()*2), th=(R()<0.5?0.5:0.75);
+          slab(px0,pz0,di,dj,c0.H,wdt,out,th,c0.dom); ovh++;
+          if(!ovhPos) ovhPos=[px0+di*(out*0.8),c0.H+0.4,pz0+dj*(out*0.8)];
+          if(drop>=3){
+            for(var s3=3;s3<9;s3++){
+              var i2=i+di*s3, j2=j+dj*s3;
+              if(i2<1||j2<1||i2>=M-1||j2>=M-1) break;
+              var c2=cells[i2*M+j2];
+              if(c2.H>=c0.H-0.5){ slab(-half+i2,-half+j2,-di,-dj,c2.H,wdt,out,th,c2.dom); ovh++; break; }
+            }
+          }
+          break;
+        }
+      }
+    }
+    /* scattered clutter */
+    for(i=1;i<M-1;i++)for(j=1;j<M-1;j++){
+      var cc2=cells[i*M+j];
+      if(cc2.water||cc2.magma) continue;
+      var px2=-half+i+(R()-0.5)*0.8, pz2=-half+j+(R()-0.5)*0.8, dm=cc2.dom, rv=R();
+      if(rv<0.032) bush(px2,pz2,dm);
+      else if(rv<0.0365&&(dm===0||dm===2)) stump(px2,pz2);
+      else if(rv<0.0405&&(dm===0||dm===2)) fallenTrunk(px2,pz2);
+      else if(rv<0.050) scree(px2,pz2,dm,2+((R()*3)|0));
+    }
+    /* one ruin and one holding, on ground flat enough to build on */
+    var poi=0;
+    for(var tr2=0;tr2<500&&poi<2;tr2++){
+      var pi=7+((R()*(M-14))|0), pj=7+((R()*(M-14))|0), cp=cells[pi*M+pj];
+      if(!cp||cp.water||cp.magma) continue;
+      var flat=true;
+      for(var a3=-2;a3<=2&&flat;a3++)for(var b3=-2;b3<=2;b3++){
+        var cq2=cells[(pi+a3)*M+(pj+b3)];
+        if(!cq2||cq2.water||Math.abs(cq2.H-cp.H)>1){ flat=false; break; }
+      }
+      if(!flat) continue;
+      var px3=-half+pi, pz3=-half+pj, ang3=R()*6.28, dm3=cp.dom;
+      if(poi===0){
+        for(var q3=0;q3<4;q3++) pillarRuin(px3+Math.cos(ang3)*(q3*2-3),pz3+Math.sin(ang3)*(q3*2-3),2+R()*2,dm3);
+        wallRun(px3-Math.sin(ang3)*2.5,pz3+Math.cos(ang3)*2.5,ang3,7,1.5,dm3);
+        scree(px3,pz3,dm3,8);
+      } else {
+        hut(px3,pz3,dm3);
+        fence(px3+2.5,pz3-3,ang3,6);
+        var lp=lamp(px3+2.2,pz3+1.6); if(lp) lamps.push(lp);
+      }
+      poi++;
+    }
+    /* a crossing wherever both banks sit level */
+    for(var tb=0;tb<600;tb++){
+      var bi=5+((R()*(M-10))|0), bj=5+((R()*(M-10))|0), cb=cells[bi*M+bj];
+      if(!cb||!cb.water) continue;
+      var done=false;
+      for(var ddd=0;ddd<2&&!done;ddd++){
+        var di2=ddd?0:1, dj2=ddd?1:0;
+        for(var s4=2;s4<=5;s4++){
+          var ca=cells[(bi-di2*s4)*M+(bj-dj2*s4)], cbb=cells[(bi+di2*s4)*M+(bj+dj2*s4)];
+          if(!ca||!cbb) break;
+          if(!ca.water&&!cbb.water&&Math.abs(ca.H-cbb.H)<=1){
+            deckBridge(-half+bi,-half+bj,di2,dj2,s4*2+1,Math.max(ca.H,cbb.H,cb.wl+0.5));
+            done=true; break;
+          }
+        }
+      }
+      if(done) break;
+    }
     /* grass */
     var gpos=[],gph=[],gtint=[],gsc=[],gyaw=[],gcol=[];
     for(i=0;i<NX;i+=2)for(j=0;j<NZ;j+=2){
@@ -722,13 +1039,49 @@ function mixHex(h1,h2,t){
         gcol.push(cr,cg,cb);
       }
     }
-    /* water quads */
-    var wv=[],wi=[],wn=0;
-    for(i=0;i<NX;i++)for(j=0;j<NZ;j++){
+    /* water: surface, shore foam, flow direction, falls */
+    var wv=[],wi=[],wd=[],wf=[],wfl=[],wn=0;
+    function wquad(q,dep,foam,fx,fz){
+      for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]); wd.push(dep); wf.push(foam); wfl.push(fx,fz); }
+      wi.push(wn,wn+2,wn+1, wn,wn+3,wn+2); wn+=4;
+    }
+    var WDIR=[[1,0],[-1,0],[0,1],[0,-1]];
+    for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
       k=i*NZ+j; if(!(FLG[k]&1)) continue;
       x=-half+i*V; z=-half+j*V; y=WL[k];
-      wv.push(x,y,z, x+V,y,z, x+V,y,z+V, x,y,z+V);
-      wi.push(wn,wn+2,wn+1, wn,wn+3,wn+2); wn+=4;
+      var bsum=0,bn=0;
+      for(var bi2=-2;bi2<=2;bi2++)for(var bj2=-2;bj2<=2;bj2++){
+        var kb=(i+bi2)*NZ+(j+bj2);
+        if(kb<0||kb>=NX*NZ) continue;
+        bsum+=Hs[kb]; bn++;
+      }
+      var dep=clamp((y-bsum/bn)/1.6,0,1), foam=0, fx=0, fz=0, dd2;
+      for(dd2=0;dd2<4;dd2++){
+        var kn=(i+WDIR[dd2][0])*NZ+(j+WDIR[dd2][1]);
+        if(FLG[kn]&1){
+          var dy=WL[kn]-y;
+          if(dy<-0.35){ fx+=WDIR[dd2][0]*-dy; fz+=WDIR[dd2][1]*-dy; foam=Math.max(foam,1); }
+          else if(dy>0.35) foam=Math.max(foam,1);
+          else { fx+=WDIR[dd2][0]*0.04; fz+=WDIR[dd2][1]*0.04; }
+        } else {
+          if(Hs[kn]>y-0.1) foam=Math.max(foam,1);
+          else { fx+=WDIR[dd2][0]*0.5; fz+=WDIR[dd2][1]*0.5; foam=Math.max(foam,1); }
+        }
+      }
+      var fl=Math.hypot(fx,fz)||1; fx/=fl; fz/=fl;
+      wquad([x,y,z, x+V,y,z, x+V,y,z+V, x,y,z+V],dep,foam,fx,fz);
+      /* vertical sheets wherever the surface steps down */
+      for(dd2=0;dd2<4;dd2++){
+        var di3=WDIR[dd2][0], dj3=WDIR[dd2][1], kn2=(i+di3)*NZ+(j+dj3);
+        var yl=(FLG[kn2]&1)?WL[kn2]:Hs[kn2];
+        if(yl>y-0.4) continue;
+        var q2;
+        if(di3===1) q2=[x+V,y,z, x+V,y,z+V, x+V,yl,z+V, x+V,yl,z];
+        else if(di3===-1) q2=[x,y,z, x,y,z+V, x,yl,z+V, x,yl,z];
+        else if(dj3===1) q2=[x,y,z+V, x+V,y,z+V, x+V,yl,z+V, x,yl,z+V];
+        else q2=[x,y,z, x+V,y,z, x+V,yl,z, x,yl,z];
+        wquad(q2,1,2,di3,dj3);
+      }
     }
     /* spawn point: flat dry ground near the middle */
     var spawn=null;
@@ -740,7 +1093,7 @@ function mixHex(h1,h2,t){
     }
     if(!spawn) spawn=[0,Hs[((NX/2)|0)*NZ+((NZ/2)|0)],0];
     return {pos:pos,col:col,mpos:mpos,mcol:mcol,grass:{p:gpos,ph:gph,ti:gtint,sc:gsc,yw:gyaw,c:gcol},
-            water:{v:wv,i:wi},Hs:Hs,FLG:FLG,NX:NX,NZ:NZ,half:half,cells:cells,M:M,spawn:spawn,size:S};
+            water:{v:wv,i:wi,d:wd,f:wf,fl:wfl},lamps:lamps,ovhPos:ovhPos,Hs:Hs,FLG:FLG,NX:NX,NZ:NZ,half:half,cells:cells,M:M,spawn:spawn,size:S};
   }
 
   /* ---------- scene assembly ---------- */
@@ -772,15 +1125,30 @@ function mixHex(h1,h2,t){
     'uniform vec3 uDry; varying float vH; varying float vT; varying vec3 vC;',
     'void main(){ vec3 c=mix(vC*0.34,vC,vH*0.85+0.15); c=mix(c,uDry,vT*0.7);',
     ' gl_FragColor=vec4(c,1.0); }'].join('\n');
-  var WATER_VS=['uniform float uTime; varying float vW; varying vec3 vP;',
-    'void main(){ vec3 p=position;',
-    ' float w=sin(uTime*1.25+p.z*0.8+p.x*0.5)*0.022+sin(uTime*2.15-p.z*1.5+p.x*0.35)*0.012;',
+  var WATER_VS=['uniform float uTime;','attribute float aDepth; attribute float aFoam; attribute vec2 aFlow;',
+    'varying float vW; varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
+    'void main(){ vec3 p=position; vD=aDepth; vF=aFoam; vFl=aFlow;',
+    ' float flat_ = step(aFoam,1.5);',
+    ' float w=(sin(uTime*1.25+p.z*0.8+p.x*0.5)*0.022+sin(uTime*2.15-p.z*1.5+p.x*0.35)*0.012)*flat_;',
     ' p.y+=w; vW=w; vP=p; gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);}'].join('\n');
-  var WATER_FS=['varying float vW; varying vec3 vP;',
-    'void main(){ vec3 deep=vec3(0.10,0.29,0.35), sh=vec3(0.27,0.60,0.62);',
-    ' vec3 c=mix(deep,sh,smoothstep(-0.05,0.05,vW));',
-    ' c+=vec3(0.55,0.72,0.70)*clamp(pow(max(vW*22.0,0.0),3.0),0.0,0.42);',
-    ' gl_FragColor=vec4(c,0.87);}'].join('\n');
+  var WATER_FS=['uniform float uTime;',
+    'varying float vW; varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
+    'void main(){',
+    ' vec3 shallow=vec3(0.34,0.66,0.64), deep=vec3(0.05,0.20,0.29);',
+    ' vec3 c=mix(shallow,deep,clamp(vD,0.0,1.0));',
+    ' vec2 fl=normalize(vFl+vec2(0.0001));',
+    ' float adv=dot(vP.xz,fl)*2.6-uTime*2.1;',
+    ' c+=vec3(0.05,0.09,0.09)*(sin(adv)*0.5+0.5);',
+    ' float chop=sin(vP.x*1.7+uTime*1.3)*sin(vP.z*1.4-uTime*1.1);',
+    ' c+=vec3(0.06,0.10,0.10)*max(chop,0.0);',
+    ' float g=pow(max(sin(vP.x*2.3+uTime*1.4)*sin(vP.z*1.9-uTime*1.1),0.0),6.0);',
+    ' c+=vec3(0.70,0.85,0.80)*g*0.45;',
+    ' float a=0.86;',
+    ' if(vF>0.5&&vF<1.5){ float f=0.55+0.45*sin(uTime*3.0+vP.x*4.0+vP.z*3.2);',
+    '   c=mix(c,vec3(0.86,0.94,0.96),0.40*f); a=0.92; }',
+    ' if(vF>1.5){ float st=fract(vP.y*3.0-uTime*2.6+sin(vP.x*8.0+vP.z*6.0)*0.25);',
+    '   c=mix(vec3(0.48,0.72,0.78),vec3(0.93,0.98,1.0),smoothstep(0.25,0.95,st)); a=0.93; }',
+    ' gl_FragColor=vec4(c,a);}'].join('\n');
 
   function makeScene(data,opts){
     var scene=new THREE.Scene();
@@ -832,11 +1200,17 @@ function mixHex(h1,h2,t){
     if(data.water.v.length){
       var wg=new THREE.BufferGeometry();
       wg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(data.water.v),3));
+      wg.setAttribute('aDepth',new THREE.BufferAttribute(new Float32Array(data.water.d),1));
+      wg.setAttribute('aFoam',new THREE.BufferAttribute(new Float32Array(data.water.f),1));
+      wg.setAttribute('aFlow',new THREE.BufferAttribute(new Float32Array(data.water.fl),2));
       wg.setIndex(data.water.i);
-      wmat=new THREE.ShaderMaterial({transparent:true,uniforms:{uTime:{value:0}},
+      wmat=new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,uniforms:{uTime:{value:0}},
         vertexShader:WATER_VS,fragmentShader:WATER_FS});
       var wm=new THREE.Mesh(wg,wmat); wm.frustumCulled=false; scene.add(wm);
     }
+    (data.lamps||[]).slice(0,3).forEach(function(l){
+      var pl=new THREE.PointLight(0xffb066,0.9,9,2); pl.position.set(l[0],l[1]+0.1,l[2]); scene.add(pl);
+    });
     return {scene:scene,gmat:gmat,wmat:wmat,vox:vox};
   }
 
@@ -955,6 +1329,7 @@ function mixHex(h1,h2,t){
     if(wet) list.push({p:[wet.x,wet.y+0.3,wet.z],t:'River <em>bed 1 m below bank</em>',f:true});
     if(cliff) list.push({p:[cliff.x,cliff.y+0.4,cliff.z],t:'Detail pass <em>&plusmn;2 voxels</em>',f:true});
     if(blend) list.push({p:[blend.x,blend.y+0.8,blend.z],t:'Biome blend <em>'+names[bi[0]]+' &rarr; '+names[bi[1]]+'</em>',f:false});
+    if(data.ovhPos) list.push({p:data.ovhPos,t:'Overhang <em>undercut rim &middot; jumpable gap</em>',f:true});
     list.push({p:[data.spawn[0],data.spawn[1]+2.4,data.spawn[2]],t:'2-player online co-op',f:true});
     annosEl.innerHTML=''; annoEls=list.map(function(a){
       var d2=document.createElement('div'); d2.className='anno'+(a.f?' flip':'');
