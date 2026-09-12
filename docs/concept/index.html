@@ -271,7 +271,7 @@ var FRAMES=[
  {nm:'Warhammer',sk:'3 · triangle',st:'24 dmg · 0.7 swing/s · 1.9 m',ds:'All three sockets touch. Every module in it fuses with every other.',hx:[[0,0],[1,0],[0,1]]},
  {nm:'Spear',sk:'3 · rank',st:'14 dmg · 1.0 swing/s · 3.0 m',ds:'A flat run of three. Reach is the frame; the lattice stays simple.',hx:[[0,0],[1,0],[2,0]]},
  {nm:'Recurve bow',sk:'4 · arc',st:'11 dmg · 1.3 draw/s · 18 m',ds:'Three along the limb and one at the nock, so the shot carries one fusion of its own.',hx:[[0,0],[1,0],[2,0],[1,1]]},
- {nm:'Bulwark',sk:'4 · ring',st:'9 dmg · 40% block · 2.4 m face',ds:'A hollow ring. Nothing sits in the middle, so opposite sockets never speak.',hx:[[1,0],[0,1],[-1,1],[-1,0]]},
+ {nm:'Bulwark',sk:'4 · ring',st:'9 dmg · 40% block · 2.4 m face',ds:'A hollow ring. Nothing sits in the middle, so opposite sockets never speak.',hx:[[1,0],[0,1],[-1,1],[-1,0]],vd:[[0,0]]},
  {nm:'Focus rod',sk:'5 · rosette',st:'8 dmg · channelled · 12 m',ds:'A centre socket touching four others: one module can anchor four fusions at once.',hx:[[0,0],[1,0],[0,1],[-1,1],[-1,0]]}
 ];
 var FUSIONS=[
@@ -336,13 +336,15 @@ function mixHex(h1,h2,t){
     for(var i=0;i<f.hx.length;i++)for(var j=i+1;j<f.hx.length;j++){
       var dq=f.hx[j][0]-f.hx[i][0], dr=f.hx[j][1]-f.hx[i][1];
       if((Math.abs(dq)<=1&&Math.abs(dr)<=1)&&(dq+dr>=-1&&dq+dr<=1)&&!(dq===0&&dr===0))
-        links+='<line x1="'+pts[i][0]+'" y1="'+pts[i][1]+'" x2="'+pts[j][0]+'" y2="'+pts[j][1]+'" stroke="#d9a25e" stroke-width="1.2" stroke-opacity=".5"/>';
+        links+='<line x1="'+pts[i][0]+'" y1="'+pts[i][1]+'" x2="'+pts[j][0]+'" y2="'+pts[j][1]+'" stroke="#d9a25e" stroke-width="2" stroke-opacity=".75" stroke-linecap="round"/>';
     }
-    var hexes=pts.map(function(p){return '<polygon points="'+hexPts(p[0],p[1],S*0.92)+'" fill="#11161c" stroke="#8c959c" stroke-width="1.5"/>'+
-      '<polygon points="'+hexPts(p[0],p[1],S*0.52)+'" fill="none" stroke="#3a4652" stroke-width="1"/>';}).join('');
+    var hexes=pts.map(function(p){return '<polygon points="'+hexPts(p[0],p[1],S*0.78)+'" fill="#11161c" stroke="#8c959c" stroke-width="1.5"/>'+
+      '<polygon points="'+hexPts(p[0],p[1],S*0.44)+'" fill="none" stroke="#3a4652" stroke-width="1"/>';}).join('');
+    var voids=(f.vd||[]).map(function(h){var p=axial(h[0],h[1],S);
+      return '<polygon points="'+hexPts(p[0],p[1],S*0.78)+'" fill="none" stroke="#3a4652" stroke-width="1.2" stroke-dasharray="3 4"/>';}).join('');
     var d=document.createElement('div');d.className='frame';
     d.innerHTML='<span class="top"><span class="nm">'+f.nm+'</span><span class="sk">'+f.sk+'</span></span>'+
-      '<svg viewBox="'+minx.toFixed(1)+' '+miny.toFixed(1)+' '+w.toFixed(1)+' '+h.toFixed(1)+'" style="max-height:132px">'+links+hexes+'</svg>'+
+      '<svg viewBox="'+minx.toFixed(1)+' '+miny.toFixed(1)+' '+w.toFixed(1)+' '+h.toFixed(1)+'" style="max-height:132px">'+voids+hexes+links+'</svg>'+
       '<p class="st">'+f.st+'</p><p class="ds">'+f.ds+'</p>';
     el.appendChild(d);
   });
@@ -534,7 +536,7 @@ function mixHex(h1,h2,t){
       return base+(n-0.38)*hill*1.9+(n2-0.5)*hill*0.55;
     }
     function riverAt(x,z){
-      var v=N.r.fbm(x*0.0105,z*0.0105,3), d=Math.abs(v-0.5)*95;
+      var v=N.r.fbm(x*0.0105,z*0.0105,3), d=Math.abs(v-0.5)*155;
       var w=1+Math.floor(N.r.n2(x*0.03+13,z*0.03+13)*4); if(w>4)w=4;
       return {d:d,w:w};
     }
@@ -566,7 +568,7 @@ function mixHex(h1,h2,t){
         else if(c.d<c.w/2+2) H-=Math.round(c.dp*(1-(c.d-c.w/2)/2));
       }
       H+=pillarAt(x,z,colw);
-      var r=riverAt(x,z), rw=r.w+Math.round(w[2]*5), water=false, wl=0;
+      var r=riverAt(x,z), rw=r.w+Math.round(w[2]*3), water=false, wl=0;
       if(r.d<rw/2){ H-=1; water=true; }
       var magma=false;
       if(w[3]>0.5){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
@@ -583,7 +585,9 @@ function mixHex(h1,h2,t){
   /* ---------- world build ---------- */
   var CBOX=new THREE.Color();
   function pickFrom(arr,r){return arr[(r()*arr.length)|0];}
-  function rouletteBiome(w,r){var v=r(),s=0;for(var i=0;i<w.length;i++){s+=w[i];if(v<=s)return i;}return w.length-1;}
+  function rouletteBiome(w,r){var p=[],t=0,i;
+    for(i=0;i<w.length;i++){var e=w[i]*w[i]*w[i]*w[i]*w[i];p.push(e);t+=e;}
+    var v=r()*t,s=0;for(i=0;i<w.length;i++){s+=p[i];if(v<=s)return i;}return w.length-1;}
 
   function buildWorld(cfg){
     var seed=cfg.seed, S=cfg.size, force=(cfg.force===undefined?null:cfg.force);
@@ -661,7 +665,7 @@ function mixHex(h1,h2,t){
         th=2.5+R()*1.5;
         for(y=0;y<th;y+=V)for(ax=-V;ax<=V;ax+=V)for(az=-V;az<=V;az+=V)
           if(Math.abs(ax)+Math.abs(az)<=V) addVox(px+ax,y0+y,pz+az,0x5a4130,0.85+R()*0.3);
-        r=1.3+R()*0.7;
+        r=1.1+R()*0.55;
         for(ax=-r;ax<=r;ax+=V)for(ay=-r*0.8;ay<=r*0.8;ay+=V)for(az=-r;az<=r;az+=V){
           if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.68)>1-R()*0.28) continue;
           addVox(px+ax,y0+th+r*0.5+ay,pz+az,R()<0.15?0x8ea84b:(R()<0.5?0x4f7a3a:0x628f45),0.8+R()*0.35);
@@ -680,7 +684,7 @@ function mixHex(h1,h2,t){
       var cc=cells[i*M+j], px=-half+i+ (R()-0.5)*1.2, pz=-half+j+(R()-0.5)*1.2;
       var bb=BIOMES[cc.dom], dens=G.wsum(cc.w,'tree')||0;
       var td=0; for(var q=0;q<cc.w.length;q++) td+=cc.w[q]*BIOMES[q].tree.d;
-      if(!cc.water&&!cc.magma&&R()<td*0.16&&treeN<260){ tree(px,pz,bb,bb.tree.t); treeN++; }
+      if(!cc.water&&!cc.magma&&R()<td*0.095&&treeN<260){ tree(px,pz,bb,bb.tree.t); treeN++; }
       else if(!cc.water&&R()<0.028) boulder(px,pz,0.5+R()*0.8,bb);
       /* arcs where a canyon crosses rock-heavy ground */
       if(arcs<3&&cc.canyon&&cc.canyon.d<0.6&&cc.cw>0.5&&R()<0.09){
@@ -770,12 +774,12 @@ function mixHex(h1,h2,t){
     ' gl_FragColor=vec4(c,1.0); }'].join('\n');
   var WATER_VS=['uniform float uTime; varying float vW; varying vec3 vP;',
     'void main(){ vec3 p=position;',
-    ' float w=sin(uTime*1.25+p.z*1.9+p.x*1.1)*0.035+sin(uTime*2.15-p.z*3.4+p.x*0.6)*0.022;',
+    ' float w=sin(uTime*1.25+p.z*0.8+p.x*0.5)*0.022+sin(uTime*2.15-p.z*1.5+p.x*0.35)*0.012;',
     ' p.y+=w; vW=w; vP=p; gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);}'].join('\n');
   var WATER_FS=['varying float vW; varying vec3 vP;',
     'void main(){ vec3 deep=vec3(0.10,0.29,0.35), sh=vec3(0.27,0.60,0.62);',
     ' vec3 c=mix(deep,sh,smoothstep(-0.05,0.05,vW));',
-    ' c+=vec3(0.55,0.72,0.70)*clamp(pow(max(vW*14.0,0.0),3.0),0.0,0.5);',
+    ' c+=vec3(0.55,0.72,0.70)*clamp(pow(max(vW*22.0,0.0),3.0),0.0,0.42);',
     ' gl_FragColor=vec4(c,0.87);}'].join('\n');
 
   function makeScene(data,opts){
@@ -870,7 +874,7 @@ function mixHex(h1,h2,t){
       var g2=glow(0.09,0.09,0.18,0xf0a72b);g2.position.y=0.62;w.add(g2);
     }
     w.position.set(0.42,0.75,0.06);w.rotation.z=-0.22;g.add(w);
-    g.traverse(function(o){if(o.isMesh)o.castShadow=true;});
+    g.traverse(function(o){if(o.isMesh){o.castShadow=true;o.userData.keep=true;}});
     g.scale.setScalar(1.4);
     return {group:g,weapon:w};
   }
@@ -908,7 +912,7 @@ function mixHex(h1,h2,t){
   function disposeScene(o){
     if(!o) return;
     o.scene.traverse(function(n){
-      if(n.isMesh||n.isInstancedMesh){
+      if((n.isMesh||n.isInstancedMesh)&&!n.userData.keep){
         if(n.geometry&&n.geometry!==boxGeo) n.geometry.dispose();
         if(n.material&&n.material.dispose) n.material.dispose();
       }
@@ -965,7 +969,7 @@ function mixHex(h1,h2,t){
     var r=stage.getBoundingClientRect();
     W=Math.max(1,r.width|0); Hh=Math.max(1,r.height|0);
     renderer.setSize(W,Hh,false);
-    var aspect=W/Hh, D=Math.max(25,88/(2*aspect));
+    var aspect=W/Hh, D=Math.max(26.5,92/(2*aspect));
     camera.left=-D*aspect;camera.right=D*aspect;camera.top=D;camera.bottom=-D;
     camera.near=0.1;camera.far=400;camera.updateProjectionMatrix();
   }
