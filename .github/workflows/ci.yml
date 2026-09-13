@@ -27,14 +27,10 @@ jobs:
         run: npm ci
 
       # playwright-core ships no browser; install one matching its version.
+      # tools/lib/harness.mjs then resolves the path itself — do not glob for it,
+      # the layout is chrome-linux64/ on current revisions and chrome-linux/ on older.
       - name: Install Chromium
         run: npx --yes playwright@1.63.0 install --with-deps chromium
-
-      - name: Resolve Chromium path
-        run: |
-          BIN=$(ls -d ~/.cache/ms-playwright/chromium-*/chrome-linux/chrome 2>/dev/null | head -1)
-          test -n "$BIN" || { echo "no chromium found"; exit 1; }
-          echo "CHROMIUM_PATH=$BIN" >> $GITHUB_ENV
 
       # Renders in software here, so this asserts correctness and proxy metrics
       # only. Real frame rate is checked by hand on a GPU — see docs/PROTOTYPE.md.

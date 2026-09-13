@@ -6,9 +6,10 @@
  * and point it at the local three.js instead.
  */
 import { chromium } from 'playwright-core';
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const CDN = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
@@ -17,14 +18,43 @@ export const THREE_LOCAL = join(ROOT, 'tools/node_modules/three/build/three.min.
 /** Instrumentation hook: the generator is inside an IIFE, so we expose it. */
 const INSTRUMENT_ANCHOR = '  /* ---------- scene assembly ---------- */';
 
+/**
+ * Find a Chromium to drive. Resolved rather than hardcoded, because two things
+ * vary: the binary sits in chrome-linux64/ on current revisions and chrome-linux/
+ * on older ones, and the installed revision often does not match the one
+ * playwright-core expects (this sandbox ships 1194; playwright-core 1.63 wants
+ * 1243). Guessing either got CI wrong once already.
+ */
 export function chromiumPath() {
-  const p = process.env.CHROMIUM_PATH
-    || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
-  if (!existsSync(p)) {
-    throw new Error(
-      `Chromium not found at ${p}. Set CHROMIUM_PATH to a Chromium binary.`);
+  const tried = [];
+  const pick = (p) => { if (!p) return null; tried.push(p); return existsSync(p) ? p : null; };
+
+  // 1. Explicit override always wins.
+  let found = pick(process.env.CHROMIUM_PATH);
+  if (found) return found;
+
+  // 2. Whatever playwright-core expects — correct whenever the versions agree.
+  try { found = pick(chromium.executablePath()); if (found) return found; } catch { /* none installed */ }
+
+  // 3. Any full Chromium in a browsers cache. Newest revision first.
+  //    'chromium_headless_shell-*' is deliberately excluded: we render.
+  const roots = [process.env.PLAYWRIGHT_BROWSERS_PATH, join(homedir(), '.cache/ms-playwright')]
+    .filter(Boolean).filter(existsSync);
+  const layouts = ['chrome-linux64/chrome', 'chrome-linux/chrome',
+                   'chrome-mac/Chromium.app/Contents/MacOS/Chromium', 'chrome-win/chrome.exe'];
+  for (const root of roots) {
+    const builds = readdirSync(root)
+      .filter((d) => /^chromium-\d+$/.test(d))
+      .sort((a, b) => parseInt(b.slice(9), 10) - parseInt(a.slice(9), 10));
+    for (const dir of builds) {
+      for (const layout of layouts) {
+        found = pick(join(root, dir, layout));
+        if (found) return found;
+      }
+    }
   }
-  return p;
+  throw new Error(
+    `No Chromium found. Set CHROMIUM_PATH to a Chromium binary.\nTried:\n  ${tried.join('\n  ')}`);
 }
 
 export function preparePage({ target, outDir, instrument = false, name = 'page.html' }) {
