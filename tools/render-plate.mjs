@@ -16,7 +16,7 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROOT, preparePage, launch, tilesDone, GOLDEN_SEEDS, measureSeeds }
+import { ROOT, preparePage, launch, tilesDone, GOLDEN_SEEDS, measureSeeds, measureWorld }
   from './lib/harness.mjs';
 
 const argv = process.argv.slice(2);
@@ -33,12 +33,12 @@ try {
     const page = await browser.newPage();
     const errs = [];
     page.on('pageerror', (e) => errs.push(e.message));
-    const file = preparePage({ target: TARGET, outDir: OUT, instrument: true, name: 'diag.html' });
+    const file = preparePage({ target: TARGET, outDir: OUT, name: 'diag.html' });
     await page.goto(`file://${file}`, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => !!window.__BW, null, { timeout: 120000 });
+    await page.waitForFunction(() => !!(window.QS && window.QS.buildWorld), null, { timeout: 120000 });
     const rows = await page.evaluate(
-      ([cfgs, fnSrc]) => new Function(`return (${fnSrc})`)()(cfgs),
-      [GOLDEN_SEEDS, measureSeeds.toString()]);
+      ([cfgs, fnSrc, measureSrc]) => new Function(`return (${fnSrc})`)()(cfgs, measureSrc),
+      [GOLDEN_SEEDS, measureSeeds.toString(), measureWorld.toString()]);
     console.table(rows);
     console.log('page errors:', errs.join(' | ') || 'none');
   } else {

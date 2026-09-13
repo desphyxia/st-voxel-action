@@ -6,10 +6,13 @@ voxels. Steam integration targets appid 480 (Spacewar) during development.
 
 ## Status
 
-Pre-production. **No game code has been written yet.** The repository holds the concept
-plate that locks generation rules, biomes and the gear lattice.
+Pre-production. **There is no engine and nothing to play yet.** What exists is the seeded
+terrain generator and the concept plate that locks generation rules, biomes and the gear
+lattice.
 
 - `docs/DECISIONS.md` — the design decision record. The authority on what the game is.
+- `src/gen/` — the terrain generator. Plain ES modules, no DOM and no three.js; it runs in
+  Node, in a worker and in the browser alike. See `src/README.md`.
 - `docs/concept/index.html` — concept plate, published at
   https://claude.ai/code/artifact/10034b02-a25d-4f5b-ab04-cea2076ceee8 — or open it in a browser. The hero diorama and all
   six biome plates are live three.js renders produced by the same seeded generator, not

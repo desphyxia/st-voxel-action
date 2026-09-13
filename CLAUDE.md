@@ -3,9 +3,9 @@
 A 45° isometric two-player online co-op action RPG on three.js. Worlds are seeded and bounded;
 terrain features are sized in whole metres on a 1 m grid and built from 25 cm voxels.
 
-**Status: pre-production. There is no engine and no game code.** What exists is a concept
-plate — a working seeded terrain generator that renders itself — and a design decision record.
-Do not start engine work without checking `docs/DECISIONS.md` first.
+**Status: pre-production.** What exists is the seeded terrain generator (`src/gen/`), the
+concept plate that draws it, and a design decision record. There is no engine, no character
+and nothing to play yet. Do not start engine work without checking `docs/DECISIONS.md` first.
 
 ## Where things are
 
@@ -13,7 +13,8 @@ Do not start engine work without checking `docs/DECISIONS.md` first.
 | --- | --- |
 | `docs/DECISIONS.md` | **Read this first.** 43 decisions from design interviews, plus open items and unresolved tensions. The authority on what the game is. |
 | `docs/PROTOTYPE.md` | **Read this second.** What "playable" means, the path to it, and the rules that keep every merge playable. |
-| `docs/concept/index.html` | The concept plate: one self-contained file holding the seeded generator, the renderer and the design document it illustrates. ~1900 lines. |
+| `src/gen/` | The terrain generator. Plain ES modules — no DOM, no three.js. See `src/README.md`. |
+| `docs/concept/index.html` | The concept plate: the design document, the renderer, and an inlined copy of `src/gen` it draws. |
 | `tools/` | Headless render and verify harness. Dev only. |
 | `README.md` | Short public summary of the project. |
 
@@ -22,6 +23,20 @@ Do not start engine work without checking `docs/DECISIONS.md` first.
 That is the live, interactive version of `docs/concept/index.html`. To **update** it from a
 session that did not publish it, pass that URL as the `url` argument — publishing without it
 silently creates a second artifact instead.
+
+## Working on the generator
+
+`src/gen/` is the source. The plate has an **inlined copy** of it, because the plate has to
+stay one self-contained file — it is opened from disk and published as an artifact whose CSP
+admits no module graph.
+
+```
+node tools/bundle-gen.mjs           # rewrite the block in the plate from src/gen
+node tools/bundle-gen.mjs --check   # fail if the plate is out of date
+```
+
+Edit the modules, run the bundler, commit both. The smoke test fails if they have drifted, and
+also fails if the plate's worlds stop matching the ones node generates from `src/gen`.
 
 ## Working on the plate
 
@@ -39,7 +54,7 @@ from scratch.
 This is enforced, not aspirational — see `docs/PROTOTYPE.md`.
 
 ```
-node tools/smoke.mjs            # the gate: boot, golden seeds, sanity, render
+node tools/smoke.mjs            # the gate: sync, node, boot, parity, golden, render
 node tools/smoke.mjs --quick    # same without the render pass (seconds)
 node tools/smoke.mjs --update   # re-record the golden baseline, deliberately
 node tools/hooks/install.mjs    # install the pre-push hook (once per clone)
@@ -64,6 +79,10 @@ Run `--diag` before and after any change to the generator. A feature that silent
 produced looks identical to one that was never there. That is not hypothetical: making bridges
 route-driven removed them from every seed, and it took counting across six seeds to notice —
 the screenshots looked fine.
+
+`--diag` and the baseline both carry a **digest** per seed: an FNV hash over every array the
+generator emits. The counts catch a feature that vanished; the digest catches a voxel that
+moved or a shade that shifted while every total stayed the same.
 
 ## Conventions
 

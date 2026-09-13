@@ -42,8 +42,9 @@ of assertions.
 Ordered by the first rule, not by architectural tidiness. The backlog's original order
 optimised for never rewriting anything; this optimises for playing something.
 
-1. **Extract the generator from the plate into a module.** It currently lives inside an IIFE in
-   a 1900-line HTML document. Nothing can be built around a document.
+1. ~~**Extract the generator from the plate into a module.**~~ **Done** (#19). It lives in
+   `src/gen/` as ES modules with no DOM and no three.js; the plate inlines a generated copy,
+   and the smoke test fails if the two disagree. See `src/README.md`.
 2. **Material ids** (#14). The one "do it anyway" item — it changes the per-voxel layout that
    the mesher, the save deltas and the netcode all read, and it is cheap now.
 3. **Collision and a character controller** — the movement budget, made real.
@@ -67,7 +68,7 @@ is what actually holds.
 
 | Layer | What it does |
 | --- | --- |
-| `tools/smoke.mjs` | The assertions. Boot, golden-master generation, sanity invariants, render. |
+| `tools/smoke.mjs` | The assertions. Bundle sync, headless generation, boot, plate/node parity, golden-master, sanity invariants, render. |
 | `tools/hooks/pre-push` | Runs `--quick` before anything leaves the machine. Seconds. Install: `node tools/hooks/install.mjs` |
 | `.github/workflows/ci.yml` | Full smoke on every push and PR, with the render pass. |
 | This document | The bar, in the place a new session will look. |
@@ -101,7 +102,9 @@ frame-time assertion on a software renderer.
 ### Golden seeds
 
 Six pinned seeds, recorded in `tools/baseline.json`. The generator is deterministic, so any
-drift is a real change. Intentional changes are re-recorded deliberately:
+drift is a real change. Each seed records its counts and a **digest** — an FNV hash over every
+array the generator emits, so a change that moves one voxel or shifts one colour without
+changing a single total still fails the gate. Intentional changes are re-recorded deliberately:
 
 ```
 node tools/smoke.mjs --update

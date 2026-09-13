@@ -8,7 +8,8 @@
   "bridges": 0,
   "landmark": true,
   "overhang": false,
-  "unreachPct": 0
+  "unreachPct": 0,
+  "digest": "d5584ab6"
  },
  {
   "seed": "mesa",
@@ -19,7 +20,8 @@
   "bridges": 1,
   "landmark": true,
   "overhang": true,
-  "unreachPct": 1
+  "unreachPct": 1,
+  "digest": "9f098fcb"
  },
  {
   "seed": "fen",
@@ -30,7 +32,8 @@
   "bridges": 1,
   "landmark": true,
   "overhang": true,
-  "unreachPct": 0
+  "unreachPct": 0,
+  "digest": "6da244c9"
  },
  {
   "seed": "ash",
@@ -41,7 +44,8 @@
   "bridges": 1,
   "landmark": true,
   "overhang": true,
-  "unreachPct": 15.4
+  "unreachPct": 15.4,
+  "digest": "930344af"
  },
  {
   "seed": "frost",
@@ -52,7 +56,8 @@
   "bridges": 1,
   "landmark": true,
   "overhang": false,
-  "unreachPct": 0.1
+  "unreachPct": 0.1,
+  "digest": "0b04835a"
  },
  {
   "seed": "hero",
@@ -63,6 +68,7 @@
   "bridges": 1,
   "landmark": true,
   "overhang": true,
-  "unreachPct": 0.1
+  "unreachPct": 0.1,
+  "digest": "b8594722"
  }
 ]

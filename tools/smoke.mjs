@@ -5,17 +5,22 @@
  *   node tools/smoke.mjs --update        # re-record the golden baseline
  *   node tools/smoke.mjs --quick         # skip the render pass (pre-push hook)
  *
- * Two things are asserted today, because today there is no game yet:
+ * What is asserted today, because today there is no game yet:
  *
- *   1. BOOT      the target loads and runs with zero page errors, and the
- *                generator produces a scene.
- *   2. GOLDEN    the generator's output for six pinned seeds matches
- *                tools/baseline.json exactly. Deterministic seeds mean any
- *                drift is a real change; --update re-records it deliberately.
+ *   1. SYNC       docs/concept/index.html carries the generator that is in
+ *                 src/gen right now. The plate inlines it rather than importing
+ *                 it (it has to stay one self-contained file), so drift is
+ *                 possible and this is what makes it loud.
+ *   2. NODE       src/gen generates every seed with no browser and no DOM.
+ *   3. BOOT       the plate loads and runs with zero page errors.
+ *   4. PARITY     the plate's worlds are identical to node's, digest included.
+ *   5. GOLDEN     all six pinned seeds match tools/baseline.json exactly.
+ *                 The generator is deterministic, so any drift is a real
+ *                 change; --update re-records it deliberately.
+ *   6. RENDER     the plate still draws.
  *
  * As the prototype gains verbs, each one adds an assertion here — that is the
- * ratchet. See docs/PROTOTYPE.md. When src/ exists, point TARGET at the game
- * and keep the plate assertions as a separate job.
+ * ratchet. See docs/PROTOTYPE.md.
  *
  * No frame-rate assertions: CI renders in software, so timings there are
  * meaningless. Proxy metrics (voxel counts, generation time) are asserted
@@ -23,8 +28,9 @@
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROOT, preparePage, launch, tilesDone, GOLDEN_SEEDS, measureSeeds }
-  from './lib/harness.mjs';
+import { ROOT, preparePage, launch, tilesDone, GOLDEN_SEEDS, measureSeeds, measureWorld,
+         measureSeedsInNode } from './lib/harness.mjs';
+import { PLATE, withBundle } from './bundle-gen.mjs';
 
 const argv = process.argv.slice(2);
 const UPDATE = argv.includes('--update');
@@ -39,6 +45,17 @@ const check = (ok, label, detail = '') => {
   if (!ok) fails.push(label);
 };
 
+/* ---------- SYNC + NODE: no browser needed ---------- */
+const plateHtml = readFileSync(PLATE, 'utf8');
+const inSync = withBundle(plateHtml) === plateHtml;
+check(inSync, 'SYNC: plate carries the current src/gen',
+      inSync ? '' : 'run: node tools/bundle-gen.mjs');
+
+const t0 = Date.now();
+const measured = await measureSeedsInNode(GOLDEN_SEEDS);
+const genMs = Date.now() - t0;
+check(measured.length === GOLDEN_SEEDS.length, 'NODE: src/gen generates every seed, no browser');
+
 /* The plate generates its hero world synchronously on load, so even
    DOMContentLoaded can take minutes under software rendering on a slow runner.
    Playwright's 30 s default is nowhere near enough — this failed in CI once. */
@@ -46,7 +63,7 @@ const PATIENCE = 600000;
 
 const browser = await launch();
 try {
-  /* ---------- BOOT + GOLDEN ---------- */
+  /* ---------- BOOT + PARITY ---------- */
   const page = await browser.newPage();
   page.setDefaultTimeout(PATIENCE);
   page.setDefaultNavigationTimeout(PATIENCE);
@@ -54,19 +71,25 @@ try {
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) errors.push(m.text()); });
 
-  const file = preparePage({ target: TARGET, outDir: OUT, instrument: true, name: 'smoke.html' });
+  const file = preparePage({ target: TARGET, outDir: OUT, name: 'smoke.html' });
   await page.goto(`file://${file}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
-  await page.waitForFunction(() => !!window.__BW, null, { timeout: PATIENCE });
+  await page.waitForFunction(() => !!(window.QS && window.QS.buildWorld), null, { timeout: PATIENCE });
 
-  const t0 = Date.now();
-  const measured = await page.evaluate(
-    ([cfgs, fnSrc]) => new Function(`return (${fnSrc})`)()(cfgs),
-    [GOLDEN_SEEDS, measureSeeds.toString()]);
-  const genMs = Date.now() - t0;
+  const inPage = await page.evaluate(
+    ([cfgs, fnSrc, measureSrc]) => new Function(`return (${fnSrc})`)()(cfgs, measureSrc),
+    [GOLDEN_SEEDS, measureSeeds.toString(), measureWorld.toString()]);
 
   check(errors.length === 0, 'BOOT: no page errors', errors.slice(0, 3).join(' | '));
-  check(measured.length === GOLDEN_SEEDS.length, 'BOOT: every seed generated');
+  check(inPage.length === GOLDEN_SEEDS.length, 'BOOT: every seed generated in the plate');
 
+  for (const want of measured) {
+    const got = inPage.find((m) => m.seed === want.seed);
+    const diffs = !got ? ['missing']
+      : Object.keys(want).filter((k) => want[k] !== got[k]).map((k) => `${k} ${want[k]} → ${got[k]}`);
+    check(diffs.length === 0, `PARITY: ${want.seed} plate matches src/gen`, diffs.join(', '));
+  }
+
+  /* ---------- GOLDEN ---------- */
   if (UPDATE) {
     writeFileSync(BASELINE, JSON.stringify(measured, null, 1) + '\n');
     console.log(`\nbaseline re-recorded (${measured.length} seeds, ${genMs} ms)`);

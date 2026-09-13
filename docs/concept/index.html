@@ -336,8 +336,1210 @@
     <p class="sig">Quarterstone · isometric voxel co-op · plate 02</p>
   </footer>
 </div>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<!-- The terrain generator, bundled from src/gen. Generated — do not edit here:
+     edit src/gen/*.mjs and run `node tools/bundle-gen.mjs`. -->
+<script>
+/* QS-BUNDLE-BEGIN — generated from src/gen by tools/bundle-gen.mjs */
+(function(){
+"use strict";
+/* ---------- src/gen/constants.mjs ---------- */
+/**
+ * World constants and the movement budget every generated feature is sized
+ * against. See docs/DECISIONS.md §3 — a terrain feature exists to be crossed,
+ * and these numbers say what "crossable" means.
+ */
+
+/** Voxel edge, metres. Terrain is authored in whole metres; this is the grain. */
+const V = 0.25;
+/** Ceiling, metres. Nothing is generated above it. */
+const CEIL = 16;
+/** Chunk edge, metres. */
+const CHUNK = 32;
+
+/** What a player can cross, in metres. */
+const MOVE = { step: 1, vault: 2, jump: 2.5, wade: 0.75, fall: 6 };
+
+/** Four-neighbourhood, in cell space. Order matters: it is part of the seed. */
+const DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+/* ---------- src/gen/rng.mjs ---------- */
+/**
+ * Seeded noise. Everything random in the generator comes from here, so that a
+ * seed string and a world position are together enough to reproduce a world.
+ *
+ * xmur3 turns a string into a stream of 32-bit seeds; mulberry32 turns one of
+ * those into a uniform stream; makeNoise builds a value-noise field from it.
+ */
+
+function xmur3(str){var h=1779033703^str.length;
+  for(var i=0;i<str.length;i++){h=Math.imul(h^str.charCodeAt(i),3432918353);h=h<<13|h>>>19;}
+  return function(){h=Math.imul(h^h>>>16,2246822507);h=Math.imul(h^h>>>13,3266489909);h^=h>>>16;return h>>>0;};}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function makeNoise(seed){
+  var r=mulberry32(seed),p=new Uint8Array(512),i,j,t;
+  for(i=0;i<256;i++)p[i]=i;
+  for(i=255;i>0;i--){j=(r()*(i+1))|0;t=p[i];p[i]=p[j];p[j]=t;}
+  for(i=0;i<256;i++)p[i+256]=p[i];
+  function g(x,y){return p[(p[x&255]+(y&255))&255]/255;}
+  function n2(x,y){var xi=Math.floor(x),yi=Math.floor(y),xf=x-xi,yf=y-yi;
+    var u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf);
+    var a=g(xi,yi),b=g(xi+1,yi),c=g(xi,yi+1),d=g(xi+1,yi+1);
+    return (a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v;}
+  function fbm(x,y,o){var s=0,a=0.5,f=1,n=0;o=o||3;
+    for(var i=0;i<o;i++){s+=a*n2(x*f,y*f);n+=a;f*=2;a*=0.5;}return s/n;}
+  return {n2:n2,fbm:fbm};
+}
+/* ---------- src/gen/biomes.mjs ---------- */
+/**
+ * The biome table. One row per biome: where it sits on the climate chart
+ * (t = temperature, m = moisture), how its ground is shaped (base, hill,
+ * canyon, col), and the palettes and vegetation kit it stamps with.
+ *
+ * The plate's document also reads nm, c, ds and mt — the same rows drive the
+ * climate chart and the biome cards, so the table lives here and nowhere else.
+ *
+ * DEBT: palettes are still hex colours, chosen per voxel by the generator.
+ * Issue #14 replaces them with material ids and hands the choice of how a
+ * material looks back to the renderer, where it belongs.
+ */
+
+const BIOMES = [
+ {k:'meadow',nm:'Meadowlands',t:0.58,m:0.66,c:'#6b9a45',ds:'Broadleaf stands, meandering rivers, boulder fields. The tutorial biome and the one the palette is calibrated against.',mt:'base 3 m · hills 1–3 m · rivers common',
+  surf:[0x5f8f3e,0x6b9a45,0x557f36,0x74a24e],soil:[0x6b4f33,0x5a4229,0x7a5a3c],rock:[0x7d7a72,0x8b877e,0x6d6a63],bed:[0xcbb187,0xd6bd94],
+  gr:{d:0.9,c:0x86ab4f,dry:0xb6a35a,h:[0.30,0.28]},tree:{t:'broad',d:0.9},base:3,hill:3,canyon:0.1,col:0.05},
+ {k:'mesa',nm:'Redrock Mesa',t:0.82,m:0.20,c:'#c08a52',ds:'Stacked sandstone, dry washes, hoodoos. Canyons and arcs are generated here more than anywhere else.',mt:'base 6 m · hills 1–2 m · canyons 3–5 m',
+  surf:[0xc98f55,0xd6a066,0xb97f49,0xc08a52],soil:[0xa9723f,0x8f5f34],rock:[0xb07a45,0xc08a52,0x9a6a3f,0xd1a06a],bed:[0xd8c08c,0xc9ad7a],
+  gr:{d:0.35,c:0xc0a760,dry:0xd8c07a,h:[0.26,0.22]},tree:{t:'scrub',d:0.25},base:6,hill:2,canyon:0.85,col:0.5},
+ {k:'fen',nm:'Boreal Fen',t:0.40,m:0.90,c:'#4a7a4e',ds:'Peat shelves, standing water, black conifers and reed beds. Wide slow water, poor footing.',mt:'base 2 m · hills 1 m · water 4–8 m wide',
+  surf:[0x3f6b46,0x4a7a4e,0x35603f,0x577f4a],soil:[0x3a2f24,0x2e251c],rock:[0x5b6058,0x4c5149],bed:[0x4a4432,0x3c3a2a],
+  gr:{d:1.0,c:0x5f8a48,dry:0x7d8a3e,h:[0.55,0.35]},tree:{t:'conifer',d:0.8},base:2,hill:1,canyon:0,col:0},
+ {k:'ash',nm:'Ashfall Barrens',t:0.90,m:0.48,c:'#5a504a',ds:'Basalt columns, fissures and magma seams under a grey crust. Vertical cover everywhere, nothing to eat.',mt:'base 4 m · columns 2–4 m · magma seams',
+  surf:[0x3a3532,0x46403c,0x2f2a28,0x4d4642],soil:[0x2b2726,0x241f1e],rock:[0x33302f,0x3f3a38,0x282524],bed:[0x1e1a19,0x272322],
+  gr:{d:0.3,c:0x6b5a50,dry:0xd2642a,h:[0.24,0.2]},tree:{t:'snag',d:0.3},base:4,hill:2,canyon:0.3,col:0.9},
+ {k:'frost',nm:'Frostmoor',t:0.12,m:0.44,c:'#cfd9e2',ds:'Snow over hard rock, frozen shelves, wind-stripped ridges. Tracks show, and so do you.',mt:'base 5 m · hills 2–3 m · ice shelves',
+  surf:[0xdfe7ee,0xe9eef4,0xcfd9e2,0xd7e0e8],soil:[0x8b95a0,0x79838e],rock:[0x6b7480,0x7c8590,0x5d6670],bed:[0x9fc9d8,0xb7dbe6],
+  gr:{d:0.45,c:0xc8d6de,dry:0x9fb4bf,h:[0.26,0.22]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
+];
+
+/** Accumulation palettes: what settles on top of whatever faces up. */
+const SNOW = [0xe7eef4, 0xdae3ec, 0xf1f6fa];
+const ASHFALL = [0x6b635c, 0x746c64, 0x5c554f];
+/** Trodden ground, wherever a route runs. */
+const PATH = [0x9a7c54, 0x8d7049, 0xa68960, 0x7f6641];
+
+function pickFrom(arr, r) { return arr[(r() * arr.length) | 0]; }
+
+/** Picks one biome out of a blend, sharpened so blends still read as somewhere. */
+function rouletteBiome(w, r) {
+  var p = [], t = 0, i;
+  for (i = 0; i < w.length; i++) { var e = w[i] * w[i] * w[i] * w[i] * w[i]; p.push(e); t += e; }
+  var v = r() * t, s = 0;
+  for (i = 0; i < w.length; i++) { s += p[i]; if (v <= s) return i; }
+  return w.length - 1;
+}
+
+/* ---------- colour ----------
+   The generator emits plain float triples in 0..1, not renderer objects: the
+   arithmetic below is exactly what THREE.Color.setHex().multiplyScalar() did
+   when this code lived in the plate, so the plate still renders identically. */
+
+/** Push one hex colour, scaled, onto a flat r,g,b array. */
+function pushShade(out, hex, k) {
+  out.push(((hex >> 16 & 255) / 255) * k, ((hex >> 8 & 255) / 255) * k, ((hex & 255) / 255) * k);
+}
+/** The three components of a scaled hex colour, when the caller needs them twice. */
+function shadeR(hex, k) { return ((hex >> 16 & 255) / 255) * k; }
+function shadeG(hex, k) { return ((hex >> 8 & 255) / 255) * k; }
+function shadeB(hex, k) { return ((hex & 255) / 255) * k; }
+/* ---------- src/gen/field.mjs ---------- */
+/**
+ * The scalar fields the world is cut from: climate, macro height, rivers,
+ * canyons, columns, caves. One 1 m cell at a time, sized in whole metres.
+ *
+ * makeGen(seed, force) is pure with respect to world position: cell(x, z)
+ * depends only on the seed and the coordinate, which is what will let the same
+ * region be generated twice and match (see issue #16). The one exception is
+ * `rnd`, the world-build stream, which is ordered rather than positional.
+ */
+
+
+
+
+function makeGen(seedStr,force){
+  var h=xmur3(String(seedStr));
+  var N={h:makeNoise(h()),d:makeNoise(h()),t:makeNoise(h()),m:makeNoise(h()),
+         r:makeNoise(h()),p:makeNoise(h()),c:makeNoise(h()),s:makeNoise(h()),v:makeNoise(h())};
+  var wx=(h()%9973)/13, wz=(h()%9967)/17, rr=mulberry32(h());
+  function climate(x,z){
+    var t,m,i,w=[],s=0;
+    if(force!=null){
+      t=BIOMES[force].t+(N.t.fbm(x*0.022,z*0.022,2)-0.5)*0.13;
+      m=BIOMES[force].m+(N.m.fbm(x*0.021+40,z*0.021,2)-0.5)*0.13;
+    }else{
+      t=N.t.fbm(x*0.0068+wx,z*0.0068+wz,3); m=N.m.fbm(x*0.0061+wz,z*0.0061+wx,3);
+      t=clamp((t-0.5)*2.1+0.5,0,1); m=clamp((m-0.5)*2.1+0.5,0,1);
+    }
+    for(i=0;i<BIOMES.length;i++){var dt=t-BIOMES[i].t,dm=m-BIOMES[i].m;
+      var e=Math.exp(-(dt*dt+dm*dm)/0.055);w.push(e);s+=e;}
+    for(i=0;i<w.length;i++)w[i]/=s;
+    return w;
+  }
+  function wsum(w,key){var s=0;for(var i=0;i<w.length;i++)s+=w[i]*BIOMES[i][key];return s;}
+  /* whole-metre macro height */
+  function macro(x,z,w){
+    var base=wsum(w,'base'), hill=wsum(w,'hill');
+    var n=N.h.fbm(x*0.017,z*0.017,4), n2=N.h.fbm(x*0.055+9,z*0.055+9,2);
+    return base+(n-0.38)*hill*1.9+(n2-0.5)*hill*0.55;
+  }
+  function riverAt(x,z){
+    var v=N.r.fbm(x*0.0105,z*0.0105,3), d=Math.abs(v-0.5)*155;
+    var w=1+Math.floor(N.r.n2(x*0.03+13,z*0.03+13)*4); if(w>4)w=4;
+    return {d:d,w:w};
+  }
+  function canyonAt(x,z){
+    var v=N.c.fbm(x*0.0082+5,z*0.0082+5,3), d=Math.abs(v-0.5)*120;
+    var w=3+Math.floor(N.c.n2(x*0.02+31,z*0.02+7)*3); if(w>5)w=5;
+    var dp=3+Math.floor(N.c.n2(x*0.015+3,z*0.015+3)*2); if(dp>4)dp=4;
+    return {d:d,w:w,dp:dp};
+  }
+  function pillarAt(x,z,colw){
+    if(colw<0.12) return 0;
+    var cx=Math.floor(x/4),cz=Math.floor(z/4);
+    if(N.p.n2(cx*7.7+0.5,cz*3.3+0.5)>1-0.30*colw){
+      var r=1+Math.floor(N.p.n2(cx*1.3+5,cz*2.1+5)*2);
+      var px=cx*4+2,pz=cz*4+2;
+      if(Math.max(Math.abs(x-px),Math.abs(z-pz))<=r-0.5)
+        return 2+Math.floor(N.p.n2(cx*0.7,cz*0.9)*3);
+    }
+    return 0;
+  }
+  /* one 1 m cell: everything sized in whole metres */
+  function cell(x,z){
+    var w=climate(x,z);
+    var hm=macro(x,z,w), H=Math.round(hm);
+    var cw=wsum(w,'canyon'), colw=wsum(w,'col');
+    var c=null;
+    if(cw>0.28){ c=canyonAt(x,z);
+      if(c.d<c.w/2) H-=c.dp;
+      else if(c.d<c.w/2+2) H-=Math.round(c.dp*(1-(c.d-c.w/2)/2));
+    }
+    H+=pillarAt(x,z,colw);
+    var r=riverAt(x,z), rw=r.w+Math.round(w[2]*3), water=false, pond=false, wl=0;
+    if(r.d<rw/2){ H-=1; water=true; }
+    if(!water&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
+      var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
+      if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
+    }
+    var magma=false;
+    if(w[3]>0.5){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
+      if(f<0.022){ H-=1; magma=true; water=false; } }
+    H=clamp(H,0,CEIL);
+    if(water) wl=H+(pond?1.25:0.75);
+    var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
+    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw};
+  }
+  function rawH(x,z){ return macro(x,z,climate(x,z)); }
+  /* a column is a run of solid spans, not one height: this is what lets a
+     tunnel open onto a cliff face and a rim hang over nothing */
+  function caveAt(x,y,z){
+    var a=N.v.n2(x*0.070+y*0.10, z*0.070-y*0.085);
+    var b=N.v.n2(z*0.058-y*0.065, x*0.058+y*0.050);
+    return Math.abs(a-0.5)+Math.abs(b-0.5);
+  }
+  function spansFor(x,z,H){
+    var sp=[],run=null,y;
+    for(y=0;y<H;y++){
+      var solid=!(y>=1&&y<=H-2&&caveAt(x,y+0.5,z)<0.062);
+      if(solid){ if(run) run[1]=y+1; else run=[y,y+1]; }
+      else if(run){ sp.push(run); run=null; }
+    }
+    if(run) sp.push(run);
+    if(!sp.length) sp.push([0,Math.max(H,1)]);
+    return sp;
+  }
+  function detail(x,z){ return (Math.round(N.d.fbm(x*0.62,z*0.62,2)*4)-2)*V; }
+  return {cell:cell,detail:detail,climate:climate,rnd:rr,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor};
+}
+/* ---------- src/gen/erosion.mjs ---------- */
+/**
+ * Erosion. Talus gathers at the foot of a cliff and high banks get cut back,
+ * so the macro height field stops looking like noise and starts looking like
+ * ground that weather has been at.
+ *
+ * Rewrites cell heights in place, from a snapshot, so the pass is order-free.
+ */
+
+
+function erode(w) {
+  var M = w.M, cells = w.cells, R = w.R, d0;
+  var Hn=new Int16Array(M*M),a,b;
+  for(a=0;a<M*M;a++) Hn[a]=cells[a].H;
+  for(a=1;a<M-1;a++)for(b=1;b<M-1;b++){
+    var c0=cells[a*M+b]; if(c0.water||c0.magma) continue;
+    var hi=0,nearW=false;
+    for(d0=0;d0<4;d0++){
+      var cn=cells[(a+DIRS4[d0][0])*M+(b+DIRS4[d0][1])];
+      if(cn.H-c0.H>hi) hi=cn.H-c0.H;
+      if(cn.water) nearW=true;
+    }
+    if(hi>=3&&R()<0.5) Hn[a*M+b]=c0.H+1;
+    else if(hi===2&&R()<0.2) Hn[a*M+b]=c0.H+1;
+    else if(nearW&&c0.H>=3&&R()<0.3) Hn[a*M+b]=c0.H-1;
+  }
+  for(a=0;a<M*M;a++) cells[a].H=clamp(Hn[a],0,CEIL);
+}
+/* ---------- src/gen/routes.mjs ---------- */
+/**
+ * Routing. The path comes first and the ground is cut for it: two sites are
+ * chosen, an A* route is found between them over movement cost, the route is
+ * graded until every step is walkable, and only then is the terrain under it
+ * pulled into shape. Crossings are placed where a route actually meets water —
+ * never scattered over it.
+ *
+ * Sets w.TRAIL, w.sites, w.bridges, w.trailPath.
+ */
+
+
+/** Cost of stepping from cell a to cell b, or -1 where a player cannot. */
+function passCost(a,b){
+  if(b.magma) return -1;
+  var dh=b.H-a.H;
+  if(dh>MOVE.vault) return -1;
+  var c=1+(dh>0?dh*3.2:(-dh)*1.1);
+  if(b.water) c+=((b.wl-b.H)>MOVE.wade)?34:6;
+  if(b.sp&&b.sp.length>1) c+=2;
+  return c;
+}
+
+function routeAStar(w,a0,b0,a1,b1){
+  var M=w.M, cells=w.cells;
+  var N2=M*M,dist=new Float32Array(N2),prev=new Int32Array(N2),seen=new Uint8Array(N2),q;
+  for(q=0;q<N2;q++){dist[q]=1e9;prev[q]=-1;}
+  var st=a0*M+b0, gl=a1*M+b1, heap=[];
+  function push(pr,v){heap.push([pr,v]);var i2=heap.length-1;
+    while(i2>0){var pi=(i2-1)>>1;if(heap[pi][0]<=heap[i2][0])break;
+      var t=heap[pi];heap[pi]=heap[i2];heap[i2]=t;i2=pi;}}
+  function pop(){var top=heap[0],last=heap.pop();
+    if(heap.length){heap[0]=last;var i2=0;
+      for(;;){var l=i2*2+1,r=l+1,sm=i2;
+        if(l<heap.length&&heap[l][0]<heap[sm][0])sm=l;
+        if(r<heap.length&&heap[r][0]<heap[sm][0])sm=r;
+        if(sm===i2)break;var t=heap[sm];heap[sm]=heap[i2];heap[i2]=t;i2=sm;}}
+    return top;}
+  dist[st]=0; push(0,st);
+  while(heap.length){
+    var cu=pop()[1];
+    if(seen[cu]) continue; seen[cu]=1;
+    if(cu===gl) break;
+    var cx=(cu/M)|0, cz=cu%M;
+    for(var d1=0;d1<4;d1++){
+      var nx=cx+DIRS4[d1][0], nz=cz+DIRS4[d1][1];
+      if(nx<1||nz<1||nx>=M-1||nz>=M-1) continue;
+      var nk=nx*M+nz; if(seen[nk]) continue;
+      var cst=passCost(cells[cu],cells[nk]); if(cst<0) continue;
+      var nd=dist[cu]+cst;
+      if(nd<dist[nk]){ dist[nk]=nd; prev[nk]=cu; push(nd,nk); }
+    }
+  }
+  if(gl!==st&&prev[gl]<0) return null;
+  var path=[],p2=gl,g2=0;
+  while(p2>=0&&g2++<5000){ path.push(p2); if(p2===st) break; p2=prev[p2]; }
+  return path.reverse();
+}
+
+function layRoutes(w) {
+  var M = w.M, cells = w.cells, half = w.half, R = w.R;
+  var TRAIL=new Uint8Array(M*M), sites=[], bridges=[], trailPath=[];
+  function addBridge(bx,bz,di,dj,len,y){
+    if(bridges.length>=2) return;
+    for(var q=0;q<bridges.length;q++)
+      if(Math.abs(bridges[q][0]-bx)+Math.abs(bridges[q][1]-bz)<6) return;
+    bridges.push([bx,bz,di,dj,len,y]);
+  }
+  function flatAt(pi,pj,r){
+    var cp=cells[pi*M+pj]; if(!cp||cp.water||cp.magma) return false;
+    for(var a=-r;a<=r;a++)for(var b=-r;b<=r;b++){
+      var cq=cells[(pi+a)*M+(pj+b)];
+      if(!cq||cq.water||cq.magma||Math.abs(cq.H-cp.H)>1) return false;
+    }
+    return true;
+  }
+  function dryFlood(startIdx){
+    var seen=new Uint8Array(M*M), q=[startIdx], head=0; seen[startIdx]=1;
+    while(head<q.length){
+      var cu=q[head++], cx=(cu/M)|0, cz=cu%M;
+      for(var d1=0;d1<4;d1++){
+        var nx=cx+DIRS4[d1][0], nz=cz+DIRS4[d1][1];
+        if(nx<1||nz<1||nx>=M-1||nz>=M-1) continue;
+        var nk=nx*M+nz; if(seen[nk]) continue;
+        var nc=cells[nk];
+        if(nc.water||nc.magma) continue;
+        if(Math.abs(nc.H-cells[cu].H)>MOVE.vault) continue;
+        seen[nk]=1; q.push(nk);
+      }
+    }
+    return seen;
+  }
+  (function(){
+    var cands=[],a,b;
+    for(a=6;a<M-6;a++)for(b=6;b<M-6;b++) if(flatAt(a,b,2)) cands.push(a*M+b);
+    if(!cands.length) return;
+    var A0=cands[(R()*cands.length)|0], ai=(A0/M)|0, aj=A0%M;
+    sites.push([ai,aj]);
+    /* the far bank is the interesting second site: reaching it needs a crossing */
+    var dry=dryFlood(A0), across=[], apart=[], q1;
+    for(q1=0;q1<cands.length;q1++){
+      var idx=cands[q1], di=(idx/M)|0, dj=idx%M;
+      if(Math.abs(di-ai)+Math.abs(dj-aj)<10) continue;
+      if(dry[idx]) apart.push(idx); else across.push(idx);
+    }
+    var pool=across.length?across:apart;
+    if(!pool.length) return;
+    /* try a handful: a site whose route has to cross water is the interesting one */
+    var bestIdx=-1, bestLen=-1, tries=Math.min(10,pool.length), t2;
+    for(t2=0;t2<tries;t2++){
+      var cand=pool[(R()*pool.length)|0], rp=routeAStar(w,ai,aj,(cand/M)|0,cand%M);
+      if(!rp) continue;
+      var wet=0,q2;
+      for(q2=0;q2<rp.length;q2++) if(cells[rp[q2]].water) wet++;
+      if(wet>0){ bestIdx=cand; break; }
+      if(rp.length>bestLen){ bestLen=rp.length; bestIdx=cand; }
+    }
+    if(bestIdx<0) bestIdx=pool[(R()*pool.length)|0];
+    sites.push([(bestIdx/M)|0,bestIdx%M]);
+  })();
+  function gradePath(path){
+    if(!path) return;
+    var q,it2,A,B;
+    for(it2=0;it2<3;it2++){
+      for(q=1;q<path.length;q++){
+        A=cells[path[q-1]]; B=cells[path[q]];
+        if(A.water||B.water) continue;
+        if(B.H-A.H>MOVE.step) B.H=A.H+MOVE.step;
+        else if(A.H-B.H>MOVE.step) B.H=A.H-MOVE.step;
+      }
+      for(q=path.length-2;q>=0;q--){
+        A=cells[path[q+1]]; B=cells[path[q]];
+        if(A.water||B.water) continue;
+        if(B.H-A.H>MOVE.step) B.H=A.H+MOVE.step;
+        else if(A.H-B.H>MOVE.step) B.H=A.H-MOVE.step;
+      }
+    }
+    /* pull the shoulders in so the route is a cutting, not a trench */
+    for(q=0;q<path.length;q++){
+      var pi=(path[q]/M)|0, pj=path[q]%M, hp=cells[path[q]].H;
+      for(var d2=0;d2<4;d2++){
+        var nc=cells[(pi+DIRS4[d2][0])*M+(pj+DIRS4[d2][1])];
+        if(!nc||nc.water||nc.magma) continue;
+        if(nc.H-hp>2) nc.H=hp+2; else if(hp-nc.H>2) nc.H=hp-2;
+      }
+    }
+  }
+  function markPath(path){
+    if(!path) return;
+    for(var q=0;q<path.length;q++){
+      var pi=(path[q]/M)|0, pj=path[q]%M;
+      if(!cells[path[q]].magma) TRAIL[path[q]]=1;
+      var pv2=path[q>0?q-1:q], di4=pi-((pv2/M)|0), dj4=pj-(pv2%M);
+      var sx=pi+dj4, sz=pj-di4;
+      if(sx>0&&sz>0&&sx<M-1&&sz<M-1&&!cells[sx*M+sz].magma) TRAIL[sx*M+sz]=1;
+      trailPath.push(path[q]);
+    }
+    /* a crossing only where the route actually meets water */
+    var w=0;
+    while(w<path.length){
+      if(!cells[path[w]].water){ w++; continue; }
+      var st2=w;
+      while(w<path.length&&cells[path[w]].water) w++;
+      var len=w-st2;
+      if(len<=12){
+        var pre=path[Math.max(0,st2-1)], post=path[Math.min(path.length-1,w)];
+        var pc=cells[pre], qc=cells[post];
+        if(!pc.magma&&!qc.magma&&!pc.water&&!qc.water){
+          var pi0=(pre/M)|0, pj0=pre%M, pi1=(post/M)|0, pj1=post%M;
+          var di=(pi1>pi0)?1:((pi1<pi0)?-1:0), dj=(pj1>pj0)?1:((pj1<pj0)?-1:0);
+          if(di&&dj) dj=0;
+          if(!di&&!dj) di=1;
+          addBridge((pi0+pi1)/2-half,(pj0+pj1)/2-half,di,dj,len+3,
+                    Math.max(pc.H,qc.H,cells[path[st2]].wl+0.5));
+        }
+      }
+    }
+  }
+  function findFord(){
+    var best=null,a,b,d1;
+    for(a=2;a<M-2;a++)for(b=2;b<M-2;b++){
+      var c0=cells[a*M+b];
+      if(c0.water||c0.magma) continue;
+      for(d1=0;d1<4;d1++){
+        var di=DIRS4[d1][0], dj=DIRS4[d1][1], len=0, x2=a+di, z2=b+dj;
+        while(x2>1&&z2>1&&x2<M-1&&z2<M-1&&cells[x2*M+z2].water&&len<8){ len++; x2+=di; z2+=dj; }
+        if(len<1||len>6) continue;
+        var fc=cells[x2*M+z2];
+        if(!fc||fc.water||fc.magma||Math.abs(fc.H-c0.H)>1) continue;
+        var score=len*10+Math.abs(fc.H-c0.H)-(TRAIL[a*M+b]?25:0);
+        if(!best||score<best.score) best={score:score,ai:a,aj:b,bi:x2,bj:z2,di:di,dj:dj,len:len};
+      }
+    }
+    return best;
+  }
+  (function(){
+    var mid=(M/2)|0, r1=null, r2=null, q3;
+    if(sites.length>0) r1=routeAStar(w,mid,mid,sites[0][0],sites[0][1]);
+    if(sites.length>1) r2=routeAStar(w,sites[0][0],sites[0][1],sites[1][0],sites[1][1]);
+    gradePath(r1); gradePath(r2); markPath(r1); markPath(r2);
+    if(bridges.length||!sites.length) return;
+    var wet=0;
+    for(q3=0;q3<M*M;q3++) if(cells[q3].water) wet++;
+    if(wet<20) return;
+    var fd=findFord();
+    if(!fd) return;
+    /* bring the route to the near bank, then carry it over */
+    var r3=routeAStar(w,sites[0][0],sites[0][1],fd.ai,fd.aj);
+    gradePath(r3); markPath(r3);
+    for(q3=0;q3<=fd.len+1;q3++){
+      var xx=fd.ai+fd.di*q3, zz=fd.aj+fd.dj*q3;
+      if(xx<1||zz<1||xx>=M-1||zz>=M-1) break;
+      if(!cells[xx*M+zz].magma) TRAIL[xx*M+zz]=1;
+    }
+    for(q3=1;q3<=3;q3++){
+      var fx=fd.bi+fd.di*q3, fz=fd.bj+fd.dj*q3;
+      if(fx<1||fz<1||fx>=M-1||fz>=M-1) break;
+      if(!cells[fx*M+fz].magma&&!cells[fx*M+fz].water) TRAIL[fx*M+fz]=1;
+    }
+    addBridge((fd.ai+fd.bi)/2-half,(fd.aj+fd.bj)/2-half,fd.di,fd.dj,fd.len+3,
+              Math.max(cells[fd.ai*M+fd.aj].H,cells[fd.bi*M+fd.bj].H,
+                       cells[(fd.ai+fd.di)*M+(fd.aj+fd.dj)].wl+0.5));
+  })();
+  w.TRAIL = TRAIL; w.sites = sites; w.bridges = bridges; w.trailPath = trailPath;
+  /* the landmark pass needs the same 'is this ground buildable' test. */
+  w.flatAt = flatAt;
+}
+/* ---------- src/gen/spans.mjs ---------- */
+/**
+ * Span columns. A column is a run of solid spans, not one height — which is
+ * what lets a tunnel open onto a cliff face and a rim hang over nothing.
+ * Caves are cut first, then rims are undercut over them.
+ *
+ * Sets cell.sp for every cell, and w.ovhPos — a sample overhang the plate
+ * points its annotation at.
+ */
+
+
+function cutSpans(w) {
+  var M = w.M, cells = w.cells, half = w.half, G = w.G, OX = w.OX, OZ = w.OZ, R = w.R, i, j, d0;
+  var ovhPos=null;
+  for(i=0;i<M;i++)for(j=0;j<M;j++){
+    var cs=cells[i*M+j];
+    cs.sp=(cs.water||cs.magma)?[[0,Math.max(cs.H,1)]]:G.spansFor(-half+i+OX,-half+j+OZ,cs.H);
+  }
+  for(i=1;i<M-1;i++)for(j=1;j<M-1;j++){
+    var cl=cells[i*M+j];
+    for(d0=0;d0<4;d0++){
+      var ch=cells[(i+DIRS4[d0][0])*M+(j+DIRS4[d0][1])];
+      if(ch.H-cl.H<2||ch.water||R()>0.17) continue;
+      var out=1+((R()*2)|0), th=(R()<0.5?1:0.75), o;
+      for(o=0;o<=out;o++){
+        var ti=i-DIRS4[d0][0]*o, tj=j-DIRS4[d0][1]*o;
+        if(ti<1||tj<1||ti>=M-1||tj>=M-1) break;
+        var tc=cells[ti*M+tj];
+        if(tc.H>=ch.H-1||tc.water) break;
+        tc.sp.push([ch.H-th,ch.H]);
+      }
+      if(!ovhPos) ovhPos=[-half+i,cl.H+1.3,-half+j];
+      break;
+    }
+  }
+  w.ovhPos = ovhPos;
+}
+/* ---------- src/gen/water.mjs ---------- */
+/**
+ * Water. Three passes that share one rule: water goes where the ground lets it.
+ *
+ *   fillWaterTable       hollows flood until they spill
+ *   flowField            one downhill vector per cell, shared by water and foam
+ *   buildWaterGeometry   the surface quads, shore foam and vertical falls
+ *
+ * The geometry is plain vertex, index and per-vertex attribute arrays — depth,
+ * foam and flow — and no renderer object of any kind.
+ */
+
+
+function fillWaterTable(w) {
+  var M = w.M, cells = w.cells, i, j, d0;
+  for(var it=0;it<4;it++){
+    var changed=0;
+    for(i=1;i<M-1;i++)for(j=1;j<M-1;j++){
+      var cw2=cells[i*M+j]; if(cw2.water||cw2.magma) continue;
+      var best=0,walls=0,spill=false;
+      for(d0=0;d0<4;d0++){
+        var cn2=cells[(i+DIRS4[d0][0])*M+(j+DIRS4[d0][1])];
+        if(cn2.water){ if(cn2.wl>cw2.H+0.75&&cn2.wl>best) best=cn2.wl; }
+        else if(cn2.H>=cw2.H+1) walls++;
+        else if(cn2.H<cw2.H) spill=true;
+      }
+      /* a hollow fills; a plain drains */
+      if(best>0&&walls>=2&&!spill){
+        cw2.water=true; cw2.pond=true; cw2.wl=best; cw2.sp=[[0,Math.max(cw2.H,1)]]; changed++;
+      }
+    }
+    if(!changed) break;
+  }
+}
+
+function flowField(w) {
+  var M = w.M, cells = w.cells, i, j;
+  for(i=0;i<M;i++)for(j=0;j<M;j++){
+    var cf=cells[i*M+j];
+    var hl=cells[(i>0?i-1:i)*M+j], hr=cells[(i<M-1?i+1:i)*M+j],
+        hb=cells[i*M+(j>0?j-1:j)], hf=cells[i*M+(j<M-1?j+1:j)];
+    var gx=(cf.water?(hl.wl||hl.H)-(hr.wl||hr.H):hl.H-hr.H),
+        gz=(cf.water?(hb.wl||hb.H)-(hf.wl||hf.H):hb.H-hf.H);
+    var gl=Math.hypot(gx,gz);
+    if(gl<0.001){ cf.fx=0.7; cf.fz=0.7; } else { cf.fx=-gx/gl; cf.fz=-gz/gl; }
+  }
+}
+
+function buildWaterGeometry(w) {
+  var NX = w.NX, NZ = w.NZ, Hs = w.Hs, WL = w.WL, FLG = w.FLG, half = w.half,
+      cellAt = w.cellAt, i, j, k, x, z, y;
+  var wv=[],wi=[],wd=[],wf=[],wfl=[],wn=0;
+  function wquad(q,dep,foam,fx,fz){
+    for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]); wd.push(dep); wf.push(foam); wfl.push(fx,fz); }
+    wi.push(wn,wn+2,wn+1, wn,wn+3,wn+2); wn+=4;
+  }
+  var WDIR=[[1,0],[-1,0],[0,1],[0,-1]];
+  for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
+    k=i*NZ+j; if(!(FLG[k]&1)) continue;
+    x=-half+i*V; z=-half+j*V; y=WL[k];
+    var bsum=0,bn=0;
+    for(var bi2=-2;bi2<=2;bi2++)for(var bj2=-2;bj2<=2;bj2++){
+      var kb=(i+bi2)*NZ+(j+bj2);
+      if(kb<0||kb>=NX*NZ) continue;
+      bsum+=Hs[kb]; bn++;
+    }
+    var dep=clamp((y-bsum/bn)/1.6,0,1), foam=0, fx=0, fz=0, dd2;
+    for(dd2=0;dd2<4;dd2++){
+      var kn=(i+WDIR[dd2][0])*NZ+(j+WDIR[dd2][1]);
+      if(FLG[kn]&1){
+        var dy=WL[kn]-y;
+        if(dy<-0.35){ fx+=WDIR[dd2][0]*-dy; fz+=WDIR[dd2][1]*-dy; foam=Math.max(foam,1); }
+        else if(dy>0.35) foam=Math.max(foam,1);
+        else { fx+=WDIR[dd2][0]*0.04; fz+=WDIR[dd2][1]*0.04; }
+      } else {
+        if(Hs[kn]>y-0.1) foam=Math.max(foam,1);
+        else { fx+=WDIR[dd2][0]*0.5; fz+=WDIR[dd2][1]*0.5; foam=Math.max(foam,1); }
+      }
+    }
+    var cfw=cellAt(x,z); fx=cfw.fx; fz=cfw.fz;
+    wquad([x,y,z, x+V,y,z, x+V,y,z+V, x,y,z+V],dep,foam,fx,fz);
+    /* vertical sheets wherever the surface steps down */
+    for(dd2=0;dd2<4;dd2++){
+      var di3=WDIR[dd2][0], dj3=WDIR[dd2][1], kn2=(i+di3)*NZ+(j+dj3);
+      var yl=(FLG[kn2]&1)?WL[kn2]:Hs[kn2];
+      if(yl>y-0.4) continue;
+      var q2;
+      if(di3===1) q2=[x+V,y,z, x+V,y,z+V, x+V,yl,z+V, x+V,yl,z];
+      else if(di3===-1) q2=[x,y,z, x,y,z+V, x,yl,z+V, x,yl,z];
+      else if(dj3===1) q2=[x,y,z+V, x+V,y,z+V, x+V,yl,z+V, x,yl,z+V];
+      else q2=[x,y,z, x+V,y,z, x+V,yl,z, x,yl,z];
+      wquad(q2,1,2,di3,dj3);
+    }
+  }
+  w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl };
+}
+/* ---------- src/gen/surface.mjs ---------- */
+/**
+ * From cells to voxels. sampleGrid resamples the 1 m cell grid onto the 25 cm
+ * voxel grid — top height, span bottom, water level, flags. buildVoxels then
+ * walks each column down from its surface and emits the boxes.
+ *
+ * Output is flat arrays: pos (x,y,z per voxel) and col (r,g,b per voxel), plus
+ * the same pair for the emissive ones. DEBT: col is still a colour, chosen
+ * here. Issue #14 replaces it with a material id and moves the choice of how a
+ * material looks to the renderer.
+ */
+
+
+
+function sampleGrid(w) {
+  var S = w.size, M = w.M, half = w.half, cells = w.cells, cellAt = w.cellAt,
+      G = w.G, OX = w.OX, OZ = w.OZ, TRAIL = w.TRAIL, i, j;
+  var NX=Math.round(S/V), NZ=NX;
+  var Hs=new Float32Array(NX*NZ), BOT=new Float32Array(NX*NZ), WL=new Float32Array(NX*NZ),
+      DOM=new Uint8Array(NX*NZ), FLG=new Uint8Array(NX*NZ);
+  var x,z,k,c;
+  function ci(px){return clamp(Math.round(px+half),0,M-1);}
+  for(i=0;i<NX;i++){ x=-half+i*V+V/2;
+    for(j=0;j<NZ;j++){ z=-half+j*V+V/2; k=i*NZ+j;
+      c=cellAt(x,z);
+      var topsp=c.sp[c.sp.length-1];
+      var d=c.water?G.detail(x+OX,z+OZ)*0.5:G.detail(x+OX,z+OZ);
+      Hs[k]=clamp(topsp[1]+d,0,CEIL); BOT[k]=topsp[0]; WL[k]=c.wl; DOM[k]=c.dom;
+      FLG[k]=(c.water?1:0)|(c.magma?2:0)|(TRAIL[ci(x)*M+ci(z)]?4:0);
+    } }
+  w.NX = NX; w.NZ = NZ; w.Hs = Hs; w.BOT = BOT; w.WL = WL; w.DOM = DOM; w.FLG = FLG; w.ci = ci;
+}
+
+function buildVoxels(w) {
+  var NX = w.NX, NZ = w.NZ, Hs = w.Hs, BOT = w.BOT, FLG = w.FLG, half = w.half,
+      cellAt = w.cellAt, R = w.R, i, j, k, x, z, c;
+  /* voxels */
+  var pos=[],col=[],mpos=[],mcol=[],y,hh,mn,slope;
+  var TOPI=new Int32Array(NX*NZ);
+  for(i=0;i<NX;i++){ x=-half+i*V+V/2;
+    for(j=0;j<NZ;j++){ z=-half+j*V+V/2; k=i*NZ+j; hh=Hs[k];
+      var n0=i>0?Hs[k-NZ]:hh-2, n1=i<NX-1?Hs[k+NZ]:hh-2,
+          n2=j>0?Hs[k-1]:hh-2, n3=j<NZ-1?Hs[k+1]:hh-2;
+      mn=Math.min(n0,n1,n2,n3); slope=hh-mn;
+      c=cellAt(x,z);
+      var b=BIOMES[rouletteBiome(c.w,R)], topc;
+      if(FLG[k]&2){ mpos.push(x,hh-V/2,z); pushShade(mcol,R()<0.5?0xff6a1e:0xffa23c,1); topc=0x2b2422; }
+      else if(FLG[k]&1) topc=pickFrom(b.bed,R);
+      else if(FLG[k]&4) topc=pickFrom(PATH,R);
+      else if(slope>0.9) topc=pickFrom(b.rock,R);
+      else topc=pickFrom(b.surf,R);
+      var topk=0.9+R()*0.2;
+      TOPI[k]=pos.length/3;
+      pos.push(x,hh-V/2,z); pushShade(col,topc,topk);
+      /* accumulation: snow and ash settle on whatever faces up */
+      if(!(FLG[k]&1)&&!(FLG[k]&4)){
+        var acc=(c.w[4]*0.95+c.w[3]*0.5)*(1-clamp(slope/1.1,0,1));
+        if(acc>0.40){
+          var ac=c.w[4]>=c.w[3]?pickFrom(SNOW,R):pickFrom(ASHFALL,R), ak=0.9+R()*0.2;
+          pos.push(x,hh+V/2,z); pushShade(col,ac,ak);
+        }
+      }
+      var bottom=Math.max(BOT[k],mn);
+      for(y=hh-1.5*V;y>bottom-0.001;y-=V){
+        var sc=(y<hh-1.25)?pickFrom(b.rock,R):pickFrom(b.soil,R);
+        var band=Math.floor(y/0.75)%2;
+        var sk=(band?0.94:1.06)*(0.88+R()*0.2);
+        pos.push(x,y,z); pushShade(col,sc,sk);
+      }
+      /* the underside of an undercut rim, and the floor under it */
+      if(BOT[k]>0.01){
+        var uc=pickFrom(b.rock,R), uk=0.72+R()*0.15;
+        pos.push(x,BOT[k]+V/2,z); pushShade(col,uc,uk);
+        for(var sq=c.sp.length-2;sq>=0;sq--){
+          var lt=c.sp[sq][1];
+          var lc=pickFrom(b.rock,R), lk=0.80+R()*0.18;
+          var lr=shadeR(lc,lk), lg=shadeG(lc,lk), lb=shadeB(lc,lk);
+          pos.push(x,lt-V/2,z); col.push(lr,lg,lb);
+          pos.push(x,lt-1.5*V,z); col.push(lr*0.9,lg*0.9,lb*0.9);
+        }
+      }
+    } }
+  w.pos = pos; w.col = col; w.mpos = mpos; w.mcol = mcol; w.TOPI = TOPI;
+}
+/* ---------- src/gen/props.mjs ---------- */
+/**
+ * Props: everything stamped onto the surface after the ground is final —
+ * trees, boulders, natural arcs, scree, clutter, the ruin and holding on the
+ * routed sites, lamps along the trail, deck bridges, and one landmark tall
+ * enough to see from three chunks away.
+ *
+ * makeStamps(w) builds the kit once per world; the kit closes over the voxel
+ * arrays, so a stamp is a call and not a mesh. Everything lands on the 25 cm
+ * grid, and nothing here knows what a renderer is.
+ */
+
+
+
+/** The stamp kit for one world: pure geometry, pushed into w's voxel arrays. */
+function makeStamps(w) {
+  var R = w.R, pos = w.pos, col = w.col, mpos = w.mpos, mcol = w.mcol,
+      half = w.half, NX = w.NX, NZ = w.NZ, Hs = w.Hs, FLG = w.FLG, y;
+  function addVox(px,py,pz,hex,k2){ pos.push(Math.round(px/V)*V,Math.round(py/V)*V,Math.round(pz/V)*V); pushShade(col,hex,k2); }
+  function surfAt(px,pz){var i2=clamp(Math.round((px+half)/V),0,NX-1),j2=clamp(Math.round((pz+half)/V),0,NZ-1);var k2=i2*NZ+j2;return {y:Hs[k2],f:FLG[k2]};}
+  function tree(px,pz,b,t){
+    var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
+    var th, r, ax, ay, az;
+    if(t==='conifer'){
+      th=3+R()*2;
+      for(y=0;y<th;y+=V) addVox(px,y0+y,pz,b.k==='frost'?0x4a4038:0x4a3a2c,0.9+R()*0.2);
+      for(var lv=0;lv<5;lv++){
+        var ly=y0+th*0.35+lv*(th*0.15), lr=(1.5-lv*0.24);
+        for(ax=-lr;ax<=lr;ax+=V)for(az=-lr;az<=lr;az+=V){
+          if(ax*ax+az*az>lr*lr) continue;
+          addVox(px+ax,ly,pz+az,(b.k==='frost'&&R()<0.45)?0xdfe7ee:(R()<0.5?0x2f5233:0x3c6b3e),0.85+R()*0.3);
+        }
+      }
+    } else if(t==='scrub'){
+      th=1+R()*1.2;
+      for(y=0;y<th;y+=V) addVox(px,y0+y,pz,0x6b5233,0.9+R()*0.2);
+      r=0.7+R()*0.4;
+      for(ax=-r;ax<=r;ax+=V)for(ay=-r*0.5;ay<=r*0.6;ay+=V)for(az=-r;az<=r;az+=V){
+        if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.5)>1-R()*0.3) continue;
+        addVox(px+ax,y0+th+ay,pz+az,R()<0.5?0x6f7f42:0x87904a,0.85+R()*0.3);
+      }
+    } else if(t==='snag'){
+      th=2.5+R()*1.8;
+      for(y=0;y<th;y+=V) addVox(px+(y>th*0.6?V:0),y0+y,pz,R()<0.5?0x2e2825:0x3a322e,0.85+R()*0.25);
+      for(var br=0;br<3;br++){var bl=0.5+R()*0.7,dirx=R()<0.5?1:-1,by=y0+th*(0.55+br*0.15);
+        for(var t2=0;t2<bl;t2+=V) addVox(px+dirx*t2,by+t2*0.4,pz+(R()-0.5)*0.3,0x332b27,0.9);}
+    } else {
+      th=2.5+R()*1.5;
+      for(y=0;y<th;y+=V)for(ax=-V;ax<=V;ax+=V)for(az=-V;az<=V;az+=V)
+        if(Math.abs(ax)+Math.abs(az)<=V) addVox(px+ax,y0+y,pz+az,0x5a4130,0.85+R()*0.3);
+      r=1.1+R()*0.55;
+      for(ax=-r;ax<=r;ax+=V)for(ay=-r*0.8;ay<=r*0.8;ay+=V)for(az=-r;az<=r;az+=V){
+        if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.68)>1-R()*0.28) continue;
+        addVox(px+ax,y0+th+r*0.5+ay,pz+az,R()<0.15?0x8ea84b:(R()<0.5?0x4f7a3a:0x628f45),0.8+R()*0.35);
+      }
+    }
+  }
+  function boulder(px,pz,r,b){
+    var s=surfAt(px,pz); if(s.f&1) return; var y0=s.y;
+    for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
+      if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
+      addVox(px+ax,y0+r*0.45+ay,pz+az,pickFrom(b.rock,R),0.85+R()*0.3);
+    }
+  }
+  function scree(px,pz,dom,n){
+    for(var q=0;q<n;q++){
+      var sx=px+(R()-0.5)*2.4, sz=pz+(R()-0.5)*2.4, s=surfAt(sx,sz); if(s.f&1) continue;
+      var n2=(R()<0.3)?2:1;
+      for(var a=0;a<n2;a++)for(var b=0;b<n2;b++)for(var c2=0;c2<n2;c2++)
+        addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickFrom(BIOMES[dom].rock,R),0.8+R()*0.3);
+    }
+  }
+  function bush(px,pz,dom){
+    var s=surfAt(px,pz); if(s.f) return;
+    var r=0.35+R()*0.35;
+    var cols=(dom===4)?[0x6f8390,0x8aa3ad]:(dom===3?[0x3b332e,0x4a403a]:(dom===1?[0x6f7f42,0x87904a]:[0x3f6b34,0x4e7d3e,0x5d8c46]));
+    for(var ax=-r;ax<=r;ax+=V)for(var ay=0;ay<=r*1.5;ay+=V)for(var az=-r;az<=r;az+=V){
+      if((ax*ax+az*az)/(r*r)+((ay-r*0.65)*(ay-r*0.65))/(r*r*0.65)>1-R()*0.3) continue;
+      addVox(px+ax,s.y+ay+V/2,pz+az,pickFrom(cols,R),0.85+R()*0.3);
+    }
+  }
+  function stump(px,pz){
+    var s=surfAt(px,pz); if(s.f) return;
+    for(var y2=0;y2<0.55;y2+=V)for(var ax=-V;ax<=V;ax+=V)for(var az=-V;az<=V;az+=V)
+      if(Math.abs(ax)+Math.abs(az)<=V)
+        addVox(px+ax,s.y+y2+V/2,pz+az,(y2>0.3&&ax===0&&az===0)?0x8a6a4a:0x5a4130,0.9+R()*0.2);
+  }
+  function fallenTrunk(px,pz){
+    var s0=surfAt(px,pz); if(s0.f) return;
+    var ang=R()*Math.PI, dx=Math.cos(ang), dz=Math.sin(ang), L=2+R()*2.2;
+    for(var t2=-L/2;t2<=L/2;t2+=V)for(var ay=0;ay<=0.55;ay+=V)for(var b=-0.3;b<=0.3;b+=V){
+      if((ay-0.28)*(ay-0.28)+b*b>0.082) continue;
+      addVox(px+dx*t2-dz*b,s0.y+ay+V/2,pz+dz*t2+dx*b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25);
+    }
+  }
+  function fence(px,pz,ang,len){
+    var dx=Math.cos(ang),dz=Math.sin(ang);
+    for(var t2=0;t2<=len;t2+=1){
+      var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
+      for(var y2=0;y2<1.0;y2+=V) addVox(xx,s.y+y2+V/2,zz,0x6b5a45,0.9+R()*0.2);
+      if(t2<len) for(var u=0;u<1;u+=V){
+        addVox(xx+dx*u,s.y+0.8,zz+dz*u,0x5f5040,0.95);
+        addVox(xx+dx*u,s.y+0.4,zz+dz*u,0x5f5040,0.95);
+      }
+    }
+  }
+  function lamp(px,pz){
+    var s=surfAt(px,pz); if(s.f) return null;
+    for(var y2=0;y2<2.5;y2+=V) addVox(px,s.y+y2+V/2,pz,0x3f4650,0.9+R()*0.15);
+    addVox(px+V,s.y+2.5,pz,0x3f4650,0.95); addVox(px+2*V,s.y+2.5,pz,0x3f4650,0.95);
+    var lx=Math.round((px+2*V)/V)*V, ly=Math.round((s.y+2.25)/V)*V;
+    mpos.push(lx,ly,pz); pushShade(mcol,0xffd08a,1);
+    return [lx,ly,pz];
+  }
+  function wallRun(px,pz,ang,len,h,dom){
+    var dx=Math.cos(ang),dz=Math.sin(ang);
+    for(var t2=0;t2<=len;t2+=V){
+      if(R()<0.05){ t2+=0.75; continue; }
+      var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
+      var hh2=h*(0.55+0.45*Math.abs(Math.sin(t2*0.7)));
+      for(var y2=0;y2<hh2;y2+=V)for(var b=-0.25;b<=0.25;b+=V)
+        addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2);
+    }
+  }
+  function pillarRuin(px,pz,h,dom){
+    var s=surfAt(px,pz); if(s.f) return;
+    for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V)
+      addVox(px+b1,s.y+V/2,pz+b2,pickFrom(BIOMES[dom].rock,R),0.95);
+    for(var y2=V;y2<h;y2+=V){
+      var rr2=(y2>h-0.6&&R()<0.5)?0.25:0.375;
+      for(var a1=-rr2;a1<=rr2;a1+=V)for(var a2=-rr2;a2<=rr2;a2+=V)
+        addVox(px+a1,s.y+y2+V/2,pz+a2,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.22);
+    }
+  }
+  function hut(px,pz,dom){
+    var s=surfAt(px,pz); if(s.f) return;
+    var w=3.0,h=2.25;
+    for(var a=-w/2;a<=w/2;a+=V)for(var b=-w/2;b<=w/2;b+=V){
+      if(Math.abs(a)<w/2-V&&Math.abs(b)<w/2-V) continue;
+      if(a>-0.6&&a<0.6&&b>w/2-V) continue;
+      var hh2=h*(R()<0.22?0.45+R()*0.4:1);
+      for(var y2=0;y2<hh2;y2+=V) addVox(px+a,s.y+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.2);
+    }
+    for(var a2=-w/2;a2<=w/2;a2+=V)for(var b2=-w/2;b2<=w/2;b2+=V)
+      if(R()<0.3) addVox(px+a2,s.y+h+V/2,pz+b2,0x5a4130,0.9);
+  }
+  function deckBridge(px,pz,di,dj,len,y){
+    for(var t2=-len/2;t2<=len/2;t2+=V)for(var b=-0.75;b<=0.75;b+=V)
+      addVox(px+di*t2-dj*b,y,pz+dj*t2+di*b,R()<0.25?0x6b5a45:0x5a4a38,0.9+R()*0.2);
+    for(var side=-1;side<=1;side+=2)for(var t3=-len/2;t3<=len/2;t3+=0.5)
+      addVox(px+di*t3-dj*side*0.75,y+0.5,pz+dj*t3+di*side*0.75,0x4c3f30,0.95);
+  }
+  return { addVox: addVox, surfAt: surfAt, tree: tree, boulder: boulder, scree: scree,
+           bush: bush, stump: stump, fallenTrunk: fallenTrunk, fence: fence, lamp: lamp,
+           wallRun: wallRun, pillarRuin: pillarRuin, hut: hut, deckBridge: deckBridge };
+}
+
+/** Trees, boulders and the arcs that span a canyon. */
+function scatterProps(w, kit) {
+  var M = w.M, cells = w.cells, half = w.half, R = w.R, G = w.G, OX = w.OX, OZ = w.OZ,
+      addVox = kit.addVox, tree = kit.tree, boulder = kit.boulder, i, j;
+  var treeN=0, arcs=0;
+  for(i=0;i<M;i+=2)for(j=0;j<M;j+=2){
+    var cc=cells[i*M+j], px=-half+i+ (R()-0.5)*1.2, pz=-half+j+(R()-0.5)*1.2;
+    var bb=BIOMES[cc.dom], dens=G.wsum(cc.w,'tree')||0;
+    var td=0; for(var q=0;q<cc.w.length;q++) td+=cc.w[q]*BIOMES[q].tree.d;
+    if(!cc.water&&!cc.magma&&R()<td*0.095&&treeN<260){ tree(px,pz,bb,bb.tree.t); treeN++; }
+    else if(!cc.water&&R()<0.028) boulder(px,pz,0.5+R()*0.8,bb);
+    /* arcs where a canyon crosses rock-heavy ground */
+    if(arcs<3&&cc.canyon&&cc.canyon.d<0.6&&cc.cw>0.5&&R()<0.09){
+      var span=cc.canyon.w+2+Math.floor(R()*2), rise=3+Math.floor(R()*3);
+      var e=0.75, gx=G.canyonAt(px+OX+e,pz+OZ).d-G.canyonAt(px+OX-e,pz+OZ).d, gz=G.canyonAt(px+OX,pz+OZ+e).d-G.canyonAt(px+OX,pz+OZ-e).d;
+      var L=Math.hypot(gx,gz)||1; gx/=L; gz/=L;
+      var base=Math.max(0,cc.H);
+      for(var t3=0;t3<=1.0001;t3+=0.01){
+        var ox2=(t3-0.5)*span, yy=base+Math.sin(Math.PI*t3)*rise;
+        var cxp=px+gx*ox2, czp=pz+gz*ox2;
+        var thick=0.5+0.5*(1-Math.sin(Math.PI*t3));
+        for(var w2=-0.75;w2<=0.75;w2+=V)for(var dy=-thick;dy<=thick*0.4;dy+=V)
+          addVox(cxp-gz*w2,yy+dy,czp+gx*w2,pickFrom(BIOMES[cc.dom].rock,R),0.9+R()*0.2);
+      }
+      arcs++;
+    }
+  }
+}
+
+/** Scree at every cliff foot, clutter off the trails, the sites, lamps, crossings. */
+function placeClutter(w, kit) {
+  var M = w.M, cells = w.cells, half = w.half, R = w.R, TRAIL = w.TRAIL, sites = w.sites,
+      bridges = w.bridges, scree = kit.scree, bush = kit.bush, stump = kit.stump,
+      fallenTrunk = kit.fallenTrunk, fence = kit.fence, lamp = kit.lamp,
+      wallRun = kit.wallRun, pillarRuin = kit.pillarRuin, hut = kit.hut,
+      deckBridge = kit.deckBridge, i, j;
+  var lamps=[];
+  for(i=2;i<M-2;i++)for(j=2;j<M-2;j++){
+    var c0=cells[i*M+j], px0=-half+i, pz0=-half+j;
+    for(var dd=0;dd<4;dd++){
+      var di=DIRS4[dd][0], dj=DIRS4[dd][1], c1=cells[(i+di)*M+(j+dj)];
+      if(!c1||c0.H-c1.H<2) continue;
+      if(R()<0.32) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((R()*4)|0));
+      break;
+    }
+  }
+  /* scattered clutter, kept off the trails */
+  for(i=1;i<M-1;i++)for(j=1;j<M-1;j++){
+    var cc2=cells[i*M+j];
+    if(cc2.water||cc2.magma||TRAIL[i*M+j]) continue;
+    var px2=-half+i+(R()-0.5)*0.8, pz2=-half+j+(R()-0.5)*0.8, dm=cc2.dom, rv=R();
+    if(rv<0.032) bush(px2,pz2,dm);
+    else if(rv<0.0365&&(dm===0||dm===2)) stump(px2,pz2);
+    else if(rv<0.0405&&(dm===0||dm===2)) fallenTrunk(px2,pz2);
+    else if(rv<0.050) scree(px2,pz2,dm,2+((R()*3)|0));
+  }
+  /* a ruin and a holding on the sites the trails were routed to */
+  for(var ps=0;ps<sites.length;ps++){
+    var pi=sites[ps][0], pj=sites[ps][1], cp=cells[pi*M+pj];
+    var px3=-half+pi, pz3=-half+pj, ang3=R()*6.28, dm3=cp.dom;
+    if(ps===0){
+      for(var q3=0;q3<4;q3++) pillarRuin(px3+Math.cos(ang3)*(q3*2-3),pz3+Math.sin(ang3)*(q3*2-3),2+R()*2,dm3);
+      wallRun(px3-Math.sin(ang3)*2.5,pz3+Math.cos(ang3)*2.5,ang3,7,1.5,dm3);
+      scree(px3,pz3,dm3,8);
+    } else {
+      hut(px3,pz3,dm3);
+      fence(px3+2.5,pz3-3,ang3,6);
+    }
+  }
+  /* lamps stand along the route, not scattered over the field */
+  var trailCells=[];
+  for(i=2;i<M-2;i++)for(j=2;j<M-2;j++)
+    if(TRAIL[i*M+j]&&!cells[i*M+j].water) trailCells.push([i,j]);
+  for(var lq=0;lq<3&&trailCells.length;lq++){
+    var tcq=trailCells[Math.floor((lq+0.5)/3*trailCells.length)];
+    var lp=lamp(-half+tcq[0]+0.6,-half+tcq[1]+0.6);
+    if(lp) lamps.push(lp);
+  }
+  /* crossings, placed where the route meets water */
+  for(var bq=0;bq<bridges.length;bq++){
+    var bd=bridges[bq];
+    deckBridge(bd[0],bd[1],bd[2],bd[3],bd[4],bd[5]);
+  }
+  w.lamps = lamps;
+}
+
+/** One landmark per region, on the highest flat ground that is not a trail. */
+function placeLandmark(w, kit) {
+  var M = w.M, cells = w.cells, half = w.half, R = w.R, TRAIL = w.TRAIL,
+      OX = w.OX, OZ = w.OZ, mpos = w.mpos, mcol = w.mcol,
+      addVox = kit.addVox, flatAt = w.flatAt;
+  var lmPos=null;
+  function landmarkStamp(px,pz,kind,dom,base){
+    var a,b,y2,r2;
+    if(kind===0){                                   /* obelisk */
+      for(a=-1;a<=1;a+=V)for(b=-1;b<=1;b+=V) addVox(px+a,base+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2);
+      for(y2=V;y2<11;y2+=V){
+        r2=0.5*(1-y2/16);
+        for(a=-r2;a<=r2;a+=V)for(b=-r2;b<=r2;b+=V)
+          addVox(px+a,base+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25);
+      }
+      mpos.push(Math.round(px/V)*V,Math.round((base+11.2)/V)*V,Math.round(pz/V)*V);
+      pushShade(mcol,0x9fe3ff,1);
+    } else if(kind===1){                            /* hive tree */
+      for(y2=0;y2<8;y2+=V)for(a=-0.5;a<=0.5;a+=V)for(b=-0.5;b<=0.5;b+=V)
+        if(a*a+b*b<0.3) addVox(px+a,base+y2+V/2,pz+b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25);
+      r2=3.2;
+      for(a=-r2;a<=r2;a+=V)for(y2=-2.2;y2<=2.2;y2+=V)for(b=-r2;b<=r2;b+=V){
+        if((a*a+b*b)/(r2*r2)+(y2*y2)/5.5>1-R()*0.25) continue;
+        addVox(px+a,base+8.5+y2,pz+b,R()<0.1?0xb7d84f:(R()<0.5?0x3f6630:0x507f3c),0.8+R()*0.35);
+      }
+      for(var hq=0;hq<7;hq++){
+        mpos.push(Math.round((px+(R()-0.5)*5)/V)*V,Math.round((base+7.5+R()*3)/V)*V,Math.round((pz+(R()-0.5)*5)/V)*V);
+        pushShade(mcol,0xb7f04f,1);
+      }
+    } else if(kind===2){                            /* wrecked machine */
+      for(var sl=0;sl<3;sl++){
+        var ax2=Math.cos(sl*2.1), az2=Math.sin(sl*2.1);
+        for(var t4=0;t4<6;t4+=V)for(b=-0.9;b<=0.9;b+=V)
+          addVox(px+ax2*t4*0.75-az2*b, base+t4*0.8+V/2, pz+az2*t4*0.75+ax2*b, R()<0.3?0x6a6259:0x4a443e,0.85+R()*0.25);
+      }
+      for(var cq3=0;cq3<5;cq3++){
+        mpos.push(Math.round((px+(R()-0.5)*1.5)/V)*V,Math.round((base+1+R()*1.5)/V)*V,Math.round((pz+(R()-0.5)*1.5)/V)*V);
+        pushShade(mcol,0xff9a3c,1);
+      }
+    } else {                                        /* standing stones */
+      for(var st=0;st<6;st++){
+        var sa=st/6*6.283, sx=px+Math.cos(sa)*4, sz2=pz+Math.sin(sa)*4, sh=2.5+R()*1.5;
+        for(y2=0;y2<sh;y2+=V)for(a=-0.375;a<=0.375;a+=V)for(b=-0.25;b<=0.25;b+=V)
+          addVox(sx+a,base+y2+V/2,sz2+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25);
+      }
+    }
+  }
+  (function(){
+    var best=null,a,b;
+    for(a=6;a<M-6;a+=2)for(b=6;b<M-6;b+=2){
+      var cq4=cells[a*M+b];
+      if(cq4.water||cq4.magma||TRAIL[a*M+b]) continue;
+      if(!flatAt(a,b,1)) continue;
+      if(!best||cq4.H>best.h) best={a:a,b:b,h:cq4.H,dom:cq4.dom};
+    }
+    if(!best) return;
+    var kinds=(best.dom===3)?[2,0]:((best.dom===1)?[0,3]:((best.dom===4)?[3,0]:[1,3]));
+    var kind=kinds[Math.abs(Math.round(OX*0.37+OZ*0.11))%kinds.length];
+    landmarkStamp(-half+best.a,-half+best.b,kind,best.dom,best.h);
+    lmPos=[-half+best.a,best.h+(kind===0?12:(kind===1?11:4)),-half+best.b];
+  })();
+  w.lmPos = lmPos;
+}
+/* ---------- src/gen/grass.mjs ---------- */
+/**
+ * Grass. One blade cloud per world: position, phase, tint, scale and yaw, all
+ * plain arrays for the renderer to instance however it likes. Density, height
+ * and colour are blended across the biomes present in the cell, not picked
+ * from the dominant one, so a border reads as a gradient.
+ */
+
+
+
+function buildGrass(w) {
+  var NX = w.NX, NZ = w.NZ, Hs = w.Hs, FLG = w.FLG, half = w.half,
+      cellAt = w.cellAt, R = w.R, i, j, k, x, z;
+  var gpos=[],gph=[],gtint=[],gsc=[],gyaw=[],gcol=[];
+  for(i=0;i<NX;i+=2)for(j=0;j<NZ;j+=2){
+    k=i*NZ+j; if(FLG[k]) continue;
+    x=-half+i*V+V/2; z=-half+j*V+V/2;
+    var n0b=i>0?Hs[k-NZ]:Hs[k], n1b=j>0?Hs[k-1]:Hs[k];
+    if(Hs[k]-Math.min(n0b,n1b)>0.6) continue;
+    var cq=cellAt(x,z), dsum=0,hbase=0,hvar=0,cr=0,cg=0,cb=0,dry=0;
+    for(var q2=0;q2<cq.w.length;q2++){var B2=BIOMES[q2],w2b=cq.w[q2];
+      dsum+=w2b*B2.gr.d; hbase+=w2b*B2.gr.h[0]; hvar+=w2b*B2.gr.h[1];
+      cr+=w2b*shadeR(B2.gr.c,1); cg+=w2b*shadeG(B2.gr.c,1); cb+=w2b*shadeB(B2.gr.c,1);
+    }
+    var nb=Math.floor(dsum*3.2); if(R()<dsum*3.2-nb) nb++;
+    for(var g2=0;g2<nb;g2++){
+      gpos.push(x+(R()-0.5)*0.5,Hs[k],z+(R()-0.5)*0.5);
+      gph.push(R()*6.28); gtint.push(R()<0.15?1:0);
+      gsc.push(hbase+R()*hvar); gyaw.push(R()*3.14);
+      gcol.push(cr,cg,cb);
+    }
+  }
+  w.grass = { p: gpos, ph: gph, ti: gtint, sc: gsc, yw: gyaw, c: gcol };
+}
+/* ---------- src/gen/reach.mjs ---------- */
+/**
+ * Reach and spawn. Floods the world from the spawn under the movement rules
+ * from docs/DECISIONS.md §3 — step, vault, jump, fall — and marks everything
+ * the flood never touches. The plate draws that as the traversability overlay;
+ * the smoke test asserts on it. A world with a large unreachable fraction is
+ * a world with terrain a player cannot use.
+ *
+ * Sets w.REACH (per cell), w.UNREACH (per voxel column) and w.spawn.
+ */
+
+
+function floodReach(w) {
+  var M = w.M, cells = w.cells, half = w.half, trailPath = w.trailPath, ci = w.ci,
+      NX = w.NX, NZ = w.NZ, i, j;
+  var REACH=new Uint8Array(M*M);
+  (function(){
+    var st=-1,q;
+    for(q=0;q<trailPath.length&&st<0;q++) if(!cells[trailPath[q]].water) st=trailPath[q];
+    if(st<0){
+      var mid=(M/2)|0;
+      for(var rr2=0;rr2<M&&st<0;rr2++)for(var a=1;a<M-1&&st<0;a++)for(var b=1;b<M-1;b++){
+        var cq=cells[a*M+b];
+        if(!cq.water&&!cq.magma){ st=a*M+b; break; }
+      }
+    }
+    if(st<0) return;
+    var queue=[st],head=0; REACH[st]=1;
+    function tryMove(from,nx,nz,mid2){
+      if(nx<0||nz<0||nx>=M||nz>=M) return;
+      var nk=nx*M+nz; if(REACH[nk]) return;
+      var cc=cells[from], nc=cells[nk];
+      if(nc.magma) return;
+      if(nc.water&&(nc.wl-nc.H)>1.5) return;
+      if(mid2!==null){
+        var mc=cells[mid2];
+        if(mc.magma) return;
+        if(!(mc.water||mc.H<=cc.H-1)) return;
+        if(Math.abs(nc.H-cc.H)>MOVE.step) return;
+      } else {
+        var dh=nc.H-cc.H;
+        if(dh>MOVE.vault||dh< -MOVE.fall) return;
+      }
+      REACH[nk]=1; queue.push(nk);
+    }
+    while(head<queue.length){
+      var cu=queue[head++], cx=(cu/M)|0, cz=cu%M;
+      for(var d3=0;d3<4;d3++){
+        var dx=DIRS4[d3][0], dz=DIRS4[d3][1];
+        tryMove(cu,cx+dx,cz+dz,null);
+        tryMove(cu,cx+dx*2,cz+dz*2,(cx+dx)*M+(cz+dz));
+      }
+    }
+  })();
+  var UNREACH=new Uint8Array(NX*NZ);
+  for(i=0;i<NX;i++)for(j=0;j<NZ;j++){
+    var ux=-half+i*V+V/2, uz=-half+j*V+V/2;
+    UNREACH[i*NZ+j]=REACH[ci(ux)*M+ci(uz)]?0:1;
+  }
+  w.REACH = REACH; w.UNREACH = UNREACH;
+}
+
+/** Flat dry ground on the route near the middle, or failing that, anywhere flat. */
+function chooseSpawn(w) {
+  var M = w.M, cells = w.cells, half = w.half, trailPath = w.trailPath, R = w.R,
+      NX = w.NX, NZ = w.NZ, Hs = w.Hs, FLG = w.FLG, k;
+  var spawn=null;
+  for(var tp=0;tp<trailPath.length&&!spawn;tp++){
+    var tc2=cells[trailPath[tp]];
+    if(tc2.water||tc2.magma) continue;
+    var tpi=(trailPath[tp]/M)|0, tpj=trailPath[tp]%M;
+    if(Math.abs(tpi-M/2)+Math.abs(tpj-M/2)>10) continue;
+    spawn=[-half+tpi,tc2.H,-half+tpj];
+  }
+  for(var tries=0;tries<900&&!spawn;tries++){
+    var si=((NX*0.5)|0)+((R()-0.5)*NX*0.4|0), sj=((NZ*0.5)|0)+((R()-0.5)*NZ*0.4|0);
+    si=clamp(si,2,NX-3); sj=clamp(sj,2,NZ-3); k=si*NZ+sj;
+    if(!FLG[k]&&Math.abs(Hs[k]-Hs[k+NZ])<0.3&&Math.abs(Hs[k]-Hs[k+1])<0.3)
+      spawn=[-half+si*V,Hs[k],-half+sj*V];
+  }
+  if(!spawn) spawn=[0,Hs[((NX/2)|0)*NZ+((NZ/2)|0)],0];
+  w.spawn = spawn;
+}
+/* ---------- src/gen/index.mjs ---------- */
+/**
+ * Quarterstone's terrain generator.
+ *
+ *   import { buildWorld } from './src/gen/index.mjs';
+ *   const world = buildWorld({ seed: 'QUARTERSTONE', size: 64, force: null, ox: 0, oz: 0 });
+ *
+ * No DOM, no three.js, no renderer of any kind: this runs the same in Node, in
+ * a worker and in the browser, and returns plain arrays and typed arrays. The
+ * concept plate (docs/concept/index.html) draws what comes out of here; it is
+ * one consumer, not the owner.
+ *
+ * The pass order below is the generator: each pass reads what the ones before
+ * it left on the world object, and the random stream is consumed in exactly
+ * this order — which is why a seed reproduces a world, and why reordering a
+ * pass is a change to every world, not a refactor. tools/smoke.mjs pins six
+ * seeds against tools/baseline.json to keep that honest.
+ */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/** The cell grid: one 1 m cell per lattice point, sampled from the fields. */
+function seedCells(cfg) {
+  var S = cfg.size, force = (cfg.force === undefined ? null : cfg.force);
+  var G = makeGen(cfg.seed, force), half = S / 2;
+  var OX = cfg.ox || 0, OZ = cfg.oz || 0;
+  var M = S + 1, cells = new Array(M * M), i, j, mx, mz;
+  for (i = 0; i < M; i++) {
+    mx = -half + i;
+    for (j = 0; j < M; j++) { mz = -half + j; cells[i * M + j] = G.cell(mx + OX, mz + OZ); }
+  }
+  var w = { cfg: cfg, size: S, G: G, R: G.rnd, half: half, OX: OX, OZ: OZ, M: M, cells: cells };
+  w.cellAt = function (mx2, mz2) {
+    var a = clamp(Math.round(mx2 + half), 0, M - 1), b = clamp(Math.round(mz2 + half), 0, M - 1);
+    return cells[a * M + b];
+  };
+  return w;
+}
+
+function buildWorld(cfg) {
+  var w = seedCells(cfg);
+  erode(w);                    /* talus at the cliff feet, banks cut back */
+  layRoutes(w);                /* sites, A* routes, grading, crossings */
+  cutSpans(w);                 /* caves cut, then rims undercut over them */
+  fillWaterTable(w);           /* hollows flood until they spill */
+  flowField(w);                /* one downhill vector per cell */
+  sampleGrid(w);               /* 1 m cells resampled onto the voxel grid */
+  buildVoxels(w);              /* the terrain voxels themselves */
+  var kit = makeStamps(w);
+  scatterProps(w, kit);        /* trees, boulders, canyon arcs */
+  placeClutter(w, kit);        /* scree, clutter, the sites, lamps, bridges */
+  placeLandmark(w, kit);       /* one landmark, visible three chunks away */
+  buildGrass(w);
+  buildWaterGeometry(w);
+  floodReach(w);               /* what the movement budget can actually reach */
+  chooseSpawn(w);
+  return {
+    pos: w.pos, col: w.col, mpos: w.mpos, mcol: w.mcol,
+    grass: w.grass, water: w.water, lamps: w.lamps,
+    ovhPos: w.ovhPos, lmPos: w.lmPos, trail: w.TRAIL, topi: w.TOPI,
+    unreach: w.UNREACH, reach: w.REACH, bridges: w.bridges,
+    Hs: w.Hs, FLG: w.FLG, NX: w.NX, NZ: w.NZ, half: w.half,
+    cells: w.cells, M: w.M, spawn: w.spawn, size: w.size,
+  };
+}
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,makeGen:makeGen,buildWorld:buildWorld};
+})();
+/* QS-BUNDLE-END */
+</script>
 <script>
 /* ============================== data ============================== */
 var DISC={tech:{nm:'Tech',c:'#f0a72b'},magic:{nm:'Magic',c:'#4fc3cd'},bio:{nm:'Biological',c:'#9ed24b'}};
@@ -387,23 +1589,9 @@ var FUSIONS=[
  {a:'SPO',b:'VIN',nm:'Creeping thicket',ds:'The colony travels the tendrils and roots the ground where they land.',st:'2 m net · 25% slow · 6 s'},
  {a:'KIN',b:'SRV',nm:'Overdrive',ds:'The battery feeds the servo directly. Faster than the frame can shed heat.',st:'+30% swing · jams at 12 hits'}
 ];
-var BIOMES=[
- {k:'meadow',nm:'Meadowlands',t:0.58,m:0.66,c:'#6b9a45',ds:'Broadleaf stands, meandering rivers, boulder fields. The tutorial biome and the one the palette is calibrated against.',mt:'base 3 m · hills 1–3 m · rivers common',
-  surf:[0x5f8f3e,0x6b9a45,0x557f36,0x74a24e],soil:[0x6b4f33,0x5a4229,0x7a5a3c],rock:[0x7d7a72,0x8b877e,0x6d6a63],bed:[0xcbb187,0xd6bd94],
-  gr:{d:0.9,c:0x86ab4f,dry:0xb6a35a,h:[0.30,0.28]},tree:{t:'broad',d:0.9},base:3,hill:3,canyon:0.1,col:0.05},
- {k:'mesa',nm:'Redrock Mesa',t:0.82,m:0.20,c:'#c08a52',ds:'Stacked sandstone, dry washes, hoodoos. Canyons and arcs are generated here more than anywhere else.',mt:'base 6 m · hills 1–2 m · canyons 3–5 m',
-  surf:[0xc98f55,0xd6a066,0xb97f49,0xc08a52],soil:[0xa9723f,0x8f5f34],rock:[0xb07a45,0xc08a52,0x9a6a3f,0xd1a06a],bed:[0xd8c08c,0xc9ad7a],
-  gr:{d:0.35,c:0xc0a760,dry:0xd8c07a,h:[0.26,0.22]},tree:{t:'scrub',d:0.25},base:6,hill:2,canyon:0.85,col:0.5},
- {k:'fen',nm:'Boreal Fen',t:0.40,m:0.90,c:'#4a7a4e',ds:'Peat shelves, standing water, black conifers and reed beds. Wide slow water, poor footing.',mt:'base 2 m · hills 1 m · water 4–8 m wide',
-  surf:[0x3f6b46,0x4a7a4e,0x35603f,0x577f4a],soil:[0x3a2f24,0x2e251c],rock:[0x5b6058,0x4c5149],bed:[0x4a4432,0x3c3a2a],
-  gr:{d:1.0,c:0x5f8a48,dry:0x7d8a3e,h:[0.55,0.35]},tree:{t:'conifer',d:0.8},base:2,hill:1,canyon:0,col:0},
- {k:'ash',nm:'Ashfall Barrens',t:0.90,m:0.48,c:'#5a504a',ds:'Basalt columns, fissures and magma seams under a grey crust. Vertical cover everywhere, nothing to eat.',mt:'base 4 m · columns 2–4 m · magma seams',
-  surf:[0x3a3532,0x46403c,0x2f2a28,0x4d4642],soil:[0x2b2726,0x241f1e],rock:[0x33302f,0x3f3a38,0x282524],bed:[0x1e1a19,0x272322],
-  gr:{d:0.3,c:0x6b5a50,dry:0xd2642a,h:[0.24,0.2]},tree:{t:'snag',d:0.3},base:4,hill:2,canyon:0.3,col:0.9},
- {k:'frost',nm:'Frostmoor',t:0.12,m:0.44,c:'#cfd9e2',ds:'Snow over hard rock, frozen shelves, wind-stripped ridges. Tracks show, and so do you.',mt:'base 5 m · hills 2–3 m · ice shelves',
-  surf:[0xdfe7ee,0xe9eef4,0xcfd9e2,0xd7e0e8],soil:[0x8b95a0,0x79838e],rock:[0x6b7480,0x7c8590,0x5d6670],bed:[0x9fc9d8,0xb7dbe6],
-  gr:{d:0.45,c:0xc8d6de,dry:0x9fb4bf,h:[0.26,0.22]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
-];
+/* The biome table lives in src/gen/biomes.mjs: the same rows the generator
+   shapes ground with are the rows this document charts and tabulates. */
+var BIOMES=QS.BIOMES;
 
 var CLUTTER=[
  {g:'Natural',items:[
@@ -663,882 +1851,13 @@ function mixHex(h1,h2,t){
       annosEl=document.getElementById('annos'), fb=document.getElementById('fallback');
   if(!window.THREE){ fb.style.display='grid'; return; }
   var reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var V=0.25, CEIL=16, CHUNK=32;
-  function clamp(v,a,b){return v<a?a:(v>b?b:v);}
+  var V=QS.V, CEIL=QS.CEIL, CHUNK=QS.CHUNK, clamp=QS.clamp;
 
-  /* ---------- seeded noise ---------- */
-  function xmur3(str){var h=1779033703^str.length;
-    for(var i=0;i<str.length;i++){h=Math.imul(h^str.charCodeAt(i),3432918353);h=h<<13|h>>>19;}
-    return function(){h=Math.imul(h^h>>>16,2246822507);h=Math.imul(h^h>>>13,3266489909);h^=h>>>16;return h>>>0;};}
-  function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);
-    t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
-  function makeNoise(seed){
-    var r=mulberry32(seed),p=new Uint8Array(512),i,j,t;
-    for(i=0;i<256;i++)p[i]=i;
-    for(i=255;i>0;i--){j=(r()*(i+1))|0;t=p[i];p[i]=p[j];p[j]=t;}
-    for(i=0;i<256;i++)p[i+256]=p[i];
-    function g(x,y){return p[(p[x&255]+(y&255))&255]/255;}
-    function n2(x,y){var xi=Math.floor(x),yi=Math.floor(y),xf=x-xi,yf=y-yi;
-      var u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf);
-      var a=g(xi,yi),b=g(xi+1,yi),c=g(xi,yi+1),d=g(xi+1,yi+1);
-      return (a*(1-u)+b*u)*(1-v)+(c*(1-u)+d*u)*v;}
-    function fbm(x,y,o){var s=0,a=0.5,f=1,n=0;o=o||3;
-      for(var i=0;i<o;i++){s+=a*n2(x*f,y*f);n+=a;f*=2;a*=0.5;}return s/n;}
-    return {n2:n2,fbm:fbm};
-  }
-
-  /* ---------- generator ---------- */
-  function makeGen(seedStr,force){
-    var h=xmur3(String(seedStr));
-    var N={h:makeNoise(h()),d:makeNoise(h()),t:makeNoise(h()),m:makeNoise(h()),
-           r:makeNoise(h()),p:makeNoise(h()),c:makeNoise(h()),s:makeNoise(h()),v:makeNoise(h())};
-    var wx=(h()%9973)/13, wz=(h()%9967)/17, rr=mulberry32(h());
-    function climate(x,z){
-      var t,m,i,w=[],s=0;
-      if(force!=null){
-        t=BIOMES[force].t+(N.t.fbm(x*0.022,z*0.022,2)-0.5)*0.13;
-        m=BIOMES[force].m+(N.m.fbm(x*0.021+40,z*0.021,2)-0.5)*0.13;
-      }else{
-        t=N.t.fbm(x*0.0068+wx,z*0.0068+wz,3); m=N.m.fbm(x*0.0061+wz,z*0.0061+wx,3);
-        t=clamp((t-0.5)*2.1+0.5,0,1); m=clamp((m-0.5)*2.1+0.5,0,1);
-      }
-      for(i=0;i<BIOMES.length;i++){var dt=t-BIOMES[i].t,dm=m-BIOMES[i].m;
-        var e=Math.exp(-(dt*dt+dm*dm)/0.055);w.push(e);s+=e;}
-      for(i=0;i<w.length;i++)w[i]/=s;
-      return w;
-    }
-    function wsum(w,key){var s=0;for(var i=0;i<w.length;i++)s+=w[i]*BIOMES[i][key];return s;}
-    /* whole-metre macro height */
-    function macro(x,z,w){
-      var base=wsum(w,'base'), hill=wsum(w,'hill');
-      var n=N.h.fbm(x*0.017,z*0.017,4), n2=N.h.fbm(x*0.055+9,z*0.055+9,2);
-      return base+(n-0.38)*hill*1.9+(n2-0.5)*hill*0.55;
-    }
-    function riverAt(x,z){
-      var v=N.r.fbm(x*0.0105,z*0.0105,3), d=Math.abs(v-0.5)*155;
-      var w=1+Math.floor(N.r.n2(x*0.03+13,z*0.03+13)*4); if(w>4)w=4;
-      return {d:d,w:w};
-    }
-    function canyonAt(x,z){
-      var v=N.c.fbm(x*0.0082+5,z*0.0082+5,3), d=Math.abs(v-0.5)*120;
-      var w=3+Math.floor(N.c.n2(x*0.02+31,z*0.02+7)*3); if(w>5)w=5;
-      var dp=3+Math.floor(N.c.n2(x*0.015+3,z*0.015+3)*2); if(dp>4)dp=4;
-      return {d:d,w:w,dp:dp};
-    }
-    function pillarAt(x,z,colw){
-      if(colw<0.12) return 0;
-      var cx=Math.floor(x/4),cz=Math.floor(z/4);
-      if(N.p.n2(cx*7.7+0.5,cz*3.3+0.5)>1-0.30*colw){
-        var r=1+Math.floor(N.p.n2(cx*1.3+5,cz*2.1+5)*2);
-        var px=cx*4+2,pz=cz*4+2;
-        if(Math.max(Math.abs(x-px),Math.abs(z-pz))<=r-0.5)
-          return 2+Math.floor(N.p.n2(cx*0.7,cz*0.9)*3);
-      }
-      return 0;
-    }
-    /* one 1 m cell: everything sized in whole metres */
-    function cell(x,z){
-      var w=climate(x,z);
-      var hm=macro(x,z,w), H=Math.round(hm);
-      var cw=wsum(w,'canyon'), colw=wsum(w,'col');
-      var c=null;
-      if(cw>0.28){ c=canyonAt(x,z);
-        if(c.d<c.w/2) H-=c.dp;
-        else if(c.d<c.w/2+2) H-=Math.round(c.dp*(1-(c.d-c.w/2)/2));
-      }
-      H+=pillarAt(x,z,colw);
-      var r=riverAt(x,z), rw=r.w+Math.round(w[2]*3), water=false, pond=false, wl=0;
-      if(r.d<rw/2){ H-=1; water=true; }
-      if(!water&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
-        var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
-        if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
-      }
-      var magma=false;
-      if(w[3]>0.5){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
-        if(f<0.022){ H-=1; magma=true; water=false; } }
-      H=clamp(H,0,CEIL);
-      if(water) wl=H+(pond?1.25:0.75);
-      var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-      return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw};
-    }
-    function rawH(x,z){ return macro(x,z,climate(x,z)); }
-    /* a column is a run of solid spans, not one height: this is what lets a
-       tunnel open onto a cliff face and a rim hang over nothing */
-    function caveAt(x,y,z){
-      var a=N.v.n2(x*0.070+y*0.10, z*0.070-y*0.085);
-      var b=N.v.n2(z*0.058-y*0.065, x*0.058+y*0.050);
-      return Math.abs(a-0.5)+Math.abs(b-0.5);
-    }
-    function spansFor(x,z,H){
-      var sp=[],run=null,y;
-      for(y=0;y<H;y++){
-        var solid=!(y>=1&&y<=H-2&&caveAt(x,y+0.5,z)<0.062);
-        if(solid){ if(run) run[1]=y+1; else run=[y,y+1]; }
-        else if(run){ sp.push(run); run=null; }
-      }
-      if(run) sp.push(run);
-      if(!sp.length) sp.push([0,Math.max(H,1)]);
-      return sp;
-    }
-    function detail(x,z){ return (Math.round(N.d.fbm(x*0.62,z*0.62,2)*4)-2)*V; }
-    return {cell:cell,detail:detail,climate:climate,rnd:rr,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor};
-  }
-
-  /* ---------- world build ---------- */
-  var CBOX=new THREE.Color();
-  var SNOW=[0xe7eef4,0xdae3ec,0xf1f6fa], ASHFALL=[0x6b635c,0x746c64,0x5c554f],
-      PATH=[0x9a7c54,0x8d7049,0xa68960,0x7f6641];
-  function pickFrom(arr,r){return arr[(r()*arr.length)|0];}
-  function rouletteBiome(w,r){var p=[],t=0,i;
-    for(i=0;i<w.length;i++){var e=w[i]*w[i]*w[i]*w[i]*w[i];p.push(e);t+=e;}
-    var v=r()*t,s=0;for(i=0;i<w.length;i++){s+=p[i];if(v<=s)return i;}return w.length-1;}
-
-  function buildWorld(cfg){
-    var seed=cfg.seed, S=cfg.size, force=(cfg.force===undefined?null:cfg.force);
-    var G=makeGen(seed,force), R=G.rnd, half=S/2, OX=cfg.ox||0, OZ=cfg.oz||0;
-    var M=S+1, cells=new Array(M*M), i,j,mx,mz;
-    for(i=0;i<M;i++){ mx=-half+i;
-      for(j=0;j<M;j++){ mz=-half+j; cells[i*M+j]=G.cell(mx+OX,mz+OZ); } }
-    function cellAt(mx,mz){
-      var i=clamp(Math.round(mx+half),0,M-1), j=clamp(Math.round(mz+half),0,M-1);
-      return cells[i*M+j];
-    }
-    var DIRS4=[[1,0],[-1,0],[0,1],[0,-1]], d0;
-    /* --- erosion: talus gathers at cliff feet, high banks get cut back --- */
-    (function(){
-      var Hn=new Int16Array(M*M),a,b;
-      for(a=0;a<M*M;a++) Hn[a]=cells[a].H;
-      for(a=1;a<M-1;a++)for(b=1;b<M-1;b++){
-        var c0=cells[a*M+b]; if(c0.water||c0.magma) continue;
-        var hi=0,nearW=false;
-        for(d0=0;d0<4;d0++){
-          var cn=cells[(a+DIRS4[d0][0])*M+(b+DIRS4[d0][1])];
-          if(cn.H-c0.H>hi) hi=cn.H-c0.H;
-          if(cn.water) nearW=true;
-        }
-        if(hi>=3&&R()<0.5) Hn[a*M+b]=c0.H+1;
-        else if(hi===2&&R()<0.2) Hn[a*M+b]=c0.H+1;
-        else if(nearW&&c0.H>=3&&R()<0.3) Hn[a*M+b]=c0.H-1;
-      }
-      for(a=0;a<M*M;a++) cells[a].H=clamp(Hn[a],0,CEIL);
-    })();
-    /* --- movement model: what a player can actually cross --- */
-    var MOVE={step:1,vault:2,jump:2.5,wade:0.75,fall:6};
-    function passCost(a,b){
-      if(b.magma) return -1;
-      var dh=b.H-a.H;
-      if(dh>MOVE.vault) return -1;
-      var c=1+(dh>0?dh*3.2:(-dh)*1.1);
-      if(b.water) c+=((b.wl-b.H)>MOVE.wade)?34:6;
-      if(b.sp&&b.sp.length>1) c+=2;
-      return c;
-    }
-    function routeAStar(a0,b0,a1,b1){
-      var N2=M*M,dist=new Float32Array(N2),prev=new Int32Array(N2),seen=new Uint8Array(N2),q;
-      for(q=0;q<N2;q++){dist[q]=1e9;prev[q]=-1;}
-      var st=a0*M+b0, gl=a1*M+b1, heap=[];
-      function push(pr,v){heap.push([pr,v]);var i2=heap.length-1;
-        while(i2>0){var pi=(i2-1)>>1;if(heap[pi][0]<=heap[i2][0])break;
-          var t=heap[pi];heap[pi]=heap[i2];heap[i2]=t;i2=pi;}}
-      function pop(){var top=heap[0],last=heap.pop();
-        if(heap.length){heap[0]=last;var i2=0;
-          for(;;){var l=i2*2+1,r=l+1,sm=i2;
-            if(l<heap.length&&heap[l][0]<heap[sm][0])sm=l;
-            if(r<heap.length&&heap[r][0]<heap[sm][0])sm=r;
-            if(sm===i2)break;var t=heap[sm];heap[sm]=heap[i2];heap[i2]=t;i2=sm;}}
-        return top;}
-      dist[st]=0; push(0,st);
-      while(heap.length){
-        var cu=pop()[1];
-        if(seen[cu]) continue; seen[cu]=1;
-        if(cu===gl) break;
-        var cx=(cu/M)|0, cz=cu%M;
-        for(var d1=0;d1<4;d1++){
-          var nx=cx+DIRS4[d1][0], nz=cz+DIRS4[d1][1];
-          if(nx<1||nz<1||nx>=M-1||nz>=M-1) continue;
-          var nk=nx*M+nz; if(seen[nk]) continue;
-          var cst=passCost(cells[cu],cells[nk]); if(cst<0) continue;
-          var nd=dist[cu]+cst;
-          if(nd<dist[nk]){ dist[nk]=nd; prev[nk]=cu; push(nd,nk); }
-        }
-      }
-      if(gl!==st&&prev[gl]<0) return null;
-      var path=[],p2=gl,g2=0;
-      while(p2>=0&&g2++<5000){ path.push(p2); if(p2===st) break; p2=prev[p2]; }
-      return path.reverse();
-    }
-    /* --- sites, routes, grading: the path comes first and the ground is cut for it --- */
-    var TRAIL=new Uint8Array(M*M), sites=[], bridges=[], trailPath=[];
-    function addBridge(bx,bz,di,dj,len,y){
-      if(bridges.length>=2) return;
-      for(var q=0;q<bridges.length;q++)
-        if(Math.abs(bridges[q][0]-bx)+Math.abs(bridges[q][1]-bz)<6) return;
-      bridges.push([bx,bz,di,dj,len,y]);
-    }
-    function flatAt(pi,pj,r){
-      var cp=cells[pi*M+pj]; if(!cp||cp.water||cp.magma) return false;
-      for(var a=-r;a<=r;a++)for(var b=-r;b<=r;b++){
-        var cq=cells[(pi+a)*M+(pj+b)];
-        if(!cq||cq.water||cq.magma||Math.abs(cq.H-cp.H)>1) return false;
-      }
-      return true;
-    }
-    function dryFlood(startIdx){
-      var seen=new Uint8Array(M*M), q=[startIdx], head=0; seen[startIdx]=1;
-      while(head<q.length){
-        var cu=q[head++], cx=(cu/M)|0, cz=cu%M;
-        for(var d1=0;d1<4;d1++){
-          var nx=cx+DIRS4[d1][0], nz=cz+DIRS4[d1][1];
-          if(nx<1||nz<1||nx>=M-1||nz>=M-1) continue;
-          var nk=nx*M+nz; if(seen[nk]) continue;
-          var nc=cells[nk];
-          if(nc.water||nc.magma) continue;
-          if(Math.abs(nc.H-cells[cu].H)>MOVE.vault) continue;
-          seen[nk]=1; q.push(nk);
-        }
-      }
-      return seen;
-    }
-    (function(){
-      var cands=[],a,b;
-      for(a=6;a<M-6;a++)for(b=6;b<M-6;b++) if(flatAt(a,b,2)) cands.push(a*M+b);
-      if(!cands.length) return;
-      var A0=cands[(R()*cands.length)|0], ai=(A0/M)|0, aj=A0%M;
-      sites.push([ai,aj]);
-      /* the far bank is the interesting second site: reaching it needs a crossing */
-      var dry=dryFlood(A0), across=[], apart=[], q1;
-      for(q1=0;q1<cands.length;q1++){
-        var idx=cands[q1], di=(idx/M)|0, dj=idx%M;
-        if(Math.abs(di-ai)+Math.abs(dj-aj)<10) continue;
-        if(dry[idx]) apart.push(idx); else across.push(idx);
-      }
-      var pool=across.length?across:apart;
-      if(!pool.length) return;
-      /* try a handful: a site whose route has to cross water is the interesting one */
-      var bestIdx=-1, bestLen=-1, tries=Math.min(10,pool.length), t2;
-      for(t2=0;t2<tries;t2++){
-        var cand=pool[(R()*pool.length)|0], rp=routeAStar(ai,aj,(cand/M)|0,cand%M);
-        if(!rp) continue;
-        var wet=0,q2;
-        for(q2=0;q2<rp.length;q2++) if(cells[rp[q2]].water) wet++;
-        if(wet>0){ bestIdx=cand; break; }
-        if(rp.length>bestLen){ bestLen=rp.length; bestIdx=cand; }
-      }
-      if(bestIdx<0) bestIdx=pool[(R()*pool.length)|0];
-      sites.push([(bestIdx/M)|0,bestIdx%M]);
-    })();
-    function gradePath(path){
-      if(!path) return;
-      var q,it2,A,B;
-      for(it2=0;it2<3;it2++){
-        for(q=1;q<path.length;q++){
-          A=cells[path[q-1]]; B=cells[path[q]];
-          if(A.water||B.water) continue;
-          if(B.H-A.H>MOVE.step) B.H=A.H+MOVE.step;
-          else if(A.H-B.H>MOVE.step) B.H=A.H-MOVE.step;
-        }
-        for(q=path.length-2;q>=0;q--){
-          A=cells[path[q+1]]; B=cells[path[q]];
-          if(A.water||B.water) continue;
-          if(B.H-A.H>MOVE.step) B.H=A.H+MOVE.step;
-          else if(A.H-B.H>MOVE.step) B.H=A.H-MOVE.step;
-        }
-      }
-      /* pull the shoulders in so the route is a cutting, not a trench */
-      for(q=0;q<path.length;q++){
-        var pi=(path[q]/M)|0, pj=path[q]%M, hp=cells[path[q]].H;
-        for(var d2=0;d2<4;d2++){
-          var nc=cells[(pi+DIRS4[d2][0])*M+(pj+DIRS4[d2][1])];
-          if(!nc||nc.water||nc.magma) continue;
-          if(nc.H-hp>2) nc.H=hp+2; else if(hp-nc.H>2) nc.H=hp-2;
-        }
-      }
-    }
-    function markPath(path){
-      if(!path) return;
-      for(var q=0;q<path.length;q++){
-        var pi=(path[q]/M)|0, pj=path[q]%M;
-        if(!cells[path[q]].magma) TRAIL[path[q]]=1;
-        var pv2=path[q>0?q-1:q], di4=pi-((pv2/M)|0), dj4=pj-(pv2%M);
-        var sx=pi+dj4, sz=pj-di4;
-        if(sx>0&&sz>0&&sx<M-1&&sz<M-1&&!cells[sx*M+sz].magma) TRAIL[sx*M+sz]=1;
-        trailPath.push(path[q]);
-      }
-      /* a crossing only where the route actually meets water */
-      var w=0;
-      while(w<path.length){
-        if(!cells[path[w]].water){ w++; continue; }
-        var st2=w;
-        while(w<path.length&&cells[path[w]].water) w++;
-        var len=w-st2;
-        if(len<=12){
-          var pre=path[Math.max(0,st2-1)], post=path[Math.min(path.length-1,w)];
-          var pc=cells[pre], qc=cells[post];
-          if(!pc.magma&&!qc.magma&&!pc.water&&!qc.water){
-            var pi0=(pre/M)|0, pj0=pre%M, pi1=(post/M)|0, pj1=post%M;
-            var di=(pi1>pi0)?1:((pi1<pi0)?-1:0), dj=(pj1>pj0)?1:((pj1<pj0)?-1:0);
-            if(di&&dj) dj=0;
-            if(!di&&!dj) di=1;
-            addBridge((pi0+pi1)/2-half,(pj0+pj1)/2-half,di,dj,len+3,
-                      Math.max(pc.H,qc.H,cells[path[st2]].wl+0.5));
-          }
-        }
-      }
-    }
-    function findFord(){
-      var best=null,a,b,d1;
-      for(a=2;a<M-2;a++)for(b=2;b<M-2;b++){
-        var c0=cells[a*M+b];
-        if(c0.water||c0.magma) continue;
-        for(d1=0;d1<4;d1++){
-          var di=DIRS4[d1][0], dj=DIRS4[d1][1], len=0, x2=a+di, z2=b+dj;
-          while(x2>1&&z2>1&&x2<M-1&&z2<M-1&&cells[x2*M+z2].water&&len<8){ len++; x2+=di; z2+=dj; }
-          if(len<1||len>6) continue;
-          var fc=cells[x2*M+z2];
-          if(!fc||fc.water||fc.magma||Math.abs(fc.H-c0.H)>1) continue;
-          var score=len*10+Math.abs(fc.H-c0.H)-(TRAIL[a*M+b]?25:0);
-          if(!best||score<best.score) best={score:score,ai:a,aj:b,bi:x2,bj:z2,di:di,dj:dj,len:len};
-        }
-      }
-      return best;
-    }
-    (function(){
-      var mid=(M/2)|0, r1=null, r2=null, q3;
-      if(sites.length>0) r1=routeAStar(mid,mid,sites[0][0],sites[0][1]);
-      if(sites.length>1) r2=routeAStar(sites[0][0],sites[0][1],sites[1][0],sites[1][1]);
-      gradePath(r1); gradePath(r2); markPath(r1); markPath(r2);
-      if(bridges.length||!sites.length) return;
-      var wet=0;
-      for(q3=0;q3<M*M;q3++) if(cells[q3].water) wet++;
-      if(wet<20) return;
-      var fd=findFord();
-      if(!fd) return;
-      /* bring the route to the near bank, then carry it over */
-      var r3=routeAStar(sites[0][0],sites[0][1],fd.ai,fd.aj);
-      gradePath(r3); markPath(r3);
-      for(q3=0;q3<=fd.len+1;q3++){
-        var xx=fd.ai+fd.di*q3, zz=fd.aj+fd.dj*q3;
-        if(xx<1||zz<1||xx>=M-1||zz>=M-1) break;
-        if(!cells[xx*M+zz].magma) TRAIL[xx*M+zz]=1;
-      }
-      for(q3=1;q3<=3;q3++){
-        var fx=fd.bi+fd.di*q3, fz=fd.bj+fd.dj*q3;
-        if(fx<1||fz<1||fx>=M-1||fz>=M-1) break;
-        if(!cells[fx*M+fz].magma&&!cells[fx*M+fz].water) TRAIL[fx*M+fz]=1;
-      }
-      addBridge((fd.ai+fd.bi)/2-half,(fd.aj+fd.bj)/2-half,fd.di,fd.dj,fd.len+3,
-                Math.max(cells[fd.ai*M+fd.aj].H,cells[fd.bi*M+fd.bj].H,
-                         cells[(fd.ai+fd.di)*M+(fd.aj+fd.dj)].wl+0.5));
-    })();
-    /* --- span columns: caves cut first, then rims undercut over them --- */
-    var ovhPos=null;
-    for(i=0;i<M;i++)for(j=0;j<M;j++){
-      var cs=cells[i*M+j];
-      cs.sp=(cs.water||cs.magma)?[[0,Math.max(cs.H,1)]]:G.spansFor(-half+i+OX,-half+j+OZ,cs.H);
-    }
-    for(i=1;i<M-1;i++)for(j=1;j<M-1;j++){
-      var cl=cells[i*M+j];
-      for(d0=0;d0<4;d0++){
-        var ch=cells[(i+DIRS4[d0][0])*M+(j+DIRS4[d0][1])];
-        if(ch.H-cl.H<2||ch.water||R()>0.17) continue;
-        var out=1+((R()*2)|0), th=(R()<0.5?1:0.75), o;
-        for(o=0;o<=out;o++){
-          var ti=i-DIRS4[d0][0]*o, tj=j-DIRS4[d0][1]*o;
-          if(ti<1||tj<1||ti>=M-1||tj>=M-1) break;
-          var tc=cells[ti*M+tj];
-          if(tc.H>=ch.H-1||tc.water) break;
-          tc.sp.push([ch.H-th,ch.H]);
-        }
-        if(!ovhPos) ovhPos=[-half+i,cl.H+1.3,-half+j];
-        break;
-      }
-    }
-    /* --- water table: hollows flood until they spill --- */
-    for(var it=0;it<4;it++){
-      var changed=0;
-      for(i=1;i<M-1;i++)for(j=1;j<M-1;j++){
-        var cw2=cells[i*M+j]; if(cw2.water||cw2.magma) continue;
-        var best=0,walls=0,spill=false;
-        for(d0=0;d0<4;d0++){
-          var cn2=cells[(i+DIRS4[d0][0])*M+(j+DIRS4[d0][1])];
-          if(cn2.water){ if(cn2.wl>cw2.H+0.75&&cn2.wl>best) best=cn2.wl; }
-          else if(cn2.H>=cw2.H+1) walls++;
-          else if(cn2.H<cw2.H) spill=true;
-        }
-        /* a hollow fills; a plain drains */
-        if(best>0&&walls>=2&&!spill){
-          cw2.water=true; cw2.pond=true; cw2.wl=best; cw2.sp=[[0,Math.max(cw2.H,1)]]; changed++;
-        }
-      }
-      if(!changed) break;
-    }
-    /* --- flow field: one downhill vector per cell, shared by water and foam --- */
-    for(i=0;i<M;i++)for(j=0;j<M;j++){
-      var cf=cells[i*M+j];
-      var hl=cells[(i>0?i-1:i)*M+j], hr=cells[(i<M-1?i+1:i)*M+j],
-          hb=cells[i*M+(j>0?j-1:j)], hf=cells[i*M+(j<M-1?j+1:j)];
-      var gx=(cf.water?(hl.wl||hl.H)-(hr.wl||hr.H):hl.H-hr.H),
-          gz=(cf.water?(hb.wl||hb.H)-(hf.wl||hf.H):hb.H-hf.H);
-      var gl=Math.hypot(gx,gz);
-      if(gl<0.001){ cf.fx=0.7; cf.fz=0.7; } else { cf.fx=-gx/gl; cf.fz=-gz/gl; }
-    }
-    var NX=Math.round(S/V), NZ=NX;
-    var Hs=new Float32Array(NX*NZ), BOT=new Float32Array(NX*NZ), WL=new Float32Array(NX*NZ),
-        DOM=new Uint8Array(NX*NZ), FLG=new Uint8Array(NX*NZ);
-    var x,z,k,c;
-    function ci(px){return clamp(Math.round(px+half),0,M-1);}
-    for(i=0;i<NX;i++){ x=-half+i*V+V/2;
-      for(j=0;j<NZ;j++){ z=-half+j*V+V/2; k=i*NZ+j;
-        c=cellAt(x,z);
-        var topsp=c.sp[c.sp.length-1];
-        var d=c.water?G.detail(x+OX,z+OZ)*0.5:G.detail(x+OX,z+OZ);
-        Hs[k]=clamp(topsp[1]+d,0,CEIL); BOT[k]=topsp[0]; WL[k]=c.wl; DOM[k]=c.dom;
-        FLG[k]=(c.water?1:0)|(c.magma?2:0)|(TRAIL[ci(x)*M+ci(z)]?4:0);
-      } }
-    /* voxels */
-    var pos=[],col=[],mpos=[],mcol=[],y,hh,mn,slope;
-    var TOPI=new Int32Array(NX*NZ);
-    for(i=0;i<NX;i++){ x=-half+i*V+V/2;
-      for(j=0;j<NZ;j++){ z=-half+j*V+V/2; k=i*NZ+j; hh=Hs[k];
-        var n0=i>0?Hs[k-NZ]:hh-2, n1=i<NX-1?Hs[k+NZ]:hh-2,
-            n2=j>0?Hs[k-1]:hh-2, n3=j<NZ-1?Hs[k+1]:hh-2;
-        mn=Math.min(n0,n1,n2,n3); slope=hh-mn;
-        c=cellAt(x,z);
-        var b=BIOMES[rouletteBiome(c.w,R)], topc;
-        if(FLG[k]&2){ mpos.push(x,hh-V/2,z); var mc=new THREE.Color(R()<0.5?0xff6a1e:0xffa23c); mcol.push(mc.r,mc.g,mc.b); topc=0x2b2422; }
-        else if(FLG[k]&1) topc=pickFrom(b.bed,R);
-        else if(FLG[k]&4) topc=pickFrom(PATH,R);
-        else if(slope>0.9) topc=pickFrom(b.rock,R);
-        else topc=pickFrom(b.surf,R);
-        CBOX.set(topc).multiplyScalar(0.9+R()*0.2);
-        TOPI[k]=pos.length/3;
-        pos.push(x,hh-V/2,z); col.push(CBOX.r,CBOX.g,CBOX.b);
-        /* accumulation: snow and ash settle on whatever faces up */
-        if(!(FLG[k]&1)&&!(FLG[k]&4)){
-          var acc=(c.w[4]*0.95+c.w[3]*0.5)*(1-clamp(slope/1.1,0,1));
-          if(acc>0.40){
-            CBOX.set(c.w[4]>=c.w[3]?pickFrom(SNOW,R):pickFrom(ASHFALL,R)).multiplyScalar(0.9+R()*0.2);
-            pos.push(x,hh+V/2,z); col.push(CBOX.r,CBOX.g,CBOX.b);
-          }
-        }
-        var bottom=Math.max(BOT[k],mn);
-        for(y=hh-1.5*V;y>bottom-0.001;y-=V){
-          var sc=(y<hh-1.25)?pickFrom(b.rock,R):pickFrom(b.soil,R);
-          var band=Math.floor(y/0.75)%2;
-          CBOX.set(sc).multiplyScalar((band?0.94:1.06)*(0.88+R()*0.2));
-          pos.push(x,y,z); col.push(CBOX.r,CBOX.g,CBOX.b);
-        }
-        /* the underside of an undercut rim, and the floor under it */
-        if(BOT[k]>0.01){
-          CBOX.set(pickFrom(b.rock,R)).multiplyScalar(0.72+R()*0.15);
-          pos.push(x,BOT[k]+V/2,z); col.push(CBOX.r,CBOX.g,CBOX.b);
-          for(var sq=c.sp.length-2;sq>=0;sq--){
-            var lt=c.sp[sq][1];
-            CBOX.set(pickFrom(b.rock,R)).multiplyScalar(0.80+R()*0.18);
-            pos.push(x,lt-V/2,z); col.push(CBOX.r,CBOX.g,CBOX.b);
-            pos.push(x,lt-1.5*V,z); col.push(CBOX.r*0.9,CBOX.g*0.9,CBOX.b*0.9);
-          }
-        }
-      } }
-    /* props: trees, boulders, arcs */
-    function addVox(px,py,pz,hex,k2){ CBOX.set(hex).multiplyScalar(k2); pos.push(Math.round(px/V)*V,Math.round(py/V)*V,Math.round(pz/V)*V); col.push(CBOX.r,CBOX.g,CBOX.b); }
-    function surfAt(px,pz){var i2=clamp(Math.round((px+half)/V),0,NX-1),j2=clamp(Math.round((pz+half)/V),0,NZ-1);var k2=i2*NZ+j2;return {y:Hs[k2],f:FLG[k2]};}
-    function tree(px,pz,b,t){
-      var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
-      var th, r, ax, ay, az;
-      if(t==='conifer'){
-        th=3+R()*2;
-        for(y=0;y<th;y+=V) addVox(px,y0+y,pz,b.k==='frost'?0x4a4038:0x4a3a2c,0.9+R()*0.2);
-        for(var lv=0;lv<5;lv++){
-          var ly=y0+th*0.35+lv*(th*0.15), lr=(1.5-lv*0.24);
-          for(ax=-lr;ax<=lr;ax+=V)for(az=-lr;az<=lr;az+=V){
-            if(ax*ax+az*az>lr*lr) continue;
-            addVox(px+ax,ly,pz+az,(b.k==='frost'&&R()<0.45)?0xdfe7ee:(R()<0.5?0x2f5233:0x3c6b3e),0.85+R()*0.3);
-          }
-        }
-      } else if(t==='scrub'){
-        th=1+R()*1.2;
-        for(y=0;y<th;y+=V) addVox(px,y0+y,pz,0x6b5233,0.9+R()*0.2);
-        r=0.7+R()*0.4;
-        for(ax=-r;ax<=r;ax+=V)for(ay=-r*0.5;ay<=r*0.6;ay+=V)for(az=-r;az<=r;az+=V){
-          if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.5)>1-R()*0.3) continue;
-          addVox(px+ax,y0+th+ay,pz+az,R()<0.5?0x6f7f42:0x87904a,0.85+R()*0.3);
-        }
-      } else if(t==='snag'){
-        th=2.5+R()*1.8;
-        for(y=0;y<th;y+=V) addVox(px+(y>th*0.6?V:0),y0+y,pz,R()<0.5?0x2e2825:0x3a322e,0.85+R()*0.25);
-        for(var br=0;br<3;br++){var bl=0.5+R()*0.7,dirx=R()<0.5?1:-1,by=y0+th*(0.55+br*0.15);
-          for(var t2=0;t2<bl;t2+=V) addVox(px+dirx*t2,by+t2*0.4,pz+(R()-0.5)*0.3,0x332b27,0.9);}
-      } else {
-        th=2.5+R()*1.5;
-        for(y=0;y<th;y+=V)for(ax=-V;ax<=V;ax+=V)for(az=-V;az<=V;az+=V)
-          if(Math.abs(ax)+Math.abs(az)<=V) addVox(px+ax,y0+y,pz+az,0x5a4130,0.85+R()*0.3);
-        r=1.1+R()*0.55;
-        for(ax=-r;ax<=r;ax+=V)for(ay=-r*0.8;ay<=r*0.8;ay+=V)for(az=-r;az<=r;az+=V){
-          if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.68)>1-R()*0.28) continue;
-          addVox(px+ax,y0+th+r*0.5+ay,pz+az,R()<0.15?0x8ea84b:(R()<0.5?0x4f7a3a:0x628f45),0.8+R()*0.35);
-        }
-      }
-    }
-    function boulder(px,pz,r,b){
-      var s=surfAt(px,pz); if(s.f&1) return; var y0=s.y;
-      for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
-        if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
-        addVox(px+ax,y0+r*0.45+ay,pz+az,pickFrom(b.rock,R),0.85+R()*0.3);
-      }
-    }
-    var treeN=0, arcs=0;
-    for(i=0;i<M;i+=2)for(j=0;j<M;j+=2){
-      var cc=cells[i*M+j], px=-half+i+ (R()-0.5)*1.2, pz=-half+j+(R()-0.5)*1.2;
-      var bb=BIOMES[cc.dom], dens=G.wsum(cc.w,'tree')||0;
-      var td=0; for(var q=0;q<cc.w.length;q++) td+=cc.w[q]*BIOMES[q].tree.d;
-      if(!cc.water&&!cc.magma&&R()<td*0.095&&treeN<260){ tree(px,pz,bb,bb.tree.t); treeN++; }
-      else if(!cc.water&&R()<0.028) boulder(px,pz,0.5+R()*0.8,bb);
-      /* arcs where a canyon crosses rock-heavy ground */
-      if(arcs<3&&cc.canyon&&cc.canyon.d<0.6&&cc.cw>0.5&&R()<0.09){
-        var span=cc.canyon.w+2+Math.floor(R()*2), rise=3+Math.floor(R()*3);
-        var e=0.75, gx=G.canyonAt(px+OX+e,pz+OZ).d-G.canyonAt(px+OX-e,pz+OZ).d, gz=G.canyonAt(px+OX,pz+OZ+e).d-G.canyonAt(px+OX,pz+OZ-e).d;
-        var L=Math.hypot(gx,gz)||1; gx/=L; gz/=L;
-        var base=Math.max(0,cc.H);
-        for(var t3=0;t3<=1.0001;t3+=0.01){
-          var ox2=(t3-0.5)*span, yy=base+Math.sin(Math.PI*t3)*rise;
-          var cxp=px+gx*ox2, czp=pz+gz*ox2;
-          var thick=0.5+0.5*(1-Math.sin(Math.PI*t3));
-          for(var w2=-0.75;w2<=0.75;w2+=V)for(var dy=-thick;dy<=thick*0.4;dy+=V)
-            addVox(cxp-gz*w2,yy+dy,czp+gx*w2,pickFrom(BIOMES[cc.dom].rock,R),0.9+R()*0.2);
-        }
-        arcs++;
-      }
-    }
-    /* ---- overhangs, scree, clutter and points of interest ---- */
-    var lamps=[];
-    function slab(px,pz,di,dj,top,w,out,th,dom){
-      for(var a=0.5;a<=out+0.001;a+=V)for(var b=-w/2;b<=w/2+0.001;b+=V)for(var y2=top-th;y2<top-0.001;y2+=V)
-        addVox(px+di*a-dj*b,y2+V/2,pz+dj*a+di*b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25);
-    }
-    function scree(px,pz,dom,n){
-      for(var q=0;q<n;q++){
-        var sx=px+(R()-0.5)*2.4, sz=pz+(R()-0.5)*2.4, s=surfAt(sx,sz); if(s.f&1) continue;
-        var n2=(R()<0.3)?2:1;
-        for(var a=0;a<n2;a++)for(var b=0;b<n2;b++)for(var c2=0;c2<n2;c2++)
-          addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickFrom(BIOMES[dom].rock,R),0.8+R()*0.3);
-      }
-    }
-    function bush(px,pz,dom){
-      var s=surfAt(px,pz); if(s.f) return;
-      var r=0.35+R()*0.35;
-      var cols=(dom===4)?[0x6f8390,0x8aa3ad]:(dom===3?[0x3b332e,0x4a403a]:(dom===1?[0x6f7f42,0x87904a]:[0x3f6b34,0x4e7d3e,0x5d8c46]));
-      for(var ax=-r;ax<=r;ax+=V)for(var ay=0;ay<=r*1.5;ay+=V)for(var az=-r;az<=r;az+=V){
-        if((ax*ax+az*az)/(r*r)+((ay-r*0.65)*(ay-r*0.65))/(r*r*0.65)>1-R()*0.3) continue;
-        addVox(px+ax,s.y+ay+V/2,pz+az,pickFrom(cols,R),0.85+R()*0.3);
-      }
-    }
-    function stump(px,pz){
-      var s=surfAt(px,pz); if(s.f) return;
-      for(var y2=0;y2<0.55;y2+=V)for(var ax=-V;ax<=V;ax+=V)for(var az=-V;az<=V;az+=V)
-        if(Math.abs(ax)+Math.abs(az)<=V)
-          addVox(px+ax,s.y+y2+V/2,pz+az,(y2>0.3&&ax===0&&az===0)?0x8a6a4a:0x5a4130,0.9+R()*0.2);
-    }
-    function fallenTrunk(px,pz){
-      var s0=surfAt(px,pz); if(s0.f) return;
-      var ang=R()*Math.PI, dx=Math.cos(ang), dz=Math.sin(ang), L=2+R()*2.2;
-      for(var t2=-L/2;t2<=L/2;t2+=V)for(var ay=0;ay<=0.55;ay+=V)for(var b=-0.3;b<=0.3;b+=V){
-        if((ay-0.28)*(ay-0.28)+b*b>0.082) continue;
-        addVox(px+dx*t2-dz*b,s0.y+ay+V/2,pz+dz*t2+dx*b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25);
-      }
-    }
-    function fence(px,pz,ang,len){
-      var dx=Math.cos(ang),dz=Math.sin(ang);
-      for(var t2=0;t2<=len;t2+=1){
-        var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
-        for(var y2=0;y2<1.0;y2+=V) addVox(xx,s.y+y2+V/2,zz,0x6b5a45,0.9+R()*0.2);
-        if(t2<len) for(var u=0;u<1;u+=V){
-          addVox(xx+dx*u,s.y+0.8,zz+dz*u,0x5f5040,0.95);
-          addVox(xx+dx*u,s.y+0.4,zz+dz*u,0x5f5040,0.95);
-        }
-      }
-    }
-    function lamp(px,pz){
-      var s=surfAt(px,pz); if(s.f) return null;
-      for(var y2=0;y2<2.5;y2+=V) addVox(px,s.y+y2+V/2,pz,0x3f4650,0.9+R()*0.15);
-      addVox(px+V,s.y+2.5,pz,0x3f4650,0.95); addVox(px+2*V,s.y+2.5,pz,0x3f4650,0.95);
-      var lx=Math.round((px+2*V)/V)*V, ly=Math.round((s.y+2.25)/V)*V;
-      CBOX.set(0xffd08a); mpos.push(lx,ly,pz); mcol.push(CBOX.r,CBOX.g,CBOX.b);
-      return [lx,ly,pz];
-    }
-    function wallRun(px,pz,ang,len,h,dom){
-      var dx=Math.cos(ang),dz=Math.sin(ang);
-      for(var t2=0;t2<=len;t2+=V){
-        if(R()<0.05){ t2+=0.75; continue; }
-        var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
-        var hh2=h*(0.55+0.45*Math.abs(Math.sin(t2*0.7)));
-        for(var y2=0;y2<hh2;y2+=V)for(var b=-0.25;b<=0.25;b+=V)
-          addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2);
-      }
-    }
-    function pillarRuin(px,pz,h,dom){
-      var s=surfAt(px,pz); if(s.f) return;
-      for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V)
-        addVox(px+b1,s.y+V/2,pz+b2,pickFrom(BIOMES[dom].rock,R),0.95);
-      for(var y2=V;y2<h;y2+=V){
-        var rr2=(y2>h-0.6&&R()<0.5)?0.25:0.375;
-        for(var a1=-rr2;a1<=rr2;a1+=V)for(var a2=-rr2;a2<=rr2;a2+=V)
-          addVox(px+a1,s.y+y2+V/2,pz+a2,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.22);
-      }
-    }
-    function hut(px,pz,dom){
-      var s=surfAt(px,pz); if(s.f) return;
-      var w=3.0,h=2.25;
-      for(var a=-w/2;a<=w/2;a+=V)for(var b=-w/2;b<=w/2;b+=V){
-        if(Math.abs(a)<w/2-V&&Math.abs(b)<w/2-V) continue;
-        if(a>-0.6&&a<0.6&&b>w/2-V) continue;
-        var hh2=h*(R()<0.22?0.45+R()*0.4:1);
-        for(var y2=0;y2<hh2;y2+=V) addVox(px+a,s.y+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.2);
-      }
-      for(var a2=-w/2;a2<=w/2;a2+=V)for(var b2=-w/2;b2<=w/2;b2+=V)
-        if(R()<0.3) addVox(px+a2,s.y+h+V/2,pz+b2,0x5a4130,0.9);
-    }
-    function deckBridge(px,pz,di,dj,len,y){
-      for(var t2=-len/2;t2<=len/2;t2+=V)for(var b=-0.75;b<=0.75;b+=V)
-        addVox(px+di*t2-dj*b,y,pz+dj*t2+di*b,R()<0.25?0x6b5a45:0x5a4a38,0.9+R()*0.2);
-      for(var side=-1;side<=1;side+=2)for(var t3=-len/2;t3<=len/2;t3+=0.5)
-        addVox(px+di*t3-dj*side*0.75,y+0.5,pz+dj*t3+di*side*0.75,0x4c3f30,0.95);
-    }
-    /* scree gathers at every cliff foot; the rims themselves are spans now */
-    for(i=2;i<M-2;i++)for(j=2;j<M-2;j++){
-      var c0=cells[i*M+j], px0=-half+i, pz0=-half+j;
-      for(var dd=0;dd<4;dd++){
-        var di=DIRS4[dd][0], dj=DIRS4[dd][1], c1=cells[(i+di)*M+(j+dj)];
-        if(!c1||c0.H-c1.H<2) continue;
-        if(R()<0.32) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((R()*4)|0));
-        break;
-      }
-    }
-    /* scattered clutter, kept off the trails */
-    for(i=1;i<M-1;i++)for(j=1;j<M-1;j++){
-      var cc2=cells[i*M+j];
-      if(cc2.water||cc2.magma||TRAIL[i*M+j]) continue;
-      var px2=-half+i+(R()-0.5)*0.8, pz2=-half+j+(R()-0.5)*0.8, dm=cc2.dom, rv=R();
-      if(rv<0.032) bush(px2,pz2,dm);
-      else if(rv<0.0365&&(dm===0||dm===2)) stump(px2,pz2);
-      else if(rv<0.0405&&(dm===0||dm===2)) fallenTrunk(px2,pz2);
-      else if(rv<0.050) scree(px2,pz2,dm,2+((R()*3)|0));
-    }
-    /* a ruin and a holding on the sites the trails were routed to */
-    for(var ps=0;ps<sites.length;ps++){
-      var pi=sites[ps][0], pj=sites[ps][1], cp=cells[pi*M+pj];
-      var px3=-half+pi, pz3=-half+pj, ang3=R()*6.28, dm3=cp.dom;
-      if(ps===0){
-        for(var q3=0;q3<4;q3++) pillarRuin(px3+Math.cos(ang3)*(q3*2-3),pz3+Math.sin(ang3)*(q3*2-3),2+R()*2,dm3);
-        wallRun(px3-Math.sin(ang3)*2.5,pz3+Math.cos(ang3)*2.5,ang3,7,1.5,dm3);
-        scree(px3,pz3,dm3,8);
-      } else {
-        hut(px3,pz3,dm3);
-        fence(px3+2.5,pz3-3,ang3,6);
-      }
-    }
-    /* lamps stand along the route, not scattered over the field */
-    var trailCells=[];
-    for(i=2;i<M-2;i++)for(j=2;j<M-2;j++)
-      if(TRAIL[i*M+j]&&!cells[i*M+j].water) trailCells.push([i,j]);
-    for(var lq=0;lq<3&&trailCells.length;lq++){
-      var tcq=trailCells[Math.floor((lq+0.5)/3*trailCells.length)];
-      var lp=lamp(-half+tcq[0]+0.6,-half+tcq[1]+0.6);
-      if(lp) lamps.push(lp);
-    }
-    /* crossings, placed where the route meets water */
-    for(var bq=0;bq<bridges.length;bq++){
-      var bd=bridges[bq];
-      deckBridge(bd[0],bd[1],bd[2],bd[3],bd[4],bd[5]);
-    }
-    /* one landmark per region, tall enough to see from three chunks away */
-    var lmPos=null;
-    function landmarkStamp(px,pz,kind,dom,base){
-      var a,b,y2,r2;
-      if(kind===0){                                   /* obelisk */
-        for(a=-1;a<=1;a+=V)for(b=-1;b<=1;b+=V) addVox(px+a,base+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2);
-        for(y2=V;y2<11;y2+=V){
-          r2=0.5*(1-y2/16);
-          for(a=-r2;a<=r2;a+=V)for(b=-r2;b<=r2;b+=V)
-            addVox(px+a,base+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25);
-        }
-        CBOX.set(0x9fe3ff); mpos.push(Math.round(px/V)*V,Math.round((base+11.2)/V)*V,Math.round(pz/V)*V);
-        mcol.push(CBOX.r,CBOX.g,CBOX.b);
-      } else if(kind===1){                            /* hive tree */
-        for(y2=0;y2<8;y2+=V)for(a=-0.5;a<=0.5;a+=V)for(b=-0.5;b<=0.5;b+=V)
-          if(a*a+b*b<0.3) addVox(px+a,base+y2+V/2,pz+b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25);
-        r2=3.2;
-        for(a=-r2;a<=r2;a+=V)for(y2=-2.2;y2<=2.2;y2+=V)for(b=-r2;b<=r2;b+=V){
-          if((a*a+b*b)/(r2*r2)+(y2*y2)/5.5>1-R()*0.25) continue;
-          addVox(px+a,base+8.5+y2,pz+b,R()<0.1?0xb7d84f:(R()<0.5?0x3f6630:0x507f3c),0.8+R()*0.35);
-        }
-        for(var hq=0;hq<7;hq++){
-          CBOX.set(0xb7f04f);
-          mpos.push(Math.round((px+(R()-0.5)*5)/V)*V,Math.round((base+7.5+R()*3)/V)*V,Math.round((pz+(R()-0.5)*5)/V)*V);
-          mcol.push(CBOX.r,CBOX.g,CBOX.b);
-        }
-      } else if(kind===2){                            /* wrecked machine */
-        for(var sl=0;sl<3;sl++){
-          var ax2=Math.cos(sl*2.1), az2=Math.sin(sl*2.1);
-          for(var t4=0;t4<6;t4+=V)for(b=-0.9;b<=0.9;b+=V)
-            addVox(px+ax2*t4*0.75-az2*b, base+t4*0.8+V/2, pz+az2*t4*0.75+ax2*b, R()<0.3?0x6a6259:0x4a443e,0.85+R()*0.25);
-        }
-        for(var cq3=0;cq3<5;cq3++){
-          CBOX.set(0xff9a3c);
-          mpos.push(Math.round((px+(R()-0.5)*1.5)/V)*V,Math.round((base+1+R()*1.5)/V)*V,Math.round((pz+(R()-0.5)*1.5)/V)*V);
-          mcol.push(CBOX.r,CBOX.g,CBOX.b);
-        }
-      } else {                                        /* standing stones */
-        for(var st=0;st<6;st++){
-          var sa=st/6*6.283, sx=px+Math.cos(sa)*4, sz2=pz+Math.sin(sa)*4, sh=2.5+R()*1.5;
-          for(y2=0;y2<sh;y2+=V)for(a=-0.375;a<=0.375;a+=V)for(b=-0.25;b<=0.25;b+=V)
-            addVox(sx+a,base+y2+V/2,sz2+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25);
-        }
-      }
-    }
-    (function(){
-      var best=null,a,b;
-      for(a=6;a<M-6;a+=2)for(b=6;b<M-6;b+=2){
-        var cq4=cells[a*M+b];
-        if(cq4.water||cq4.magma||TRAIL[a*M+b]) continue;
-        if(!flatAt(a,b,1)) continue;
-        if(!best||cq4.H>best.h) best={a:a,b:b,h:cq4.H,dom:cq4.dom};
-      }
-      if(!best) return;
-      var kinds=(best.dom===3)?[2,0]:((best.dom===1)?[0,3]:((best.dom===4)?[3,0]:[1,3]));
-      var kind=kinds[Math.abs(Math.round(OX*0.37+OZ*0.11))%kinds.length];
-      landmarkStamp(-half+best.a,-half+best.b,kind,best.dom,best.h);
-      lmPos=[-half+best.a,best.h+(kind===0?12:(kind===1?11:4)),-half+best.b];
-    })();
-    /* grass */
-    var gpos=[],gph=[],gtint=[],gsc=[],gyaw=[],gcol=[];
-    for(i=0;i<NX;i+=2)for(j=0;j<NZ;j+=2){
-      k=i*NZ+j; if(FLG[k]) continue;
-      x=-half+i*V+V/2; z=-half+j*V+V/2;
-      var n0b=i>0?Hs[k-NZ]:Hs[k], n1b=j>0?Hs[k-1]:Hs[k];
-      if(Hs[k]-Math.min(n0b,n1b)>0.6) continue;
-      var cq=cellAt(x,z), dsum=0,hbase=0,hvar=0,cr=0,cg=0,cb=0,dry=0;
-      for(var q2=0;q2<cq.w.length;q2++){var B2=BIOMES[q2],w2b=cq.w[q2];
-        dsum+=w2b*B2.gr.d; hbase+=w2b*B2.gr.h[0]; hvar+=w2b*B2.gr.h[1];
-        CBOX.set(B2.gr.c); cr+=w2b*CBOX.r; cg+=w2b*CBOX.g; cb+=w2b*CBOX.b;
-      }
-      var nb=Math.floor(dsum*3.2); if(R()<dsum*3.2-nb) nb++;
-      for(var g2=0;g2<nb;g2++){
-        gpos.push(x+(R()-0.5)*0.5,Hs[k],z+(R()-0.5)*0.5);
-        gph.push(R()*6.28); gtint.push(R()<0.15?1:0);
-        gsc.push(hbase+R()*hvar); gyaw.push(R()*3.14);
-        gcol.push(cr,cg,cb);
-      }
-    }
-    /* water: surface, shore foam, flow direction, falls */
-    var wv=[],wi=[],wd=[],wf=[],wfl=[],wn=0;
-    function wquad(q,dep,foam,fx,fz){
-      for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]); wd.push(dep); wf.push(foam); wfl.push(fx,fz); }
-      wi.push(wn,wn+2,wn+1, wn,wn+3,wn+2); wn+=4;
-    }
-    var WDIR=[[1,0],[-1,0],[0,1],[0,-1]];
-    for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
-      k=i*NZ+j; if(!(FLG[k]&1)) continue;
-      x=-half+i*V; z=-half+j*V; y=WL[k];
-      var bsum=0,bn=0;
-      for(var bi2=-2;bi2<=2;bi2++)for(var bj2=-2;bj2<=2;bj2++){
-        var kb=(i+bi2)*NZ+(j+bj2);
-        if(kb<0||kb>=NX*NZ) continue;
-        bsum+=Hs[kb]; bn++;
-      }
-      var dep=clamp((y-bsum/bn)/1.6,0,1), foam=0, fx=0, fz=0, dd2;
-      for(dd2=0;dd2<4;dd2++){
-        var kn=(i+WDIR[dd2][0])*NZ+(j+WDIR[dd2][1]);
-        if(FLG[kn]&1){
-          var dy=WL[kn]-y;
-          if(dy<-0.35){ fx+=WDIR[dd2][0]*-dy; fz+=WDIR[dd2][1]*-dy; foam=Math.max(foam,1); }
-          else if(dy>0.35) foam=Math.max(foam,1);
-          else { fx+=WDIR[dd2][0]*0.04; fz+=WDIR[dd2][1]*0.04; }
-        } else {
-          if(Hs[kn]>y-0.1) foam=Math.max(foam,1);
-          else { fx+=WDIR[dd2][0]*0.5; fz+=WDIR[dd2][1]*0.5; foam=Math.max(foam,1); }
-        }
-      }
-      var cfw=cellAt(x,z); fx=cfw.fx; fz=cfw.fz;
-      wquad([x,y,z, x+V,y,z, x+V,y,z+V, x,y,z+V],dep,foam,fx,fz);
-      /* vertical sheets wherever the surface steps down */
-      for(dd2=0;dd2<4;dd2++){
-        var di3=WDIR[dd2][0], dj3=WDIR[dd2][1], kn2=(i+di3)*NZ+(j+dj3);
-        var yl=(FLG[kn2]&1)?WL[kn2]:Hs[kn2];
-        if(yl>y-0.4) continue;
-        var q2;
-        if(di3===1) q2=[x+V,y,z, x+V,y,z+V, x+V,yl,z+V, x+V,yl,z];
-        else if(di3===-1) q2=[x,y,z, x,y,z+V, x,yl,z+V, x,yl,z];
-        else if(dj3===1) q2=[x,y,z+V, x+V,y,z+V, x+V,yl,z+V, x,yl,z+V];
-        else q2=[x,y,z, x+V,y,z, x+V,yl,z, x,yl,z];
-        wquad(q2,1,2,di3,dj3);
-      }
-    }
-    /* --- reach: flood from the spawn under the movement rules --- */
-    var REACH=new Uint8Array(M*M);
-    (function(){
-      var st=-1,q;
-      for(q=0;q<trailPath.length&&st<0;q++) if(!cells[trailPath[q]].water) st=trailPath[q];
-      if(st<0){
-        var mid=(M/2)|0;
-        for(var rr2=0;rr2<M&&st<0;rr2++)for(var a=1;a<M-1&&st<0;a++)for(var b=1;b<M-1;b++){
-          var cq=cells[a*M+b];
-          if(!cq.water&&!cq.magma){ st=a*M+b; break; }
-        }
-      }
-      if(st<0) return;
-      var queue=[st],head=0; REACH[st]=1;
-      function tryMove(from,nx,nz,mid2){
-        if(nx<0||nz<0||nx>=M||nz>=M) return;
-        var nk=nx*M+nz; if(REACH[nk]) return;
-        var cc=cells[from], nc=cells[nk];
-        if(nc.magma) return;
-        if(nc.water&&(nc.wl-nc.H)>1.5) return;
-        if(mid2!==null){
-          var mc=cells[mid2];
-          if(mc.magma) return;
-          if(!(mc.water||mc.H<=cc.H-1)) return;
-          if(Math.abs(nc.H-cc.H)>MOVE.step) return;
-        } else {
-          var dh=nc.H-cc.H;
-          if(dh>MOVE.vault||dh< -MOVE.fall) return;
-        }
-        REACH[nk]=1; queue.push(nk);
-      }
-      while(head<queue.length){
-        var cu=queue[head++], cx=(cu/M)|0, cz=cu%M;
-        for(var d3=0;d3<4;d3++){
-          var dx=DIRS4[d3][0], dz=DIRS4[d3][1];
-          tryMove(cu,cx+dx,cz+dz,null);
-          tryMove(cu,cx+dx*2,cz+dz*2,(cx+dx)*M+(cz+dz));
-        }
-      }
-    })();
-    var UNREACH=new Uint8Array(NX*NZ);
-    for(i=0;i<NX;i++)for(j=0;j<NZ;j++){
-      var ux=-half+i*V+V/2, uz=-half+j*V+V/2;
-      UNREACH[i*NZ+j]=REACH[ci(ux)*M+ci(uz)]?0:1;
-    }
-    /* spawn point: flat dry ground near the middle */
-    var spawn=null;
-    for(var tp=0;tp<trailPath.length&&!spawn;tp++){
-      var tc2=cells[trailPath[tp]];
-      if(tc2.water||tc2.magma) continue;
-      var tpi=(trailPath[tp]/M)|0, tpj=trailPath[tp]%M;
-      if(Math.abs(tpi-M/2)+Math.abs(tpj-M/2)>10) continue;
-      spawn=[-half+tpi,tc2.H,-half+tpj];
-    }
-    for(var tries=0;tries<900&&!spawn;tries++){
-      var si=((NX*0.5)|0)+((R()-0.5)*NX*0.4|0), sj=((NZ*0.5)|0)+((R()-0.5)*NZ*0.4|0);
-      si=clamp(si,2,NX-3); sj=clamp(sj,2,NZ-3); k=si*NZ+sj;
-      if(!FLG[k]&&Math.abs(Hs[k]-Hs[k+NZ])<0.3&&Math.abs(Hs[k]-Hs[k+1])<0.3)
-        spawn=[-half+si*V,Hs[k],-half+sj*V];
-    }
-    if(!spawn) spawn=[0,Hs[((NX/2)|0)*NZ+((NZ/2)|0)],0];
-    return {pos:pos,col:col,mpos:mpos,mcol:mcol,grass:{p:gpos,ph:gph,ti:gtint,sc:gsc,yw:gyaw,c:gcol},
-            water:{v:wv,i:wi,d:wd,f:wf,fl:wfl},lamps:lamps,ovhPos:ovhPos,lmPos:lmPos,trail:TRAIL,
-            topi:TOPI,unreach:UNREACH,reach:REACH,bridges:bridges,Hs:Hs,FLG:FLG,NX:NX,NZ:NZ,half:half,cells:cells,M:M,spawn:spawn,size:S};
-  }
+  /* ---------- the generator ---------- */
+  /* Extracted to src/gen/ — plain ES modules, no DOM and no three.js — and
+     inlined into the tag near the top of this file by tools/bundle-gen.mjs.
+     Edit it there, not here. The plate is one consumer of the generator. */
+  var makeGen=QS.makeGen, buildWorld=QS.buildWorld;
 
   /* ---------- scene assembly ---------- */
   var boxGeo=new THREE.BoxGeometry(V,V,V);
