@@ -6,6 +6,7 @@ The game. Today that is the terrain generator and nothing else — see
 | Path | What it is |
 | --- | --- |
 | `gen/` | The seeded terrain generator. Plain ES modules: no DOM, no three.js, no renderer. |
+| `sim/` | Collision and the character controller. Same rules: no DOM, no three.js, no renderer. |
 
 ## src/gen
 
@@ -59,6 +60,37 @@ character-for-character so the extraction could be proved: all six golden seeds
 still hash to the same digest they did inside the plate. That is why this reads
 like dense ES5 with `var`. Modernising it is a separate change, one that has to
 keep the digests green on its own merits.
+
+## src/sim
+
+```js
+import { colliderForWorld } from './src/sim/collider.mjs';
+import { placeOnGround, step } from './src/sim/actor.mjs';
+
+const col = colliderForWorld(world);
+const a = placeOnGround(col, world.spawn[0], world.spawn[2]);
+step(col, a, { mx: 1, mz: 0, jump: false });   // one 1/60 s tick
+```
+
+`collider.mjs` turns one generated window into a column grid of solid spans.
+It reads `cell.sp` rather than the voxel arrays on purpose: `buildVoxels` emits
+a **shell** — the surface and a skirt down to the lowest neighbour — because that
+is all a renderer needs, and a collider built from it would let a player drop
+into the hollow inside of a hill. The voxels go in as well, on top, because
+props are in no span at all and a bridge you cannot stand on is not a bridge.
+The edge of the window is a wall: the world is bounded.
+
+`actor.mjs` is the controller. Only run speed is chosen; gravity, jump speed and
+airtime are **solved** from `MOVE` so that a jump clears exactly `MOVE.jump`,
+footprint included, and no more. Change the budget and the character changes
+with the terrain instead of drifting away from it. The actor is an axis-aligned
+box, not a capsule: against a voxel world an AABB is exact where a capsule is
+approximate, and it cannot wedge on a corner.
+
+Fixed timestep, no randomness, no wall clock. That is what lets
+`tools/smoke.mjs` assert every clause of the budget — step, vault, gap, drop,
+wade, swim, magma — in node, and run a five-minute soak on all six golden seeds,
+with no browser anywhere.
 
 ### Known debt
 

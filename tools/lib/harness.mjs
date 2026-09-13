@@ -221,8 +221,13 @@ export function measureSeeds(cfgs, measureSrc) {
   return cfgs.map((c) => measure(window.QS.buildWorld(c), c.nm));
 }
 
-/** Same six seeds, generated in node straight off src/gen. */
-export async function measureSeedsInNode(cfgs) {
+/** The worlds themselves, generated in node straight off src/gen. */
+export async function generateSeeds(cfgs) {
   const { buildWorld } = await import('../../src/gen/index.mjs');
-  return cfgs.map((c) => measureWorld(buildWorld(c), c.nm));
+  return cfgs.map((c) => buildWorld(c));
+}
+
+/** Same six seeds, measured. */
+export async function measureSeedsInNode(cfgs) {
+  return (await generateSeeds(cfgs)).map((w, i) => measureWorld(w, cfgs[i].nm));
 }

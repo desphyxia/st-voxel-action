@@ -1,0 +1,229 @@
+/**
+ * The character controller, written against the published movement budget
+ * (docs/DECISIONS.md §3) rather than against a feel that happens to emerge:
+ *
+ *   step up 1 m free · vault 2 m · clear a 2.5 m gap · survive a 6 m drop ·
+ *   wade 0.75 m, swim deeper · magma is lethal
+ *
+ * Only run speed is chosen. Everything about the jump is solved from it, so
+ * that a change to `MOVE` moves the character and the terrain together instead
+ * of letting them drift apart. A canyon is 3-5 m wide because 2.5 m is what a
+ * jump clears; if the jump quietly cleared 3.2 m, canyons would stop being
+ * obstacles and nobody would notice for months.
+ *
+ * Fixed timestep, no randomness, no wall clock: the same inputs give the same
+ * trajectory in node and in a browser. That is what lets tools/smoke.mjs assert
+ * the budget without a renderer, and what host-authoritative netcode will want.
+ *
+ * The actor is collided as an axis-aligned box of half-width `radius`. Against
+ * a voxel world an AABB is exact where a capsule is only approximate, and it
+ * cannot wedge itself on a corner the way a capsule can.
+ */
+import { MOVE, clamp } from '../gen/constants.mjs';
+import { EPS, LIQUID } from './collider.mjs';
+
+/** One simulation tick. Every constant below assumes it. */
+export const TICK = 1 / 60;
+
+export const ACTOR = { radius: 0.35, height: 1.8 };
+
+export const GRAVITY = 22;
+/** The one free parameter: how fast it feels right to run. */
+export const RUN = 4.0;
+
+/**
+ * How far the jump must carry the actor's centre.
+ *
+ * The box rests on anything under its footprint, so it can walk one radius out
+ * over a drop and land one radius short of the far lip — 2 * radius of the gap
+ * is crossed by the body rather than by the jump. One tick of run is added on
+ * top so that a jump timed within a frame of the lip still clears MOVE.jump;
+ * any more than that and a 3 m canyon would stop being a canyon.
+ */
+const FLIGHT = MOVE.jump - 2 * ACTOR.radius + RUN * TICK;
+export const AIRTIME = FLIGHT / RUN;
+export const JUMP_V = (GRAVITY * AIRTIME) / 2;
+export const JUMP_APEX = (JUMP_V * JUMP_V) / (2 * GRAVITY);
+
+export const WADE_SPEED = RUN * 0.55;
+export const SWIM_SPEED = RUN * 0.45;
+/** How much of the wanted velocity an airborne actor can claw back per tick. */
+export const AIR_CONTROL = 0.12;
+/** A vault is a climb, not a jump: it takes time and cannot be steered. */
+export const VAULT_TIME = 0.35;
+/** Terminal velocity, low enough that no fall tunnels a floor in one tick. */
+export const TERMINAL = 45;
+
+export function makeActor(x, y, z) {
+  return {
+    x, y, z, vx: 0, vy: 0, vz: 0,
+    grounded: false,
+    /** Highest point since the feet last left the ground: what a drop measures from. */
+    apex: y,
+    /** null, or a scripted climb in progress. */
+    vault: null,
+    /** Set on the tick a vault starts, for anything counting verbs. */
+    vaults: 0,
+    inWater: false, swimming: false,
+    /** null while alive, else 'fall' | 'magma' | 'void'. */
+    dead: null,
+    /** Path length, summed per axis. Not displacement — see the soak. */
+    travelled: 0, ticks: 0, blocked: false,
+  };
+}
+
+/** Drop an actor onto whatever holds it at (x, z). How spawning works. */
+export function placeOnGround(col, x, z, fromY) {
+  const ceil = (fromY === undefined ? Infinity : fromY) + EPS;
+  const g = col.supportUnder(x, z, ACTOR.radius, ceil);
+  const a = makeActor(x, g === -Infinity ? 0 : g, z);
+  a.grounded = g !== -Infinity;
+  a.apex = a.y;
+  return a;
+}
+
+/** Is the actor's box inside solid ground? Must never be true after a tick. */
+export function embedded(col, a) {
+  return col.overlaps(a.x, a.z, ACTOR.radius, a.y + EPS, a.y + ACTOR.height - EPS);
+}
+
+/**
+ * Move the box to (nx, nz) if it fits, climbing a free step if that is what is
+ * in the way. Two phases, in this order, because they are different verbs: walk
+ * through the air where the body is now, or rise onto the thing blocking it.
+ */
+function slide(col, a, nx, nz) {
+  const r = ACTOR.radius, h = ACTOR.height;
+  if (!col.overlaps(nx, nz, r, a.y + EPS, a.y + h - EPS)) {
+    a.travelled += Math.abs(nx - a.x) + Math.abs(nz - a.z);
+    a.x = nx; a.z = nz;
+    return true;
+  }
+  if (!a.grounded) return false;
+  const top = col.supportUnder(nx, nz, r, a.y + MOVE.step + EPS);
+  if (!(top > a.y + EPS) || top - a.y > MOVE.step + EPS) return false;
+  if (col.overlaps(nx, nz, r, top + EPS, top + h - EPS)) return false;
+  a.travelled += Math.abs(nx - a.x) + Math.abs(nz - a.z);
+  a.x = nx; a.z = nz; a.y = top; a.apex = top;
+  return true;
+}
+
+/** A ledge too tall to step onto but not too tall to climb. Starts the vault. */
+function tryVault(col, a, dx, dz) {
+  const r = ACTOR.radius, h = ACTOR.height;
+  if (!a.grounded || (dx === 0 && dz === 0)) return false;
+  const probe = 0.4;
+  const top = col.supportUnder(a.x + dx * probe, a.z + dz * probe, r, a.y + MOVE.vault + EPS);
+  if (!(top > a.y + MOVE.step + EPS) || top - a.y > MOVE.vault + EPS) return false;
+  /* Room to rise in place — a low ceiling makes a ledge unvaultable. */
+  if (col.overlaps(a.x, a.z, r, a.y + EPS, top + h - EPS)) return false;
+  /* Somewhere to land, and room to stand up once there. */
+  const lx = a.x + dx * (r + probe + 0.2), lz = a.z + dz * (r + probe + 0.2);
+  if (col.supportUnder(lx, lz, r, top + EPS) < top - 0.05) return false;
+  if (col.overlaps(lx, lz, r, top + EPS, top + h - EPS)) return false;
+  a.vault = { t: 0, x0: a.x, y0: a.y, z0: a.z, x1: lx, y1: top, z1: lz };
+  a.vaults++;
+  a.vx = 0; a.vz = 0; a.vy = 0;
+  return true;
+}
+
+/**
+ * Advance one tick.
+ *
+ * `input` is { mx, mz, jump } — a heading of length 0..1 and a boolean. Nothing
+ * else reaches the controller: no camera, no renderer, no clock.
+ */
+export function step(col, a, input, dt = TICK) {
+  if (a.dead) return a;
+  a.ticks++;
+  a.blocked = false;
+  const r = ACTOR.radius, h = ACTOR.height;
+
+  /* A vault owns the actor until it finishes: all the way up, and only then
+     across. Overlapping the two looks better and puts the box inside the ledge
+     for a few ticks on the way through, which is indistinguishable from a
+     collision bug the first time someone sees it in a log. */
+  if (a.vault) {
+    const vt = a.vault;
+    vt.t += dt;
+    const u = clamp(vt.t / VAULT_TIME, 0, 1);
+    const uy = u < 0.5 ? u / 0.5 : 1, uh = u < 0.5 ? 0 : (u - 0.5) / 0.5;
+    a.x = vt.x0 + (vt.x1 - vt.x0) * uh;
+    a.z = vt.z0 + (vt.z1 - vt.z0) * uh;
+    a.y = vt.y0 + (vt.y1 - vt.y0) * uy;
+    if (u >= 1) { a.vault = null; a.grounded = true; a.apex = a.y; }
+    return a;
+  }
+
+  const liquid = col.liquidAt(a.x, a.z);
+  if (liquid.kind === LIQUID.MAGMA && a.y <= liquid.level + 0.35) { a.dead = 'magma'; return a; }
+
+  const submerged = liquid.kind === LIQUID.WATER ? liquid.level - a.y : 0;
+  a.inWater = submerged > EPS;
+  a.swimming = submerged > MOVE.wade;
+
+  /* ---- intent ---- */
+  const speed = a.swimming ? SWIM_SPEED : (a.inWater ? WADE_SPEED : RUN);
+  const wx = (input.mx || 0) * speed, wz = (input.mz || 0) * speed;
+  if (a.grounded || a.swimming) { a.vx = wx; a.vz = wz; }
+  else { a.vx += (wx - a.vx) * AIR_CONTROL; a.vz += (wz - a.vz) * AIR_CONTROL; }
+
+  if (input.jump && (a.grounded || a.swimming)) {
+    a.vy = a.swimming ? JUMP_V * 0.35 : JUMP_V;
+    a.grounded = false;
+    a.apex = a.y;
+  }
+
+  /* False for the tick a jump starts, which is what keeps the snap below from
+     pulling the actor straight back down again. */
+  const wasGrounded = a.grounded;
+
+  /* ---- horizontal, one axis at a time so a wall is slid along, not stuck on ---- */
+  if (a.vx !== 0 && !slide(col, a, a.x + a.vx * dt, a.z)) {
+    a.blocked = true;
+    if (!tryVault(col, a, Math.sign(a.vx), 0)) a.vx = 0;
+    if (a.vault) return a;
+  }
+  if (a.vz !== 0 && !slide(col, a, a.x, a.z + a.vz * dt)) {
+    a.blocked = true;
+    if (!tryVault(col, a, 0, Math.sign(a.vz))) a.vz = 0;
+    if (a.vault) return a;
+  }
+
+  /* ---- vertical ---- */
+  if (a.swimming) {
+    /* Buoyancy holds the head out of the water. Sinking is not a verb yet. */
+    a.vy = clamp((liquid.level - h * 0.45 - a.y) * 4, -2.5, 2.5);
+  } else {
+    a.vy -= GRAVITY * dt;
+    if (a.vy < -TERMINAL) a.vy = -TERMINAL;
+  }
+
+  let ny = a.y + a.vy * dt;
+  if (a.swimming) {
+    a.grounded = false;
+  } else if (a.vy <= 0) {
+    const g = col.supportUnder(a.x, a.z, r, a.y + EPS);
+    if (ny <= g + EPS) {
+      ny = g;
+      if (!a.inWater && a.apex - g > MOVE.fall + EPS) a.dead = 'fall';
+      a.vy = 0; a.grounded = true; a.apex = g;
+    } else if (wasGrounded && g !== -Infinity && a.y - g <= MOVE.step + EPS) {
+      /* Walked down. A step down is as free as a step up — without this the
+         actor is airborne for most of every slope, bouncing its way to the
+         bottom, and anything that only acts when grounded never gets a turn. */
+      ny = g; a.vy = 0; a.grounded = true; a.apex = g;
+    } else {
+      a.grounded = false;
+    }
+  } else {
+    const ceil = col.ceilingOver(a.x, a.z, r, a.y + EPS);
+    if (ny + h > ceil - EPS) { ny = Math.max(a.y, ceil - h); a.vy = 0; }
+    a.grounded = false;
+  }
+  a.y = ny;
+  if (!a.grounded && a.y > a.apex) a.apex = a.y;
+
+  if (a.y < -1) a.dead = 'void';
+  return a;
+}

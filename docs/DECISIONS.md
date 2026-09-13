@@ -48,6 +48,7 @@ same world — not credits.
 | Defence | Dodge is universal; blocking is frame-dependent (the bulwark's root wall is the extreme case) |
 | Targeting | Mouse free-aim; **twin-stick free aim** on gamepad |
 | Movement budget | Step up 1 m · vault 2 m · jump a 2.5 m gap · survive a 6 m drop · wade 0.75 m · swim deeper · magma lethal |
+| Character physics | **Solved from the budget, not tuned.** Run speed is the only free number; gravity, jump speed and airtime follow from it so that a jump clears exactly `MOVE.jump` and no more. A jump that quietly cleared 3.2 m would stop canyons being obstacles, and nobody would notice for months |
 
 ## 4. Gear and progression
 

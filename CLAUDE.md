@@ -3,9 +3,11 @@
 A 45° isometric two-player online co-op action RPG on three.js. Worlds are seeded and bounded;
 terrain features are sized in whole metres on a 1 m grid and built from 25 cm voxels.
 
-**Status: pre-production.** What exists is the seeded terrain generator (`src/gen/`), the
-concept plate that draws it, and a design decision record. There is no engine, no character
-and nothing to play yet. Do not start engine work without checking `docs/DECISIONS.md` first.
+**Status: pre-production.** What exists is the seeded terrain generator (`src/gen/`), a
+character controller that moves through what it generates (`src/sim/`), the concept plate that
+draws the terrain, and a design decision record. There is no renderer for the character and no
+camera yet — the controller is asserted headlessly, not looked at. Do not start engine work
+without checking `docs/DECISIONS.md` first.
 
 ## Where things are
 
@@ -14,6 +16,7 @@ and nothing to play yet. Do not start engine work without checking `docs/DECISIO
 | `docs/DECISIONS.md` | **Read this first.** 43 decisions from design interviews, plus open items and unresolved tensions. The authority on what the game is. |
 | `docs/PROTOTYPE.md` | **Read this second.** What "playable" means, the path to it, and the rules that keep every merge playable. |
 | `src/gen/` | The terrain generator. Plain ES modules — no DOM, no three.js. See `src/README.md`. |
+| `src/sim/` | Collision and the character controller, written against the movement budget. Also no DOM and no three.js, which is why the budget can be asserted in node. |
 | `docs/concept/index.html` | The concept plate: the design document, the renderer, and an inlined copy of `src/gen` it draws. |
 | `tools/` | Headless render and verify harness. Dev only. |
 | `README.md` | Short public summary of the project. |

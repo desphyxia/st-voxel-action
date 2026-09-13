@@ -45,10 +45,14 @@ optimised for never rewriting anything; this optimises for playing something.
 1. ~~**Extract the generator from the plate into a module.**~~ **Done** (#19). It lives in
    `src/gen/` as ES modules with no DOM and no three.js; the plate inlines a generated copy,
    and the smoke test fails if the two disagree. See `src/README.md`.
-2. **Material ids** (#14). The one "do it anyway" item — it changes the per-voxel layout that
-   the mesher, the save deltas and the netcode all read, and it is cheap now.
-3. **Collision and a character controller** — the movement budget, made real.
-4. **Camera and input** — isometric follow camera, mouse and twin-stick aim.
+2. ~~**Material ids.**~~ **Done** (#14). The one "do it anyway" item: it changed the per-voxel
+   layout the mesher, the save deltas and the netcode all read, and it was cheap to do early.
+3. ~~**Collision and a character controller.**~~ **Done** (#20). `src/sim/` derives collision
+   from the generated spans and moves a box through it under the budget. Every clause of that
+   budget is a smoke assertion, and a wanderer survives five simulated minutes on all six
+   golden seeds. Nothing draws it yet — that is the next item.
+4. **Camera and input** — isometric follow camera, mouse and twin-stick aim. This is what
+   makes the build something a person can judge rather than something CI can.
 5. **Two players moving.** Earlier than comfortable: authority discovered late is a rewrite,
    discovered now it is an interface. Plain WebRTC or WebSockets behind an interface Steam
    Networking can later implement. No Electron wrapper needed to prototype.
@@ -68,7 +72,7 @@ is what actually holds.
 
 | Layer | What it does |
 | --- | --- |
-| `tools/smoke.mjs` | The assertions. Bundle sync, headless generation, boot, cross-engine math, plate/node parity, golden-master, sanity invariants, render. |
+| `tools/smoke.mjs` | The assertions. Bundle sync, headless generation, the movement budget, a five-minute soak per seed, boot, cross-engine math, plate/node parity, golden-master, sanity invariants, render. |
 | `tools/hooks/pre-push` | Runs `--quick` before anything leaves the machine. Seconds. Install: `node tools/hooks/install.mjs` |
 | `.github/workflows/ci.yml` | Full smoke on every push and PR, with the render pass. |
 | This document | The bar, in the place a new session will look. |

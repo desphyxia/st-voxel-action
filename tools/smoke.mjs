@@ -18,11 +18,15 @@
  *                 return the same bits in node's V8 as in the browser's. The
  *                 engines disagree on Math.sin and Math.cos; that is why that
  *                 module exists.
- *   5. PARITY     the plate's worlds are identical to node's, digest included.
- *   6. GOLDEN     all six pinned seeds match tools/baseline.json exactly.
+ *   5. MOVE       every clause of the movement budget, against a micro-world
+ *                 built to pin it: step, vault, jump, fall, wade, swim, magma.
+ *   6. PLAY       a character survives five simulated minutes on every seed
+ *                 without falling through the world or ending up inside it.
+ *   7. PARITY     the plate's worlds are identical to node's, digest included.
+ *   8. GOLDEN     all six pinned seeds match tools/baseline.json exactly.
  *                 The generator is deterministic, so any drift is a real
  *                 change; --update re-records it deliberately.
- *   7. RENDER     the plate still draws.
+ *   9. RENDER     the plate still draws.
  *
  * As the prototype gains verbs, each one adds an assertion here — that is the
  * ratchet. See docs/PROTOTYPE.md.
@@ -34,7 +38,8 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, tilesDone, GOLDEN_SEEDS, measureSeeds, measureWorld,
-         measureSeedsInNode, diffMeasure, mathProbe } from './lib/harness.mjs';
+         generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
+import { budgetSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { PLATE, withBundle } from './bundle-gen.mjs';
 
 const argv = process.argv.slice(2);
@@ -62,19 +67,49 @@ check(inSync, 'SYNC: plate carries the current src/gen',
    enough to give two players different worlds from the same seed. */
 const UNPINNED = /Math\.(sin|cos|tan|asin|acos|atan|atan2|exp|expm1|log|log2|log10|log1p|pow|hypot|cbrt|sinh|cosh|tanh|fround)\b|\*\*/g;
 const strays = [];
-for (const f of readdirSync(join(ROOT, 'src/gen')).filter((n) => n.endsWith('.mjs'))) {
-  if (f === 'exact.mjs') continue;                       /* where they are allowed to appear */
-  const src = readFileSync(join(ROOT, 'src/gen', f), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-  for (const m of src.match(UNPINNED) || []) strays.push(`${f}: ${m}`);
+for (const dir of ['src/gen', 'src/sim']) {
+  for (const f of readdirSync(join(ROOT, dir)).filter((n) => n.endsWith('.mjs'))) {
+    if (f === 'exact.mjs') continue;                     /* where they are allowed to appear */
+    const src = readFileSync(join(ROOT, dir, f), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    for (const m of src.match(UNPINNED) || []) strays.push(`${dir}/${f}: ${m}`);
+  }
 }
-check(strays.length === 0, 'MATH: src/gen uses only pinned arithmetic',
+check(strays.length === 0, 'MATH: src/gen and src/sim use only pinned arithmetic',
       strays.length ? `${strays.join(', ')} — use src/gen/exact.mjs` : '');
 
 const t0 = Date.now();
-const measured = await measureSeedsInNode(GOLDEN_SEEDS);
+const worlds = await generateSeeds(GOLDEN_SEEDS);
+const measured = worlds.map((w, i) => measureWorld(w, GOLDEN_SEEDS[i].nm));
 const genMs = Date.now() - t0;
 check(measured.length === GOLDEN_SEEDS.length, 'NODE: src/gen generates every seed, no browser');
+
+/* ---------- MOVE + PLAY: the movement budget, with no browser either ----------
+   The controller is deliberately renderer-free, so the verbs can be asserted
+   here rather than inferred from a screenshot. MOVE pins each clause of the
+   budget against a micro-world built for it; PLAY turns a wanderer loose on
+   each generated seed for five simulated minutes, which is the bar in
+   docs/PROTOTYPE.md. */
+for (const r of budgetSuite()) check(r.ok, `MOVE: ${r.label}`, r.detail);
+
+const t1 = Date.now();
+let jumped = 0, vaulted = 0;
+for (let i = 0; i < worlds.length; i++) {
+  const s = soak(worlds[i], GOLDEN_SEEDS[i].nm);
+  jumped += s.jumps; vaulted += s.vaults;
+  check(s.survived, `PLAY: ${s.seed} five minutes without falling through`,
+        `${s.ticks}/${SOAK_TICKS} ticks, ${s.dead || 'alive'}`);
+  /* Falling through the world is the loud failure; ending up inside it is the
+     quiet one, and a scripted climb that clips a ledge is how it gets in. */
+  check(s.insideTicks === 0, `PLAY: ${s.seed} never inside the ground`,
+        `${s.insideTicks} ticks embedded`);
+  /* A capsule wedged in a corner survives five minutes perfectly well. */
+  check(s.travelled > 300, `PLAY: ${s.seed} covers ground`,
+        `${s.travelled} m walked, ${s.displaced} m from spawn`);
+}
+check(jumped > 0 && vaulted > 0, 'PLAY: jumps and vaults happen on real terrain',
+      `${jumped} jumps, ${vaulted} vaults across ${worlds.length} seeds`);
+const playMs = Date.now() - t1;
 
 /* The plate generates its hero world synchronously on load, so even
    DOMContentLoaded can take minutes under software rendering on a slow runner.
@@ -179,6 +214,7 @@ try {
   }
 
   console.log(`\ngeneration: ${genMs} ms for ${measured.length} seeds`);
+  console.log(`simulation: ${playMs} ms for ${measured.length} x five minutes`);
 } finally {
   await browser.close();
 }
