@@ -16,7 +16,8 @@ of world as plain arrays:
 import { buildWorld } from './src/gen/index.mjs';
 const w = buildWorld({ seed: 'QUARTERSTONE', size: 64, force: null, ox: 0, oz: 0 });
 // w.pos / w.col     voxel centres and colours, 3 floats each
-// w.mpos / w.mcol   the emissive ones — magma, lamps, landmark lights
+// w.mat             one material id per voxel — see src/gen/materials.mjs
+// w.mpos/mcol/mmat  the emissive ones — magma, lamps, landmark lights
 // w.grass, w.water  blade clouds and water surface geometry
 // w.cells, w.Hs     the 1 m cell grid and the 25 cm height field
 // w.reach, w.unreach, w.spawn   what the movement budget can actually get to
@@ -26,6 +27,17 @@ It runs identically in Node, in a worker and in the browser. `index.mjs` lists t
 passes in the order they run, which is also the order the random stream is
 consumed: **reordering a pass changes every world**. That is what
 `tools/baseline.json` pins, and what `node tools/smoke.mjs` checks.
+
+`pos`, `col` and `mat` are one record split three ways: voxel *n* is at
+`pos[3n..3n+2]`, coloured `col[3n..3n+2]`, and made of `MATERIALS[mat[n]]`. Any
+stamp that pushes a position must push all three, and the smoke test fails if
+the lengths ever disagree.
+
+Material and palette are deliberately separate. Two biomes can both be grass and
+look nothing alike, and the per-voxel dithering that makes a blended transition
+read only works on colour. The material answers what a thing *is* — how hard it
+is to carve, whether it burns, whether it conducts, what it sounds like
+underfoot — and the gear design depends on those answers.
 
 ### Two things to know before editing
 

@@ -96,9 +96,9 @@ export const GOLDEN_SEEDS = [
  * directly against src/gen in node, and serialized into the page to run
  * against the plate's bundled copy, and the two must agree exactly.
  *
- * `digest` hashes every array the generator emits — positions, colours, grass,
- * water, reach, cells. The counts above it would miss a change that swapped
- * two voxels or shifted a colour; the digest would not.
+ * `digest` hashes every array the generator emits — positions, colours,
+ * materials, grass, water, reach, cells. The counts above it would miss a
+ * change that swapped two voxels or shifted a colour; the digest would not.
  */
 export function measureWorld(d, name) {
   const buf = new DataView(new ArrayBuffer(8));
@@ -108,7 +108,7 @@ export function measureWorld(d, name) {
     for (let b = 0; b < 8; b++) { h ^= buf.getUint8(b); h = Math.imul(h, 16777619) >>> 0; }
   };
   const arr = (a) => { if (!a) { num(-1); return; } num(a.length); for (let i = 0; i < a.length; i++) num(a[i]); };
-  arr(d.pos); arr(d.col); arr(d.mpos); arr(d.mcol);
+  arr(d.pos); arr(d.col); arr(d.mat); arr(d.mpos); arr(d.mcol); arr(d.mmat);
   arr(d.grass.p); arr(d.grass.ph); arr(d.grass.ti); arr(d.grass.sc); arr(d.grass.yw); arr(d.grass.c);
   arr(d.water.v); arr(d.water.i); arr(d.water.d); arr(d.water.f); arr(d.water.fl);
   arr(d.trail); arr(d.topi); arr(d.unreach); arr(d.reach); arr(d.Hs); arr(d.FLG);
@@ -133,6 +133,10 @@ export function measureWorld(d, name) {
   return {
     seed: name,
     voxels: d.pos.length / 3,
+    /* mats must equal voxels: pos, col and mat are one record split three ways,
+       and a stamp that forgets its material shows up here as a mismatch. */
+    mats: d.mat ? d.mat.length : -1,
+    matKinds: d.mat ? new Set(d.mat).size : -1,
     grass: d.grass.ph.length,
     waterCells: water,
     trailCells: trail,

@@ -14,7 +14,7 @@
  * concatenate in dependency order, close over it all and publish one global.
  * Keep src/gen to plain static imports and it stays true.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,11 +24,12 @@ export const BEGIN = '/* QS-BUNDLE-BEGIN — generated from src/gen by tools/bun
 export const END = '/* QS-BUNDLE-END */';
 
 /** Dependency order. A module may only use names defined above it. */
-const MODULES = ['constants', 'rng', 'biomes', 'field', 'erosion', 'routes', 'spans',
-                 'water', 'surface', 'props', 'grass', 'reach', 'index'];
+const MODULES = ['constants', 'materials', 'rng', 'biomes', 'field', 'erosion', 'routes',
+                 'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index'];
 
 /** What the plate reads off the global. Everything else stays private. */
-const EXPOSED = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'makeGen', 'buildWorld'];
+const EXPOSED = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERIALS',
+                 'carvable', 'makeGen', 'buildWorld'];
 
 function strip(src) {
   return src
@@ -37,7 +38,27 @@ function strip(src) {
     .replace(/^export\s+/gm, '');
 }
 
+/**
+ * A module added to src/gen but not to MODULES used to bundle silently: the
+ * plate would throw a ReferenceError on load, never define window.QS, and the
+ * smoke test would sit there until its timeout. Fail here instead, where the
+ * message can say what is wrong.
+ */
+function assertComplete() {
+  const onDisk = readdirSync(join(ROOT, 'src/gen'))
+    .filter((f) => f.endsWith('.mjs')).map((f) => f.slice(0, -4)).sort();
+  const missing = onDisk.filter((m) => !MODULES.includes(m));
+  const extra = MODULES.filter((m) => !onDisk.includes(m));
+  if (missing.length || extra.length) {
+    throw new Error(
+      'MODULES in tools/bundle-gen.mjs is out of step with src/gen.\n' +
+      (missing.length ? `  not bundled: ${missing.join(', ')} — add them in dependency order\n` : '') +
+      (extra.length ? `  listed but absent: ${extra.join(', ')}\n` : ''));
+  }
+}
+
 export function renderBundle() {
+  assertComplete();
   const parts = MODULES.map((m) => {
     const src = strip(readFileSync(join(ROOT, `src/gen/${m}.mjs`), 'utf8')).trim();
     return `/* ---------- src/gen/${m}.mjs ---------- */\n${src}`;

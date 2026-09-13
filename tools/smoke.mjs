@@ -114,6 +114,13 @@ try {
       /* Invariants that must hold for any seed, baseline or not. */
       for (const m of measured) {
         check(m.voxels > 1000, `SANITY: ${m.seed} produced terrain`, `${m.voxels} voxels`);
+        /* Every voxel carries a material, and a world uses more than one.
+           A stamp that forgets its material breaks the first; a biome table
+           that collapsed to a single id breaks the second. */
+        check(m.mats === m.voxels, `MATERIAL: ${m.seed} one per voxel`,
+              `${m.mats} materials, ${m.voxels} voxels`);
+        check(m.matKinds >= 4, `MATERIAL: ${m.seed} uses a range`,
+              `${m.matKinds} distinct`);
         check(m.landmark, `SANITY: ${m.seed} has a landmark`);
         check(m.waterCells === 0 || m.bridges > 0,
               `SANITY: ${m.seed} water implies a crossing`,

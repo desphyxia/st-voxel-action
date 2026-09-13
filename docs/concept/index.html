@@ -41,6 +41,7 @@
   .anno.flip span{left:auto;right:13px;border-left:1px solid var(--line2);border-right:2px solid var(--sand)}
   .annos.off .anno{opacity:0;transition:opacity .2s}
   .stagebar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:10px}
+  .stagebar .note{font-family:var(--mono);font-size:11px;color:var(--sand);min-width:0}
   .stagebar .cap{font-size:13px;color:var(--dim);flex:1 1 220px;min-width:0}
   .seedbox{display:flex;align-items:center;gap:0;border:1px solid var(--line);border-radius:2px;background:var(--ink2);overflow:hidden}
   .seedbox label{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);padding:0 9px}
@@ -186,6 +187,7 @@
       <button class="ctl" id="togc" type="button" aria-pressed="false">Chunks</button>
       <button class="ctl" id="carve" type="button" aria-pressed="false">Carve</button>
       <button class="ctl" id="reach" type="button" aria-pressed="false">Reach</button>
+      <span class="note" id="carvenote"></span>
       <button class="ctl" id="toga" type="button" aria-pressed="true">Callouts</button>
     </div>
   </section>
@@ -365,6 +367,64 @@ const MOVE = { step: 1, vault: 2, jump: 2.5, wade: 0.75, fall: 6 };
 const DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
 function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+/* ---------- src/gen/materials.mjs ---------- */
+/**
+ * What a voxel is made of, as opposed to what colour it happens to be.
+ *
+ * Until now a voxel carried only a colour, and three fusions in the gear design
+ * were fiction because nothing could answer the questions they ask: chain-frost
+ * conducts through wet ground and standing water, emberweft spreads to dry
+ * grass, and the lodestone flail's damage depends on whether it tore basalt or
+ * sand out of the ground (docs/DECISIONS.md §5).
+ *
+ * Every field here exists because some system needs it. Nothing is speculative:
+ *
+ *   hard   carve resistance. A bite that cannot pay it leaves the voxel alone.
+ *   dens   mass. What the lodestone flail throws, and how hard it lands.
+ *   burn   flammability. Emberweft spreads across anything above zero.
+ *   cond   conductivity. Chain-frost and shock travel through it.
+ *   grip   footing. Ice is the reason this is not a constant.
+ *   step   footstep and impact sound key — audio is material-driven by decision.
+ *   emit   emissive. Drawn by the renderer as its own lit pass.
+ *   harm   damage per second on contact. Magma is the only one today.
+ *
+ * Ids are stored per voxel as a byte and are part of the save format: append
+ * new materials at the end, never renumber.
+ */
+
+const MAT = {
+  AIR: 0, SOIL: 1, GRASS: 2, ROCK: 3, SAND: 4, SNOW: 5, ICE: 6, BASALT: 7,
+  ASH: 8, WOOD: 9, LEAF: 10, PEAT: 11, PATH: 12, MAGMA: 13, METAL: 14, LIGHT: 15,
+};
+
+/** Indexed by MAT. Order is the wire format — append only. */
+const MATERIALS = [
+  { id: 0,  k: 'air',    nm: 'Air',      hard: 0,   dens: 0,   burn: 0,   cond: 0,   grip: 1,    step: 'none',   emit: 0, harm: 0 },
+  { id: 1,  k: 'soil',   nm: 'Soil',     hard: 0.5, dens: 0.6, burn: 0,   cond: 0.2, grip: 1,    step: 'soft',   emit: 0, harm: 0 },
+  { id: 2,  k: 'grass',  nm: 'Grass',    hard: 0.45,dens: 0.5, burn: 0.8, cond: 0.2, grip: 1,    step: 'soft',   emit: 0, harm: 0 },
+  { id: 3,  k: 'rock',   nm: 'Rock',     hard: 0.8, dens: 1,   burn: 0,   cond: 0.1, grip: 1,    step: 'hard',   emit: 0, harm: 0 },
+  { id: 4,  k: 'sand',   nm: 'Sand',     hard: 0.3, dens: 0.5, burn: 0,   cond: 0.1, grip: 0.85, step: 'grain',  emit: 0, harm: 0 },
+  { id: 5,  k: 'snow',   nm: 'Snow',     hard: 0.15,dens: 0.3, burn: 0,   cond: 0.3, grip: 0.8,  step: 'crunch', emit: 0, harm: 0 },
+  { id: 6,  k: 'ice',    nm: 'Ice',      hard: 0.6, dens: 0.9, burn: 0,   cond: 0.7, grip: 0.35, step: 'hard',   emit: 0, harm: 0 },
+  { id: 7,  k: 'basalt', nm: 'Basalt',   hard: 1.2, dens: 1.4, burn: 0,   cond: 0.1, grip: 1,    step: 'hard',   emit: 0, harm: 0 },
+  { id: 8,  k: 'ash',    nm: 'Ash',      hard: 0.2, dens: 0.3, burn: 0,   cond: 0.1, grip: 0.9,  step: 'grain',  emit: 0, harm: 0 },
+  { id: 9,  k: 'wood',   nm: 'Wood',     hard: 0.4, dens: 0.6, burn: 1,   cond: 0.1, grip: 1,    step: 'wood',   emit: 0, harm: 0 },
+  { id: 10, k: 'leaf',   nm: 'Foliage',  hard: 0.1, dens: 0.1, burn: 1,   cond: 0.1, grip: 1,    step: 'brush',  emit: 0, harm: 0 },
+  { id: 11, k: 'peat',   nm: 'Peat',     hard: 0.35,dens: 0.5, burn: 0.6, cond: 0.5, grip: 0.9,  step: 'soft',   emit: 0, harm: 0 },
+  { id: 12, k: 'path',   nm: 'Trodden',  hard: 0.5, dens: 0.7, burn: 0,   cond: 0.2, grip: 1.05, step: 'soft',   emit: 0, harm: 0 },
+  { id: 13, k: 'magma',  nm: 'Magma',    hard: 99,  dens: 1.2, burn: 1,   cond: 0.9, grip: 0.5,  step: 'none',   emit: 1, harm: 40 },
+  { id: 14, k: 'metal',  nm: 'Metal',    hard: 1.5, dens: 1.6, burn: 0,   cond: 1,   grip: 1,    step: 'metal',  emit: 0, harm: 0 },
+  { id: 15, k: 'light',  nm: 'Lit core', hard: 1.5, dens: 0.8, burn: 0,   cond: 1,   grip: 1,    step: 'metal',  emit: 1, harm: 0 },
+];
+
+/** Wet ground conducts: what chain-frost needs, and why water level matters. */
+function conductivity(matId, wet) {
+  var c = MATERIALS[matId].cond;
+  return wet ? Math.min(1, c + 0.6) : c;
+}
+
+/** True when one bite of the given strength can break this material at all. */
+function carvable(matId, bite) { return MATERIALS[matId].hard <= bite; }
 /* ---------- src/gen/rng.mjs ---------- */
 /**
  * Seeded noise. Everything random in the generator comes from here, so that a
@@ -402,26 +462,37 @@ function makeNoise(seed){
  * The plate's document also reads nm, c, ds and mt — the same rows drive the
  * climate chart and the biome cards, so the table lives here and nowhere else.
  *
- * DEBT: palettes are still hex colours, chosen per voxel by the generator.
- * Issue #14 replaces them with material ids and hands the choice of how a
- * material looks back to the renderer, where it belongs.
+ * Each row also names the material its ground is made of, per layer. Palette
+ * and material are deliberately separate: two biomes can both be grass and look
+ * nothing alike, and the blend dithering that makes a transition read only works
+ * on colour. See src/gen/materials.mjs.
+ *
+ * DEBT: palettes are still hex colours chosen per voxel by the generator, which
+ * means the renderer cannot restyle a material without regenerating the world.
+ * Moving colour choice behind the material is tracked separately from #14.
  */
+
 
 const BIOMES = [
  {k:'meadow',nm:'Meadowlands',t:0.58,m:0.66,c:'#6b9a45',ds:'Broadleaf stands, meandering rivers, boulder fields. The tutorial biome and the one the palette is calibrated against.',mt:'base 3 m · hills 1–3 m · rivers common',
   surf:[0x5f8f3e,0x6b9a45,0x557f36,0x74a24e],soil:[0x6b4f33,0x5a4229,0x7a5a3c],rock:[0x7d7a72,0x8b877e,0x6d6a63],bed:[0xcbb187,0xd6bd94],
+  mat:{surf:MAT.GRASS,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
   gr:{d:0.9,c:0x86ab4f,dry:0xb6a35a,h:[0.30,0.28]},tree:{t:'broad',d:0.9},base:3,hill:3,canyon:0.1,col:0.05},
  {k:'mesa',nm:'Redrock Mesa',t:0.82,m:0.20,c:'#c08a52',ds:'Stacked sandstone, dry washes, hoodoos. Canyons and arcs are generated here more than anywhere else.',mt:'base 6 m · hills 1–2 m · canyons 3–5 m',
   surf:[0xc98f55,0xd6a066,0xb97f49,0xc08a52],soil:[0xa9723f,0x8f5f34],rock:[0xb07a45,0xc08a52,0x9a6a3f,0xd1a06a],bed:[0xd8c08c,0xc9ad7a],
+  mat:{surf:MAT.SAND,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
   gr:{d:0.35,c:0xc0a760,dry:0xd8c07a,h:[0.26,0.22]},tree:{t:'scrub',d:0.25},base:6,hill:2,canyon:0.85,col:0.5},
  {k:'fen',nm:'Boreal Fen',t:0.40,m:0.90,c:'#4a7a4e',ds:'Peat shelves, standing water, black conifers and reed beds. Wide slow water, poor footing.',mt:'base 2 m · hills 1 m · water 4–8 m wide',
   surf:[0x3f6b46,0x4a7a4e,0x35603f,0x577f4a],soil:[0x3a2f24,0x2e251c],rock:[0x5b6058,0x4c5149],bed:[0x4a4432,0x3c3a2a],
+  mat:{surf:MAT.GRASS,soil:MAT.PEAT,rock:MAT.ROCK,bed:MAT.PEAT},
   gr:{d:1.0,c:0x5f8a48,dry:0x7d8a3e,h:[0.55,0.35]},tree:{t:'conifer',d:0.8},base:2,hill:1,canyon:0,col:0},
  {k:'ash',nm:'Ashfall Barrens',t:0.90,m:0.48,c:'#5a504a',ds:'Basalt columns, fissures and magma seams under a grey crust. Vertical cover everywhere, nothing to eat.',mt:'base 4 m · columns 2–4 m · magma seams',
   surf:[0x3a3532,0x46403c,0x2f2a28,0x4d4642],soil:[0x2b2726,0x241f1e],rock:[0x33302f,0x3f3a38,0x282524],bed:[0x1e1a19,0x272322],
+  mat:{surf:MAT.ASH,soil:MAT.ASH,rock:MAT.BASALT,bed:MAT.BASALT},
   gr:{d:0.3,c:0x6b5a50,dry:0xd2642a,h:[0.24,0.2]},tree:{t:'snag',d:0.3},base:4,hill:2,canyon:0.3,col:0.9},
  {k:'frost',nm:'Frostmoor',t:0.12,m:0.44,c:'#cfd9e2',ds:'Snow over hard rock, frozen shelves, wind-stripped ridges. Tracks show, and so do you.',mt:'base 5 m · hills 2–3 m · ice shelves',
   surf:[0xdfe7ee,0xe9eef4,0xcfd9e2,0xd7e0e8],soil:[0x8b95a0,0x79838e],rock:[0x6b7480,0x7c8590,0x5d6670],bed:[0x9fc9d8,0xb7dbe6],
+  mat:{surf:MAT.SNOW,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.ICE},
   gr:{d:0.45,c:0xc8d6de,dry:0x9fb4bf,h:[0.26,0.22]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
 ];
 
@@ -958,11 +1029,13 @@ function buildWaterGeometry(w) {
  * voxel grid — top height, span bottom, water level, flags. buildVoxels then
  * walks each column down from its surface and emits the boxes.
  *
- * Output is flat arrays: pos (x,y,z per voxel) and col (r,g,b per voxel), plus
- * the same pair for the emissive ones. DEBT: col is still a colour, chosen
- * here. Issue #14 replaces it with a material id and moves the choice of how a
- * material looks to the renderer.
+ * Output is flat arrays: pos (x,y,z per voxel), col (r,g,b per voxel) and mat
+ * (one material id per voxel), plus the same three for the emissive ones. Every
+ * push into pos is matched by exactly one push into col and one into mat — the
+ * three arrays are one record split three ways, and the smoke test checks their
+ * lengths agree.
  */
+
 
 
 
@@ -989,7 +1062,7 @@ function buildVoxels(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, BOT = w.BOT, FLG = w.FLG, half = w.half,
       cellAt = w.cellAt, R = w.R, i, j, k, x, z, c;
   /* voxels */
-  var pos=[],col=[],mpos=[],mcol=[],y,hh,mn,slope;
+  var pos=[],col=[],mat=[],mpos=[],mcol=[],mmat=[],y,hh,mn,slope;
   var TOPI=new Int32Array(NX*NZ);
   for(i=0;i<NX;i++){ x=-half+i*V+V/2;
     for(j=0;j<NZ;j++){ z=-half+j*V+V/2; k=i*NZ+j; hh=Hs[k];
@@ -997,44 +1070,48 @@ function buildVoxels(w) {
           n2=j>0?Hs[k-1]:hh-2, n3=j<NZ-1?Hs[k+1]:hh-2;
       mn=Math.min(n0,n1,n2,n3); slope=hh-mn;
       c=cellAt(x,z);
-      var b=BIOMES[rouletteBiome(c.w,R)], topc;
-      if(FLG[k]&2){ mpos.push(x,hh-V/2,z); pushShade(mcol,R()<0.5?0xff6a1e:0xffa23c,1); topc=0x2b2422; }
-      else if(FLG[k]&1) topc=pickFrom(b.bed,R);
-      else if(FLG[k]&4) topc=pickFrom(PATH,R);
-      else if(slope>0.9) topc=pickFrom(b.rock,R);
-      else topc=pickFrom(b.surf,R);
+      var b=BIOMES[rouletteBiome(c.w,R)], topc, topm;
+      if(FLG[k]&2){ mpos.push(x,hh-V/2,z); pushShade(mcol,R()<0.5?0xff6a1e:0xffa23c,1); mmat.push(MAT.MAGMA);
+                    topc=0x2b2422; topm=MAT.ASH; }
+      else if(FLG[k]&1){ topc=pickFrom(b.bed,R); topm=b.mat.bed; }
+      else if(FLG[k]&4){ topc=pickFrom(PATH,R); topm=MAT.PATH; }
+      else if(slope>0.9){ topc=pickFrom(b.rock,R); topm=b.mat.rock; }
+      else { topc=pickFrom(b.surf,R); topm=b.mat.surf; }
       var topk=0.9+R()*0.2;
       TOPI[k]=pos.length/3;
-      pos.push(x,hh-V/2,z); pushShade(col,topc,topk);
+      pos.push(x,hh-V/2,z); pushShade(col,topc,topk); mat.push(topm);
       /* accumulation: snow and ash settle on whatever faces up */
       if(!(FLG[k]&1)&&!(FLG[k]&4)){
         var acc=(c.w[4]*0.95+c.w[3]*0.5)*(1-clamp(slope/1.1,0,1));
         if(acc>0.40){
-          var ac=c.w[4]>=c.w[3]?pickFrom(SNOW,R):pickFrom(ASHFALL,R), ak=0.9+R()*0.2;
-          pos.push(x,hh+V/2,z); pushShade(col,ac,ak);
+          var snowy=c.w[4]>=c.w[3];
+          var ac=snowy?pickFrom(SNOW,R):pickFrom(ASHFALL,R), ak=0.9+R()*0.2;
+          pos.push(x,hh+V/2,z); pushShade(col,ac,ak); mat.push(snowy?MAT.SNOW:MAT.ASH);
         }
       }
       var bottom=Math.max(BOT[k],mn);
       for(y=hh-1.5*V;y>bottom-0.001;y-=V){
-        var sc=(y<hh-1.25)?pickFrom(b.rock,R):pickFrom(b.soil,R);
+        var deep=(y<hh-1.25);
+        var sc=deep?pickFrom(b.rock,R):pickFrom(b.soil,R);
         var band=Math.floor(y/0.75)%2;
         var sk=(band?0.94:1.06)*(0.88+R()*0.2);
-        pos.push(x,y,z); pushShade(col,sc,sk);
+        pos.push(x,y,z); pushShade(col,sc,sk); mat.push(deep?b.mat.rock:b.mat.soil);
       }
       /* the underside of an undercut rim, and the floor under it */
       if(BOT[k]>0.01){
         var uc=pickFrom(b.rock,R), uk=0.72+R()*0.15;
-        pos.push(x,BOT[k]+V/2,z); pushShade(col,uc,uk);
+        pos.push(x,BOT[k]+V/2,z); pushShade(col,uc,uk); mat.push(b.mat.rock);
         for(var sq=c.sp.length-2;sq>=0;sq--){
           var lt=c.sp[sq][1];
           var lc=pickFrom(b.rock,R), lk=0.80+R()*0.18;
           var lr=shadeR(lc,lk), lg=shadeG(lc,lk), lb=shadeB(lc,lk);
-          pos.push(x,lt-V/2,z); col.push(lr,lg,lb);
-          pos.push(x,lt-1.5*V,z); col.push(lr*0.9,lg*0.9,lb*0.9);
+          pos.push(x,lt-V/2,z); col.push(lr,lg,lb); mat.push(b.mat.rock);
+          pos.push(x,lt-1.5*V,z); col.push(lr*0.9,lg*0.9,lb*0.9); mat.push(b.mat.rock);
         }
       }
     } }
-  w.pos = pos; w.col = col; w.mpos = mpos; w.mcol = mcol; w.TOPI = TOPI;
+  w.pos = pos; w.col = col; w.mat = mat;
+  w.mpos = mpos; w.mcol = mcol; w.mmat = mmat; w.TOPI = TOPI;
 }
 /* ---------- src/gen/props.mjs ---------- */
 /**
@@ -1050,46 +1127,56 @@ function buildVoxels(w) {
 
 
 
+
 /** The stamp kit for one world: pure geometry, pushed into w's voxel arrays. */
 function makeStamps(w) {
-  var R = w.R, pos = w.pos, col = w.col, mpos = w.mpos, mcol = w.mcol,
+  var R = w.R, pos = w.pos, col = w.col, mat = w.mat,
+      mpos = w.mpos, mcol = w.mcol, mmat = w.mmat,
       half = w.half, NX = w.NX, NZ = w.NZ, Hs = w.Hs, FLG = w.FLG, y;
-  function addVox(px,py,pz,hex,k2){ pos.push(Math.round(px/V)*V,Math.round(py/V)*V,Math.round(pz/V)*V); pushShade(col,hex,k2); }
+  /** Every stamp lands through here, so every stamped voxel has a material. */
+  function addVox(px,py,pz,hex,k2,m){
+    pos.push(Math.round(px/V)*V,Math.round(py/V)*V,Math.round(pz/V)*V);
+    pushShade(col,hex,k2); mat.push(m);
+  }
   function surfAt(px,pz){var i2=clamp(Math.round((px+half)/V),0,NX-1),j2=clamp(Math.round((pz+half)/V),0,NZ-1);var k2=i2*NZ+j2;return {y:Hs[k2],f:FLG[k2]};}
   function tree(px,pz,b,t){
     var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
     var th, r, ax, ay, az;
     if(t==='conifer'){
       th=3+R()*2;
-      for(y=0;y<th;y+=V) addVox(px,y0+y,pz,b.k==='frost'?0x4a4038:0x4a3a2c,0.9+R()*0.2);
+      for(y=0;y<th;y+=V) addVox(px,y0+y,pz,b.k==='frost'?0x4a4038:0x4a3a2c,0.9+R()*0.2,MAT.WOOD);
       for(var lv=0;lv<5;lv++){
         var ly=y0+th*0.35+lv*(th*0.15), lr=(1.5-lv*0.24);
         for(ax=-lr;ax<=lr;ax+=V)for(az=-lr;az<=lr;az+=V){
           if(ax*ax+az*az>lr*lr) continue;
-          addVox(px+ax,ly,pz+az,(b.k==='frost'&&R()<0.45)?0xdfe7ee:(R()<0.5?0x2f5233:0x3c6b3e),0.85+R()*0.3);
+          /* hoisted so the material can follow the colour; the short-circuit,
+             and so the number of R() calls, is unchanged. */
+          var capped=(b.k==='frost'&&R()<0.45);
+          addVox(px+ax,ly,pz+az,capped?0xdfe7ee:(R()<0.5?0x2f5233:0x3c6b3e),0.85+R()*0.3,
+                 capped?MAT.SNOW:MAT.LEAF);
         }
       }
     } else if(t==='scrub'){
       th=1+R()*1.2;
-      for(y=0;y<th;y+=V) addVox(px,y0+y,pz,0x6b5233,0.9+R()*0.2);
+      for(y=0;y<th;y+=V) addVox(px,y0+y,pz,0x6b5233,0.9+R()*0.2,MAT.WOOD);
       r=0.7+R()*0.4;
       for(ax=-r;ax<=r;ax+=V)for(ay=-r*0.5;ay<=r*0.6;ay+=V)for(az=-r;az<=r;az+=V){
         if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.5)>1-R()*0.3) continue;
-        addVox(px+ax,y0+th+ay,pz+az,R()<0.5?0x6f7f42:0x87904a,0.85+R()*0.3);
+        addVox(px+ax,y0+th+ay,pz+az,R()<0.5?0x6f7f42:0x87904a,0.85+R()*0.3,MAT.LEAF);
       }
     } else if(t==='snag'){
       th=2.5+R()*1.8;
-      for(y=0;y<th;y+=V) addVox(px+(y>th*0.6?V:0),y0+y,pz,R()<0.5?0x2e2825:0x3a322e,0.85+R()*0.25);
+      for(y=0;y<th;y+=V) addVox(px+(y>th*0.6?V:0),y0+y,pz,R()<0.5?0x2e2825:0x3a322e,0.85+R()*0.25,MAT.WOOD);
       for(var br=0;br<3;br++){var bl=0.5+R()*0.7,dirx=R()<0.5?1:-1,by=y0+th*(0.55+br*0.15);
-        for(var t2=0;t2<bl;t2+=V) addVox(px+dirx*t2,by+t2*0.4,pz+(R()-0.5)*0.3,0x332b27,0.9);}
+        for(var t2=0;t2<bl;t2+=V) addVox(px+dirx*t2,by+t2*0.4,pz+(R()-0.5)*0.3,0x332b27,0.9,MAT.WOOD);}
     } else {
       th=2.5+R()*1.5;
       for(y=0;y<th;y+=V)for(ax=-V;ax<=V;ax+=V)for(az=-V;az<=V;az+=V)
-        if(Math.abs(ax)+Math.abs(az)<=V) addVox(px+ax,y0+y,pz+az,0x5a4130,0.85+R()*0.3);
+        if(Math.abs(ax)+Math.abs(az)<=V) addVox(px+ax,y0+y,pz+az,0x5a4130,0.85+R()*0.3,MAT.WOOD);
       r=1.1+R()*0.55;
       for(ax=-r;ax<=r;ax+=V)for(ay=-r*0.8;ay<=r*0.8;ay+=V)for(az=-r;az<=r;az+=V){
         if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.68)>1-R()*0.28) continue;
-        addVox(px+ax,y0+th+r*0.5+ay,pz+az,R()<0.15?0x8ea84b:(R()<0.5?0x4f7a3a:0x628f45),0.8+R()*0.35);
+        addVox(px+ax,y0+th+r*0.5+ay,pz+az,R()<0.15?0x8ea84b:(R()<0.5?0x4f7a3a:0x628f45),0.8+R()*0.35,MAT.LEAF);
       }
     }
   }
@@ -1097,7 +1184,7 @@ function makeStamps(w) {
     var s=surfAt(px,pz); if(s.f&1) return; var y0=s.y;
     for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
-      addVox(px+ax,y0+r*0.45+ay,pz+az,pickFrom(b.rock,R),0.85+R()*0.3);
+      addVox(px+ax,y0+r*0.45+ay,pz+az,pickFrom(b.rock,R),0.85+R()*0.3,b.mat.rock);
     }
   }
   function scree(px,pz,dom,n){
@@ -1105,7 +1192,7 @@ function makeStamps(w) {
       var sx=px+(R()-0.5)*2.4, sz=pz+(R()-0.5)*2.4, s=surfAt(sx,sz); if(s.f&1) continue;
       var n2=(R()<0.3)?2:1;
       for(var a=0;a<n2;a++)for(var b=0;b<n2;b++)for(var c2=0;c2<n2;c2++)
-        addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickFrom(BIOMES[dom].rock,R),0.8+R()*0.3);
+        addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickFrom(BIOMES[dom].rock,R),0.8+R()*0.3,BIOMES[dom].mat.rock);
     }
   }
   function bush(px,pz,dom){
@@ -1114,40 +1201,40 @@ function makeStamps(w) {
     var cols=(dom===4)?[0x6f8390,0x8aa3ad]:(dom===3?[0x3b332e,0x4a403a]:(dom===1?[0x6f7f42,0x87904a]:[0x3f6b34,0x4e7d3e,0x5d8c46]));
     for(var ax=-r;ax<=r;ax+=V)for(var ay=0;ay<=r*1.5;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+((ay-r*0.65)*(ay-r*0.65))/(r*r*0.65)>1-R()*0.3) continue;
-      addVox(px+ax,s.y+ay+V/2,pz+az,pickFrom(cols,R),0.85+R()*0.3);
+      addVox(px+ax,s.y+ay+V/2,pz+az,pickFrom(cols,R),0.85+R()*0.3,MAT.LEAF);
     }
   }
   function stump(px,pz){
     var s=surfAt(px,pz); if(s.f) return;
     for(var y2=0;y2<0.55;y2+=V)for(var ax=-V;ax<=V;ax+=V)for(var az=-V;az<=V;az+=V)
       if(Math.abs(ax)+Math.abs(az)<=V)
-        addVox(px+ax,s.y+y2+V/2,pz+az,(y2>0.3&&ax===0&&az===0)?0x8a6a4a:0x5a4130,0.9+R()*0.2);
+        addVox(px+ax,s.y+y2+V/2,pz+az,(y2>0.3&&ax===0&&az===0)?0x8a6a4a:0x5a4130,0.9+R()*0.2,MAT.WOOD);
   }
   function fallenTrunk(px,pz){
     var s0=surfAt(px,pz); if(s0.f) return;
     var ang=R()*Math.PI, dx=Math.cos(ang), dz=Math.sin(ang), L=2+R()*2.2;
     for(var t2=-L/2;t2<=L/2;t2+=V)for(var ay=0;ay<=0.55;ay+=V)for(var b=-0.3;b<=0.3;b+=V){
       if((ay-0.28)*(ay-0.28)+b*b>0.082) continue;
-      addVox(px+dx*t2-dz*b,s0.y+ay+V/2,pz+dz*t2+dx*b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25);
+      addVox(px+dx*t2-dz*b,s0.y+ay+V/2,pz+dz*t2+dx*b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25,MAT.WOOD);
     }
   }
   function fence(px,pz,ang,len){
     var dx=Math.cos(ang),dz=Math.sin(ang);
     for(var t2=0;t2<=len;t2+=1){
       var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
-      for(var y2=0;y2<1.0;y2+=V) addVox(xx,s.y+y2+V/2,zz,0x6b5a45,0.9+R()*0.2);
+      for(var y2=0;y2<1.0;y2+=V) addVox(xx,s.y+y2+V/2,zz,0x6b5a45,0.9+R()*0.2,MAT.WOOD);
       if(t2<len) for(var u=0;u<1;u+=V){
-        addVox(xx+dx*u,s.y+0.8,zz+dz*u,0x5f5040,0.95);
-        addVox(xx+dx*u,s.y+0.4,zz+dz*u,0x5f5040,0.95);
+        addVox(xx+dx*u,s.y+0.8,zz+dz*u,0x5f5040,0.95,MAT.WOOD);
+        addVox(xx+dx*u,s.y+0.4,zz+dz*u,0x5f5040,0.95,MAT.WOOD);
       }
     }
   }
   function lamp(px,pz){
     var s=surfAt(px,pz); if(s.f) return null;
-    for(var y2=0;y2<2.5;y2+=V) addVox(px,s.y+y2+V/2,pz,0x3f4650,0.9+R()*0.15);
-    addVox(px+V,s.y+2.5,pz,0x3f4650,0.95); addVox(px+2*V,s.y+2.5,pz,0x3f4650,0.95);
+    for(var y2=0;y2<2.5;y2+=V) addVox(px,s.y+y2+V/2,pz,0x3f4650,0.9+R()*0.15,MAT.METAL);
+    addVox(px+V,s.y+2.5,pz,0x3f4650,0.95,MAT.METAL); addVox(px+2*V,s.y+2.5,pz,0x3f4650,0.95,MAT.METAL);
     var lx=Math.round((px+2*V)/V)*V, ly=Math.round((s.y+2.25)/V)*V;
-    mpos.push(lx,ly,pz); pushShade(mcol,0xffd08a,1);
+    mpos.push(lx,ly,pz); pushShade(mcol,0xffd08a,1); mmat.push(MAT.LIGHT);
     return [lx,ly,pz];
   }
   function wallRun(px,pz,ang,len,h,dom){
@@ -1157,17 +1244,17 @@ function makeStamps(w) {
       var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
       var hh2=h*(0.55+0.45*Math.abs(Math.sin(t2*0.7)));
       for(var y2=0;y2<hh2;y2+=V)for(var b=-0.25;b<=0.25;b+=V)
-        addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2);
+        addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
     }
   }
   function pillarRuin(px,pz,h,dom){
     var s=surfAt(px,pz); if(s.f) return;
     for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V)
-      addVox(px+b1,s.y+V/2,pz+b2,pickFrom(BIOMES[dom].rock,R),0.95);
+      addVox(px+b1,s.y+V/2,pz+b2,pickFrom(BIOMES[dom].rock,R),0.95,BIOMES[dom].mat.rock);
     for(var y2=V;y2<h;y2+=V){
       var rr2=(y2>h-0.6&&R()<0.5)?0.25:0.375;
       for(var a1=-rr2;a1<=rr2;a1+=V)for(var a2=-rr2;a2<=rr2;a2+=V)
-        addVox(px+a1,s.y+y2+V/2,pz+a2,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.22);
+        addVox(px+a1,s.y+y2+V/2,pz+a2,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.22,BIOMES[dom].mat.rock);
     }
   }
   function hut(px,pz,dom){
@@ -1177,16 +1264,16 @@ function makeStamps(w) {
       if(Math.abs(a)<w/2-V&&Math.abs(b)<w/2-V) continue;
       if(a>-0.6&&a<0.6&&b>w/2-V) continue;
       var hh2=h*(R()<0.22?0.45+R()*0.4:1);
-      for(var y2=0;y2<hh2;y2+=V) addVox(px+a,s.y+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.2);
+      for(var y2=0;y2<hh2;y2+=V) addVox(px+a,s.y+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.2,BIOMES[dom].mat.rock);
     }
     for(var a2=-w/2;a2<=w/2;a2+=V)for(var b2=-w/2;b2<=w/2;b2+=V)
-      if(R()<0.3) addVox(px+a2,s.y+h+V/2,pz+b2,0x5a4130,0.9);
+      if(R()<0.3) addVox(px+a2,s.y+h+V/2,pz+b2,0x5a4130,0.9,MAT.WOOD);
   }
   function deckBridge(px,pz,di,dj,len,y){
     for(var t2=-len/2;t2<=len/2;t2+=V)for(var b=-0.75;b<=0.75;b+=V)
-      addVox(px+di*t2-dj*b,y,pz+dj*t2+di*b,R()<0.25?0x6b5a45:0x5a4a38,0.9+R()*0.2);
+      addVox(px+di*t2-dj*b,y,pz+dj*t2+di*b,R()<0.25?0x6b5a45:0x5a4a38,0.9+R()*0.2,MAT.WOOD);
     for(var side=-1;side<=1;side+=2)for(var t3=-len/2;t3<=len/2;t3+=0.5)
-      addVox(px+di*t3-dj*side*0.75,y+0.5,pz+dj*t3+di*side*0.75,0x4c3f30,0.95);
+      addVox(px+di*t3-dj*side*0.75,y+0.5,pz+dj*t3+di*side*0.75,0x4c3f30,0.95,MAT.WOOD);
   }
   return { addVox: addVox, surfAt: surfAt, tree: tree, boulder: boulder, scree: scree,
            bush: bush, stump: stump, fallenTrunk: fallenTrunk, fence: fence, lamp: lamp,
@@ -1215,7 +1302,7 @@ function scatterProps(w, kit) {
         var cxp=px+gx*ox2, czp=pz+gz*ox2;
         var thick=0.5+0.5*(1-Math.sin(Math.PI*t3));
         for(var w2=-0.75;w2<=0.75;w2+=V)for(var dy=-thick;dy<=thick*0.4;dy+=V)
-          addVox(cxp-gz*w2,yy+dy,czp+gx*w2,pickFrom(BIOMES[cc.dom].rock,R),0.9+R()*0.2);
+          addVox(cxp-gz*w2,yy+dy,czp+gx*w2,pickFrom(BIOMES[cc.dom].rock,R),0.9+R()*0.2,BIOMES[cc.dom].mat.rock);
       }
       arcs++;
     }
@@ -1282,47 +1369,47 @@ function placeClutter(w, kit) {
 /** One landmark per region, on the highest flat ground that is not a trail. */
 function placeLandmark(w, kit) {
   var M = w.M, cells = w.cells, half = w.half, R = w.R, TRAIL = w.TRAIL,
-      OX = w.OX, OZ = w.OZ, mpos = w.mpos, mcol = w.mcol,
+      OX = w.OX, OZ = w.OZ, mpos = w.mpos, mcol = w.mcol, mmat = w.mmat,
       addVox = kit.addVox, flatAt = w.flatAt;
   var lmPos=null;
   function landmarkStamp(px,pz,kind,dom,base){
     var a,b,y2,r2;
     if(kind===0){                                   /* obelisk */
-      for(a=-1;a<=1;a+=V)for(b=-1;b<=1;b+=V) addVox(px+a,base+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2);
+      for(a=-1;a<=1;a+=V)for(b=-1;b<=1;b+=V) addVox(px+a,base+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
       for(y2=V;y2<11;y2+=V){
         r2=0.5*(1-y2/16);
         for(a=-r2;a<=r2;a+=V)for(b=-r2;b<=r2;b+=V)
-          addVox(px+a,base+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25);
+          addVox(px+a,base+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock);
       }
       mpos.push(Math.round(px/V)*V,Math.round((base+11.2)/V)*V,Math.round(pz/V)*V);
-      pushShade(mcol,0x9fe3ff,1);
+      pushShade(mcol,0x9fe3ff,1); mmat.push(MAT.LIGHT);
     } else if(kind===1){                            /* hive tree */
       for(y2=0;y2<8;y2+=V)for(a=-0.5;a<=0.5;a+=V)for(b=-0.5;b<=0.5;b+=V)
-        if(a*a+b*b<0.3) addVox(px+a,base+y2+V/2,pz+b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25);
+        if(a*a+b*b<0.3) addVox(px+a,base+y2+V/2,pz+b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25,MAT.WOOD);
       r2=3.2;
       for(a=-r2;a<=r2;a+=V)for(y2=-2.2;y2<=2.2;y2+=V)for(b=-r2;b<=r2;b+=V){
         if((a*a+b*b)/(r2*r2)+(y2*y2)/5.5>1-R()*0.25) continue;
-        addVox(px+a,base+8.5+y2,pz+b,R()<0.1?0xb7d84f:(R()<0.5?0x3f6630:0x507f3c),0.8+R()*0.35);
+        addVox(px+a,base+8.5+y2,pz+b,R()<0.1?0xb7d84f:(R()<0.5?0x3f6630:0x507f3c),0.8+R()*0.35,MAT.LEAF);
       }
       for(var hq=0;hq<7;hq++){
         mpos.push(Math.round((px+(R()-0.5)*5)/V)*V,Math.round((base+7.5+R()*3)/V)*V,Math.round((pz+(R()-0.5)*5)/V)*V);
-        pushShade(mcol,0xb7f04f,1);
+        pushShade(mcol,0xb7f04f,1); mmat.push(MAT.LIGHT);
       }
     } else if(kind===2){                            /* wrecked machine */
       for(var sl=0;sl<3;sl++){
         var ax2=Math.cos(sl*2.1), az2=Math.sin(sl*2.1);
         for(var t4=0;t4<6;t4+=V)for(b=-0.9;b<=0.9;b+=V)
-          addVox(px+ax2*t4*0.75-az2*b, base+t4*0.8+V/2, pz+az2*t4*0.75+ax2*b, R()<0.3?0x6a6259:0x4a443e,0.85+R()*0.25);
+          addVox(px+ax2*t4*0.75-az2*b, base+t4*0.8+V/2, pz+az2*t4*0.75+ax2*b, R()<0.3?0x6a6259:0x4a443e,0.85+R()*0.25,MAT.METAL);
       }
       for(var cq3=0;cq3<5;cq3++){
         mpos.push(Math.round((px+(R()-0.5)*1.5)/V)*V,Math.round((base+1+R()*1.5)/V)*V,Math.round((pz+(R()-0.5)*1.5)/V)*V);
-        pushShade(mcol,0xff9a3c,1);
+        pushShade(mcol,0xff9a3c,1); mmat.push(MAT.LIGHT);
       }
     } else {                                        /* standing stones */
       for(var st=0;st<6;st++){
         var sa=st/6*6.283, sx=px+Math.cos(sa)*4, sz2=pz+Math.sin(sa)*4, sh=2.5+R()*1.5;
         for(y2=0;y2<sh;y2+=V)for(a=-0.375;a<=0.375;a+=V)for(b=-0.25;b<=0.25;b+=V)
-          addVox(sx+a,base+y2+V/2,sz2+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25);
+          addVox(sx+a,base+y2+V/2,sz2+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock);
       }
     }
   }
@@ -1528,7 +1615,8 @@ function buildWorld(cfg) {
   floodReach(w);               /* what the movement budget can actually reach */
   chooseSpawn(w);
   return {
-    pos: w.pos, col: w.col, mpos: w.mpos, mcol: w.mcol,
+    pos: w.pos, col: w.col, mat: w.mat,
+    mpos: w.mpos, mcol: w.mcol, mmat: w.mmat,
     grass: w.grass, water: w.water, lamps: w.lamps,
     ovhPos: w.ovhPos, lmPos: w.lmPos, trail: w.TRAIL, topi: w.TOPI,
     unreach: w.UNREACH, reach: w.REACH, bridges: w.bridges,
@@ -1536,7 +1624,7 @@ function buildWorld(cfg) {
     cells: w.cells, M: w.M, spawn: w.spawn, size: w.size,
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,makeGen:makeGen,buildWorld:buildWorld};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -2189,9 +2277,19 @@ function mixHex(h1,h2,t){
     togc.setAttribute('aria-pressed',String(!on));
     if(chunkLines) chunkLines.visible=!on;
   });
-  /* destructible clutter: take a bite out of the world in 25 cm units */
+  /* destructible clutter: take a bite out of the world in 25 cm units.
+     What comes away depends on what it is made of — one bite cannot break
+     basalt or worked metal, and magma is not carveable at all. This is the
+     first system to read the material ids the generator now emits. */
+  var BITE=1.0;
   var carveOn=false, carveBtn=document.getElementById('carve'),
+      carveNote=document.getElementById('carvenote'), carveTimer=0,
       rayc=new THREE.Raycaster(), ptr=new THREE.Vector2(), zeroM=new THREE.Matrix4().makeScale(0,0,0);
+  function says(msg){
+    carveNote.textContent=msg;
+    clearTimeout(carveTimer);
+    carveTimer=setTimeout(function(){carveNote.textContent='';},2600);
+  }
   carveBtn.addEventListener('click',function(){
     carveOn=!carveOn; carveBtn.setAttribute('aria-pressed',String(carveOn));
     stage.style.cursor=carveOn?'crosshair':'';
@@ -2204,12 +2302,19 @@ function mixHex(h1,h2,t){
     rayc.setFromCamera(ptr,camera);
     var hit=rayc.intersectObject(built.vox,false);
     if(!hit.length) return;
-    var p=hit[0].point, d=built.data.pos, n=d.length/3, rad=0.62*0.62, cut=0;
+    var p=hit[0].point, d=built.data.pos, mt=built.data.mat,
+        n=d.length/3, rad=0.62*0.62, cut=0, held=null;
     for(var q=0;q<n;q++){
       var dx=d[q*3]-p.x, dy=d[q*3+1]-p.y, dz=d[q*3+2]-p.z;
-      if(dx*dx+dy*dy+dz*dz<rad){ built.vox.setMatrixAt(q,zeroM); cut++; }
+      if(dx*dx+dy*dy+dz*dz>=rad) continue;
+      var mm=QS.MATERIALS[mt[q]];
+      if(mm.hard>BITE){ if(!held||mm.hard>held.hard) held=mm; continue; }
+      built.vox.setMatrixAt(q,zeroM); cut++;
     }
     if(cut) built.vox.instanceMatrix.needsUpdate=true;
+    if(held&&!cut) says(held.nm+' holds — too hard for one bite');
+    else if(held) says(cut+' voxels; the '+held.nm.toLowerCase()+' held');
+    else if(cut) says(cut+' voxels');
   });
 
   /* reach overlay: tint everything the movement rules cannot get to */
