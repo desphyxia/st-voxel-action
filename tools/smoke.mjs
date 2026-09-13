@@ -89,6 +89,12 @@ try {
     check(diffs.length === 0, `PARITY: ${want.seed} plate matches src/gen`, diffs.join(', '));
   }
 
+  /* The plate renders its hero continuously from requestAnimationFrame. Leave
+     this page open and it competes with the render pass below for the whole
+     run — on a 4-core box in software that is the difference between 90 s and
+     a timeout. It has done its job; close it. */
+  await page.close();
+
   /* ---------- GOLDEN ---------- */
   if (UPDATE) {
     writeFileSync(BASELINE, JSON.stringify(measured, null, 1) + '\n');
