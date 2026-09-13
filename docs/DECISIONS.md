@@ -83,6 +83,7 @@ underneath:
 | Materials | Full material ids driving audio, carve hardness, flammability, conduction, friction, emission |
 | Weather | Full day/night and weather; rain wets materials, snow accumulates, fog for distance |
 | Terrain edits | Persist near settlements; wilderness heals over a few in-game days |
+| Scar hazards | **A distinct hazard per scar** — ashfall burns and blocks sight, rime drains stamina and freezes water, spores infect over time. Each scar is a place you prepare for differently |
 | Navigation | A map you fill by walking |
 
 ## 6. Content and enemies
@@ -99,7 +100,21 @@ Three sources, all derived from the premise:
 
 Rival heirs were explicitly excluded: there is no human opposition.
 
-**All encounters and sites are procedural.** No hand-built interiors, no authored dungeons.
+### Weapon sites
+
+The destinations of the main drive, one per tradition: a **tech furnace** half-buried in the
+ashfall's basalt and still venting; a **rime engine** holding a winter in place at the centre
+of the ice; a **spore core** still seeding the bloom. A fourth site is whatever the glasslands
+collision produced, which the other three were holding in check.
+
+| Decision | Choice |
+| --- | --- |
+| How they are made | **Set-piece grammar** — the generator learns a vocabulary for climactic sites (approach, gate, arena, core) assembled from per-tradition parts. They vary by seed like everything else |
+| Boss | A **guardian construct** built to protect the weapon — conventional telegraphs, openings and positioning, not an environmental puzzle |
+
+**All encounters and sites are procedural**, including these. No hand-built interiors, no
+authored dungeons. The set-piece grammar is what makes that possible, and it is a substantial
+generator workstream in its own right — not a content pass.
 
 ## 7. Technical
 
@@ -107,7 +122,7 @@ Rival heirs were explicitly excluded: there is no human opposition.
 | --- | --- |
 | Terrain rendering | Greedy-meshed chunks with baked per-face AO; props stay instanced |
 | Netcode | Host-authoritative peer-to-peer over Steam Networking |
-| Save ownership | **Shared world, host only** — the world can be played only when the host is online |
+| Save ownership | **Shared world, host only** — accepted deliberately. One world, one save, one owner; the pair plays together or not at all |
 | Platform | Steam desktop first, wrapped (Electron or Tauri); browser build is a test harness |
 | Art pipeline | Hybrid — hand-authored `.vox` for characters, creatures and hero structures; trees, boulders, walls and clutter stay procedural |
 
@@ -123,45 +138,34 @@ Rival heirs were explicitly excluded: there is no human opposition.
 ## Still open
 
 - Enemy archetypes, telegraphs and AI behaviour within the three sources above.
-- What a scar does to you mechanically, per scar, now that they are "still running".
-- Boss structure for the three weapon sites, and what the glasslands releases.
+- What the glasslands releases once all three weapons are down.
+- The set-piece grammar's actual vocabulary — what an approach, a gate, an arena and a core
+  are made of, and how each tradition's parts differ.
 - Quest and objective plumbing (minimal, given the drive is self-evident).
 - Stamina numbers, damage types, status stacking rules.
 - Accessibility.
 
 ## Tensions to resolve
 
-1. **Procedural everything versus three climactic weapon sites.** The drive is to find and
-   shut down three specific things, and the ending escalates from there — but no hand-built
-   content is allowed. Those sites are the game's spine and its climax, and they must come out
-   of rules. This is the sharpest conflict in the document and it should be resolved before
-   encounter work starts. Either the generator gets a real set-piece grammar, or the "keep
-   everything procedural" call gets a carve-out for exactly four places.
-
-2. **Host-only saves gatekeep a persistent world.** One player cannot touch the world when the
-   other is offline. Proposed mitigation, not yet decided: split the save — the **world** belongs
-   to the host, but each player's **character** (modules, stats, learned fusions) is local to
-   them, so progress is never hostage even though the world is.
-
-3. **Two aiming models, one ability set.** Mouse free-aim gives a point; twin-stick gives a
+1. **Two aiming models, one ability set.** Mouse free-aim gives a point; twin-stick gives a
    direction. Ground-targeted abilities — the censer's fields, the tuning stake — need a
    placement rule that is fair on both: likely "cast at a fixed range along the aim direction,
    with the mouse setting the point directly".
 
-4. **Repopulation versus claiming.** Everything returns over days, but claimed holdings are
+2. **Repopulation versus claiming.** Everything returns over days, but claimed holdings are
    supposed to be yours and anchor the persistence radius. Claimed sites need an exemption, or
    a weaker repopulation, or claiming means nothing.
 
-5. **"Eight biomes" is four biomes and four overlays.** Worth being precise in the generator
+3. **"Eight biomes" is four biomes and four overlays.** Worth being precise in the generator
    and the plate: the climate field has four anchors; the scar field paints four contamination
    layers over them. The climate chart on the concept plate currently shows five anchors and is
    simply wrong now.
 
-6. **Party scaling does not cover environmental danger.** Scars are still running, so their
+4. **Party scaling does not cover environmental danger.** Scars are still running, so their
    hazards are environmental rather than enemies. Scaling to party size does nothing for them —
    which may be correct (the map is the difficulty curve) but should be deliberate.
 
-7. **Materials without crafting.** Materials serve audio, carving, fire and conduction only.
+5. **Materials without crafting.** Materials serve audio, carving, fire and conduction only.
    Coherent, but harvesting has no purpose unless crafting returns.
 
 ## What the current concept plate contradicts
