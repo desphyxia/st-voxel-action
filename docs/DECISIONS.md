@@ -1,81 +1,176 @@
 # Quarterstone — design decisions
 
-Recorded from a design interview, 2026-09-12. This is the decision record the concept plate
-and any future engine work should be checked against. Items marked **open** are not yet
-decided; items under *Tensions* are decided but conflict with something else and need a
-follow-up call.
+Recorded from design interviews, 2026-09-12 and 2026-09-13. This is the record the concept
+plate and any engine work should be checked against. Nothing here is built yet.
 
-## Shape of the game
+---
 
-| # | Decision | Choice |
-| --- | --- | --- |
-| 1 | Session shape | **Persistent seeded world** — one world per seed that both players return to |
-| 2 | Co-op camera | **Independent cameras** — each player has their own 45° view, free separation |
-| 3 | Combat feel | **Methodical, stamina-gated** — deliberate spacing, committed swings, readable telegraphs |
-| 4 | Progression | **All four axes**: gear/modules, unlocked movement verbs, character stats, module refinement |
-| 6 | Death | **Partner revive**, then respawn at the last landmark; carried modules stay where you fell |
-| 7 | World extent | **Bounded world per seed** — a few km² with a real edge |
+## 1. Premise and fiction
 
-## Terrain
+**Three rival traditions fought here.** Tech, magic and biological were competing schools of
+the old world that never combined — which is why fusing them is new, and why their ruins,
+their machines and their palettes look nothing alike. The war did not end cleanly: each
+tradition's weapon is **still running**, and the scars they left are still spreading.
 
-| # | Decision | Choice |
-| --- | --- | --- |
-| 5 | Terrain edits | **Persist near settlements; wilderness heals** over a few in-game days |
-| 9 | Vertical budget | **16 m ceiling for terrain; props exempt** (obelisks, hive trees, arcs may exceed) |
-| 10 | Caves | **Cliff-face decoration** — mouths, alcoves, undercuts; no walkable interior |
-| 11 | Materials | **Full material ids** — stone, soil, grass, sand, ice, basalt, wood, snow, magma, driving audio, carve hardness, flammability, conduction, friction, emission |
-| 12 | Weather | **Full day/night and weather** — rain wets materials, snow accumulates, fog for distance |
+**You are heirs of the builders**, returning to something that was yours, on a **hostile
+frontier**. The people who stayed are **neutral holdouts** — no stake in the old war, stayed
+because leaving was worse. They trade with anyone, know the land, and are the only place the
+fighting is not.
 
-## Technical
+**The drive:** find the three weapons and shut them down, one per tradition.
 
-| # | Decision | Choice |
-| --- | --- | --- |
-| 13 | Terrain rendering | **Greedy-meshed chunks with baked per-face AO; props stay instanced** |
-| 14 | Netcode | **Host-authoritative peer-to-peer over Steam Networking**; host owns the save |
-| 15 | Targeting | **Mouse free-aim** |
-| 16 | Platform | **Steam desktop first**, wrapped (Electron or Tauri); browser build is a test harness |
+**The ending:** the three weapons were holding each other in check. Shutting them down
+releases whatever the glasslands collision produced. Completion is a new, harder phase in the
+same world — not credits.
 
-## Content
+## 2. Shape of the game
 
-| # | Decision | Choice |
-| --- | --- | --- |
-| 17 | Module sourcing | **Landmark caches + enemy drops + bought from survivors** (not crafted) |
-| 18 | Inventory | **Limited carried slots, stash at camp** |
-| 19 | Navigation | **Map filled by exploration** |
-| 20 | Art pipeline | **Hybrid** — hand-authored `.vox` for characters, creatures and hero structures; trees, boulders, walls and clutter stay procedural |
+| Decision | Choice |
+| --- | --- |
+| Session shape | Persistent seeded world, returned to across sessions |
+| World extent | Bounded world per seed — a few km² with a real edge |
+| Co-op camera | Independent cameras; players separate freely |
+| Death | Partner revive; if both fall, respawn at the last landmark and your carried modules stay where you fell |
+| Camps | Claim the holdings the generator already places — no building system |
+| Difficulty | Scales to party size, so nobody is locked out playing alone |
+| Enemy respawn | Everything repopulates over in-game days |
 
-## Deferred
+## 3. Combat and movement
 
-- **Enemies, factions and lore** (#8) — to be derived from a separate lore questionnaire.
-- Audio design, HUD layout, quest and objective structure, boss and elite structure, NPC
-  survivors as characters.
+| Decision | Choice |
+| --- | --- |
+| Feel | Methodical, stamina-gated: deliberate spacing, committed swings, readable telegraphs |
+| Defence | Dodge is universal; blocking is frame-dependent (the bulwark's root wall is the extreme case) |
+| Targeting | Mouse free-aim; **twin-stick free aim** on gamepad |
+| Movement budget | Step up 1 m · vault 2 m · jump a 2.5 m gap · survive a 6 m drop · wade 0.75 m · swim deeper · magma lethal |
+
+## 4. Gear and progression
+
+**Modules and sockets are the spine.** Character stats, unlocked movement verbs and module
+refinement all exist, but as seasoning — the hex lattice carries the sense of getting
+stronger.
+
+| Decision | Choice |
+| --- | --- |
+| Frames | 8, each a hex socket lattice; frames never level up |
+| Modules | 9 across tech, magic and biological; fuse only across shared hex edges |
+| Fusion knowledge | **Learned from the world** — recovered from ruins, dead machines and holdout traders, not known from the start |
+| Sourcing | Landmark caches, enemy drops, bought from holdouts (not crafted) |
+| Inventory | Limited carried slots, stash at camp |
+
+## 5. World and terrain
+
+**Four natural biomes**, in the climate field: Meadowlands · Redrock Mesa · Cloudpine
+Highlands · Thornwood. (Boreal Fen and Frostmoor are dropped — they overlapped their scar
+counterparts and wasted contrast.)
+
+**Four scars**, painted as an **overlay on the climate field** rather than as biomes of their
+own, so a scar can cut across several biomes and you can still see what the land used to be
+underneath:
+
+- **Ashfall Barrens** — the tech weapon's burn: basalt columns, magma seams, grey crust
+- **Rimewaste** — a magical winter that never lifted: black ice, things frozen mid-motion
+- **Sporeverge** — a biological bloom that got out: fungal towers, spore fog
+- **Glasslands** — where two weapons met: vitrified ground, shard fields
+
+| Decision | Choice |
+| --- | --- |
+| Chunk | 32 × 32 m footprint, 16 m ceiling — 128 × 128 × 64 voxels |
+| Feature grid | 1 m; every feature dimension is a whole number of metres |
+| Voxel | 25 cm, for surface detail, palette dithering and silhouette |
+| Ceiling | 16 m applies to terrain; props (obelisks, hive trees, arcs) may exceed it |
+| Caves | Cliff-face decoration — mouths, alcoves, undercuts, no walkable interior |
+| Materials | Full material ids driving audio, carve hardness, flammability, conduction, friction, emission |
+| Weather | Full day/night and weather; rain wets materials, snow accumulates, fog for distance |
+| Terrain edits | Persist near settlements; wilderness heals over a few in-game days |
+| Navigation | A map you fill by walking |
+
+## 6. Content and enemies
+
+Three sources, all derived from the premise:
+
+- **Each tradition's war machines** — tech automata, magical constructs, biological weapons,
+  still holding positions against enemies who left. They drop their own discipline's modules,
+  so a fight previews its loot.
+- **Scar-born things** — whatever crawled out of the contaminated ground. One threat
+  signature per scar, and they spread as the scars do.
+- **Wildlife adapted to the damage** — populates the natural biomes and makes the scars read
+  as worse by comparison.
+
+Rival heirs were explicitly excluded: there is no human opposition.
+
+**All encounters and sites are procedural.** No hand-built interiors, no authored dungeons.
+
+## 7. Technical
+
+| Decision | Choice |
+| --- | --- |
+| Terrain rendering | Greedy-meshed chunks with baked per-face AO; props stay instanced |
+| Netcode | Host-authoritative peer-to-peer over Steam Networking |
+| Save ownership | **Shared world, host only** — the world can be played only when the host is online |
+| Platform | Steam desktop first, wrapped (Electron or Tauri); browser build is a test harness |
+| Art pipeline | Hybrid — hand-authored `.vox` for characters, creatures and hero structures; trees, boulders, walls and clutter stay procedural |
+
+## 8. Presentation
+
+| Decision | Choice |
+| --- | --- |
+| HUD | Classic — bars, cooldowns, fusion states, partner status |
+| Audio | Material-driven and sparse: footsteps, impacts and carving read off the voxel material; wind drives ambience; music is rare and marks moments |
+
+---
+
+## Still open
+
+- Enemy archetypes, telegraphs and AI behaviour within the three sources above.
+- What a scar does to you mechanically, per scar, now that they are "still running".
+- Boss structure for the three weapon sites, and what the glasslands releases.
+- Quest and objective plumbing (minimal, given the drive is self-evident).
+- Stamina numbers, damage types, status stacking rules.
+- Accessibility.
 
 ## Tensions to resolve
 
-1. **Four progression axes.** "Gear only" and "character stats" are in direct opposition, and
-   with verbs and refinement alongside them there are four currencies competing for the same
-   reward moments. Needs a hierarchy: which is the spine, and which are seasoning.
-2. **"Endless" now means endless seeds, not endless walking.** The original brief asked for
-   potentially endless worlds; the decision is a bounded world per seed. Both can be true —
-   unlimited seeds, each finite — but nobody should build infinite streaming on the strength
-   of the old wording.
-3. **Camps are load-bearing and undesigned.** Three separate decisions lean on them: edits
-   persist near settlements (#5), the stash lives at camp (#18), and respawn is at a landmark
-   (#6). What a camp is, who places it, what it anchors and whether players build it are all
-   open.
-4. **Mouse free-aim versus a Steam-first release.** Free-aim makes the gamepad second-class,
-   but Steam Input is expected. A gamepad scheme — stick-aimed cursor or soft lock — still
-   needs deciding.
-5. **Designed content has no home.** Caves are decoration only, so authored spaces currently
-   have nowhere to live except surface ruins and holdings. If hand-built encounters are
-   wanted, they need a container.
-6. **Materials without crafting.** Full material ids were chosen but crafting was not, so
-   materials serve audio, carving, fire and conduction only. That is coherent — just note
-   that harvesting has no purpose unless crafting returns.
+1. **Procedural everything versus three climactic weapon sites.** The drive is to find and
+   shut down three specific things, and the ending escalates from there — but no hand-built
+   content is allowed. Those sites are the game's spine and its climax, and they must come out
+   of rules. This is the sharpest conflict in the document and it should be resolved before
+   encounter work starts. Either the generator gets a real set-piece grammar, or the "keep
+   everything procedural" call gets a carve-out for exactly four places.
 
-## What this changes about the current concept plate
+2. **Host-only saves gatekeep a persistent world.** One player cannot touch the world when the
+   other is offline. Proposed mitigation, not yet decided: split the save — the **world** belongs
+   to the host, but each player's **character** (modules, stats, learned fusions) is local to
+   them, so progress is never hostage even though the world is.
 
-The plate at `docs/concept/index.html` predates these decisions and now disagrees with them
-in three places: it draws instanced boxes rather than meshed chunks (#13), it renders caves
-as if they mattered (#10), and its voxels carry colour only (#11). The generator's structure
-is unaffected — chunking, biomes, features, trails, reach and the movement budget all stand.
+3. **Two aiming models, one ability set.** Mouse free-aim gives a point; twin-stick gives a
+   direction. Ground-targeted abilities — the censer's fields, the tuning stake — need a
+   placement rule that is fair on both: likely "cast at a fixed range along the aim direction,
+   with the mouse setting the point directly".
+
+4. **Repopulation versus claiming.** Everything returns over days, but claimed holdings are
+   supposed to be yours and anchor the persistence radius. Claimed sites need an exemption, or
+   a weaker repopulation, or claiming means nothing.
+
+5. **"Eight biomes" is four biomes and four overlays.** Worth being precise in the generator
+   and the plate: the climate field has four anchors; the scar field paints four contamination
+   layers over them. The climate chart on the concept plate currently shows five anchors and is
+   simply wrong now.
+
+6. **Party scaling does not cover environmental danger.** Scars are still running, so their
+   hazards are environmental rather than enemies. Scaling to party size does nothing for them —
+   which may be correct (the map is the difficulty curve) but should be deliberate.
+
+7. **Materials without crafting.** Materials serve audio, carving, fire and conduction only.
+   Coherent, but harvesting has no purpose unless crafting returns.
+
+## What the current concept plate contradicts
+
+`docs/concept/index.html` predates most of this and is now wrong in six places: it ships five
+biomes including Boreal Fen and Frostmoor; its climate chart has five anchors and no scar
+overlay; it has no Cloudpine Highlands or Thornwood; it renders caves as though they mattered;
+its voxels carry colour only; and it draws instanced boxes rather than meshed chunks.
+
+The generator's *structure* is unaffected — chunking, whole-metre features, the detail pass,
+trails, reach, erosion, the water table, accumulation, the wind field and destructibility all
+stand.
