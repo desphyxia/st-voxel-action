@@ -39,17 +39,24 @@ const check = (ok, label, detail = '') => {
   if (!ok) fails.push(label);
 };
 
+/* The plate generates its hero world synchronously on load, so even
+   DOMContentLoaded can take minutes under software rendering on a slow runner.
+   Playwright's 30 s default is nowhere near enough — this failed in CI once. */
+const PATIENCE = 600000;
+
 const browser = await launch();
 try {
   /* ---------- BOOT + GOLDEN ---------- */
   const page = await browser.newPage();
+  page.setDefaultTimeout(PATIENCE);
+  page.setDefaultNavigationTimeout(PATIENCE);
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) errors.push(m.text()); });
 
   const file = preparePage({ target: TARGET, outDir: OUT, instrument: true, name: 'smoke.html' });
-  await page.goto(`file://${file}`, { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => !!window.__BW, null, { timeout: 120000 });
+  await page.goto(`file://${file}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+  await page.waitForFunction(() => !!window.__BW, null, { timeout: PATIENCE });
 
   const t0 = Date.now();
   const measured = await page.evaluate(
@@ -89,11 +96,13 @@ try {
   /* ---------- RENDER ---------- */
   if (!QUICK && !UPDATE) {
     const rp = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+    rp.setDefaultTimeout(PATIENCE);
+    rp.setDefaultNavigationTimeout(PATIENCE);
     const rErrors = [];
     rp.on('pageerror', (e) => rErrors.push(e.message));
     const rfile = preparePage({ target: TARGET, outDir: OUT, name: 'smoke-render.html' });
-    await rp.goto(`file://${rfile}`, { waitUntil: 'domcontentloaded' });
-    await rp.waitForFunction(tilesDone, null, { timeout: 600000 });
+    await rp.goto(`file://${rfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+    await rp.waitForFunction(tilesDone, null, { timeout: PATIENCE });
     await rp.screenshot({ path: join(OUT, 'smoke.png') });
     check(rErrors.length === 0, 'RENDER: draws without errors', rErrors.slice(0, 2).join(' | '));
     const painted = await rp.evaluate(() => {
