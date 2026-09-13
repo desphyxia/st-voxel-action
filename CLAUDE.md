@@ -12,6 +12,7 @@ Do not start engine work without checking `docs/DECISIONS.md` first.
 | Path | What it is |
 | --- | --- |
 | `docs/DECISIONS.md` | **Read this first.** 43 decisions from design interviews, plus open items and unresolved tensions. The authority on what the game is. |
+| `docs/PROTOTYPE.md` | **Read this second.** What "playable" means, the path to it, and the rules that keep every merge playable. |
 | `docs/concept/index.html` | The concept plate: one self-contained file holding the seeded generator, the renderer and the design document it illustrates. ~1900 lines. |
 | `tools/` | Headless render and verify harness. Dev only. |
 | `README.md` | Short public summary of the project. |
@@ -33,6 +34,24 @@ from scratch.
   verification uses `tools/node_modules/three` instead; see `tools/README.md`.
 - Rendering falls back to software here, so a full render takes minutes. Budget for it.
 
+### Every merge must leave the build playable
+
+This is enforced, not aspirational — see `docs/PROTOTYPE.md`.
+
+```
+node tools/smoke.mjs            # the gate: boot, golden seeds, sanity, render
+node tools/smoke.mjs --quick    # same without the render pass (seconds)
+node tools/smoke.mjs --update   # re-record the golden baseline, deliberately
+node tools/hooks/install.mjs    # install the pre-push hook (once per clone)
+```
+
+The smoke test is the executable specification of what the prototype can do. **An issue that
+adds a player-facing verb must add an assertion covering it.** Internal systems only have to
+keep the existing assertions green.
+
+Bypass is `SKIP_SMOKE=1 git push` plus a `Smoke-Skipped: <reason>` commit trailer. Use it
+rarely and visibly.
+
 ### Verify generator changes by measuring, not looking
 
 ```
@@ -49,7 +68,9 @@ the screenshots looked fine.
 ## Conventions
 
 - Work on the current branch. It is also the repo's default branch.
-- Do not open pull requests unless asked.
+- Do not open pull requests unless asked — **except** for architectural work (anything behind a
+  feature flag, or touching the voxel data layout, meshing, or netcode authority), which goes
+  through a PR so CI is a hard gate. See `docs/PROTOTYPE.md`.
 - Commit messages end with the attribution trailers used in the existing history.
 - The concept plate is documentation, not a prototype of the engine. Its instanced-box
   renderer is explicitly not the shipping approach — see `docs/DECISIONS.md` §7.
@@ -66,6 +87,10 @@ the other. Two ordering notes worth knowing before picking something up:
   layout that the mesher, the save deltas and the netcode all read.
 - Region-level determinism (#16) comes before chunk streaming (#13) — it is the reason the
   generator can currently only produce one window at a time.
+
+**Phase 0 comes first.** The path to a playable build is a short, specific sequence in
+`docs/PROTOTYPE.md`, and most of the engine backlog is deliberately deferred behind it. Do not
+start on meshing or streaming while there is still nothing to play.
 
 ## What the plate now contradicts
 

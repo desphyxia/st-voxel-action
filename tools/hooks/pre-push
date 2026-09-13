@@ -1,0 +1,21 @@
+#!/bin/sh
+# Keeps the build playable. Install with:  node tools/hooks/install.mjs
+#
+# Bypass:  SKIP_SMOKE=1 git push
+# A bypass must be recorded with a  Smoke-Skipped: <reason>  commit trailer.
+if [ -n "$SKIP_SMOKE" ]; then
+  echo "pre-push: smoke test skipped (SKIP_SMOKE set)"
+  echo "pre-push: add a 'Smoke-Skipped: <reason>' trailer to the commit"
+  exit 0
+fi
+if [ ! -d "tools/node_modules" ]; then
+  echo "pre-push: tools/node_modules missing, skipping (run npm install in tools/)"
+  exit 0
+fi
+echo "pre-push: running smoke test (quick)…"
+node tools/smoke.mjs --quick || {
+  echo ""
+  echo "pre-push: BLOCKED — the build is not in a playable state."
+  echo "pre-push: fix it, or SKIP_SMOKE=1 git push with a Smoke-Skipped trailer."
+  exit 1
+}

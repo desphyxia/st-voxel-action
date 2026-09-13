@@ -1,0 +1,68 @@
+[
+ {
+  "seed": "meadow",
+  "voxels": 43256,
+  "grass": 10551,
+  "waterCells": 0,
+  "trailCells": 62,
+  "bridges": 0,
+  "landmark": true,
+  "overhang": false,
+  "unreachPct": 0
+ },
+ {
+  "seed": "mesa",
+  "voxels": 30192,
+  "grass": 3764,
+  "waterCells": 72,
+  "trailCells": 61,
+  "bridges": 1,
+  "landmark": true,
+  "overhang": true,
+  "unreachPct": 1
+ },
+ {
+  "seed": "fen",
+  "voxels": 30188,
+  "grass": 9048,
+  "waterCells": 218,
+  "trailCells": 82,
+  "bridges": 1,
+  "landmark": true,
+  "overhang": true,
+  "unreachPct": 0
+ },
+ {
+  "seed": "ash",
+  "voxels": 27189,
+  "grass": 3366,
+  "waterCells": 105,
+  "trailCells": 82,
+  "bridges": 1,
+  "landmark": true,
+  "overhang": true,
+  "unreachPct": 15.4
+ },
+ {
+  "seed": "frost",
+  "voxels": 44111,
+  "grass": 5013,
+  "waterCells": 50,
+  "trailCells": 95,
+  "bridges": 1,
+  "landmark": true,
+  "overhang": false,
+  "unreachPct": 0.1
+ },
+ {
+  "seed": "hero",
+  "voxels": 144139,
+  "grass": 28427,
+  "waterCells": 84,
+  "trailCells": 194,
+  "bridges": 1,
+  "landmark": true,
+  "overhang": true,
+  "unreachPct": 0.1
+ }
+]

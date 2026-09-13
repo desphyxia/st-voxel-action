@@ -4,10 +4,21 @@ Dev-only. Nothing here ships with the game.
 
 ```
 cd tools && npm install          # playwright-core + three@0.128.0 (r128)
-node render-plate.mjs --diag     # generator stats per seed, no rendering
-node render-plate.mjs --shots    # page screenshots
-node render-plate.mjs --plates   # export the six biome plates as PNGs
+cd .. && node tools/hooks/install.mjs   # pre-push gate, once per clone
+
+node tools/smoke.mjs             # the gate: boot, golden seeds, sanity, render
+node tools/smoke.mjs --quick     # same without rendering (seconds)
+node tools/smoke.mjs --update    # re-record tools/baseline.json, deliberately
+
+node tools/render-plate.mjs --diag     # generator stats per seed, no rendering
+node tools/render-plate.mjs --shots    # page screenshots
+node tools/render-plate.mjs --plates   # export the six biome plates as PNGs
 ```
+
+`smoke.mjs` is the assertion gate and runs in CI; `render-plate.mjs` is for looking at things.
+Shared plumbing lives in `lib/harness.mjs` — both scripts rewrite the plate's three.js CDN tag
+the same way, and that logic must not be duplicated. See `docs/PROTOTYPE.md` for the rules the
+gate enforces.
 
 Output lands in `.render/` at the repo root (gitignored).
 

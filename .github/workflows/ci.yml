@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# One run per ref. A superseded run is wasted minutes on a slow software render.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install harness dependencies
+        working-directory: tools
+        run: npm ci
+
+      # playwright-core ships no browser; install one matching its version.
+      - name: Install Chromium
+        run: npx --yes playwright@1.63.0 install --with-deps chromium
+
+      - name: Resolve Chromium path
+        run: |
+          BIN=$(ls -d ~/.cache/ms-playwright/chromium-*/chrome-linux/chrome 2>/dev/null | head -1)
+          test -n "$BIN" || { echo "no chromium found"; exit 1; }
+          echo "CHROMIUM_PATH=$BIN" >> $GITHUB_ENV
+
+      # Renders in software here, so this asserts correctness and proxy metrics
+      # only. Real frame rate is checked by hand on a GPU — see docs/PROTOTYPE.md.
+      - name: Smoke test
+        run: node tools/smoke.mjs
+
+      - name: Upload render
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-render
+          path: .render/smoke.png
+          if-no-files-found: ignore
