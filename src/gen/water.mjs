@@ -9,6 +9,7 @@
  * foam and flow — and no renderer object of any kind.
  */
 import { V, DIRS4, clamp } from './constants.mjs';
+import { hyp } from './exact.mjs';
 
 export function fillWaterTable(w) {
   var M = w.M, cells = w.cells, i, j, d0;
@@ -40,7 +41,7 @@ export function flowField(w) {
         hb=cells[i*M+(j>0?j-1:j)], hf=cells[i*M+(j<M-1?j+1:j)];
     var gx=(cf.water?(hl.wl||hl.H)-(hr.wl||hr.H):hl.H-hr.H),
         gz=(cf.water?(hb.wl||hb.H)-(hf.wl||hf.H):hb.H-hf.H);
-    var gl=Math.hypot(gx,gz);
+    var gl=hyp(gx,gz);
     if(gl<0.001){ cf.fx=0.7; cf.fz=0.7; } else { cf.fx=-gx/gl; cf.fz=-gz/gl; }
   }
 }

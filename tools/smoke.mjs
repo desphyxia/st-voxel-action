@@ -13,11 +13,16 @@
  *                 possible and this is what makes it loud.
  *   2. NODE       src/gen generates every seed with no browser and no DOM.
  *   3. BOOT       the plate loads and runs with zero page errors.
- *   4. PARITY     the plate's worlds are identical to node's, digest included.
- *   5. GOLDEN     all six pinned seeds match tools/baseline.json exactly.
+ *   4. MATH       src/gen reaches for no arithmetic the spec leaves to the
+ *                 implementation, and the replacements in src/gen/exact.mjs
+ *                 return the same bits in node's V8 as in the browser's. The
+ *                 engines disagree on Math.sin and Math.cos; that is why that
+ *                 module exists.
+ *   5. PARITY     the plate's worlds are identical to node's, digest included.
+ *   6. GOLDEN     all six pinned seeds match tools/baseline.json exactly.
  *                 The generator is deterministic, so any drift is a real
  *                 change; --update re-records it deliberately.
- *   6. RENDER     the plate still draws.
+ *   7. RENDER     the plate still draws.
  *
  * As the prototype gains verbs, each one adds an assertion here — that is the
  * ratchet. See docs/PROTOTYPE.md.
@@ -26,10 +31,10 @@
  * meaningless. Proxy metrics (voxel counts, generation time) are asserted
  * instead, and real performance is checked by hand on a GPU.
  */
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, tilesDone, GOLDEN_SEEDS, measureSeeds, measureWorld,
-         measureSeedsInNode } from './lib/harness.mjs';
+         measureSeedsInNode, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { PLATE, withBundle } from './bundle-gen.mjs';
 
 const argv = process.argv.slice(2);
@@ -50,6 +55,21 @@ const plateHtml = readFileSync(PLATE, 'utf8');
 const inSync = withBundle(plateHtml) === plateHtml;
 check(inSync, 'SYNC: plate carries the current src/gen',
       inSync ? '' : 'run: node tools/bundle-gen.mjs');
+
+/* The static half of the MATH check. The dynamic half, below, proves the
+   replacements in src/gen/exact.mjs agree across engines; this one proves
+   nothing walked around them. Both are needed: a single stray Math.sin is
+   enough to give two players different worlds from the same seed. */
+const UNPINNED = /Math\.(sin|cos|tan|asin|acos|atan|atan2|exp|expm1|log|log2|log10|log1p|pow|hypot|cbrt|sinh|cosh|tanh|fround)\b|\*\*/g;
+const strays = [];
+for (const f of readdirSync(join(ROOT, 'src/gen')).filter((n) => n.endsWith('.mjs'))) {
+  if (f === 'exact.mjs') continue;                       /* where they are allowed to appear */
+  const src = readFileSync(join(ROOT, 'src/gen', f), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  for (const m of src.match(UNPINNED) || []) strays.push(`${f}: ${m}`);
+}
+check(strays.length === 0, 'MATH: src/gen uses only pinned arithmetic',
+      strays.length ? `${strays.join(', ')} — use src/gen/exact.mjs` : '');
 
 const t0 = Date.now();
 const measured = await measureSeedsInNode(GOLDEN_SEEDS);
@@ -82,10 +102,19 @@ try {
   check(errors.length === 0, 'BOOT: no page errors', errors.slice(0, 3).join(' | '));
   check(inPage.length === GOLDEN_SEEDS.length, 'BOOT: every seed generated in the plate');
 
+  /* ---------- MATH ----------
+     Two engines, one sample. If this fails, something in src/gen/exact.mjs has
+     picked up an operation the spec only approximates and every PARITY check
+     below is about to fail for that reason and no other. */
+  const exact = await import('../src/gen/exact.mjs');
+  const pageMath = await page.evaluate(
+    (src) => new Function(`return (${src})`)()(window.QS), mathProbe.toString());
+  const nodeMath = mathProbe(exact);
+  check(pageMath === nodeMath, 'MATH: pinned math agrees across engines',
+        pageMath === nodeMath ? '' : `node ${nodeMath} → plate ${pageMath}`);
+
   for (const want of measured) {
-    const got = inPage.find((m) => m.seed === want.seed);
-    const diffs = !got ? ['missing']
-      : Object.keys(want).filter((k) => want[k] !== got[k]).map((k) => `${k} ${want[k]} → ${got[k]}`);
+    const diffs = diffMeasure(want, inPage.find((m) => m.seed === want.seed));
     check(diffs.length === 0, `PARITY: ${want.seed} plate matches src/gen`, diffs.join(', '));
   }
 
@@ -106,9 +135,7 @@ try {
       for (const want of base) {
         const got = measured.find((m) => m.seed === want.seed);
         if (!got) { check(false, `GOLDEN: ${want.seed} generated`); continue; }
-        const diffs = Object.keys(want)
-          .filter((k) => k !== 'seed' && want[k] !== got[k])
-          .map((k) => `${k} ${want[k]} → ${got[k]}`);
+        const diffs = diffMeasure(want, got, ['seed']);
         check(diffs.length === 0, `GOLDEN: ${want.seed}`, diffs.join(', '));
       }
       /* Invariants that must hold for any seed, baseline or not. */

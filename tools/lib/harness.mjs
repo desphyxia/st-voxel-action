@@ -102,28 +102,55 @@ export const GOLDEN_SEEDS = [
  */
 export function measureWorld(d, name) {
   const buf = new DataView(new ArrayBuffer(8));
-  let h = 2166136261 >>> 0;
+  const SEED = 2166136261 >>> 0;
+  let h = SEED;   /* over everything */
+  let s = SEED;   /* over the section being hashed right now */
   const num = (v) => {
     buf.setFloat64(0, +v);
-    for (let b = 0; b < 8; b++) { h ^= buf.getUint8(b); h = Math.imul(h, 16777619) >>> 0; }
+    for (let b = 0; b < 8; b++) {
+      const c = buf.getUint8(b);
+      h ^= c; h = Math.imul(h, 16777619) >>> 0;
+      s ^= c; s = Math.imul(s, 16777619) >>> 0;
+    }
   };
   const arr = (a) => { if (!a) { num(-1); return; } num(a.length); for (let i = 0; i < a.length; i++) num(a[i]); };
-  arr(d.pos); arr(d.col); arr(d.mat); arr(d.mpos); arr(d.mcol); arr(d.mmat);
-  arr(d.grass.p); arr(d.grass.ph); arr(d.grass.ti); arr(d.grass.sc); arr(d.grass.yw); arr(d.grass.c);
-  arr(d.water.v); arr(d.water.i); arr(d.water.d); arr(d.water.f); arr(d.water.fl);
-  arr(d.trail); arr(d.topi); arr(d.unreach); arr(d.reach); arr(d.Hs); arr(d.FLG);
-  arr(d.spawn); arr(d.lmPos); arr(d.ovhPos);
-  num(d.lamps.length); for (let q = 0; q < d.lamps.length; q++) arr(d.lamps[q]);
-  num(d.bridges.length); for (let q = 0; q < d.bridges.length; q++) arr(d.bridges[q]);
-  num(d.NX); num(d.NZ); num(d.half); num(d.M); num(d.size);
-  for (let q = 0; q < d.cells.length; q++) {
-    const c = d.cells[q];
-    num(c.H); num(c.water ? 1 : 0); num(c.pond ? 1 : 0); num(c.wl); num(c.magma ? 1 : 0);
-    num(c.dom); num(c.cw); num(c.fx); num(c.fz); arr(c.w);
-    num(c.sp ? c.sp.length : -1);
-    for (let s = 0; c.sp && s < c.sp.length; s++) { num(c.sp[s][0]); num(c.sp[s][1]); }
-    num(c.canyon ? c.canyon.d : -1);
-  }
+  const hex = (v) => ('00000000' + (v >>> 0).toString(16)).slice(-8);
+
+  /* Each section is hashed into its own bucket as well as into the total, so
+     a digest-only mismatch names the array that moved instead of only saying
+     that one did. Working that out the hard way cost a CI round trip. */
+  const parts = {};
+  const part = (nm, fn) => { s = SEED; fn(); parts[nm] = hex(s); };
+
+  part('vox', () => { arr(d.pos); arr(d.col); arr(d.mat); });
+  part('magma', () => { arr(d.mpos); arr(d.mcol); arr(d.mmat); });
+  part('grass', () => {
+    arr(d.grass.p); arr(d.grass.ph); arr(d.grass.ti);
+    arr(d.grass.sc); arr(d.grass.yw); arr(d.grass.c);
+  });
+  part('water', () => {
+    arr(d.water.v); arr(d.water.i); arr(d.water.d); arr(d.water.f); arr(d.water.fl);
+  });
+  part('maps', () => {
+    arr(d.trail); arr(d.topi); arr(d.unreach); arr(d.reach); arr(d.Hs); arr(d.FLG);
+  });
+  part('sites', () => {
+    arr(d.spawn); arr(d.lmPos); arr(d.ovhPos);
+    num(d.lamps.length); for (let q = 0; q < d.lamps.length; q++) arr(d.lamps[q]);
+    num(d.bridges.length); for (let q = 0; q < d.bridges.length; q++) arr(d.bridges[q]);
+  });
+  part('cells', () => {
+    num(d.NX); num(d.NZ); num(d.half); num(d.M); num(d.size);
+    for (let q = 0; q < d.cells.length; q++) {
+      const c = d.cells[q];
+      num(c.H); num(c.water ? 1 : 0); num(c.pond ? 1 : 0); num(c.wl); num(c.magma ? 1 : 0);
+      num(c.dom); num(c.cw); num(c.fx); num(c.fz); arr(c.w);
+      num(c.sp ? c.sp.length : -1);
+      for (let t = 0; c.sp && t < c.sp.length; t++) { num(c.sp[t][0]); num(c.sp[t][1]); }
+      num(c.canyon ? c.canyon.d : -1);
+    }
+  });
+
   let water = 0, trail = 0, unreach = 0;
   for (let i = 0; i < d.M * d.M; i++) {
     if (d.cells[i].water) water++;
@@ -144,8 +171,48 @@ export function measureWorld(d, name) {
     landmark: !!d.lmPos,
     overhang: !!d.ovhPos,
     unreachPct: +(100 * unreach / d.unreach.length).toFixed(1),
-    digest: ('00000000' + (h >>> 0).toString(16)).slice(-8),
+    digest: hex(h),
+    parts,
   };
+}
+
+/** Every difference between two measurements, `parts` flattened into it. */
+export function diffMeasure(want, got, skip = []) {
+  if (!got) return ['missing'];
+  const out = Object.keys(want)
+    .filter((k) => k !== 'parts' && !skip.includes(k) && want[k] !== got[k])
+    .map((k) => `${k} ${want[k]} → ${got[k]}`);
+  const wp = want.parts || {}, gp = got.parts || {};
+  for (const k of Object.keys(wp)) if (wp[k] !== gp[k]) out.push(`${k}[] ${wp[k]} → ${gp[k]}`);
+  return out;
+}
+
+/**
+ * The generator's math, hashed over a fixed sample. src/gen/exact.mjs exists
+ * because Math.sin, Math.cos, Math.exp and Math.hypot are only
+ * implementation-approximated and drift between engine versions; this is what
+ * asserts the replacements really are pinned, in the one place where two
+ * different engines run the same code.
+ */
+export function mathProbe(E) {
+  let a = 20260913 | 0;
+  const rnd = () => {
+    a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+  const buf = new DataView(new ArrayBuffer(8));
+  let h = 2166136261 >>> 0;
+  const num = (v) => {
+    buf.setFloat64(0, +v);
+    for (let b = 0; b < 8; b++) { h ^= buf.getUint8(b); h = Math.imul(h, 16777619) >>> 0; }
+  };
+  for (let i = 0; i < 20000; i++) {
+    const x = (rnd() - 0.5) * 40, y = (rnd() - 0.5) * 40;
+    num(E.sin(x)); num(E.cos(y)); num(E.hyp(x, y)); num(E.exp(-Math.abs(x)));
+  }
+  return ('00000000' + (h >>> 0).toString(16)).slice(-8);
 }
 
 /** Runs in the page, against the generator the plate has bundled. */

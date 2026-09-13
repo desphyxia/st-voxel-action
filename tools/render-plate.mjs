@@ -39,7 +39,11 @@ try {
     const rows = await page.evaluate(
       ([cfgs, fnSrc, measureSrc]) => new Function(`return (${fnSrc})`)()(cfgs, measureSrc),
       [GOLDEN_SEEDS, measureSeeds.toString(), measureWorld.toString()]);
-    console.table(rows);
+    /* Part digests get their own columns, prefixed so none of them collides
+       with a count: `--diag` before and after a change is how drift is
+       localised, and `#vox` moving while `#cells` holds still says a lot. */
+    console.table(rows.map(({ parts, ...r }) => Object.assign(r,
+      ...Object.entries(parts || {}).map(([k, v]) => ({ ['#' + k]: v })))));
     console.log('page errors:', errs.join(' | ') || 'none');
   } else {
     const page = await browser.newPage({ viewport: { width: WIDTH, height: 950 } });

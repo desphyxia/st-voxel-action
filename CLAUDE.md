@@ -38,6 +38,11 @@ node tools/bundle-gen.mjs --check   # fail if the plate is out of date
 Edit the modules, run the bundler, commit both. The smoke test fails if they have drifted, and
 also fails if the plate's worlds stop matching the ones node generates from `src/gen`.
 
+One rule inside `src/gen`: **no `Math.sin`, `cos`, `exp`, `pow` or `hypot`.** The spec only
+approximates them and engines disagree — node 22 and Chromium 141 already return different
+sines — which silently breaks plate/node parity and would give two players different worlds
+from the same seed. Use `src/gen/exact.mjs`. The smoke test's MATH check catches it.
+
 ## Working on the plate
 
 The plate is a concept artefact that has been iterated many times. Edit it; do not rebuild it

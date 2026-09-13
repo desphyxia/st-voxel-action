@@ -39,13 +39,20 @@ read only works on colour. The material answers what a thing *is* — how hard i
 is to carve, whether it burns, whether it conducts, what it sounds like
 underfoot — and the gear design depends on those answers.
 
-### Two things to know before editing
+### Three things to know before editing
 
 **The concept plate inlines this code, it does not import it.** `docs/concept/index.html`
 has to stay one self-contained file — it is opened from disk and published as an
 artifact whose CSP admits no module graph. `node tools/bundle-gen.mjs` writes the
 generator into the marked block near the top of the plate; the smoke test fails if
 the block and `src/gen` have drifted. Edit the modules, run the bundler, commit both.
+
+**The arithmetic is pinned.** `Math.sin`, `Math.cos`, `Math.exp`, `Math.pow` and
+`Math.hypot` are "implementation-approximated" — two conforming engines may return
+different last bits, and V8 changes them between versions. Node 22 and Chromium 141
+already disagree on sine. So the generator uses only what the spec pins exactly, and
+`gen/exact.mjs` supplies the rest. **Do not reach for `Math.` transcendentals here**;
+the smoke test's MATH check exists to catch it if you do.
 
 **The style is the plate's, deliberately.** The bodies were moved across
 character-for-character so the extraction could be proved: all six golden seeds
@@ -55,9 +62,10 @@ keep the digests green on its own merits.
 
 ### Known debt
 
-- Colours are still chosen here, per voxel, from the biome palettes. Issue #14
-  replaces them with material ids and hands the choice of how a material looks
-  back to the renderer, where it belongs.
+- Colours are still chosen here, per voxel, from the biome palettes, alongside
+  the material ids. That is deliberate for the plate's dithered blends, but the
+  greedy mesher (issue #12) wants the look decided from the material at draw
+  time, and the two will have to be reconciled then.
 - One window at a time. The generator is positional in `cell(x, z)` but the
   world-build stream is ordered, so two overlapping windows do not agree at the
   seam. Issue #16 is region-level determinism, and it blocks chunk streaming.

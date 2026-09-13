@@ -11,7 +11,16 @@
   "landmark": true,
   "overhang": false,
   "unreachPct": 0,
-  "digest": "1874f3e1"
+  "digest": "c72d9a9b",
+  "parts": {
+   "vox": "1938a717",
+   "magma": "f6ba62da",
+   "grass": "51542952",
+   "water": "ea6207e5",
+   "maps": "f8f0fa23",
+   "sites": "69abeb3d",
+   "cells": "f3be59ef"
+  }
  },
  {
   "seed": "mesa",
@@ -25,7 +34,16 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 1,
-  "digest": "5c2eb389"
+  "digest": "5b054ee6",
+  "parts": {
+   "vox": "d1c105f0",
+   "magma": "e2ba14a5",
+   "grass": "b42a0fd0",
+   "water": "d80b8015",
+   "maps": "191535e5",
+   "sites": "7e2bf90a",
+   "cells": "dc484209"
+  }
  },
  {
   "seed": "fen",
@@ -39,7 +57,16 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0,
-  "digest": "11d82982"
+  "digest": "268b0952",
+  "parts": {
+   "vox": "fe78890f",
+   "magma": "e2ba14a5",
+   "grass": "a88cd832",
+   "water": "af0123a9",
+   "maps": "d2c0d53e",
+   "sites": "52c12870",
+   "cells": "3124ec5d"
+  }
  },
  {
   "seed": "ash",
@@ -53,7 +80,16 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 15.4,
-  "digest": "f95adb4a"
+  "digest": "90955e0f",
+  "parts": {
+   "vox": "3c3d9212",
+   "magma": "a978a6d7",
+   "grass": "3f638870",
+   "water": "a729dad5",
+   "maps": "db68eede",
+   "sites": "16470164",
+   "cells": "35924d21"
+  }
  },
  {
   "seed": "frost",
@@ -67,7 +103,16 @@
   "landmark": true,
   "overhang": false,
   "unreachPct": 0.1,
-  "digest": "f35ace20"
+  "digest": "5ed601bf",
+  "parts": {
+   "vox": "dd4d8d42",
+   "magma": "8ffe77d7",
+   "grass": "8ef6c47d",
+   "water": "00b3af51",
+   "maps": "fc761b10",
+   "sites": "d05d9c26",
+   "cells": "91df3fb4"
+  }
  },
  {
   "seed": "hero",
@@ -81,6 +126,15 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0.1,
-  "digest": "54cb2370"
+  "digest": "e96d1580",
+  "parts": {
+   "vox": "37c6fffc",
+   "magma": "58be81cd",
+   "grass": "c7b3e833",
+   "water": "d7ea17cb",
+   "maps": "941ba8fa",
+   "sites": "a8447bc9",
+   "cells": "cac997d6"
+  }
  }
 ]

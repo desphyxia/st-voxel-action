@@ -68,7 +68,7 @@ is what actually holds.
 
 | Layer | What it does |
 | --- | --- |
-| `tools/smoke.mjs` | The assertions. Bundle sync, headless generation, boot, plate/node parity, golden-master, sanity invariants, render. |
+| `tools/smoke.mjs` | The assertions. Bundle sync, headless generation, boot, cross-engine math, plate/node parity, golden-master, sanity invariants, render. |
 | `tools/hooks/pre-push` | Runs `--quick` before anything leaves the machine. Seconds. Install: `node tools/hooks/install.mjs` |
 | `.github/workflows/ci.yml` | Full smoke on every push and PR, with the render pass. |
 | This document | The bar, in the place a new session will look. |

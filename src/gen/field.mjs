@@ -10,6 +10,7 @@
 import { BIOMES } from './biomes.mjs';
 import { xmur3, mulberry32, makeNoise } from './rng.mjs';
 import { V, CEIL, clamp } from './constants.mjs';
+import { exp } from './exact.mjs';
 
 export function makeGen(seedStr,force){
   var h=xmur3(String(seedStr));
@@ -26,7 +27,7 @@ export function makeGen(seedStr,force){
       t=clamp((t-0.5)*2.1+0.5,0,1); m=clamp((m-0.5)*2.1+0.5,0,1);
     }
     for(i=0;i<BIOMES.length;i++){var dt=t-BIOMES[i].t,dm=m-BIOMES[i].m;
-      var e=Math.exp(-(dt*dt+dm*dm)/0.055);w.push(e);s+=e;}
+      var e=exp(-(dt*dt+dm*dm)/0.055);w.push(e);s+=e;}
     for(i=0;i<w.length;i++)w[i]/=s;
     return w;
   }

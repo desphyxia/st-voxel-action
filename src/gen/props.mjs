@@ -9,6 +9,7 @@
  * grid, and nothing here knows what a renderer is.
  */
 import { V, DIRS4, clamp } from './constants.mjs';
+import { sin, cos, hyp } from './exact.mjs';
 import { MAT } from './materials.mjs';
 import { BIOMES, pickFrom, pushShade } from './biomes.mjs';
 
@@ -96,14 +97,14 @@ export function makeStamps(w) {
   }
   function fallenTrunk(px,pz){
     var s0=surfAt(px,pz); if(s0.f) return;
-    var ang=R()*Math.PI, dx=Math.cos(ang), dz=Math.sin(ang), L=2+R()*2.2;
+    var ang=R()*Math.PI, dx=cos(ang), dz=sin(ang), L=2+R()*2.2;
     for(var t2=-L/2;t2<=L/2;t2+=V)for(var ay=0;ay<=0.55;ay+=V)for(var b=-0.3;b<=0.3;b+=V){
       if((ay-0.28)*(ay-0.28)+b*b>0.082) continue;
       addVox(px+dx*t2-dz*b,s0.y+ay+V/2,pz+dz*t2+dx*b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25,MAT.WOOD);
     }
   }
   function fence(px,pz,ang,len){
-    var dx=Math.cos(ang),dz=Math.sin(ang);
+    var dx=cos(ang),dz=sin(ang);
     for(var t2=0;t2<=len;t2+=1){
       var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
       for(var y2=0;y2<1.0;y2+=V) addVox(xx,s.y+y2+V/2,zz,0x6b5a45,0.9+R()*0.2,MAT.WOOD);
@@ -122,11 +123,11 @@ export function makeStamps(w) {
     return [lx,ly,pz];
   }
   function wallRun(px,pz,ang,len,h,dom){
-    var dx=Math.cos(ang),dz=Math.sin(ang);
+    var dx=cos(ang),dz=sin(ang);
     for(var t2=0;t2<=len;t2+=V){
       if(R()<0.05){ t2+=0.75; continue; }
       var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
-      var hh2=h*(0.55+0.45*Math.abs(Math.sin(t2*0.7)));
+      var hh2=h*(0.55+0.45*Math.abs(sin(t2*0.7)));
       for(var y2=0;y2<hh2;y2+=V)for(var b=-0.25;b<=0.25;b+=V)
         addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
     }
@@ -179,12 +180,12 @@ export function scatterProps(w, kit) {
     if(arcs<3&&cc.canyon&&cc.canyon.d<0.6&&cc.cw>0.5&&R()<0.09){
       var span=cc.canyon.w+2+Math.floor(R()*2), rise=3+Math.floor(R()*3);
       var e=0.75, gx=G.canyonAt(px+OX+e,pz+OZ).d-G.canyonAt(px+OX-e,pz+OZ).d, gz=G.canyonAt(px+OX,pz+OZ+e).d-G.canyonAt(px+OX,pz+OZ-e).d;
-      var L=Math.hypot(gx,gz)||1; gx/=L; gz/=L;
+      var L=hyp(gx,gz)||1; gx/=L; gz/=L;
       var base=Math.max(0,cc.H);
       for(var t3=0;t3<=1.0001;t3+=0.01){
-        var ox2=(t3-0.5)*span, yy=base+Math.sin(Math.PI*t3)*rise;
+        var ox2=(t3-0.5)*span, yy=base+sin(Math.PI*t3)*rise;
         var cxp=px+gx*ox2, czp=pz+gz*ox2;
-        var thick=0.5+0.5*(1-Math.sin(Math.PI*t3));
+        var thick=0.5+0.5*(1-sin(Math.PI*t3));
         for(var w2=-0.75;w2<=0.75;w2+=V)for(var dy=-thick;dy<=thick*0.4;dy+=V)
           addVox(cxp-gz*w2,yy+dy,czp+gx*w2,pickFrom(BIOMES[cc.dom].rock,R),0.9+R()*0.2,BIOMES[cc.dom].mat.rock);
       }
@@ -225,8 +226,8 @@ export function placeClutter(w, kit) {
     var pi=sites[ps][0], pj=sites[ps][1], cp=cells[pi*M+pj];
     var px3=-half+pi, pz3=-half+pj, ang3=R()*6.28, dm3=cp.dom;
     if(ps===0){
-      for(var q3=0;q3<4;q3++) pillarRuin(px3+Math.cos(ang3)*(q3*2-3),pz3+Math.sin(ang3)*(q3*2-3),2+R()*2,dm3);
-      wallRun(px3-Math.sin(ang3)*2.5,pz3+Math.cos(ang3)*2.5,ang3,7,1.5,dm3);
+      for(var q3=0;q3<4;q3++) pillarRuin(px3+cos(ang3)*(q3*2-3),pz3+sin(ang3)*(q3*2-3),2+R()*2,dm3);
+      wallRun(px3-sin(ang3)*2.5,pz3+cos(ang3)*2.5,ang3,7,1.5,dm3);
       scree(px3,pz3,dm3,8);
     } else {
       hut(px3,pz3,dm3);
@@ -281,7 +282,7 @@ export function placeLandmark(w, kit) {
       }
     } else if(kind===2){                            /* wrecked machine */
       for(var sl=0;sl<3;sl++){
-        var ax2=Math.cos(sl*2.1), az2=Math.sin(sl*2.1);
+        var ax2=cos(sl*2.1), az2=sin(sl*2.1);
         for(var t4=0;t4<6;t4+=V)for(b=-0.9;b<=0.9;b+=V)
           addVox(px+ax2*t4*0.75-az2*b, base+t4*0.8+V/2, pz+az2*t4*0.75+ax2*b, R()<0.3?0x6a6259:0x4a443e,0.85+R()*0.25,MAT.METAL);
       }
@@ -291,7 +292,7 @@ export function placeLandmark(w, kit) {
       }
     } else {                                        /* standing stones */
       for(var st=0;st<6;st++){
-        var sa=st/6*6.283, sx=px+Math.cos(sa)*4, sz2=pz+Math.sin(sa)*4, sh=2.5+R()*1.5;
+        var sa=st/6*6.283, sx=px+cos(sa)*4, sz2=pz+sin(sa)*4, sh=2.5+R()*1.5;
         for(y2=0;y2<sh;y2+=V)for(a=-0.375;a<=0.375;a+=V)for(b=-0.25;b<=0.25;b+=V)
           addVox(sx+a,base+y2+V/2,sz2+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock);
       }

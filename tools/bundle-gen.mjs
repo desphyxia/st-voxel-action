@@ -24,12 +24,14 @@ export const BEGIN = '/* QS-BUNDLE-BEGIN — generated from src/gen by tools/bun
 export const END = '/* QS-BUNDLE-END */';
 
 /** Dependency order. A module may only use names defined above it. */
-const MODULES = ['constants', 'materials', 'rng', 'biomes', 'field', 'erosion', 'routes',
+const MODULES = ['constants', 'exact', 'materials', 'rng', 'biomes', 'field', 'erosion', 'routes',
                  'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index'];
 
 /** What the plate reads off the global. Everything else stays private. */
 const EXPOSED = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERIALS',
-                 'carvable', 'makeGen', 'buildWorld'];
+                 'carvable', 'makeGen', 'buildWorld',
+                 /* the pinned math, so the smoke test can compare it across engines */
+                 'sin', 'cos', 'exp', 'hyp'];
 
 function strip(src) {
   return src
