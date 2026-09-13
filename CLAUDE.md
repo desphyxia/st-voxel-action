@@ -54,6 +54,19 @@ the screenshots looked fine.
 - The concept plate is documentation, not a prototype of the engine. Its instanced-box
   renderer is explicitly not the shipping approach — see `docs/DECISIONS.md` §7.
 
+## What to work on
+
+The backlog is GitHub issues, indexed by the tracking issue:
+https://github.com/desphyxia/st-voxel-action/issues/18
+
+`docs/DECISIONS.md` records **decisions**; issues record **work**. Don't duplicate one into
+the other. Two ordering notes worth knowing before picking something up:
+
+- Material ids (#14) come before the greedy mesher (#12) — they change the per-voxel data
+  layout that the mesher, the save deltas and the netcode all read.
+- Region-level determinism (#16) comes before chunk streaming (#13) — it is the reason the
+  generator can currently only produce one window at a time.
+
 ## What the plate now contradicts
 
 The plate predates the later decisions and disagrees with the record in six places — biome
