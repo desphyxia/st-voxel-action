@@ -66,7 +66,8 @@ export function buildWorld(cfg) {
   floodReach(w);               /* what the movement budget can actually reach */
   chooseSpawn(w);
   return {
-    pos: w.pos, col: w.col, mpos: w.mpos, mcol: w.mcol,
+    pos: w.pos, col: w.col, mat: w.mat,
+    mpos: w.mpos, mcol: w.mcol, mmat: w.mmat,
     grass: w.grass, water: w.water, lamps: w.lamps,
     ovhPos: w.ovhPos, lmPos: w.lmPos, trail: w.TRAIL, topi: w.TOPI,
     unreach: w.UNREACH, reach: w.REACH, bridges: w.bridges,

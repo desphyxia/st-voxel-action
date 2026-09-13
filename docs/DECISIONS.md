@@ -130,6 +130,7 @@ generator workstream in its own right — not a content pass.
 | Save ownership | **Shared world, host only** — accepted deliberately. One world, one save, one owner; the pair plays together or not at all |
 | Platform | Steam desktop first, wrapped (Electron or Tauri); browser build is a test harness |
 | Art pipeline | Hybrid — hand-authored `.vox` for characters, creatures and hero structures; trees, boulders, walls and clutter stay procedural |
+| Generator arithmetic | **Only operations the spec pins exactly.** `Math.sin`, `cos`, `exp`, `pow` and `hypot` are implementation-approximated and differ between engine versions; `src/gen/exact.mjs` replaces them. A seed has to grow the same world on both players' machines, and in the tooling that measures it |
 
 ## 8. Presentation
 

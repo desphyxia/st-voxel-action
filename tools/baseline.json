@@ -2,6 +2,8 @@
  {
   "seed": "meadow",
   "voxels": 43256,
+  "mats": 43256,
+  "matKinds": 7,
   "grass": 10551,
   "waterCells": 0,
   "trailCells": 62,
@@ -9,11 +11,22 @@
   "landmark": true,
   "overhang": false,
   "unreachPct": 0,
-  "digest": "d5584ab6"
+  "digest": "c72d9a9b",
+  "parts": {
+   "vox": "1938a717",
+   "magma": "f6ba62da",
+   "grass": "51542952",
+   "water": "ea6207e5",
+   "maps": "f8f0fa23",
+   "sites": "69abeb3d",
+   "cells": "f3be59ef"
+  }
  },
  {
   "seed": "mesa",
   "voxels": 30192,
+  "mats": 30192,
+  "matKinds": 8,
   "grass": 3764,
   "waterCells": 72,
   "trailCells": 61,
@@ -21,11 +34,22 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 1,
-  "digest": "9f098fcb"
+  "digest": "5b054ee6",
+  "parts": {
+   "vox": "d1c105f0",
+   "magma": "e2ba14a5",
+   "grass": "b42a0fd0",
+   "water": "d80b8015",
+   "maps": "191535e5",
+   "sites": "7e2bf90a",
+   "cells": "dc484209"
+  }
  },
  {
   "seed": "fen",
   "voxels": 30188,
+  "mats": 30188,
+  "matKinds": 8,
   "grass": 9048,
   "waterCells": 218,
   "trailCells": 82,
@@ -33,11 +57,22 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0,
-  "digest": "6da244c9"
+  "digest": "268b0952",
+  "parts": {
+   "vox": "fe78890f",
+   "magma": "e2ba14a5",
+   "grass": "a88cd832",
+   "water": "af0123a9",
+   "maps": "d2c0d53e",
+   "sites": "52c12870",
+   "cells": "3124ec5d"
+  }
  },
  {
   "seed": "ash",
   "voxels": 27189,
+  "mats": 27189,
+  "matKinds": 6,
   "grass": 3366,
   "waterCells": 105,
   "trailCells": 82,
@@ -45,11 +80,22 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 15.4,
-  "digest": "930344af"
+  "digest": "90955e0f",
+  "parts": {
+   "vox": "3c3d9212",
+   "magma": "a978a6d7",
+   "grass": "3f638870",
+   "water": "a729dad5",
+   "maps": "db68eede",
+   "sites": "16470164",
+   "cells": "35924d21"
+  }
  },
  {
   "seed": "frost",
   "voxels": 44111,
+  "mats": 44111,
+  "matKinds": 8,
   "grass": 5013,
   "waterCells": 50,
   "trailCells": 95,
@@ -57,11 +103,22 @@
   "landmark": true,
   "overhang": false,
   "unreachPct": 0.1,
-  "digest": "0b04835a"
+  "digest": "5ed601bf",
+  "parts": {
+   "vox": "dd4d8d42",
+   "magma": "8ffe77d7",
+   "grass": "8ef6c47d",
+   "water": "00b3af51",
+   "maps": "fc761b10",
+   "sites": "d05d9c26",
+   "cells": "91df3fb4"
+  }
  },
  {
   "seed": "hero",
   "voxels": 144139,
+  "mats": 144139,
+  "matKinds": 12,
   "grass": 28427,
   "waterCells": 84,
   "trailCells": 194,
@@ -69,6 +126,15 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0.1,
-  "digest": "b8594722"
+  "digest": "e96d1580",
+  "parts": {
+   "vox": "37c6fffc",
+   "magma": "58be81cd",
+   "grass": "c7b3e833",
+   "water": "d7ea17cb",
+   "maps": "941ba8fa",
+   "sites": "a8447bc9",
+   "cells": "cac997d6"
+  }
  }
 ]
