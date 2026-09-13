@@ -9,7 +9,9 @@ voxels. Steam integration targets appid 480 (Spacewar) during development.
 Pre-production. **No game code has been written yet.** The repository holds the concept
 plate that locks generation rules, biomes and the gear lattice.
 
-- `docs/concept/index.html` — concept plate. Open it in a browser. The hero diorama and all
+- `docs/DECISIONS.md` — the design decision record. The authority on what the game is.
+- `docs/concept/index.html` — concept plate, published at
+  https://claude.ai/code/artifact/10034b02-a25d-4f5b-ab04-cea2076ceee8 — or open it in a browser. The hero diorama and all
   six biome plates are live three.js renders produced by the same seeded generator, not
   artwork. Type a seed and press Generate to produce a different world.
 

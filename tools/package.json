@@ -1,0 +1,15 @@
+{
+  "name": "quarterstone-tools",
+  "private": true,
+  "type": "module",
+  "description": "Headless render and verify harness for the concept plate. Dev only — nothing here ships.",
+  "scripts": {
+    "shots": "node render-plate.mjs --shots",
+    "plates": "node render-plate.mjs --plates",
+    "diag": "node render-plate.mjs --diag"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.49.0",
+    "three": "0.128.0"
+  }
+}

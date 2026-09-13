@@ -3,6 +3,11 @@
 Recorded from design interviews, 2026-09-12 and 2026-09-13. This is the record the concept
 plate and any engine work should be checked against. Nothing here is built yet.
 
+**Concept plate:** `docs/concept/index.html` — published at
+https://claude.ai/code/artifact/10034b02-a25d-4f5b-ab04-cea2076ceee8
+(to update that artifact, a session must pass the URL explicitly, or it creates a second one).
+Remaining work is tracked in GitHub issues; this file records decisions, not tasks.
+
 ---
 
 ## 1. Premise and fiction
