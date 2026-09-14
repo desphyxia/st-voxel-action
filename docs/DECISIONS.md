@@ -137,6 +137,7 @@ generator workstream in its own right — not a content pass.
 
 | Decision | Choice |
 | --- | --- |
+| Camera | **Orthographic 45°, following one player, snapping in quarter turns** — the plate's view, made to follow. Movement is camera-relative, so a snap turns the world and not the controls |
 | HUD | Classic — bars, cooldowns, fusion states, partner status |
 | Audio | Material-driven and sparse: footsteps, impacts and carving read off the voxel material; wind drives ambience; music is rare and marks moments |
 

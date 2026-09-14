@@ -22,6 +22,10 @@ terrain work has been serving all along.
 
 It is a floor, not a ceiling. The bar **ratchets**: see below.
 
+**Met, as of #21.** `docs/play/index.html` is that build. What it cannot yet tell us is anything
+about the game: there is no second player, no combat and nothing to fight. The next bar is
+**#24 — the first build anyone can have an opinion about.**
+
 ### The movement budget it is measured against
 
 Step up 1 m · vault 2 m · jump a 2.5 m gap · survive a 6 m drop · wade 0.75 m · swim deeper ·
@@ -51,8 +55,10 @@ optimised for never rewriting anything; this optimises for playing something.
    from the generated spans and moves a box through it under the budget. Every clause of that
    budget is a smoke assertion, and a wanderer survives five simulated minutes on all six
    golden seeds. Nothing draws it yet — that is the next item.
-4. **Camera and input** — isometric follow camera, mouse and twin-stick aim. This is what
-   makes the build something a person can judge rather than something CI can.
+4. ~~**Camera and input.**~~ **Done** (#21). An orthographic 45° follow camera with the plate's
+   quarter-turn snap, camera-relative movement that survives a snap, both aiming models, and a
+   remappable binding table — all in `src/sim/`, all assertable in node. `docs/play/index.html`
+   is the build: open it and walk around. **The bar at the top of this document is met.**
 5. **Two players moving.** Earlier than comfortable: authority discovered late is a rewrite,
    discovered now it is an interface. Plain WebRTC or WebSockets behind an interface Steam
    Networking can later implement. No Electron wrapper needed to prototype.
@@ -72,7 +78,7 @@ is what actually holds.
 
 | Layer | What it does |
 | --- | --- |
-| `tools/smoke.mjs` | The assertions. Bundle sync, headless generation, the movement budget, a five-minute soak per seed, boot, cross-engine math, plate/node parity, golden-master, sanity invariants, render. |
+| `tools/smoke.mjs` | The assertions. Bundle sync, headless generation, the movement budget, the camera and input table, a five-minute soak per seed, boot, cross-engine math, plate/node parity, golden-master, sanity invariants, and a render of both pages. |
 | `tools/hooks/pre-push` | Runs `--quick` before anything leaves the machine. Seconds. Install: `node tools/hooks/install.mjs` |
 | `.github/workflows/ci.yml` | Full smoke on every push and PR, with the render pass. |
 | This document | The bar, in the place a new session will look. |

@@ -1,9 +1,10 @@
 /**
  * Driving the character controller without a player.
  *
- * Two things live here, and neither is part of the game: a suite of micro-worlds
- * that pin each clause of the movement budget, and a five-minute soak that turns
- * a wanderer loose on a generated world and watches for it to fall through.
+ * Three things live here, and none is part of the game: a suite of micro-worlds
+ * that pin each clause of the movement budget, a five-minute soak that turns a
+ * wanderer loose on a generated world and watches for it to fall through, and a
+ * suite for the camera and the input table.
  *
  * The soak's wanderer is deliberately cautious — it turns away from magma and
  * from drops it would not survive — because the soak is asking whether the world
@@ -15,6 +16,9 @@ import { sin, cos } from '../../src/gen/exact.mjs';
 import { mulberry32, xmur3 } from '../../src/gen/rng.mjs';
 import { makeCollider, colliderForWorld, LIQUID, EPS } from '../../src/sim/collider.mjs';
 import { placeOnGround, step, embedded, ACTOR, TICK, RUN } from '../../src/sim/actor.mjs';
+import { makeCamera, moveFrom, project, aimFromStick, aimFromPointer,
+         START_YAW, QUARTER, snap } from '../../src/sim/camera.mjs';
+import { makeInput, defaultBindings, ACTIONS } from '../../src/sim/input.mjs';
 
 /** Five minutes, the bar in docs/PROTOTYPE.md. */
 export const SOAK_TICKS = Math.round(300 / TICK);
@@ -210,4 +214,121 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
     insideTicks,
     minY: +minY.toFixed(2), maxY: +maxY.toFixed(2),
   };
+}
+
+/* ------------------------------------------------------------------ view ---- */
+
+
+const VP = { w: 1200, h: 800 };
+const near = (a, b, eps) => Math.abs(a - b) <= (eps === undefined ? 1e-9 : eps);
+
+/** Screen-space displacement of one tick of a given input, at a given yaw. */
+function screenStep(cam, ix, iy) {
+  const m = moveFrom(cam, ix, iy);
+  const a = project(cam, { x: 0, y: 0, z: 0 }, VP);
+  const b = project(cam, { x: m.mx, y: 0, z: m.mz }, VP);
+  return { dx: b.x - a.x, dy: b.y - a.y };
+}
+
+/**
+ * The camera and the input table: the two things in #21 that are easy to get
+ * subtly wrong and impossible to see in a screenshot.
+ */
+export function viewSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  /* 1. Camera-relative movement. The whole point of a snap-rotating view is
+        that "up" keeps meaning up: the world direction changes, the picture
+        does not. So the screen displacement must be *identical* at all four
+        steps, not merely similar. */
+  const CARDINALS = [['right', 1, 0], ['up', 0, 1], ['left', -1, 0], ['down', 0, -1],
+                     ['up-right', 1, 1], ['down-left', -1, -1]];
+  let drift = 0, where = '';
+  const ref = {};
+  for (let q = 0; q < 4; q++) {
+    const cam = makeCamera({ yaw: START_YAW + q * QUARTER });
+    for (const [nm, ix, iy] of CARDINALS) {
+      const s = screenStep(cam, ix, iy);
+      if (q === 0) { ref[nm] = s; continue; }
+      const d = Math.abs(s.dx - ref[nm].dx) + Math.abs(s.dy - ref[nm].dy);
+      if (d > drift) { drift = d; where = `${nm} at step ${q}`; }
+    }
+  }
+  say('movement is identical at every view step', drift < 1e-9,
+      drift < 1e-9 ? '4 steps x 6 headings' : `${where} drifts ${drift.toFixed(6)} px`);
+
+  /* 2. And it points the way the key does: right is right, up is up, and a
+        cardinal never leaks into the other axis. */
+  const signOk = (v, want) => (want > 0 ? v > 0.5 : (want < 0 ? v < -0.5 : near(v, 0, 1e-9)));
+  let wrong = null;
+  for (let q = 0; q < 4 && !wrong; q++) {
+    const cam = makeCamera({ yaw: START_YAW + q * QUARTER });
+    for (const [nm, ix, iy] of CARDINALS.slice(0, 4)) {
+      const s = screenStep(cam, ix, iy);
+      /* Screen y grows downward, so "up the screen" is a negative dy. */
+      if (!signOk(s.dx, ix) || !signOk(s.dy, -iy)) { wrong = `${nm} at step ${q}`; break; }
+    }
+  }
+  say('up is up the screen, right is right', !wrong, wrong || 'every heading, every step');
+
+  /* 3. Snapping is exactly a quarter, and four of them come back round. */
+  const c2 = makeCamera({});
+  for (let q = 0; q < 4; q++) snap(c2, 1);
+  say('four snaps return to the start', near(c2.yawTo - START_YAW, 2 * Math.PI, 1e-9),
+      `${(c2.yawTo - START_YAW).toFixed(6)} rad`);
+
+  /* 4. The two aiming models. A stick direction and a mouse point that mean the
+        same thing have to produce the same facing — the bar in #21 — and the
+        only honest way to check that is to aim with one and read back the
+        other. */
+  const actor = { x: 3.25, y: 2.5, z: -4.75 };
+  let aimErr = 0, aimAt = '';
+  for (let q = 0; q < 4; q++) {
+    const cam = makeCamera({ yaw: START_YAW + q * QUARTER });
+    cam.tx = actor.x - 1.5; cam.ty = actor.y + 1; cam.tz = actor.z + 2;
+    for (let a = 0; a < 8; a++) {
+      const th = (a / 8) * Math.PI * 2;
+      const ax = Math.cos(th), ay = Math.sin(th);
+      const stick = aimFromStick(cam, ax, ay);
+      if (!stick) continue;
+      const p = project(cam, { x: actor.x + stick.x * 5, y: actor.y, z: actor.z + stick.z * 5 }, VP);
+      const mouse = aimFromPointer(cam, p.x, p.y, VP, actor);
+      const d = Math.abs(mouse.x - stick.x) + Math.abs(mouse.z - stick.z);
+      if (d > aimErr) { aimErr = d; aimAt = `step ${q}, ${(th * 57.3) | 0} deg`; }
+    }
+  }
+  say('mouse and stick aim agree', aimErr < 1e-9,
+      aimErr < 1e-9 ? '4 steps x 8 directions' : `${aimAt} differs by ${aimErr.toFixed(9)}`);
+
+  /* 5. The dead zone is a dead zone, not a direction. */
+  const c3 = makeCamera({});
+  say('a resting stick does not aim', aimFromStick(c3, 0.05, -0.02) === null,
+      aimFromStick(c3, 0.05, -0.02) ? 'it aimed' : '');
+
+  /* 6. Bindings. Every action reachable out of the box, rebinding takes effect
+        and unbinds the old key, and an edge fires once. */
+  const unbound = ACTIONS.filter((a) => !(defaultBindings()[a] || []).length);
+  say('every action has a default binding', unbound.length === 0, unbound.join(', '));
+
+  const inp = makeInput();
+  inp.press('Space');
+  const first = inp.took('jump'), second = inp.took('jump');
+  say('a press fires once, not every tick', first && !second, `${first} then ${second}`);
+
+  inp.bind('jump', ['KeyJ']);
+  inp.release('Space'); inp.press('Space');
+  const stale = inp.took('jump');
+  inp.press('KeyJ');
+  const fresh = inp.took('jump');
+  say('rebinding moves the action', !stale && fresh, `old key ${stale}, new key ${fresh}`);
+
+  const inp2 = makeInput();
+  inp2.stick(0.9, 0.9);
+  inp2.press('KeyA');
+  const ax2 = inp2.axes();
+  say('a held key beats a drifting stick', ax2.ix === -1 && ax2.iy === 0,
+      `ix ${ax2.ix}, iy ${ax2.iy}`);
+
+  return out;
 }

@@ -20,13 +20,16 @@
  *                 module exists.
  *   5. MOVE       every clause of the movement budget, against a micro-world
  *                 built to pin it: step, vault, jump, fall, wade, swim, magma.
+ *   5b. VIEW      camera-relative movement survives a 90 degree snap, the two
+ *                 aiming models agree, and every action is bound and rebindable.
  *   6. PLAY       a character survives five simulated minutes on every seed
  *                 without falling through the world or ending up inside it.
  *   7. PARITY     the plate's worlds are identical to node's, digest included.
  *   8. GOLDEN     all six pinned seeds match tools/baseline.json exactly.
  *                 The generator is deterministic, so any drift is a real
  *                 change; --update re-records it deliberately.
- *   9. RENDER     the plate still draws.
+ *   9. RENDER     the plate still draws, and the playable build boots, moves a
+ *                 character under the camera it is given, and draws too.
  *
  * As the prototype gains verbs, each one adds an assertion here — that is the
  * ratchet. See docs/PROTOTYPE.md.
@@ -39,8 +42,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, tilesDone, GOLDEN_SEEDS, measureSeeds, measureWorld,
          generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
-import { PLATE, withBundle } from './bundle-gen.mjs';
+import { budgetSuite, viewSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+import { TARGETS, staleTargets } from './bundle-gen.mjs';
 
 const argv = process.argv.slice(2);
 const UPDATE = argv.includes('--update');
@@ -48,6 +51,7 @@ const QUICK = argv.includes('--quick');
 const OUT = join(ROOT, '.render');
 const BASELINE = join(ROOT, 'tools/baseline.json');
 const TARGET = join(ROOT, 'docs/concept/index.html');
+const PLAY_TARGET = join(ROOT, 'docs/play/index.html');
 
 const fails = [];
 const check = (ok, label, detail = '') => {
@@ -56,10 +60,9 @@ const check = (ok, label, detail = '') => {
 };
 
 /* ---------- SYNC + NODE: no browser needed ---------- */
-const plateHtml = readFileSync(PLATE, 'utf8');
-const inSync = withBundle(plateHtml) === plateHtml;
-check(inSync, 'SYNC: plate carries the current src/gen',
-      inSync ? '' : 'run: node tools/bundle-gen.mjs');
+const stale = staleTargets().map((s) => s.target.name);
+check(stale.length === 0, `SYNC: ${TARGETS.length} pages carry the current src`,
+      stale.length ? `${stale.join(', ')} — run: node tools/bundle-gen.mjs` : '');
 
 /* The static half of the MATH check. The dynamic half, below, proves the
    replacements in src/gen/exact.mjs agree across engines; this one proves
@@ -91,6 +94,13 @@ check(measured.length === GOLDEN_SEEDS.length, 'NODE: src/gen generates every se
    each generated seed for five simulated minutes, which is the bar in
    docs/PROTOTYPE.md. */
 for (const r of budgetSuite()) check(r.ok, `MOVE: ${r.label}`, r.detail);
+
+/* ---------- VIEW: the camera and the input table ----------
+   Both are pure functions of an angle and a lookup, which is the whole reason
+   they live in src/sim rather than in the page: "up is still up after you
+   rotate the view" and "a mouse point and a stick direction mean the same
+   thing" are exactly the claims a screenshot cannot make. */
+for (const r of viewSuite()) check(r.ok, `VIEW: ${r.label}`, r.detail);
 
 const t1 = Date.now();
 let jumped = 0, vaulted = 0;
@@ -211,6 +221,73 @@ try {
       return n;
     });
     check(painted > 50, 'RENDER: biome plates have pixels', `${painted} sampled`);
+    await rp.close();
+
+    /* ---------- BUILD: the thing you can actually play ----------
+       The VIEW checks above prove the camera maths; this proves the page is
+       wired to it. Held key in, character moves up the screen — at every one of
+       the four view steps, which is the bar in issue #21. Deterministic because
+       QSPLAY.run steps the same fixed tick the loop does, so none of it waits on
+       a software renderer's frame rate. */
+    const bp = await browser.newPage({ viewport: { width: 1100, height: 700 } });
+    bp.setDefaultTimeout(PATIENCE);
+    bp.setDefaultNavigationTimeout(PATIENCE);
+    const bErrors = [];
+    bp.on('pageerror', (e) => bErrors.push(e.message));
+    bp.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) bErrors.push(m.text()); });
+    const bfile = preparePage({ target: PLAY_TARGET, outDir: OUT, name: 'play.html' });
+    await bp.goto(`file://${bfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+    await bp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+    check(bErrors.length === 0, 'BUILD: boots with no page errors', bErrors.slice(0, 3).join(' | '));
+
+    const spawned = await bp.evaluate(() => {
+      const a = window.QSPLAY.actor;
+      return { y: a.y, grounded: a.grounded, embedded: window.QSPLAY.actor.dead };
+    });
+    check(spawned.grounded && !spawned.embedded, 'BUILD: the character spawns standing on the world',
+          `y ${spawned.y.toFixed(2)}, ${spawned.grounded ? 'grounded' : 'in the air'}`);
+
+    const walked = await bp.evaluate(() => {
+      const P = window.QSPLAY, out = [];
+      for (let q = 0; q < 4; q++) {
+        P.respawn();
+        const a0 = P.screen();
+        P.input.press('KeyW');
+        P.run(45);
+        P.input.release('KeyW');
+        const a1 = P.screen();
+        out.push({ step: q, dx: a1.x - a0.x, dy: a1.y - a0.y });
+        /* Snap the view a quarter and settle the easing before the next pass. */
+        P.input.press('KeyE'); P.run(1); P.input.release('KeyE'); P.run(90);
+      }
+      return out;
+    });
+    /* The follow camera keeps the character near the middle, so the screen
+       displacement is small — what matters is that it is upward and that no
+       view step sends it sideways or down. */
+    const offAxis = walked.filter((w) => !(w.dy < -0.5 && Math.abs(w.dx) < Math.abs(w.dy)));
+    check(offAxis.length === 0, 'BUILD: holding up walks up the screen at every view step',
+          offAxis.length ? offAxis.map((w) => `step ${w.step} (${w.dx.toFixed(1)}, ${w.dy.toFixed(1)})`).join(', ')
+                         : walked.map((w) => w.dy.toFixed(1)).join(' / '));
+
+    await bp.screenshot({ path: join(OUT, 'play.png') });
+    const bPainted = await bp.evaluate(() => {
+      /* Draw and read in one task: WebGL clears the drawing buffer as soon as
+         the browser gets a turn, so a read after an animation frame sees black. */
+      window.QSPLAY.draw();
+      const c = document.querySelector('#cv');
+      const g = document.createElement('canvas');
+      g.width = c.width; g.height = c.height;
+      const x = g.getContext('2d');
+      x.drawImage(c, 0, 0);
+      const d = x.getImageData(0, 0, g.width, g.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4000) if (d[i] + d[i + 1] + d[i + 2] > 60) n++;
+      return n;
+    });
+    check(bPainted > 50, 'BUILD: draws', `${bPainted} sampled`);
+    check(bErrors.length === 0, 'BUILD: no errors while playing', bErrors.slice(0, 3).join(' | '));
+    await bp.close();
   }
 
   console.log(`\ngeneration: ${genMs} ms for ${measured.length} seeds`);

@@ -65,6 +65,10 @@ export function makeActor(x, y, z) {
     /** Set on the tick a vault starts, for anything counting verbs. */
     vaults: 0,
     inWater: false, swimming: false,
+    /** Where it is looking. Aim drives this when there is aim; otherwise the
+        direction of travel does. Phase 0 uses it for nothing but the model's
+        heading — issue #1 decides what aim means once there is an ability. */
+    faceX: 0, faceZ: 1,
     /** null while alive, else 'fall' | 'magma' | 'void'. */
     dead: null,
     /** Path length, summed per axis. Not displacement — see the soak. */
@@ -130,8 +134,9 @@ function tryVault(col, a, dx, dz) {
 /**
  * Advance one tick.
  *
- * `input` is { mx, mz, jump } — a heading of length 0..1 and a boolean. Nothing
- * else reaches the controller: no camera, no renderer, no clock.
+ * `input` is { mx, mz, jump } — a heading of length 0..1 and a boolean —
+ * optionally with { aimX, aimZ }, a unit heading to face. Nothing else reaches
+ * the controller: no camera, no renderer, no clock.
  */
 export function step(col, a, input, dt = TICK) {
   if (a.dead) return a;
@@ -153,6 +158,16 @@ export function step(col, a, input, dt = TICK) {
     a.y = vt.y0 + (vt.y1 - vt.y0) * uy;
     if (u >= 1) { a.vault = null; a.grounded = true; a.apex = a.y; }
     return a;
+  }
+
+  /* Facing: aim if there is any, otherwise wherever it is going. Set before
+     anything can return early, so a magma death still faces the right way. */
+  if (input.aimX || input.aimZ) {
+    const l = Math.sqrt(input.aimX * input.aimX + input.aimZ * input.aimZ);
+    if (l > 1e-9) { a.faceX = input.aimX / l; a.faceZ = input.aimZ / l; }
+  } else if (input.mx || input.mz) {
+    const l = Math.sqrt(input.mx * input.mx + input.mz * input.mz);
+    if (l > 1e-9) { a.faceX = input.mx / l; a.faceZ = input.mz / l; }
   }
 
   const liquid = col.liquidAt(a.x, a.z);

@@ -3,11 +3,11 @@
 A 45° isometric two-player online co-op action RPG on three.js. Worlds are seeded and bounded;
 terrain features are sized in whole metres on a 1 m grid and built from 25 cm voxels.
 
-**Status: pre-production.** What exists is the seeded terrain generator (`src/gen/`), a
-character controller that moves through what it generates (`src/sim/`), the concept plate that
-draws the terrain, and a design decision record. There is no renderer for the character and no
-camera yet — the controller is asserted headlessly, not looked at. Do not start engine work
-without checking `docs/DECISIONS.md` first.
+**Status: pre-production, and playable.** What exists is the seeded terrain generator
+(`src/gen/`), collision, a character controller, an isometric camera and a remappable input
+layer (`src/sim/`), a build you can open and walk around in (`docs/play/`), the concept plate,
+and a design decision record. There is no second player, no netcode and no combat. Do not start
+engine work without checking `docs/DECISIONS.md` first.
 
 ## Where things are
 
@@ -16,7 +16,8 @@ without checking `docs/DECISIONS.md` first.
 | `docs/DECISIONS.md` | **Read this first.** 43 decisions from design interviews, plus open items and unresolved tensions. The authority on what the game is. |
 | `docs/PROTOTYPE.md` | **Read this second.** What "playable" means, the path to it, and the rules that keep every merge playable. |
 | `src/gen/` | The terrain generator. Plain ES modules — no DOM, no three.js. See `src/README.md`. |
-| `src/sim/` | Collision and the character controller, written against the movement budget. Also no DOM and no three.js, which is why the budget can be asserted in node. |
+| `src/sim/` | Collision, the character controller, the isometric camera and the input table — all written against the movement budget and all free of the DOM and three.js, which is why they can be asserted in node. |
+| `docs/play/index.html` | **The playable build.** Open it in a browser and walk around. Carries an inlined copy of `src/gen` and `src/sim`. |
 | `docs/concept/index.html` | The concept plate: the design document, the renderer, and an inlined copy of `src/gen` it draws. |
 | `tools/` | Headless render and verify harness. Dev only. |
 | `README.md` | Short public summary of the project. |
@@ -34,9 +35,13 @@ stay one self-contained file — it is opened from disk and published as an arti
 admits no module graph.
 
 ```
-node tools/bundle-gen.mjs           # rewrite the block in the plate from src/gen
-node tools/bundle-gen.mjs --check   # fail if the plate is out of date
+node tools/bundle-gen.mjs           # rewrite the inlined blocks from src/
+node tools/bundle-gen.mjs --check   # fail if either page is out of date
 ```
+
+Two pages carry a bundle: the plate gets `src/gen`, the playable build gets `src/gen` **and**
+`src/sim`. A new module has to be added to `MODULES` in the bundler, in dependency order, or it
+bundles silently and the page throws on load.
 
 Edit the modules, run the bundler, commit both. The smoke test fails if they have drifted, and
 also fails if the plate's worlds stop matching the ones node generates from `src/gen`.

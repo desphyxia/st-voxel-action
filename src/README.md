@@ -6,7 +6,7 @@ The game. Today that is the terrain generator and nothing else — see
 | Path | What it is |
 | --- | --- |
 | `gen/` | The seeded terrain generator. Plain ES modules: no DOM, no three.js, no renderer. |
-| `sim/` | Collision and the character controller. Same rules: no DOM, no three.js, no renderer. |
+| `sim/` | Collision, the character controller, the isometric camera and the input table. Same rules: no DOM, no three.js, no renderer. |
 
 ## src/gen
 
@@ -80,6 +80,20 @@ into the hollow inside of a hill. The voxels go in as well, on top, because
 props are in no span at all and a bridge you cannot stand on is not a bridge.
 The edge of the window is a wall: the world is bounded.
 
+`camera.mjs` is the isometric view as maths: one angle decides where the eye
+sits, which way "up the screen" points on the ground, and where a pixel lands in
+the world. Keeping it here rather than in a renderer is what lets the two things
+that are easy to get wrong and impossible to see in a screenshot be asserted —
+that movement stays camera-relative across a quarter-turn snap, and that a mouse
+point and a stick direction meaning the same thing produce the same facing. The
+page builds a `THREE.OrthographicCamera` from `eye()` and points it at the same
+target, so the angle has one owner.
+
+`input.mjs` is a binding table, not a switch statement. Remapping is there from
+the first commit because retrofitting it is the expensive version (#11), and it
+costs a map and a lookup. Codes are `KeyboardEvent.code` — physical keys, so
+WASD stays under the same fingers on any layout — plus `Pad<n>` for a gamepad.
+
 `actor.mjs` is the controller. Only run speed is chosen; gravity, jump speed and
 airtime are **solved** from `MOVE` so that a jump clears exactly `MOVE.jump`,
 footprint included, and no more. Change the budget and the character changes
@@ -90,7 +104,8 @@ approximate, and it cannot wedge on a corner.
 Fixed timestep, no randomness, no wall clock. That is what lets
 `tools/smoke.mjs` assert every clause of the budget — step, vault, gap, drop,
 wade, swim, magma — in node, and run a five-minute soak on all six golden seeds,
-with no browser anywhere.
+with no browser anywhere. `docs/play/index.html` drives the same `step` from a
+fixed-step accumulator, so what you play is what the gate measured.
 
 ### Known debt
 
