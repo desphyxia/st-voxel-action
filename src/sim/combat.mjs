@@ -14,6 +14,12 @@
  * that the arc covered a target this tick and stops there. Damage, poise,
  * stagger and the rest belong to #9 and to the archetypes in enemy.mjs.
  *
+ * Every number below is now a *base*: the constants are what an empty frame
+ * plays with, and `baseStats()` is that same set as a value something else can
+ * modify. `src/sim/lattice.mjs` is what modifies it. So read the rules from
+ * `statsOf(a)` rather than from the constants — the constants are the floor,
+ * not the answer.
+ *
  * Pure functions of an actor and a number, like everything else in src/sim, so
  * a guest replaying inputs reproduces the host's swing exactly rather than
  * approximately.
@@ -65,6 +71,35 @@ export const HURT_TIME = 0.25;
 
 export const PHASE = { NONE: 0, WINDUP: 1, ACTIVE: 2, RECOVER: 3 };
 
+/* ---- the numbers, as a value rather than as constants ----
+   An empty frame plays exactly the game the constants above describe. A
+   socketed one plays a different one, and everything that reads a rule reads
+   it from here so that there is one place where "different" is decided. */
+
+/** A fresh copy every call: callers mutate it, and a shared one would drift. */
+export function baseStats() {
+  return {
+    maxHp: PLAYER_HP, regen: 0,
+    maxStamina: STAMINA_MAX, staminaRegen: STAMINA_REGEN, staminaHold: STAMINA_HOLD,
+    swingCost: SWING_COST, dodgeCost: DODGE_COST,
+    damage: SWING_DAMAGE, reach: REACH, arc: ARC, span: SPAN,
+    recover: RECOVER, speed: 1,
+    dodgeDist: DODGE_DIST, iframes: DODGE_IFRAMES,
+    /** Hit points returned per target cut. Zero until something grants it. */
+    lifesteal: 0,
+  };
+}
+
+/** The one shared copy, for anything that has no gear — a practice post, a
+    target handed in as three numbers, an actor built before its frame was. */
+const BARE = baseStats();
+
+export function statsOf(a) { return (a && a.st) || BARE; }
+
+/** Recovery is the one window a module moves, so the whole swing moves with it. */
+export function swingTime(a) { return WINDUP + ACTIVE + statsOf(a).recover; }
+export function dodgeSpeed(a) { return statsOf(a).dodgeDist / DODGE_TIME; }
+
 /** Which window a swing is in, or NONE. */
 export function phase(a) {
   if (!a.swing) return PHASE.NONE;
@@ -74,10 +109,10 @@ export function phase(a) {
 }
 
 /** 0..1 through the whole swing. What an animation would read. */
-export function swingProgress(a) { return a.swing ? clamp(a.swing.t / SWING_TIME, 0, 1) : 0; }
+export function swingProgress(a) { return a.swing ? clamp(a.swing.t / swingTime(a), 0, 1) : 0; }
 
 export function dodging(a) { return !!a.dodge; }
-export function invulnerable(a) { return !!a.dodge && a.dodge.t < DODGE_IFRAMES; }
+export function invulnerable(a) { return !!a.dodge && a.dodge.t < statsOf(a).iframes; }
 
 /** What fraction of running speed this actor is allowed right now. */
 export function speedScale(a) {
@@ -91,7 +126,7 @@ export function speedScale(a) {
 }
 
 export function canSwing(a) {
-  return !a.swing && !a.dodge && !a.vault && !a.swimming && a.stamina >= SWING_COST;
+  return !a.swing && !a.dodge && !a.vault && !a.swimming && a.stamina >= statsOf(a).swingCost;
 }
 
 /**
@@ -100,15 +135,16 @@ export function canSwing(a) {
  * "committed": once the blade is moving you are going to finish the motion.
  */
 export function canDodge(a) {
-  if (a.dodge || a.vault || a.swimming || a.stamina < DODGE_COST) return false;
+  if (a.dodge || a.vault || a.swimming || a.stamina < statsOf(a).dodgeCost) return false;
   return !a.swing || phase(a) === PHASE.RECOVER;
 }
 
 export function beginSwing(a) {
   if (!canSwing(a)) return false;
+  const st = statsOf(a);
   a.swing = { t: 0, hit: 0 };
-  a.stamina -= SWING_COST;
-  a.staminaHold = STAMINA_HOLD;
+  a.stamina -= st.swingCost;
+  a.staminaHold = st.staminaHold;
   return true;
 }
 
@@ -119,10 +155,11 @@ export function beginDodge(a, dx, dz) {
   /* No heading held: dodge the way you are looking. */
   if (l < 1e-6) { ux = a.faceX; uz = a.faceZ; }
   else { ux /= l; uz /= l; }
+  const st = statsOf(a);
   a.swing = null;                              /* cancels recovery, never active */
   a.dodge = { t: 0, dx: ux, dz: uz };
-  a.stamina -= DODGE_COST;
-  a.staminaHold = STAMINA_HOLD;
+  a.stamina -= st.dodgeCost;
+  a.staminaHold = st.staminaHold;
   return true;
 }
 
@@ -134,15 +171,19 @@ export function beginDodge(a, dx, dz) {
  * still makes sense next to `step`.
  */
 export function advanceCombat(a, dt) {
+  const st = statsOf(a);
   a.hits = 0;
   if (a.hurtT > 0) a.hurtT = Math.max(0, a.hurtT - dt);
-  if (a.swing) { a.swing.t += dt; if (a.swing.t >= SWING_TIME) a.swing = null; }
+  if (a.swing) { a.swing.t += dt; if (a.swing.t >= WINDUP + ACTIVE + st.recover) a.swing = null; }
   if (a.dodge) { a.dodge.t += dt; if (a.dodge.t >= DODGE_TIME) a.dodge = null; }
 
   if (a.staminaHold > 0) a.staminaHold = Math.max(0, a.staminaHold - dt);
-  else if (a.stamina < STAMINA_MAX) {
-    a.stamina = Math.min(STAMINA_MAX, a.stamina + STAMINA_REGEN * dt);
+  else if (a.stamina < st.maxStamina) {
+    a.stamina = Math.min(st.maxStamina, a.stamina + st.staminaRegen * dt);
   }
+  /* Anything grown into the lattice keeps working while you walk. Applied last
+     so that the tick a blow lands still shows the blow. */
+  if (st.regen > 0) heal(a, st.regen * dt);
 }
 
 /**
@@ -166,6 +207,15 @@ export function inArc(a, t, reach, arc, span, cosHalf) {
  * Take a hit. Returns false if it did not land — dead already, or dodging,
  * which is the entire reason the dodge exists.
  */
+/** Put hit points back, never past the ceiling the frame allows. */
+export function heal(a, amount) {
+  if (!a || a.dead || a.hp === undefined) return 0;
+  const cap = a.maxHp === undefined ? statsOf(a).maxHp : a.maxHp;
+  const before = a.hp;
+  a.hp = Math.min(cap, a.hp + amount);
+  return a.hp - before;
+}
+
 export function hurt(a, amount, cause) {
   if (!a || a.dead || a.hp === undefined || invulnerable(a)) return false;
   a.hp -= amount;
@@ -180,10 +230,15 @@ export function hurt(a, amount, cause) {
  */
 export function applyHits(a, targets, damage) {
   if (!a.hits || !targets) return 0;
+  const st = statsOf(a);
+  const dmg = damage === undefined ? st.damage : damage;
   let n = 0;
   for (let i = 0; i < targets.length && i < 32; i++) {
-    if ((a.hits & (1 << i)) && hurt(targets[i], damage, 'struck')) n++;
+    if ((a.hits & (1 << i)) && hurt(targets[i], dmg, 'struck')) n++;
   }
+  /* A fused edge can pay you back for landing the blow. Host-side only, like
+     every other consequence of a hit — the guest predicts movement, not damage. */
+  if (n && st.lifesteal > 0) heal(a, st.lifesteal * n);
   return n;
 }
 
@@ -198,11 +253,15 @@ export function applyHits(a, targets, damage) {
  */
 export function sweep(a, targets) {
   if (!targets || !targets.length || phase(a) !== PHASE.ACTIVE) return 0;
+  const st = statsOf(a);
+  /* One cosine per sweep rather than one per target, and the base arc's is
+     precomputed because it is the one almost every swing uses. */
+  const cosHalf = st.arc === ARC ? COS_HALF_ARC : cos(st.arc / 2);
   let mask = 0;
   for (let i = 0; i < targets.length && i < 32; i++) {
     if (a.swing.hit & (1 << i)) continue;
     const t = targets[i];
-    if (t && !t.dead && inArc(a, t, REACH, ARC, SPAN, COS_HALF_ARC)) mask |= (1 << i);
+    if (t && !t.dead && inArc(a, t, st.reach, st.arc, st.span, cosHalf)) mask |= (1 << i);
   }
   a.swing.hit |= mask;
   a.hits = mask;

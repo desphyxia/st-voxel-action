@@ -16,14 +16,16 @@ import { V, MOVE } from '../../src/gen/constants.mjs';
 import { sin, cos, hyp } from '../../src/gen/exact.mjs';
 import { mulberry32, xmur3 } from '../../src/gen/rng.mjs';
 import { makeCollider, colliderForWorld, LIQUID, EPS } from '../../src/sim/collider.mjs';
-import { placeOnGround, step, embedded, ACTOR, TICK, RUN } from '../../src/sim/actor.mjs';
+import { placeOnGround, step, embedded, snapshot, restore, ACTOR, TICK, RUN } from '../../src/sim/actor.mjs';
 import { makeCamera, moveFrom, project, aimFromStick, aimFromPointer,
          START_YAW, QUARTER, snap } from '../../src/sim/camera.mjs';
 import { makeInput, defaultBindings, ACTIONS } from '../../src/sim/input.mjs';
 import * as CB from '../../src/sim/combat.mjs';
 import * as EN from '../../src/sim/enemy.mjs';
+import * as LT from '../../src/sim/lattice.mjs';
+import * as LO from '../../src/sim/loot.mjs';
 import { makeLoopback } from '../../src/net/transport.mjs';
-import { makeHost, makeGuest } from '../../src/net/session.mjs';
+import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import { buildWorld } from '../../src/gen/index.mjs';
 import { GOLDEN_SEEDS } from './harness.mjs';
 
@@ -363,7 +365,7 @@ function sides(seedName) {
     const world = buildWorld(cfg);
     const hostCol = colliderForWorld(world), guestCol = colliderForWorld(buildWorld(cfg));
     WORLDS.set(seedName, {
-      cfg, spawn: world.spawn, hostCol, guestCol,
+      cfg, world, spawn: world.spawn, hostCol, guestCol,
       /* Derived on each side from its own world, never sent. If the two ends
          disagreed about where the posts are, a swing would land on one and not
          the other and the exact-agreement tests would say so. */
@@ -378,7 +380,7 @@ function twoPlayers(seedName, wire, withFoes) {
   const w = sides(seedName || 'meadow');
   /* Fresh every time: the machines in it die, and a suite that shared them
      would be testing whatever the previous case left standing. */
-  const encounter = withFoes ? EN.makeEncounter(w.hostCol, w.spawn, w.hostTargets) : null;
+  const encounter = withFoes ? EN.makeEncounter(w.hostCol, w.world, w.hostTargets) : null;
   const host = makeHost({ col: w.hostCol, spawn: w.spawn, transport: wire.a, cfg: w.cfg,
                           targets: encounter ? encounter.targets : w.hostTargets, encounter });
   const guest = makeGuest({
@@ -568,6 +570,33 @@ export function netSuite() {
     const kbs = wire.stat.bytes / (600 / 60) / 1024;
     say('three machines on the wire still fit the budget', kbs < 30,
         `${kbs.toFixed(1)} kB/s with two players and ${p.encounter.enemies.length} machines`);
+  }
+
+  /* 8e. Gear is not an input, so it takes the other path: a guest asks, the
+         host decides, and the snapshot is the answer. What has to hold is that
+         the answer arrives and that both ends then agree, because `step` reads
+         the lattice and a replay against the wrong one lands nowhere real. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 5 }));
+    run(p, 40, scripted(0), scripted(2));
+    /* The host is where a module would arrive from — it owns pickups too. */
+    LT.takeModule(p.host.peer.gear, LT.MOD.SIGIL);
+    run(p, 20, scripted(0), scripted(2));
+    const carried = p.guest.me.gear.carried.slice();
+    p.guest.act(ACT.SOCKET, 1, 0);
+    run(p, 40, scripted(0), scripted(2));
+    settle(p, 60);
+    const hostSeated = p.host.peer.gear.slots[1] === LT.MOD.SIGIL;
+    const guestSeated = p.guest.me.gear.slots[1] === LT.MOD.SIGIL;
+    const d = dist2(p.guest.me, p.host.peer);
+    say('a lattice the guest changes is the host\'s to apply, and then both agree',
+        carried.length === 1 && hostSeated && guestSeated && d < 1e-9,
+        `carried ${carried.length}, host ${hostSeated ? 'seated' : 'EMPTY'}, ` +
+        `guest ${guestSeated ? 'seated' : 'EMPTY'}, ${d.toFixed(9)} m apart`);
+    say('and the reach it grants crossed with it',
+        Math.abs(p.guest.me.st.reach - p.host.peer.st.reach) < 1e-12
+          && p.guest.me.st.reach > CB.REACH,
+        `${p.guest.me.st.reach} m on the guest, ${p.host.peer.st.reach} m on the host`);
   }
 
   /* 8. The point of all of it: each of them can see the other move. */
@@ -948,4 +977,240 @@ export function enemySuite() {
   }
 
   return out;
+}
+
+/* ------------------------------------------------------------------ gear ---- */
+
+/** A flat arena, an actor on it, and a target a fixed distance in front. */
+function bench() {
+  const c = makeCollider(20, V);
+  c.addBox(-19.9, 19.9, -19.9, 19.9, -2, 0);
+  c.finish();
+  const a = placeOnGround(c, 0, 0);
+  a.faceX = 1; a.faceZ = 0;
+  return { col: c, a };
+}
+
+/** Seat `mod` in `slot` directly, the way a pickup and a socket would. */
+function seat(a, slot, mod) {
+  LT.takeModule(a.gear, mod);
+  LT.socketModule(a.gear, slot, a.gear.carried.length - 1);
+  a.st = a.gear.st;
+  a.maxHp = a.st.maxHp;
+  return a;
+}
+
+/**
+ * Modules, sockets, fusion and loot — the spine of progression (§4).
+ *
+ * Same terms as combat: none of these numbers are balance. What is pinned is
+ * the shape — that a lattice is adjacency and not a list, that knowledge is
+ * something you go and get, and that what is on the ground is derived rather
+ * than sent.
+ */
+export function gearSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  /* 1. An empty frame plays exactly the game that was here before it. */
+  {
+    const g = LT.makeGear();
+    const b = CB.baseStats();
+    const drift = Object.keys(b).filter((k) => g.st[k] !== b[k]);
+    say('an empty lattice is exactly the numbers in combat.mjs',
+        drift.length === 0 && g.slots.length === 4 && LT.FRAMES[g.frame].edges.length === 5,
+        drift.length ? drift.join(', ')
+                     : `${g.slots.length} sockets, ${LT.FRAMES[g.frame].edges.length} edges`);
+  }
+
+  /* 2. Carried is not equipped. The lattice is the only thing that plays. */
+  {
+    const { a } = bench();
+    const before = a.st.reach;
+    LT.takeModule(a.gear, LT.MOD.SIGIL);
+    const carried = a.gear.st.reach;
+    LT.socketModule(a.gear, 0, 0);
+    a.st = a.gear.st;
+    say('a module in the pack does nothing; the same module in a socket does',
+        carried === before && a.st.reach > before + 0.4 && a.gear.carried.length === 0,
+        `${before} m carried ${carried} m, seated ${a.st.reach} m`);
+  }
+
+  /* 3. ...and it reaches what it says it reaches, through the same sweep the
+        blade always used. This is the end of the wire, not a stat readout. */
+  {
+    const far = { x: CB.REACH + 0.35, y: 0, z: 0, r: 0 };
+    const bare = bench(), kit = bench();
+    seat(kit.a, 0, LT.MOD.SIGIL);
+    let bareHit = 0, kitHit = 0;
+    for (const [w, tally] of [[bare, 'bare'], [kit, 'kit']]) {
+      const t = [{ x: far.x, y: w.a.y, z: 0, r: 0 }];
+      step(w.col, w.a, { mx: 0, mz: 0, aimX: 1, aimZ: 0, attack: true }, t);
+      for (let q = 1; q < 80; q++) {
+        step(w.col, w.a, { mx: 0, mz: 0, aimX: 1, aimZ: 0 }, t);
+        if (w.a.hits) { if (tally === 'bare') bareHit++; else kitHit++; }
+      }
+    }
+    say('a sigil cuts what the bare blade cannot reach', bareHit === 0 && kitHit === 1,
+        `bare ${bareHit} hits at ${far.x.toFixed(2)} m, with the sigil ${kitHit}`);
+  }
+
+  /* 4. Fusion wants both halves of its bargain: a shared edge *and* the recipe
+        for it. Either alone is two modules sitting next to each other. */
+  {
+    const near = LT.makeGear();                    /* slots 0 and 1 share an edge */
+    LT.takeModule(near, LT.MOD.GOVERNOR); LT.socketModule(near, 0, 0);
+    LT.takeModule(near, LT.MOD.KEEN); LT.socketModule(near, 1, 0);
+    const unlearned = near.fused.length;
+    /* Sitting on a fusion you have not found yet is the thing that is supposed
+       to send you looking, so the lattice has to be able to say so. */
+    const latent = LT.latentFusions(near);
+    LT.learnFusion(near, LT.FUS.REGULATED);
+    const learned = near.fused.length;
+    const spent = LT.latentFusions(near).length;
+
+    const apart = LT.makeGear();                   /* slots 0 and 3 do not */
+    apart.known = (1 << LT.FUS.REGULATED);
+    LT.takeModule(apart, LT.MOD.GOVERNOR); LT.socketModule(apart, 0, 0);
+    LT.takeModule(apart, LT.MOD.KEEN); LT.socketModule(apart, 3, 0);
+
+    say('a fusion needs a shared edge and a recipe, and takes neither on trust',
+        unlearned === 0 && learned === 1 && apart.fused.length === 0
+          && near.st.damage > apart.st.damage,
+        `unlearned ${unlearned}, learned ${learned}, not adjacent ${apart.fused.length}, `
+        + `${near.st.damage} damage against ${apart.st.damage}`);
+    say('and an adjacency you cannot yet close is visible as one',
+        latent.length === 1 && latent[0] === LT.FUS.REGULATED && spent === 0
+          && LT.latentFusions(apart).length === 0,
+        `${latent.length} latent before the recipe, ${spent} after, `
+        + `${LT.latentFusions(apart).length} across a non-edge`);
+  }
+
+  /* 5. The three schools never combined, so two of a kind never fuse — however
+        good each of them is on its own. */
+  {
+    const g = LT.makeGear();
+    g.known = 0x3f;                                /* every recipe there is */
+    LT.takeModule(g, LT.MOD.GOVERNOR); LT.socketModule(g, 0, 0);
+    LT.takeModule(g, LT.MOD.SERVO); LT.socketModule(g, 1, 0);
+    const cross = FUSIONS_CROSS();
+    say('same-tradition neighbours never fuse', g.fused.length === 0 && cross,
+        `${g.fused.length} fusions from two tech modules, `
+        + `${cross ? 'every recipe crosses' : 'A RECIPE DOES NOT CROSS'}`);
+  }
+
+  /* 6. Limited carried slots, stash at camp — and there is no camp. */
+  {
+    const g = LT.makeGear();
+    let took = 0;
+    for (let i = 0; i < LT.CARRY + 3; i++) if (LT.takeModule(g, LT.MOD.KEEN)) took++;
+    say('the pack is limited, and says no rather than dropping something',
+        took === LT.CARRY && g.carried.length === LT.CARRY, `${took} of ${LT.CARRY + 3} taken`);
+  }
+
+  /* 7. A machine leaves the discipline it was built from where it fell, and it
+        is picked up once — by whoever was standing there. */
+  {
+    const { col, a } = bench();
+    const field = LO.makeLootField(col, { spawn: [0, 0, 0], lamps: [], lmPos: null }, 1);
+    const machine = { x: 6, y: a.y, z: 0 };
+    const early = field.collect([a]).length;
+    field.drop(0, machine);
+    const away = field.collect([a]).length;
+    a.x = machine.x; a.z = machine.z;
+    const got = field.collect([a]);
+    const again = field.collect([a]).length;
+    say('a fallen machine leaves its discipline on the ground, taken once',
+        early === 0 && away === 0 && got.length === 1 && again === 0
+          && a.gear.carried.length === 1,
+        `before it fell ${early}, standing off it ${away}, on it ${got.length}, again ${again}`);
+  }
+
+  /* 8. A cache is knowledge, and knowledge is somewhere you have to go. Derived
+        from the world on both machines, which is why none of it is sent. */
+  {
+    const w = sides('meadow');
+    const mine = LO.cacheSites(w.hostCol, w.world);
+    const theirs = LO.cacheSites(w.guestCol, w.world);
+    const same = JSON.stringify(mine) === JSON.stringify(theirs);
+    let nearest = Infinity, grounded = true;
+    for (const c of mine) {
+      nearest = Math.min(nearest, hyp(c.x - w.spawn[0], c.z - w.spawn[2]));
+      if (!Number.isFinite(c.y)) grounded = false;
+    }
+    say('caches are derived from the world, identically on both machines',
+        mine.length > 0 && same && grounded,
+        `${mine.length} caches, ${same ? 'identical' : 'DIFFERENT'}`);
+    /* And somewhere the budget can actually get to. A cache on a ruin's roof
+       is a cache nobody collects, and the generator's reach flood is the only
+       thing that knows the difference. */
+    let unreachable = 0;
+    for (const c of mine) {
+      const ai = Math.round(c.x + w.world.half), bj = Math.round(c.z + w.world.half);
+      if (!w.world.reach[ai * w.world.M + bj]) unreachable++;
+    }
+    say('and every one of them is a walk away, on ground the budget can reach',
+        mine.length > 0 && nearest >= 9 && unreachable === 0,
+        `nearest is ${Number.isFinite(nearest) ? nearest.toFixed(1) : '-'} m, `
+        + `${unreachable} out of reach`);
+
+    /* And what is in one is a module *and* the recipe that makes it worth
+       more than a module — the whole reason the landmark is worth the walk. */
+    const { a } = bench();
+    const before = a.gear.known;
+    const field = LO.makeLootField(w.hostCol, w.world, 0);
+    const c0 = field.caches[0];
+    a.x = c0.x; a.y = c0.y; a.z = c0.z;
+    const got = field.collect([a]);
+    say('a cache holds a module and the recipe that makes two of them worth more',
+        got.length === 1 && got[0].fus >= 0 && a.gear.carried.length === 1
+          && a.gear.known !== before,
+        got.length ? `${LT.MODULES[got[0].mod].name} and ${LT.FUSIONS[got[0].fus].name}`
+                   : 'nothing was there');
+  }
+
+  /* 9. The lattice has to survive the round trip, or a guest replays its inputs
+        against numbers the host never had. */
+  {
+    const { a } = bench();
+    seat(a, 0, LT.MOD.GOVERNOR);
+    seat(a, 1, LT.MOD.KEEN);
+    LT.learnFusion(a.gear, LT.FUS.REGULATED);
+    a.st = a.gear.st;
+    LT.takeModule(a.gear, LT.MOD.BLOOM);
+    const b = placeOnGround(bench().col, 0, 0);
+    restore(b, snapshot(a));
+    const fields = ['damage', 'maxStamina', 'swingCost', 'reach', 'recover', 'speed'];
+    const drift = fields.filter((k) => a.st[k] !== b.st[k]);
+    say('a lattice survives snapshot and restore, fusions and all',
+        drift.length === 0 && b.gear.fused.length === 1
+          && b.gear.carried.length === 1 && b.gear.known === a.gear.known,
+        drift.length ? drift.join(', ')
+                     : `${b.gear.fused.length} fusion, ${b.gear.carried.length} carried`);
+  }
+
+  /* 10. And it is paid for. A module that makes the swing cheaper has to make
+         the swing cheaper, through the same stamina pool as everything else. */
+  {
+    const bare = bench(), kit = bench();
+    seat(kit.a, 0, LT.MOD.THEW);
+    step(bare.col, bare.a, { mx: 0, mz: 0, aimX: 1, aimZ: 0, attack: true });
+    step(kit.col, kit.a, { mx: 0, mz: 0, aimX: 1, aimZ: 0, attack: true });
+    const cheap = (CB.STAMINA_MAX - kit.a.stamina) < (CB.STAMINA_MAX - bare.a.stamina);
+    say('a module that says it is cheaper is cheaper, out of the same pool',
+        cheap && kit.a.swing !== null,
+        `${(CB.STAMINA_MAX - bare.a.stamina).toFixed(0)} stamina bare, `
+        + `${(CB.STAMINA_MAX - kit.a.stamina).toFixed(0)} with the cord`);
+  }
+
+  return out;
+}
+
+/** Every recipe joins two different traditions. The rule, checked rather than
+    trusted: a same-tradition recipe would make case 5 above pass by accident. */
+function FUSIONS_CROSS() {
+  for (const f of LT.FUSIONS) {
+    if (LT.MODULES[f.pair[0]].trad === LT.MODULES[f.pair[1]].trad) return false;
+  }
+  return true;
 }

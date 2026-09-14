@@ -21,8 +21,9 @@
  */
 import { MOVE, clamp } from '../gen/constants.mjs';
 import { EPS, LIQUID } from './collider.mjs';
-import { STAMINA_MAX, PLAYER_HP, advanceCombat, beginSwing, beginDodge,
-         speedScale, sweep, DODGE_SPEED } from './combat.mjs';
+import { advanceCombat, beginSwing, beginDodge, speedScale, sweep,
+         statsOf, dodgeSpeed } from './combat.mjs';
+import { makeGear, gearWire, applyGearWire } from './lattice.mjs';
 
 /** One simulation tick. Every constant below assumes it. */
 export const TICK = 1 / 60;
@@ -57,6 +58,12 @@ export const VAULT_TIME = 0.35;
 export const TERMINAL = 45;
 
 export function makeActor(x, y, z) {
+  /* Every actor carries a frame, machines included. An empty lattice computes
+     exactly the constants in combat.mjs, so a sentry plays the game it always
+     played; giving it one anyway means there is no actor anywhere whose rules
+     have to be looked up somewhere else. */
+  const gear = makeGear();
+  const st = gear.st;
   return {
     x, y, z, vx: 0, vy: 0, vz: 0,
     grounded: false,
@@ -73,12 +80,19 @@ export function makeActor(x, y, z) {
     faceX: 0, faceZ: 1,
     /* ---- combat (src/sim/combat.mjs owns the rules; the state lives here so
        that one snapshot is the whole actor) ---- */
-    hp: PLAYER_HP, maxHp: PLAYER_HP,
+    /* ---- the lattice (src/sim/lattice.mjs owns the rules; like combat, the
+       state lives here so that one snapshot is the whole actor) ---- */
+    gear,
+    /** The stats the lattice works out to. Never written except through gear. */
+    st,
+    /** How many things this actor has picked up. Counted, not simulated. */
+    picked: 0,
+    hp: st.maxHp, maxHp: st.maxHp,
     /** Seconds of flinch left. The renderer's business, nobody else's. */
     hurtT: 0,
     /** A heavy machine does not pull itself over a ledge — see src/sim/enemy.mjs. */
     canVault: true,
-    stamina: STAMINA_MAX,
+    stamina: st.maxStamina,
     /** Seconds before stamina starts coming back. */
     staminaHold: 0,
     /** null, or { t, hit } — hit is a bitmask of targets already cut this swing. */
@@ -121,8 +135,12 @@ export function snapshot(a) {
                        x1: a.vault.x1, y1: a.vault.y1, z1: a.vault.z1 } : null,
     vaults: a.vaults, inWater: a.inWater, swimming: a.swimming,
     faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
-    hp: a.hp, hurtT: a.hurtT,
+    hp: a.hp, maxHp: a.maxHp, hurtT: a.hurtT,
     stamina: a.stamina, staminaHold: a.staminaHold,
+    /* Nine small numbers, and the stats are recomputed from them on the way
+       back in — so the two ends cannot disagree about what a lattice means
+       without first disagreeing about the lattice. */
+    gear: gearWire(a.gear), picked: a.picked,
     swing: a.swing ? { t: a.swing.t, hit: a.swing.hit } : null,
     dodge: a.dodge ? { t: a.dodge.t, dx: a.dodge.dx, dz: a.dodge.dz } : null,
     hits: a.hits,
@@ -138,7 +156,9 @@ export function restore(a, s) {
                         x1: s.vault.x1, y1: s.vault.y1, z1: s.vault.z1 } : null;
   a.vaults = s.vaults; a.inWater = s.inWater; a.swimming = s.swimming;
   a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
-  a.hp = s.hp; a.hurtT = s.hurtT;
+  if (s.gear) { applyGearWire(a.gear, s.gear); a.st = a.gear.st; }
+  a.hp = s.hp; a.maxHp = s.maxHp === undefined ? a.st.maxHp : s.maxHp;
+  a.hurtT = s.hurtT; a.picked = s.picked || 0;
   a.stamina = s.stamina; a.staminaHold = s.staminaHold;
   a.swing = s.swing ? { t: s.swing.t, hit: s.swing.hit } : null;
   a.dodge = s.dodge ? { t: s.dodge.t, dx: s.dodge.dx, dz: s.dodge.dz } : null;
@@ -159,9 +179,12 @@ export function display(a) {
   const r3 = (v) => Math.round(v * 1000) / 1000;
   return {
     x: r3(a.x), y: r3(a.y), z: r3(a.z), fx: r3(a.faceX), fz: r3(a.faceZ),
-    g: a.grounded ? 1 : 0, d: a.dead || 0, hp: a.hp,
+    g: a.grounded ? 1 : 0, d: a.dead || 0, hp: a.hp, mh: a.maxHp,
     sw: a.swing ? Math.round(a.swing.t * 1000) / 1000 : -1,
     dv: a.dodge ? 1 : 0, u: Math.round(a.hurtT * 100) / 100,
+    /* The arc is drawn at the reach it cuts at, so a partner who has socketed
+       a sigil looks like they can reach what they can reach. */
+    rc: r3(statsOf(a).reach),
   };
 }
 
@@ -169,6 +192,10 @@ export function display(a) {
 export function applyDisplay(a, m) {
   a.faceX = m.fx; a.faceZ = m.fz;
   a.grounded = !!m.g; a.dead = m.d || null; a.hp = m.hp; a.hurtT = m.u;
+  if (m.mh !== undefined) a.maxHp = m.mh;
+  /* A drawn-only actor's stats are its own object, so writing the one field
+     that is sent does not reach anybody else's numbers. */
+  if (m.rc !== undefined) a.st.reach = m.rc;
   a.swing = m.sw >= 0 ? { t: m.sw, hit: 0 } : null;
   a.dodge = m.dv ? { t: 0, dx: m.fx, dz: m.fz } : null;
   return a;
@@ -279,11 +306,16 @@ export function step(col, a, input, targets, dt = TICK) {
   if (a.dodge) {
     /* A dodge owns the horizontal for its whole window: it is a distance, not
        a nudge, and a player steering out of it would make it a sprint. */
-    a.vx = a.dodge.dx * DODGE_SPEED;
-    a.vz = a.dodge.dz * DODGE_SPEED;
+    const ds = dodgeSpeed(a);
+    a.vx = a.dodge.dx * ds;
+    a.vz = a.dodge.dz * ds;
   } else {
     const base = a.swimming ? SWIM_SPEED : (a.inWater ? WADE_SPEED : RUN);
-    const speed = base * speedScale(a);
+    /* The lattice scales how fast you go, not how far you jump: the budget in
+       DECISIONS §3 is what the terrain was sized against, and a module that
+       quietly cleared a wider canyon would be the exact failure the solved
+       jump above exists to prevent. */
+    const speed = base * speedScale(a) * statsOf(a).speed;
     const wx = (input.mx || 0) * speed, wz = (input.mz || 0) * speed;
     if (a.grounded || a.swimming) { a.vx = wx; a.vz = wz; }
     else { a.vx += (wx - a.vx) * AIR_CONTROL; a.vz += (wz - a.vz) * AIR_CONTROL; }

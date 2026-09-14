@@ -66,6 +66,40 @@ stronger.
 | Sourcing | Landmark caches, enemy drops, bought from holdouts (not crafted) |
 | Inventory | Limited carried slots, stash at camp |
 
+### The first frame, specified
+
+One of eight, taken to the level the sockets need, because the prototype needed something to
+seat modules in. The other seven are not built, in the same way eleven of the twelve enemy
+archetypes are not.
+
+**Warden frame** — the longblade's. Four sockets in a rhombus: two triangles sharing an edge,
+which is **five edges between four cells**. The two ends of the long diagonal touch two
+neighbours each and never each other, so where a module goes is always a question.
+
+**Nine modules**, three per tradition. Tech: governor (stamina), servo (recovery), plating
+(hit points). Magic: keening edge (damage), lengthening sigil (reach), blink rune (dodge).
+Biological: sinew (run speed), thewed cord (swing cost), bloom (regeneration).
+
+**Six fusions**, two per pair of traditions, each along a shared edge: regulated edge, slipdrive,
+ironthew, reaching vine, deep well, bloodedge.
+
+Three rules came out of building it, and every later frame inherits them:
+
+- **Only across traditions.** Two tech modules side by side do nothing extra, however good each
+  one is. This is §1 made mechanical: the three schools never combined, so combining them is the
+  only thing that is new.
+- **A machine drops its own discipline**, which §6 already said — but the consequence only shows
+  up once fusion exists. Every machine in the prototype is tech, so *fighting alone can never
+  give you two traditions*. The lattice cannot be filled by combat. That is what turns the
+  landmark on the horizon into somewhere you have to go.
+- **Knowledge is the scarce half, not the modules.** An adjacency you have no recipe for is
+  inert. Caches hold a module *and* a recipe, and the recipes in one world walk the list from a
+  seed-dependent start, so four caches teach four different fusions: a second copy of something
+  you already know is not a reason to cross a valley.
+
+None of the numbers are balance, on exactly the terms §3's combat numbers are not: #9 decides
+what a hit is worth and what a module is worth at the same time.
+
 ## 5. World and terrain
 
 **Four natural biomes**, in the climate field: Meadowlands · Redrock Mesa · Cloudpine
@@ -150,6 +184,8 @@ generator workstream in its own right — not a content pass.
 | Netcode | Host-authoritative peer-to-peer over Steam Networking |
 | Client model | **The guest predicts and reconciles.** It applies its own input immediately, and on each authoritative snapshot restores the host's state wholesale and replays every input the host had not yet seen. The replay lands on the host's answer *exactly*, not near it, because the controller is deterministic — which is what the pinned arithmetic was for |
 | What crosses the wire | **A seed and two characters.** The world is a pure function of its seed, so terrain is never sent; later, edits, enemies and loot are deltas against something both ends already have |
+| What crosses for loot | **One integer.** Caches are derived from the world, which both machines grew from the same seed, and a machine's spoil lies where that machine fell — which the guest is already told. So all that is left to send is a bitmask of what has been picked up. Gear is the exception: a lattice is derivable from nothing, and `step` reads it, so it rides the snapshot |
+| Gear is not an input | Inputs are replayed after a correction, and "seat the module I am carrying in slot 2" is not idempotent. Socketing goes as its own message, applied by the host exactly once; the snapshot is the answer. A menu click can afford the round trip |
 | Save ownership | **Shared world, host only** — accepted deliberately. One world, one save, one owner; the pair plays together or not at all |
 | Platform | Steam desktop first, wrapped (Electron or Tauri); browser build is a test harness |
 | Art pipeline | Hybrid — hand-authored `.vox` for characters, creatures and hero structures; trees, boulders, walls and clutter stay procedural |
@@ -167,6 +203,10 @@ generator workstream in its own right — not a content pass.
 
 ## Still open
 
+- The other seven frames, and the rest of the modules and fusions. Nine and six are what one
+  frame needed; the set is not closed.
+- Refinement, and the stash. Carried slots are limited and there is nowhere to put the overflow,
+  because there is no camp.
 - Enemy archetypes, telegraphs and AI behaviour within the three sources above.
 - What the glasslands releases once all three weapons are down.
 - The set-piece grammar's actual vocabulary — what an approach, a gate, an arena and a core

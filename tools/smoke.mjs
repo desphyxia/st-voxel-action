@@ -34,7 +34,11 @@
  *                 is an arc, and a dodge that cancels recovery and nothing else.
  *   5d. ENEMY     one machine that closes, telegraphs, swings, staggers and
  *                 dies — and a dodge through its strike that costs nothing.
- *   5e. NET       a host and a guest agree exactly after latency and packet
+ *   5e. GEAR      a hex lattice: a module does nothing until it is socketed,
+ *                 a fusion needs a shared edge *and* a recipe found in the
+ *                 world, and what is on the ground is derived on both machines
+ *                 rather than sent — one integer of it crosses.
+ *   5f. NET       a host and a guest agree exactly after latency and packet
  *                 loss, the host is authoritative, and no terrain crosses.
  *   6. PLAY       a character survives five simulated minutes on every seed
  *                 without falling through the world or ending up inside it.
@@ -47,8 +51,10 @@
  *  10. NET (page) two windows, postMessage between them, and a key pressed in
  *                 one moving a character in the other.
  *  11. BUILD      a swing winds up, draws an arc you can actually count pixels
- *                 of, and strikes what is in front of it once; and a machine
- *                 notices, closes, telegraphs visibly, and can be killed.
+ *                 of, and strikes what is in front of it once; a machine
+ *                 notices, closes, telegraphs visibly, and can be killed; and
+ *                 there is loot in the world to walk to, which seats in the
+ *                 lattice and widens the arc the player is reading.
  *
  * As the prototype gains verbs, each one adds an assertion here — that is the
  * ratchet. See docs/PROTOTYPE.md.
@@ -61,8 +67,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, netSuite, soak,
-         SOAK_TICKS } from './lib/playtest.mjs';
+import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, netSuite,
+         soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 
 const argv = process.argv.slice(2);
@@ -136,6 +142,14 @@ if (NODE_HALF) for (const r of combatSuite()) check(r.ok, `COMBAT: ${r.label}`, 
    of things, and a wind-up you cannot read is a fight you cannot learn — so the
    assertions are about windows and openings, not about damage. */
 if (NODE_HALF) for (const r of enemySuite()) check(r.ok, `ENEMY: ${r.label}`, r.detail);
+
+/* ---------- GEAR: modules, sockets, fusion and what is on the ground ----------
+   The spine of progression (§4), and the first reason this world has anywhere
+   worth going. Same terms as COMBAT: none of these numbers are balance. What is
+   pinned is the shape — that a lattice is adjacency rather than a list, that a
+   fusion needs both a shared edge and a recipe you went and found, and that
+   what is lying on the ground is derived on both machines rather than sent. */
+if (NODE_HALF) for (const r of gearSuite()) check(r.ok, `GEAR: ${r.label}`, r.detail);
 
 /* ---------- NET: two players, one world, one authority ----------
    A host and a guest over a loopback wire with latency and loss dialled in. The
@@ -382,6 +396,116 @@ if (BROWSER_HALF) {
             `${reads.before} lit pixels idle, ${reads.during} mid-swing`);
       check(reads.struck === 1, 'BUILD: a post in the arc is struck, once',
             `${reads.struck} hits`);
+
+      /* ---------- BUILD: is there anything to find, and does it change the
+           thing you are looking at? ----------
+         The node half proves the lattice arithmetic. What it cannot prove is
+         that the world has any of it lying in it, or that seating a module
+         changes what is drawn rather than only what is computed — a sigil that
+         widened the hitbox and left the arc alone would be a lie on the floor,
+         and it is the arc the player is reading. So: walk onto a cache, then
+         count the same pale pixels the swing check counts, bare and seated. */
+      const found = await bp.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS;
+        P.pause(true);
+        const a = P.actor;
+        a.hp = QS.PLAYER_HP; a.dead = null;
+        const loose = P.loose;
+        const caches = loose.filter((o) => o.kind === 'cache');
+        if (!caches.length) { P.pause(false); return { caches: 0 }; }
+        const it = caches[0].item;
+        const before = { carried: P.gear.carried.length, known: P.gear.known, loose: loose.length };
+        a.x = it.x; a.y = it.y; a.z = it.z; a.vx = 0; a.vz = 0; a.vy = 0;
+        QS.warpTo(P.cam, a.x, a.y, a.z);
+        P.run(4);
+        const after = { carried: P.gear.carried.length, known: P.gear.known,
+                        loose: P.loose.length };
+        P.pause(false);
+        return { caches: caches.length, before, after,
+                 seated: P.gear.slots.filter((v) => v >= 0).length };
+      });
+      check(found.caches > 0, 'BUILD: the world has caches in it to walk to',
+            `${found.caches} still unopened`);
+      check(!!found.after && found.after.carried === found.before.carried + 1
+              && found.after.known !== found.before.known
+              && found.after.loose === found.before.loose - 1,
+            'BUILD: and walking onto one hands over a module and a recipe',
+            found.after ? `carried ${found.before.carried} → ${found.after.carried}, `
+                          + `recipes ${found.before.known} → ${found.after.known}, `
+                          + `${found.before.loose} → ${found.after.loose} left on the ground`
+                        : 'nothing to find');
+
+      const widened = await bp.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS;
+        const lit = () => {
+          P.draw();
+          const c = document.querySelector('#cv');
+          const g = document.createElement('canvas');
+          g.width = c.width; g.height = c.height;
+          const x = g.getContext('2d');
+          x.drawImage(c, 0, 0);
+          const s = P.screen(), R = 110;
+          const d = x.getImageData(Math.max(0, (s.x - R) | 0), Math.max(0, (s.y - R) | 0),
+                                   R * 2, R * 2).data;
+          let n = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            if (d[i] > 210 && d[i + 1] > 195 && d[i + 2] > 150) n++;
+          }
+          return n;
+        };
+        /* One swing, held at its widest, with the clock stopped.
+           The press is retried rather than assumed: `step` reads the attack
+           before it recomputes whether the actor is standing in water, so the
+           first tick after a teleport can refuse the swing on the *previous*
+           position's state — and a single consumed press with a `while` after
+           it is an infinite loop, not a failed check. Every loop is bounded for
+           the same reason. */
+        const swingAndCount = () => {
+          const a = P.actor;
+          let guard = 0;
+          while (!a.swing && guard++ < 240) {
+            a.stamina = a.st.maxStamina; a.staminaHold = 0;
+            a.dodge = null; a.vault = null; a.dead = null;
+            P.input.press('KeyF'); P.run(1); P.input.release('KeyF');
+          }
+          if (!a.swing) return -1;
+          while (QS.phase(a) !== QS.PHASE.ACTIVE && guard++ < 480) P.run(1);
+          P.run(1);
+          const n = lit();
+          while (a.swing && guard++ < 720) P.run(1);
+          return n;
+        };
+        P.pause(true);
+        const t = P.targets[0], a = P.actor;
+        a.x = t.x - 1.15; a.z = t.z - 0.25; a.y = t.y;
+        a.faceX = 1; a.faceZ = 0; a.vx = 0; a.vz = 0;
+        a.hp = QS.PLAYER_HP; a.dead = null; a.swing = null; a.dodge = null; a.vault = null;
+        QS.warpTo(P.cam, a.x, a.y, a.z);
+        /* Whatever in this patch of world is already pale. Subtracted from
+           both counts, so what is compared is arc against arc. One settling
+           tick first, so the actor's idea of where it is standing has caught
+           up with where it was just put. */
+        P.run(2);
+        const idle = lit();
+        const bare = swingAndCount();
+        const bareReach = a.st.reach;
+        /* Empty the lattice first: the cache above may already have filled it. */
+        for (let q = 0; q < P.gear.slots.length; q++) P.unsocket(q);
+        while (P.gear.carried.length) P.gear.carried.pop();
+        P.give(QS.MOD.SIGIL);
+        const seated = P.socket(0, 0);
+        const kit = swingAndCount();
+        P.pause(false);
+        return { idle, bare: bare - idle, kit: kit - idle,
+                 bareReach, kitReach: a.st.reach, seated };
+      });
+      check(widened.seated && widened.kitReach > widened.bareReach,
+            'BUILD: a module seated in the lattice changes what the blade covers',
+            `${widened.bareReach.toFixed(2)} m bare, ${widened.kitReach.toFixed(2)} m seated`);
+      check(widened.bare > 0 && widened.kit > widened.bare * 1.2,
+            'BUILD: and the arc on screen is the one it actually cuts with',
+            `${widened.bare} lit pixels bare, ${widened.kit} with the sigil, `
+            + `over ${widened.idle} already pale`);
 
       /* ---------- BUILD: does the telegraph read? ----------
          The question issue #24 turns on. Counting a colour band the way the

@@ -71,6 +71,10 @@ export function buildWorld(cfg) {
     grass: w.grass, water: w.water, lamps: w.lamps,
     ovhPos: w.ovhPos, lmPos: w.lmPos, trail: w.TRAIL, topi: w.TOPI,
     unreach: w.UNREACH, reach: w.REACH, bridges: w.bridges,
+    /* The two places the trails were routed to, as cell indices. A ruin and a
+       holding stand on them (props.mjs), which makes them the places worth
+       putting something in — see src/sim/loot.mjs. */
+    sites: w.sites,
     Hs: w.Hs, FLG: w.FLG, NX: w.NX, NZ: w.NZ, half: w.half,
     cells: w.cells, M: w.M, spawn: w.spawn, size: w.size,
   };

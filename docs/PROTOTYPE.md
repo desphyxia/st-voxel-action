@@ -22,13 +22,15 @@ terrain work has been serving all along.
 
 It is a floor, not a ceiling. The bar **ratchets**: see below.
 
-**Met, as of #21**, and passed. `docs/play/index.html` is that build, and as of #24 it is
-**move and fight** — the first build anyone can form an opinion about, which was the whole point
-of the ordering. Phase 0 is complete.
+**Met, as of #21**, and passed. `docs/play/index.html` is that build, and as of #24 it was
+**move and fight** — the first build anyone could form an opinion about, which was the whole
+point of the ordering. Phase 0 is complete.
 
-What it still cannot tell us is whether the *game* is good: one frame of eight, no sockets, no
-fusions, one archetype of twelve, no loot, no progression and no reason to go anywhere. That is
-Phase 1, and it is no longer gated on being able to play.
+As of #27 it is **move, fight and fuse**: the hex lattice is in, a machine leaves the discipline
+it was built from where it fell, and there are caches out in the world holding modules and the
+fusion recipes that make two of them worth more than two. That closes the loudest of the gaps —
+"no loot, no progression and no reason to go anywhere" — and leaves the rest of Phase 1: one
+frame of eight, one archetype of twelve, and a world with no set-pieces in it.
 
 ### The movement budget it is measured against
 
@@ -77,10 +79,23 @@ optimised for never rewriting anything; this optimises for playing something.
    player walks, through the same controller. **Phase 0 is complete: the prototype is
    *move and fight*.**
 
+## Phase 1, and where it started
+
+The rule that ordered Phase 0 orders this too, and it picked the same kind of thing: the spine
+of progression, because the shape of a lattice is expensive to change once saves, netcode and
+twelve archetypes' drop tables all read it — and because it is the one thing that makes the
+world worth walking across.
+
+1. ~~**Modules, sockets, fusion and loot.**~~ **Done** (#27). One frame of eight, nine modules,
+   six fusions, and the first reason to go anywhere: a machine drops its own tradition, so
+   fighting alone can never give you two to fuse. `src/sim/lattice.mjs` and `src/sim/loot.mjs`.
+   What crosses the wire for all of it is **one integer** — the caches are derived from the
+   world on both machines, and a machine's spoil lies where the guest was already told it fell.
+
 **Deliberately deferred, and recorded as debt:** the instanced-box renderer stays until
 streaming forces the mesher — it handles a single window fine. Also deferred: LOD, region
-determinism, save deltas, the Steam wrapper, seven of the eight frames, and every module the
-first attack does not need.
+determinism, save deltas, the Steam wrapper, seven of the eight frames, module refinement, the
+stash, and the holdout traders that are the third source of modules.
 
 ## Enforcement
 
@@ -90,7 +105,7 @@ is what actually holds.
 
 | Layer | What it does |
 | --- | --- |
-| `tools/smoke.mjs` | The assertions, in two halves. `--node` (seconds): bundle sync, pinned arithmetic, generation, the movement budget, the camera and input table, two networked sessions over a lossy wire, a five-minute soak per seed, golden-master, sanity invariants. `--browser` (minutes): boot, cross-engine math, plate/node parity, both renders, and two windows playing together. |
+| `tools/smoke.mjs` | The assertions, in two halves. `--node` (seconds): bundle sync, pinned arithmetic, generation, the movement budget, the camera and input table, the lattice and what is on the ground, two networked sessions over a lossy wire, a five-minute soak per seed, golden-master, sanity invariants. `--browser` (minutes): boot, cross-engine math, plate/node parity, both renders, loot you can walk onto, and two windows playing together. |
 | `tools/hooks/pre-push` | Runs `--node` before anything leaves the machine — genuinely seconds, so it survives contact with 1am. Install: `node tools/hooks/install.mjs` |
 | `.github/workflows/ci.yml` | Two required jobs in parallel on every push and PR: `checks` (the node half, under a minute) and `browser` (boot, parity, and both renders). |
 | This document | The bar, in the place a new session will look. |

@@ -16,8 +16,16 @@
  *
  * Nothing about the terrain crosses the wire. The world is a pure function of
  * its seed, so the host sends the seed once and the guest grows the same world
- * itself. Later that is what makes edits, enemies and loot affordable: they are
- * deltas against something both ends already have.
+ * itself. That is what makes edits, enemies and loot affordable: they are
+ * deltas against something both ends already have. Loot is the first one to
+ * take the promise up — the caches are derived from the world on both machines
+ * and a machine's spoil lies where that machine fell, so the whole of what is
+ * on the ground travels as **one integer** of what has been picked up.
+ *
+ * Gear is the exception that proves the rule: it rides the *snapshot*, because
+ * a lattice is not derivable from anything and because `step` reads it. A
+ * guest replaying inputs after a correction has to replay them with the host's
+ * lattice, or the replay lands somewhere the host never was.
  *
  * The transport is an interface (src/net/transport.mjs). Steam Networking
  * implements the same three methods later; the prototype uses two browser
@@ -25,6 +33,7 @@
  */
 import { TICK, placeOnGround, step, snapshot, restore, display, applyDisplay,
          embedded, ACTOR } from '../sim/actor.mjs';
+import { seatOn, pullFrom } from '../sim/lattice.mjs';
 
 /** Snapshots per second is this divided into the tick rate: 60 / 3 = 20 Hz. */
 export const SEND_EVERY = 3;
@@ -41,6 +50,21 @@ const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, 
 const copyInput = (i) => ({ mx: i.mx || 0, mz: i.mz || 0, jump: !!i.jump,
                             attack: !!i.attack, dodge: !!i.dodge,
                             aimX: i.aimX || 0, aimZ: i.aimZ || 0 });
+
+/**
+ * Seating and unseating a module is **not** an input.
+ *
+ * Inputs are replayed — that is the whole point of them — and replaying "put
+ * the module I am carrying into slot 2" four times is not the same as doing it
+ * once. So gear changes go as their own message, the host applies each exactly
+ * once, and the result comes back in the next snapshot. A menu click can afford
+ * the round trip; the reconciliation cannot afford a non-idempotent input.
+ */
+export const ACT = { SOCKET: 0, UNSOCKET: 1 };
+
+function applyAct(a, m) {
+  return m.k === ACT.SOCKET ? seatOn(a, m.s, m.c) : pullFrom(a, m.s);
+}
 
 /**
  * Somewhere to put the second player: near the first, but not inside a tree.
@@ -73,6 +97,10 @@ export function makeHost(opts) {
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
     if (m.t === 'join') { joined = true; return; }
+    /* The guest asking for its own lattice to change. Authority is not shared:
+       it is applied here or it does not happen, and the next snapshot is how
+       the guest finds out which. */
+    if (m.t === 'act') { applyAct(peer, m); return; }
     if (m.t === 'input') {
       seen++;
       if (inbox.length < MAX_PENDING) inbox.push({ seq: m.seq, input: copyInput(m) });
@@ -88,6 +116,13 @@ export function makeHost(opts) {
     get tick() { return t; },
     /** Drawn from the same data that is sent, so a gap in one shows in both. */
     get foes() { return encounter ? encounter.wire() : null; },
+    /** What is still on the ground, as the bitmask that goes over the wire. */
+    get loot() { return encounter && encounter.loot ? encounter.loot.wire() : 0; },
+
+    /** This machine's own player seats a module. No wire: it is the authority. */
+    act(kind, slot, carriedIndex) {
+      return applyAct(me, { k: kind, s: slot, c: carriedIndex });
+    },
     get stats() { return { t, joined, queued: inbox.length, inputs: seen }; },
 
     /** One authoritative tick. `localInput` is this machine's own player. */
@@ -112,6 +147,8 @@ export function makeHost(opts) {
           you: snapshot(peer),
           them: display(me),
           foes: encounter ? encounter.wire() : null,
+          /* Every drop in the world, as one integer — see src/sim/loot.mjs. */
+          lt: encounter && encounter.loot ? encounter.loot.wire() : 0,
         });
       }
       return this;
@@ -129,8 +166,8 @@ export function makeHost(opts) {
  */
 export function makeGuest(opts) {
   const { transport, build } = opts;
-  let col = null, me = null, peer = null, cfg = null;
-  let foes = null;
+  let col = null, me = null, peer = null, cfg = null, encounter = null;
+  let foes = null, lootBits = 0;
   let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0;
   const pending = [];
   let target = null;                       /* last authoritative host state */
@@ -144,6 +181,9 @@ export function makeGuest(opts) {
       cfg = m.cfg;
       const world = build(m.cfg);
       col = world.col;
+      /* Optional, and only ever drawn: if this end derived an encounter of its
+         own, the snapshots are folded into it rather than into a second list. */
+      encounter = world.encounter || null;
       me = spawnNear(col, m.spawn[0], m.spawn[2]);
       peer = placeOnGround(col, m.spawn[0], m.spawn[2]);
       ready = true;
@@ -166,6 +206,8 @@ export function makeGuest(opts) {
       for (const p of pending) { step(col, me, p.input, null); replayed++; }
       target = m.them;
       foes = m.foes;
+      lootBits = m.lt || 0;
+      if (encounter && encounter.observeWire) encounter.observeWire(foes, lootBits);
     }
   });
 
@@ -179,6 +221,15 @@ export function makeGuest(opts) {
     get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck }; },
     /** Whatever the host last said was in the world. Drawn, never stepped. */
     get foes() { return foes; },
+    /** And what of it has been picked up, by either of them. */
+    get loot() { return lootBits; },
+
+    /** Ask the host to seat a module. It decides; the next snapshot answers. */
+    act(kind, slot, carriedIndex) {
+      if (!ready) return false;
+      transport.send({ t: 'act', k: kind, s: slot, c: carriedIndex });
+      return true;
+    },
     /** The last thing the host said about us, before any replay on top of it.
         The gap between this and `me` is exactly what prediction is buying. */
     get authoritative() { return target ? lastYou : null; },

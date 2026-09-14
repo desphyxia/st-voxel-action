@@ -23,13 +23,16 @@
  *                and the side-stepping below are for.
  *
  * No AI architecture, as the issue says — a state machine and a steering
- * direction. No spawn rules, no repopulation, no loot.
+ * direction. No spawn rules and no repopulation; a machine does now leave
+ * behind the discipline it was built from, which is the other half of "a fight
+ * previews its loot" (§6) and lives in src/sim/loot.mjs.
  */
 import { MOVE } from '../gen/constants.mjs';
 import { hyp, cos } from '../gen/exact.mjs';
 import { EPS } from './collider.mjs';
 import { TICK, ACTOR, placeOnGround, step } from './actor.mjs';
-import { SWING_DAMAGE, inArc, hurt, applyHits } from './combat.mjs';
+import { inArc, hurt, applyHits } from './combat.mjs';
+import { makeLootField } from './loot.mjs';
 
 export const SENTRY = {
   hp: 60,
@@ -211,7 +214,8 @@ export function jolt(e) {
  * bit the guest does *not* run is obvious: it draws what the host sends and
  * simulates none of it.
  */
-export function makeEncounter(col, spawn, posts) {
+export function makeEncounter(col, world, posts) {
+  const spawn = world.spawn;
   /* Beyond sight from the spawn, so they are found rather than met: these
      things are holding positions, not patrolling. */
   const ring = [[14, 3], [-11, -13], [5, 19]];
@@ -224,9 +228,12 @@ export function makeEncounter(col, spawn, posts) {
   }
   const targets = (posts || []).concat(enemies);
   const postCount = (posts || []).length;
+  /* Derived from the same world the machines were placed in, and index-aligned
+     with them — see src/sim/loot.mjs for why that means nothing has to be sent. */
+  const loot = makeLootField(col, world, enemies.length);
 
   return {
-    enemies, targets, postCount,
+    enemies, targets, postCount, loot,
 
     /** One tick: the machines act, then whatever the players cut takes it. */
     step(players, dt = TICK) {
@@ -234,11 +241,27 @@ export function makeEncounter(col, spawn, posts) {
       for (const p of players) {
         if (!p || !p.hits) continue;
         const mask = p.hits;
-        applyHits(p, targets, SWING_DAMAGE);
+        /* No damage argument: what a swing is worth is the swinger's business,
+           and their lattice is what decides it. */
+        applyHits(p, targets);
         /* A hit interrupts a machine that was not already committed. The posts
            are the first entries and feel nothing. */
         for (let i = postCount; i < targets.length; i++) if (mask & (1 << i)) jolt(targets[i]);
       }
+      /* What is left of a machine, and then whoever walks over it. */
+      for (let i = 0; i < enemies.length; i++) if (enemies[i].dead) loot.drop(i, enemies[i]);
+      return loot.collect(players);
+    },
+
+    /**
+     * Guest: fold an authoritative snapshot back into the copy this end derived
+     * for itself. The machines are drawn from `foes`; a fallen one is standing
+     * over its own spoil, so where the loot is needs no message of its own, and
+     * `takenBits` — one integer — is the whole of what has been picked up.
+     */
+    observeWire(foes, takenBits) {
+      loot.observe(foes, EST.DEAD);
+      if (takenBits !== undefined && takenBits !== null) loot.applyWire(takenBits);
     },
 
     /**

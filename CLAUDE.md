@@ -3,15 +3,17 @@
 A 45° isometric two-player online co-op action RPG on three.js. Worlds are seeded and bounded;
 terrain features are sized in whole metres on a 1 m grid and built from 25 cm voxels.
 
-**Status: Phase 0 complete — move and fight.** What exists is the seeded terrain generator
-(`src/gen/`), collision, a character controller, an isometric camera, a remappable input layer,
-one committed swing, a dodge and one enemy archetype (`src/sim/`), host-authoritative netcode
-with client prediction (`src/net/`), and a build you can open and fight in, with a second window
-if you want company (`docs/play/`) — plus the concept plate and a design decision record.
+**Status: move, fight and fuse.** Phase 0 is complete and Phase 1 has started. What exists is
+the seeded terrain generator (`src/gen/`), collision, a character controller, an isometric
+camera, a remappable input layer, one committed swing, a dodge, one enemy archetype, a hex
+socket lattice with modules and fusion, and loot to fill it from (`src/sim/`),
+host-authoritative netcode with client prediction (`src/net/`), and a build you can open and
+fight in, with a second window if you want company (`docs/play/`) — plus the concept plate and
+a design decision record.
 
-What it cannot yet tell you is whether the *game* is good: one frame of eight, no sockets, no
-fusions, one archetype of twelve, no loot and no reason to go anywhere. That is Phase 1, and it
-is no longer gated on being able to play. Check `docs/DECISIONS.md` before starting anything.
+What it still cannot tell you is whether the *game* is good: one frame of eight, one archetype
+of twelve, no set-pieces, and a world one window wide. Check `docs/DECISIONS.md` before starting
+anything.
 
 ## Where things are
 
@@ -20,9 +22,10 @@ is no longer gated on being able to play. Check `docs/DECISIONS.md` before start
 | `docs/DECISIONS.md` | **Read this first.** 43 decisions from design interviews, plus open items and unresolved tensions. The authority on what the game is. |
 | `docs/PROTOTYPE.md` | **Read this second.** What "playable" means, the path to it, and the rules that keep every merge playable. |
 | `src/gen/` | The terrain generator. Plain ES modules — no DOM, no three.js. See `src/README.md`. |
-| `src/sim/` | Collision, the character controller, the isometric camera, the input table, combat and the first enemy — all written against the movement budget and all free of the DOM and three.js, which is why they can be asserted in node. |
+| `src/sim/` | Collision, the character controller, the isometric camera, the input table, combat, the first enemy, the socket lattice and what is lying on the ground — all written against the movement budget and all free of the DOM and three.js, which is why they can be asserted in node. |
 | `src/net/` | The wire: a three-method transport interface, a loopback double with latency and loss, and the host/guest sessions. No DOM either. |
 | `docs/play/index.html` | **The playable build.** Open it in a browser and walk around; *Host a game* opens a second window and puts another character in the same world. Carries an inlined copy of `src/gen`, `src/sim` and `src/net`. |
+| `src/sim/lattice.mjs` | The spine of progression. Read it before touching combat numbers: every constant in `combat.mjs` is now a *base*, and `statsOf(a)` is what an actor actually plays with. |
 | `docs/concept/index.html` | The concept plate: the design document, the renderer, and an inlined copy of `src/gen` it draws. |
 | `tools/` | Headless render and verify harness. Dev only. |
 | `README.md` | Short public summary of the project. |
@@ -51,7 +54,8 @@ node tools/bundle-gen.mjs --check   # fail if either page is out of date
 ```
 
 Two pages carry a bundle: the plate gets `src/gen`, the playable build gets `src/gen`,
-`src/sim` **and** `src/net`. Two traps the bundler now fails on rather than letting through,
+`src/sim` **and** `src/net`. `MODULES` in `tools/bundle-gen.mjs` is the dependency order, and
+it is also the concatenation order — a module may only use names defined above it. Two traps the bundler now fails on rather than letting through,
 because it concatenates everything into one scope: a module missing from `MODULES`, and an
 import that **renames** anything (`import { advance as advanceCombat }` bundles to a scope that
 only ever defined `advance`). Rename the export instead.

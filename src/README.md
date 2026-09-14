@@ -1,12 +1,13 @@
 # src
 
-The game. Today that is the terrain generator and nothing else — see
-`docs/PROTOTYPE.md` for what lands next and in what order.
+The game. Today that is a seeded terrain generator, a character who can move and
+fight through it, two of them over a wire, and a socket lattice to hang
+progression on — see `docs/PROTOTYPE.md` for what lands next and in what order.
 
 | Path | What it is |
 | --- | --- |
 | `gen/` | The seeded terrain generator. Plain ES modules: no DOM, no three.js, no renderer. |
-| `sim/` | Collision, the character controller, the isometric camera, the input table, combat and the enemy. Same rules: no DOM, no three.js, no renderer. |
+| `sim/` | Collision, the character controller, the isometric camera, the input table, combat, the enemy, the socket lattice and what is lying on the ground. Same rules: no DOM, no three.js, no renderer. |
 | `net/` | The transport interface, a loopback double, and the host and guest sessions. Same rules again. |
 
 ## src/gen
@@ -108,6 +109,11 @@ wade, swim, magma — in node, and run a five-minute soak on all six golden seed
 with no browser anywhere. `docs/play/index.html` drives the same `step` from a
 fixed-step accumulator, so what you play is what the gate measured.
 
+Every number in `combat.mjs` is a **base**. `baseStats()` is the same set as a
+value, `statsOf(a)` is what an actor is actually playing with, and `lattice.mjs`
+is the only thing that makes those differ. Read the rules from `statsOf`, not
+from the constants — the constants are the floor, not the answer.
+
 `combat.mjs` is the first verb that is not movement: one committed swing and a
 dodge, gated by a stamina pool. Three windows — wind-up, active, recovery — and
 during the active one the actor goes nowhere and cannot cancel into anything. A
@@ -135,6 +141,31 @@ everything else in a fight is moving.
 from that same format rather than from its own actors. If a field the guest
 needs were missing, the host's picture would break too.
 
+`lattice.mjs` is the spine of progression: a frame is a list of axial hex cells,
+and everything else falls out of the adjacency that implies. One frame of eight —
+four sockets in a rhombus, five edges — nine modules and six fusions. A module
+seated in a socket modifies the stats block `combat.mjs` hands out; two modules
+**from different traditions across a shared edge** fuse, if you know the recipe.
+
+Three rules are worth knowing before adding to it. Fusion is only ever
+cross-tradition, which is §1 made mechanical. A machine drops its **own**
+discipline, so the prototype's all-tech machines can never hand you two
+traditions — the lattice cannot be filled by fighting. And the recipe is the
+scarce half: an adjacency you cannot close is inert until you have walked to a
+cache that had the recipe in it.
+
+`recomputeGear` is the only writer of stats. Two machines holding the same
+lattice compute the same numbers in the same order, which is what lets a guest
+replay its inputs against the host's gear rather than near it.
+
+`loot.mjs` is where modules come from, and the reason to walk anywhere. The
+interesting part is what it does *not* do: nothing here crosses the wire except
+a bitmask of what has been taken. Caches are derived from the landmark and the
+routed sites, which both machines grew from the same seed; a machine's spoil is
+derived from its index and lies where that machine fell, which the guest is
+already being told. That is the shape the netcode promised for edits, enemies
+and loot — deltas against something both ends already have.
+
 ## src/net
 
 ```js
@@ -146,6 +177,13 @@ const host = makeHost({ col, spawn, transport: wire.a, cfg });
 const guest = makeGuest({ transport: wire.b, build: (cfg) => ({ col: myCol, spawn }) });
 // each tick:  wire.pump(); host.step(hostInput); guest.step(guestInput);
 ```
+
+**Gear is not an input.** Inputs are replayed after a correction, and "seat the
+module I am carrying in slot 2" applied four times is not the same as applied
+once. Socketing goes as its own message, the host applies it exactly once, and
+the snapshot is the answer; a menu click can afford the round trip. The lattice
+itself rides the snapshot, because `step` reads it and a replay against the
+wrong one lands somewhere the host never was.
 
 The host owns the simulation and runs both characters. The guest runs its own
 immediately from its own input — otherwise every step would cost a round trip —

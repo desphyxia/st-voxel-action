@@ -28,7 +28,7 @@ export const END = '/* QS-BUNDLE-END */';
 const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'rng', 'biomes', 'field', 'erosion', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index'],
-  'src/sim': ['collider', 'combat', 'actor', 'enemy', 'camera', 'input'],
+  'src/sim': ['collider', 'combat', 'lattice', 'loot', 'actor', 'enemy', 'camera', 'input'],
   'src/net': ['transport', 'session'],
 };
 
@@ -45,14 +45,21 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld',
                  'PHASE', 'phase', 'swingProgress', 'dodging', 'invulnerable',
                  'STAMINA_MAX', 'SWING_COST', 'DODGE_COST', 'SWING_TIME', 'WINDUP', 'ACTIVE',
                  'REACH', 'ARC', 'DODGE_TIME', 'DODGE_DIST', 'practicePosts',
-                 'PLAYER_HP', 'SWING_DAMAGE', 'HURT_TIME', 'hurt', 'applyHits',
+                 'PLAYER_HP', 'SWING_DAMAGE', 'HURT_TIME', 'hurt', 'heal', 'applyHits',
+                 'baseStats', 'statsOf', 'swingTime', 'dodgeSpeed',
+                 'TRAD', 'TRADITIONS', 'MOD', 'MODULES', 'FUS', 'FUSIONS',
+                 'FRAME', 'FRAMES', 'CARRY', 'makeGear', 'recomputeGear',
+                 'latentFusions', 'knows', 'recipeFor', 'hexXY', 'hexAdjacent',
+                 'takeModule', 'learnFusion', 'socketModule', 'unsocketModule',
+                 'gearWire', 'applyGearWire', 'refitGear', 'seatOn', 'pullFrom',
+                 'PICKUP_R', 'CACHES', 'makeLootField', 'cacheSites', 'spoilModule',
                  'SENTRY', 'EST', 'makeSentry', 'stepSentry', 'makeEncounter',
                  'WAKE_TIME', 'TELEGRAPH_TIME', 'STRIKE_TIME', 'RECOVER_TIME',
                  'makeCamera', 'snap', 'warpTo', 'follow', 'eye', 'basis', 'moveFrom',
                  'project', 'groundAt', 'heading', 'aimFromPointer', 'aimFromStick',
                  'setView', 'VIEW', 'QUARTER', 'START_YAW',
                  'ACTIONS', 'DEFAULT_BINDINGS', 'defaultBindings', 'makeInput',
-                 'snapshot', 'restore', 'makeLoopback', 'makeHost', 'makeGuest', 'spawnNear'];
+                 'snapshot', 'restore', 'makeLoopback', 'makeHost', 'makeGuest', 'spawnNear', 'ACT'];
 
 /**
  * The two pages that carry a bundle. The plate is a design document and gets

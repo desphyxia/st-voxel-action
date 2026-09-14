@@ -73,6 +73,30 @@
   .bind button:hover{color:var(--text)}
   .bind.arming{outline:1px solid var(--magic);outline-offset:-1px}
   .bind.arming .keys{color:var(--magic)}
+  .toast{position:absolute;right:12px;bottom:12px;max-width:60%;font-family:var(--mono);font-size:11.5px;
+         line-height:1.6;color:var(--text);background:rgba(10,13,17,.78);border:1px solid var(--line2);
+         border-left:2px solid var(--sand);padding:7px 10px;opacity:0;transition:opacity .25s;
+         pointer-events:none;white-space:pre}
+  .toast.on{opacity:1}
+  .lat{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+  .lat svg{flex:0 0 auto;overflow:visible}
+  .lat .hexfill{cursor:pointer}
+  .lat .hexfill:hover{stroke:var(--magic)}
+  .latside{flex:1 1 190px;min-width:170px;display:flex;flex-direction:column;gap:9px}
+  .pack{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--text);
+        background:var(--ink);border:1px solid var(--line2);border-radius:2px;padding:4px 7px;
+        cursor:pointer}
+  .chip:hover{border-color:var(--magic)}
+  .chip.sel{border-color:var(--magic);color:var(--magic)}
+  .chip.dead{cursor:default;opacity:.7;color:var(--dim);border-style:dashed}
+  .chip.dead:hover{border-color:var(--line2)}
+  .chip i{font-style:normal;color:var(--dim);margin-left:6px}
+  .rows{display:flex;flex-direction:column;gap:2px;font-family:var(--mono);font-size:10.5px}
+  .rows div{display:flex;justify-content:space-between;gap:10px;color:var(--dim)}
+  .rows div.on{color:var(--text)}
+  .rows div.on b{color:var(--magic);font-weight:500}
+  .hint{font-family:var(--mono);font-size:10.5px;color:var(--dim)}
   .budget{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-family:var(--mono);font-size:11.5px}
   .budget dt{color:var(--sand)}
   .budget dd{margin:0;color:var(--muted)}
@@ -86,8 +110,8 @@
     <h1>Quarterstone · playable build</h1>
     <p class="lede">The first thing here you can actually play. One 64 × 64 m window of a seeded world,
       the movement budget the terrain was sized against, one committed swing, three sentry automata still
-      holding a position, and — if you open a second window — someone else in it with you. This is
-      <b>move and fight</b>: the first build anyone can form an opinion about.</p>
+      holding a position, caches out in the world with modules and fusion recipes in them, and — if you
+      open a second window — someone else in it with you. This is <b>move, fight and fuse</b>.</p>
   </header>
 
   <section>
@@ -99,12 +123,14 @@
         <div class="bar st"><i id="staminafill"></i></div>
       </div>
       <div class="dead" id="dead"><span id="deadmsg">dead</span></div>
+      <div class="toast" id="toast"></div>
       <div class="fallback" id="fallback">This browser could not start WebGL, so there is nothing to play here.</div>
     </div>
     <div class="bar">
       <p class="cap"><b>WASD</b> to move, camera-relative · <b>Space</b> to jump · <b>click</b> or <b>F</b> to
         swing · <b>Shift</b> to dodge · <b>Q</b>/<b>E</b> to turn the view · <b>R</b> to respawn · mouse or
-        right stick to aim. Click the view first to give it the keyboard.</p>
+        right stick to aim. Walk over a cache or a fallen machine to take what is in it, and seat it in
+        the lattice below. Click the view first to give it the keyboard.</p>
       <span class="seedbox"><label for="seedin">Seed</label><input id="seedin" value="QUARTERSTONE" spellcheck="false" autocomplete="off"></span>
       <button class="ctl" id="regen" type="button">Generate</button>
       <button class="ctl" id="respawn" type="button">Respawn</button>
@@ -130,6 +156,25 @@
       <p>Remappable from the first commit, because retrofitting it is the expensive version. Bindings are
         physical key codes, so WASD stays under the same fingers on any layout. A gamepad works too: left
         stick moves, right stick aims, A jumps, the shoulders turn the view.</p>
+    </div>
+    <div class="card">
+      <h2>The lattice</h2>
+      <div class="lat">
+        <svg id="latsvg" width="150" height="176" viewBox="0 0 150 176" aria-label="socket lattice"></svg>
+        <div class="latside">
+          <div class="pack" id="pack"></div>
+          <div class="rows" id="fusions"></div>
+          <p class="hint" id="lathint">Pick a module, then a socket.</p>
+        </div>
+      </div>
+      <p>Four sockets, five shared edges. A module seated in one does its own small thing; two
+        from <em>different</em> traditions across a shared edge can fuse into something neither
+        does alone — which is the premise, since tech, magic and biological were rival schools
+        that never combined. Two of a kind side by side is just two modules.</p>
+      <p>You do not start knowing how. <b>Fusion recipes are learned from the world</b>, out of the
+        caches at the landmark and the routed sites — which is the first reason this world has
+        anywhere worth walking to. The machines only ever drop <em>tech</em>, because a war machine
+        drops its own discipline, so fighting alone can never give you two traditions to fuse.</p>
     </div>
     <div class="card">
       <h2>One swing</h2>
@@ -160,9 +205,10 @@
     <div class="card">
       <h2>What this is not</h2>
       <p>The instanced-box renderer is the concept plate's, not the shipping approach — the greedy mesher
-        replaces it once streaming forces the issue. One frame of eight, no sockets, no fusions, one enemy
-        archetype of the twelve #6 will specify, no loot and no respawning. The world is one window: walk
-        to the edge and you meet a wall, because that is where the generated window stops.</p>
+        replaces it once streaming forces the issue. One frame of eight, nine modules and six fusions of
+        however many there will be, one enemy archetype of the twelve #6 will specify, no respawning and
+        no stash. The world is one window: walk to the edge and you meet a wall, because that is where
+        the generated window stops.</p>
       <p>The two windows talk through <code>postMessage</code>, which is a prototype's transport and
         nothing more. It sits behind the same three methods Steam Networking will implement, so none of
         the session logic knows the difference — which was the point of doing this now rather than later.</p>
@@ -1553,6 +1599,10 @@ function buildWorld(cfg) {
     grass: w.grass, water: w.water, lamps: w.lamps,
     ovhPos: w.ovhPos, lmPos: w.lmPos, trail: w.TRAIL, topi: w.TOPI,
     unreach: w.UNREACH, reach: w.REACH, bridges: w.bridges,
+    /* The two places the trails were routed to, as cell indices. A ruin and a
+       holding stand on them (props.mjs), which makes them the places worth
+       putting something in — see src/sim/loot.mjs. */
+    sites: w.sites,
     Hs: w.Hs, FLG: w.FLG, NX: w.NX, NZ: w.NZ, half: w.half,
     cells: w.cells, M: w.M, spawn: w.spawn, size: w.size,
   };
@@ -1797,6 +1847,12 @@ function colliderForWorld(world) {
  * that the arc covered a target this tick and stops there. Damage, poise,
  * stagger and the rest belong to #9 and to the archetypes in enemy.mjs.
  *
+ * Every number below is now a *base*: the constants are what an empty frame
+ * plays with, and `baseStats()` is that same set as a value something else can
+ * modify. `src/sim/lattice.mjs` is what modifies it. So read the rules from
+ * `statsOf(a)` rather than from the constants — the constants are the floor,
+ * not the answer.
+ *
  * Pure functions of an actor and a number, like everything else in src/sim, so
  * a guest replaying inputs reproduces the host's swing exactly rather than
  * approximately.
@@ -1848,6 +1904,35 @@ const HURT_TIME = 0.25;
 
 const PHASE = { NONE: 0, WINDUP: 1, ACTIVE: 2, RECOVER: 3 };
 
+/* ---- the numbers, as a value rather than as constants ----
+   An empty frame plays exactly the game the constants above describe. A
+   socketed one plays a different one, and everything that reads a rule reads
+   it from here so that there is one place where "different" is decided. */
+
+/** A fresh copy every call: callers mutate it, and a shared one would drift. */
+function baseStats() {
+  return {
+    maxHp: PLAYER_HP, regen: 0,
+    maxStamina: STAMINA_MAX, staminaRegen: STAMINA_REGEN, staminaHold: STAMINA_HOLD,
+    swingCost: SWING_COST, dodgeCost: DODGE_COST,
+    damage: SWING_DAMAGE, reach: REACH, arc: ARC, span: SPAN,
+    recover: RECOVER, speed: 1,
+    dodgeDist: DODGE_DIST, iframes: DODGE_IFRAMES,
+    /** Hit points returned per target cut. Zero until something grants it. */
+    lifesteal: 0,
+  };
+}
+
+/** The one shared copy, for anything that has no gear — a practice post, a
+    target handed in as three numbers, an actor built before its frame was. */
+const BARE = baseStats();
+
+function statsOf(a) { return (a && a.st) || BARE; }
+
+/** Recovery is the one window a module moves, so the whole swing moves with it. */
+function swingTime(a) { return WINDUP + ACTIVE + statsOf(a).recover; }
+function dodgeSpeed(a) { return statsOf(a).dodgeDist / DODGE_TIME; }
+
 /** Which window a swing is in, or NONE. */
 function phase(a) {
   if (!a.swing) return PHASE.NONE;
@@ -1857,10 +1942,10 @@ function phase(a) {
 }
 
 /** 0..1 through the whole swing. What an animation would read. */
-function swingProgress(a) { return a.swing ? clamp(a.swing.t / SWING_TIME, 0, 1) : 0; }
+function swingProgress(a) { return a.swing ? clamp(a.swing.t / swingTime(a), 0, 1) : 0; }
 
 function dodging(a) { return !!a.dodge; }
-function invulnerable(a) { return !!a.dodge && a.dodge.t < DODGE_IFRAMES; }
+function invulnerable(a) { return !!a.dodge && a.dodge.t < statsOf(a).iframes; }
 
 /** What fraction of running speed this actor is allowed right now. */
 function speedScale(a) {
@@ -1874,7 +1959,7 @@ function speedScale(a) {
 }
 
 function canSwing(a) {
-  return !a.swing && !a.dodge && !a.vault && !a.swimming && a.stamina >= SWING_COST;
+  return !a.swing && !a.dodge && !a.vault && !a.swimming && a.stamina >= statsOf(a).swingCost;
 }
 
 /**
@@ -1883,15 +1968,16 @@ function canSwing(a) {
  * "committed": once the blade is moving you are going to finish the motion.
  */
 function canDodge(a) {
-  if (a.dodge || a.vault || a.swimming || a.stamina < DODGE_COST) return false;
+  if (a.dodge || a.vault || a.swimming || a.stamina < statsOf(a).dodgeCost) return false;
   return !a.swing || phase(a) === PHASE.RECOVER;
 }
 
 function beginSwing(a) {
   if (!canSwing(a)) return false;
+  const st = statsOf(a);
   a.swing = { t: 0, hit: 0 };
-  a.stamina -= SWING_COST;
-  a.staminaHold = STAMINA_HOLD;
+  a.stamina -= st.swingCost;
+  a.staminaHold = st.staminaHold;
   return true;
 }
 
@@ -1902,10 +1988,11 @@ function beginDodge(a, dx, dz) {
   /* No heading held: dodge the way you are looking. */
   if (l < 1e-6) { ux = a.faceX; uz = a.faceZ; }
   else { ux /= l; uz /= l; }
+  const st = statsOf(a);
   a.swing = null;                              /* cancels recovery, never active */
   a.dodge = { t: 0, dx: ux, dz: uz };
-  a.stamina -= DODGE_COST;
-  a.staminaHold = STAMINA_HOLD;
+  a.stamina -= st.dodgeCost;
+  a.staminaHold = st.staminaHold;
   return true;
 }
 
@@ -1917,15 +2004,19 @@ function beginDodge(a, dx, dz) {
  * still makes sense next to `step`.
  */
 function advanceCombat(a, dt) {
+  const st = statsOf(a);
   a.hits = 0;
   if (a.hurtT > 0) a.hurtT = Math.max(0, a.hurtT - dt);
-  if (a.swing) { a.swing.t += dt; if (a.swing.t >= SWING_TIME) a.swing = null; }
+  if (a.swing) { a.swing.t += dt; if (a.swing.t >= WINDUP + ACTIVE + st.recover) a.swing = null; }
   if (a.dodge) { a.dodge.t += dt; if (a.dodge.t >= DODGE_TIME) a.dodge = null; }
 
   if (a.staminaHold > 0) a.staminaHold = Math.max(0, a.staminaHold - dt);
-  else if (a.stamina < STAMINA_MAX) {
-    a.stamina = Math.min(STAMINA_MAX, a.stamina + STAMINA_REGEN * dt);
+  else if (a.stamina < st.maxStamina) {
+    a.stamina = Math.min(st.maxStamina, a.stamina + st.staminaRegen * dt);
   }
+  /* Anything grown into the lattice keeps working while you walk. Applied last
+     so that the tick a blow lands still shows the blow. */
+  if (st.regen > 0) heal(a, st.regen * dt);
 }
 
 /**
@@ -1949,6 +2040,15 @@ function inArc(a, t, reach, arc, span, cosHalf) {
  * Take a hit. Returns false if it did not land — dead already, or dodging,
  * which is the entire reason the dodge exists.
  */
+/** Put hit points back, never past the ceiling the frame allows. */
+function heal(a, amount) {
+  if (!a || a.dead || a.hp === undefined) return 0;
+  const cap = a.maxHp === undefined ? statsOf(a).maxHp : a.maxHp;
+  const before = a.hp;
+  a.hp = Math.min(cap, a.hp + amount);
+  return a.hp - before;
+}
+
 function hurt(a, amount, cause) {
   if (!a || a.dead || a.hp === undefined || invulnerable(a)) return false;
   a.hp -= amount;
@@ -1963,10 +2063,15 @@ function hurt(a, amount, cause) {
  */
 function applyHits(a, targets, damage) {
   if (!a.hits || !targets) return 0;
+  const st = statsOf(a);
+  const dmg = damage === undefined ? st.damage : damage;
   let n = 0;
   for (let i = 0; i < targets.length && i < 32; i++) {
-    if ((a.hits & (1 << i)) && hurt(targets[i], damage, 'struck')) n++;
+    if ((a.hits & (1 << i)) && hurt(targets[i], dmg, 'struck')) n++;
   }
+  /* A fused edge can pay you back for landing the blow. Host-side only, like
+     every other consequence of a hit — the guest predicts movement, not damage. */
+  if (n && st.lifesteal > 0) heal(a, st.lifesteal * n);
   return n;
 }
 
@@ -1981,11 +2086,15 @@ function applyHits(a, targets, damage) {
  */
 function sweep(a, targets) {
   if (!targets || !targets.length || phase(a) !== PHASE.ACTIVE) return 0;
+  const st = statsOf(a);
+  /* One cosine per sweep rather than one per target, and the base arc's is
+     precomputed because it is the one almost every swing uses. */
+  const cosHalf = st.arc === ARC ? COS_HALF_ARC : cos(st.arc / 2);
   let mask = 0;
   for (let i = 0; i < targets.length && i < 32; i++) {
     if (a.swing.hit & (1 << i)) continue;
     const t = targets[i];
-    if (t && !t.dead && inArc(a, t, REACH, ARC, SPAN, COS_HALF_ARC)) mask |= (1 << i);
+    if (t && !t.dead && inArc(a, t, st.reach, st.arc, st.span, cosHalf)) mask |= (1 << i);
   }
   a.swing.hit |= mask;
   a.hits = mask;
@@ -2009,6 +2118,558 @@ function practicePosts(col, spawn) {
   }
   return out;
 }
+/* ---------- src/sim/lattice.mjs ---------- */
+/**
+ * Modules, sockets and fusion — the spine of progression (docs/DECISIONS.md §4).
+ *
+ * A frame is a hex socket lattice. Frames never level up and never change; what
+ * changes is what is seated in them. A module seated in a socket modifies the
+ * numbers in combat.mjs, and two modules **from different traditions sharing a
+ * hex edge** can fuse into something neither of them does alone — which is the
+ * whole premise of the fiction (§1): tech, magic and biological were rival
+ * schools that never combined, so combining them is the new thing.
+ *
+ * Three rules make the lattice a decision rather than a list:
+ *
+ *   1. **Adjacency is the currency.** A module in the wrong socket is a module
+ *      that only does its own small thing. The rhombus below has four sockets
+ *      and five edges, so every placement is a choice about what it touches.
+ *   2. **Only across traditions.** Two tech modules side by side do nothing
+ *      extra, however good each one is.
+ *   3. **Knowledge is learned from the world**, not known from the start. An
+ *      adjacency you have no recipe for is inert, and stays inert until you
+ *      have walked to somewhere that had the recipe in it. That is what makes
+ *      the landmark on the horizon worth the walk — see src/sim/loot.mjs.
+ *
+ * One frame of eight and nine modules, which is the whole set §4 asks for; the
+ * other seven frames are not here, in the same way eleven of the twelve enemy
+ * archetypes are not. The data model is the general one: a frame is a list of
+ * axial hex cells, and everything else falls out of the adjacency that implies.
+ *
+ * Plain data and pure functions, like the rest of src/sim: no DOM, no renderer,
+ * and no wall clock. `recomputeGear` is the only thing that writes stats, so a
+ * host and a guest holding the same lattice hold the same numbers exactly.
+ */
+
+
+const TRAD = { TECH: 0, MAGIC: 1, BIO: 2 };
+const TRADITIONS = ['tech', 'magic', 'biological'];
+
+const MOD = {
+  GOVERNOR: 0, SERVO: 1, PLATING: 2,
+  KEEN: 3, SIGIL: 4, BLINK: 5,
+  SINEW: 6, THEW: 7, BLOOM: 8,
+};
+
+/**
+ * Nine modules, three per tradition. Each `apply` mutates a stats block from
+ * `baseStats()`; they are applied in socket order, which is fixed, so two
+ * machines holding the same lattice compute the same bits.
+ *
+ * The numbers are placeholders on exactly the same terms as everything in
+ * combat.mjs: #9 decides what a hit is worth, and it will decide what a module
+ * is worth at the same time. What is being built here is the *shape* — that
+ * gear is a lattice and not a list, and that the interesting part is which
+ * edges you can close.
+ */
+const MODULES = [
+  { key: 'GOVERNOR', name: 'governor', trad: TRAD.TECH, says: '+30 stamina',
+    apply(s) { s.maxStamina += 30; } },
+  { key: 'SERVO', name: 'servo', trad: TRAD.TECH, says: 'recovery −30%',
+    apply(s) { s.recover *= 0.70; } },
+  { key: 'PLATING', name: 'plating', trad: TRAD.TECH, says: '+40 hp',
+    apply(s) { s.maxHp += 40; } },
+  { key: 'KEEN', name: 'keening edge', trad: TRAD.MAGIC, says: '+8 damage',
+    apply(s) { s.damage += 8; } },
+  { key: 'SIGIL', name: 'lengthening sigil', trad: TRAD.MAGIC, says: '+0.5 m reach',
+    apply(s) { s.reach += 0.5; } },
+  { key: 'BLINK', name: 'blink rune', trad: TRAD.MAGIC, says: '+1 m dodge',
+    apply(s) { s.dodgeDist += 1.0; } },
+  { key: 'SINEW', name: 'sinew', trad: TRAD.BIO, says: '+12% run',
+    apply(s) { s.speed += 0.12; } },
+  { key: 'THEW', name: 'thewed cord', trad: TRAD.BIO, says: '−8 swing cost',
+    apply(s) { s.swingCost -= 8; } },
+  { key: 'BLOOM', name: 'bloom', trad: TRAD.BIO, says: '+1.5 hp/s',
+    apply(s) { s.regen += 1.5; } },
+];
+
+/** The modules each tradition is made of, in id order. A machine drops from
+    its own school's pool, which is why fusing needs more than fighting. */
+const MODS_BY_TRAD = (function () {
+  const t = [[], [], []];
+  for (let i = 0; i < MODULES.length; i++) t[MODULES[i].trad].push(i);
+  return t;
+})();
+
+const FUS = {
+  REGULATED: 0, SLIPDRIVE: 1, IRONTHEW: 2, VINE: 3, WELL: 4, BLOODEDGE: 5,
+};
+
+/**
+ * Six fusions, two per pair of traditions. Every one crosses a tradition
+ * boundary, because that is the only kind there is.
+ */
+const FUSIONS = [
+  { key: 'REGULATED', name: 'regulated edge', pair: [MOD.GOVERNOR, MOD.KEEN],
+    says: '+6 damage, −5 swing cost', apply(s) { s.damage += 6; s.swingCost -= 5; } },
+  { key: 'SLIPDRIVE', name: 'slipdrive', pair: [MOD.SERVO, MOD.BLINK],
+    says: '+0.06 s i-frames, +0.6 m dodge',
+    apply(s) { s.iframes += 0.06; s.dodgeDist += 0.6; } },
+  { key: 'IRONTHEW', name: 'ironthew', pair: [MOD.PLATING, MOD.SINEW],
+    says: '+25 hp, +5% run', apply(s) { s.maxHp += 25; s.speed += 0.05; } },
+  { key: 'VINE', name: 'reaching vine', pair: [MOD.SIGIL, MOD.SINEW],
+    says: '+0.30 rad of arc', apply(s) { s.arc += 0.30; } },
+  { key: 'WELL', name: 'deep well', pair: [MOD.THEW, MOD.GOVERNOR],
+    says: '+20 stamina/s', apply(s) { s.staminaRegen += 20; } },
+  { key: 'BLOODEDGE', name: 'bloodedge', pair: [MOD.BLOOM, MOD.KEEN],
+    says: '+4 hp per target cut', apply(s) { s.lifesteal += 4; } },
+];
+
+/** Unordered pair of module ids as one small integer, so the table is a lookup. */
+function pairKey(a, b) { return a < b ? a * 16 + b : b * 16 + a; }
+
+const RECIPES = (function () {
+  const t = {};
+  for (let i = 0; i < FUSIONS.length; i++) t[pairKey(FUSIONS[i].pair[0], FUSIONS[i].pair[1])] = i;
+  return t;
+})();
+
+/** The fusion these two modules make, or -1. Says nothing about knowing it. */
+function recipeFor(a, b) {
+  const k = RECIPES[pairKey(a, b)];
+  return k === undefined ? -1 : k;
+}
+
+/* ------------------------------------------------------------------- hex ---- */
+
+/** The six axial directions. Two cells share an edge iff their difference is one. */
+const HEXDIRS = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+
+function hexAdjacent(a, b) {
+  const dq = b[0] - a[0], dr = b[1] - a[1];
+  for (let i = 0; i < 6; i++) if (HEXDIRS[i][0] === dq && HEXDIRS[i][1] === dr) return true;
+  return false;
+}
+
+/** sqrt is exactly rounded by the spec, unlike the transcendentals — see exact.mjs. */
+const SQRT3 = Math.sqrt(3);
+
+/** Axial to flat-top pixel centres, in units of the hex's circumradius. */
+function hexXY(cell) {
+  return { x: 1.5 * cell[0], y: SQRT3 * (cell[1] + cell[0] / 2) };
+}
+
+/* ----------------------------------------------------------------- frame ---- */
+
+const FRAME = { WARDEN: 0 };
+
+/**
+ * One of eight. A rhombus of four sockets — two triangles sharing an edge —
+ * which is five edges between four cells: the two ends of the long diagonal
+ * touch two neighbours each and not each other, so where a module goes is
+ * always a question.
+ */
+const FRAMES = [
+  { key: 'WARDEN', name: 'warden frame', blade: 'longblade',
+    cells: [[0, 0], [1, 0], [0, 1], [1, 1]] },
+];
+
+for (let fi = 0; fi < FRAMES.length; fi++) {
+  const cells = FRAMES[fi].cells, edges = [];
+  for (let i = 0; i < cells.length; i++) {
+    for (let j = i + 1; j < cells.length; j++) if (hexAdjacent(cells[i], cells[j])) edges.push([i, j]);
+  }
+  FRAMES[fi].edges = edges;
+}
+
+/* ------------------------------------------------------------------ gear ---- */
+
+/** Carried slots, stash at camp — and there is no camp yet, so this is the lot. */
+const CARRY = 4;
+
+function makeGear(frameId) {
+  const g = { frame: frameId === undefined ? FRAME.WARDEN : frameId,
+              slots: [], carried: [], known: 0, fused: [], st: null };
+  for (let i = 0; i < FRAMES[g.frame].cells.length; i++) g.slots.push(-1);
+  recomputeGear(g);
+  return g;
+}
+
+/**
+ * Everything the lattice means, as one stats block. The only writer, so that
+ * "what am I playing with" has exactly one answer and both ends compute it the
+ * same way from the same lattice.
+ */
+function recomputeGear(g) {
+  const s = baseStats();
+  const frame = FRAMES[g.frame];
+  for (let i = 0; i < g.slots.length; i++) if (g.slots[i] >= 0) MODULES[g.slots[i]].apply(s);
+
+  const fused = [];
+  for (let e = 0; e < frame.edges.length; e++) {
+    const a = g.slots[frame.edges[e][0]], b = g.slots[frame.edges[e][1]];
+    if (a < 0 || b < 0) continue;
+    /* The three schools never combined. Two of a kind side by side is two
+       modules, not a fusion, however good each one is on its own. */
+    if (MODULES[a].trad === MODULES[b].trad) continue;
+    const r = recipeFor(a, b);
+    if (r < 0 || !(g.known & (1 << r))) continue;
+    fused.push(r);
+  }
+  for (let i = 0; i < fused.length; i++) FUSIONS[fused[i]].apply(s);
+
+  g.fused = fused;
+  g.st = s;
+  return s;
+}
+
+/** An adjacency you could close if you knew how. What the HUD nags you with. */
+function latentFusions(g) {
+  const frame = FRAMES[g.frame], out = [];
+  for (let e = 0; e < frame.edges.length; e++) {
+    const a = g.slots[frame.edges[e][0]], b = g.slots[frame.edges[e][1]];
+    if (a < 0 || b < 0 || MODULES[a].trad === MODULES[b].trad) continue;
+    const r = recipeFor(a, b);
+    if (r >= 0 && !(g.known & (1 << r))) out.push(r);
+  }
+  return out;
+}
+
+function knows(g, f) { return !!(g.known & (1 << f)); }
+
+/** Pick one up. False when there is nowhere to put it — the carry limit bites. */
+function takeModule(g, mod) {
+  if (!(mod >= 0 && mod < MODULES.length)) return false;
+  if (g.carried.length >= CARRY) return false;
+  g.carried.push(mod);
+  return true;
+}
+
+function learnFusion(g, f) {
+  if (!(f >= 0 && f < FUSIONS.length)) return false;
+  if (g.known & (1 << f)) return false;
+  g.known |= (1 << f);
+  recomputeGear(g);
+  return true;
+}
+
+/** Seat carried module `carriedIndex` in `slot`. Sockets are never overwritten. */
+function socketModule(g, slot, carriedIndex) {
+  if (!(slot >= 0 && slot < g.slots.length) || g.slots[slot] >= 0) return false;
+  if (!(carriedIndex >= 0 && carriedIndex < g.carried.length)) return false;
+  g.slots[slot] = g.carried.splice(carriedIndex, 1)[0];
+  recomputeGear(g);
+  return true;
+}
+
+/** Take it back out, if there is room to carry it. Nothing is destroyed. */
+function unsocketModule(g, slot) {
+  if (!(slot >= 0 && slot < g.slots.length) || g.slots[slot] < 0) return false;
+  if (g.carried.length >= CARRY) return false;
+  g.carried.push(g.slots[slot]);
+  g.slots[slot] = -1;
+  recomputeGear(g);
+  return true;
+}
+
+/**
+ * The three fields an actor keeps in step with its lattice.
+ *
+ * One place, because there are three callers — the page playing solo, the host
+ * applying its own click, and the host applying a guest's — and three copies of
+ * "and don't forget the hit point ceiling" is two copies too many.
+ */
+function refitGear(a) {
+  a.st = a.gear.st;
+  a.maxHp = a.st.maxHp;
+  if (a.hp > a.maxHp) a.hp = a.maxHp;
+  return a;
+}
+
+/** Seat a carried module, and make the actor play by the numbers that follow. */
+function seatOn(a, slot, carriedIndex) {
+  if (!a || !a.gear || !socketModule(a.gear, slot, carriedIndex)) return false;
+  refitGear(a);
+  return true;
+}
+
+/** And take it back out again. */
+function pullFrom(a, slot) {
+  if (!a || !a.gear || !unsocketModule(a.gear, slot)) return false;
+  refitGear(a);
+  return true;
+}
+
+/**
+ * The lattice on the wire: a frame, four small ints, at most four more, and a
+ * bitmask of what you know. Nine numbers, not a stats block — the stats are
+ * recomputed from it on arrival, so the two ends can never disagree about what
+ * a lattice means without disagreeing about the lattice.
+ */
+function gearWire(g) {
+  return g ? { f: g.frame, s: g.slots.slice(), c: g.carried.slice(), k: g.known } : null;
+}
+
+function applyGearWire(g, m) {
+  if (!g || !m) return g;
+  g.frame = m.f;
+  g.slots = m.s.slice();
+  g.carried = m.c.slice();
+  g.known = m.k;
+  recomputeGear(g);
+  return g;
+}
+/* ---------- src/sim/loot.mjs ---------- */
+/**
+ * Where modules come from, and the first reason to walk anywhere.
+ *
+ * §4 names three sources — landmark caches, enemy drops, and holdout traders.
+ * The first two are here; there are no holdouts yet. A machine drops the
+ * discipline it was built from, so a fight previews its loot (§6); a cache sits
+ * at the **landmark, the routed sites, or a lamp on the trail** — the places the
+ * generator already thought were somewhere — holds a module *and* a fusion
+ * recipe, and is the answer to the complaint that this world had nowhere worth
+ * going.
+ *
+ * Recipes are the interesting half. A module you find makes you slightly
+ * better on its own; a recipe you find makes two modules you already had into
+ * something else, which means the walk pays off in the lattice rather than in
+ * the inventory. That is "fusion knowledge is learned from the world" (§4)
+ * made into a verb.
+ *
+ * **Nothing here crosses the wire except a bitmask.** Caches are derived from
+ * the world, which both machines grew from the same seed; a machine's spoil is
+ * derived from its index, and appears where that machine fell, which the guest
+ * is already told. So what is left to send is which of them have been picked
+ * up — one integer. That is the shape §7 promised for edits, enemies and loot:
+ * deltas against something both ends already have.
+ */
+
+
+
+
+
+/** How close is close enough. Generous: this is not a precision verb. */
+const PICKUP_R = 1.2;
+/** And how far above or below, so a drop on a ledge is not taken from beneath. */
+const PICKUP_Y = 1.4;
+/** At most this many caches in one window — four recipes of the six. */
+const CACHES = 4;
+/** Anything nearer than this to the spawn is not a walk, so it is not a cache. */
+const CACHE_MIN_WALK = 9;
+
+/**
+ * A small integer stream with no state and no float arithmetic, so a host and a
+ * guest reading the same site get the same module without any of it crossing.
+ * Positions are quantised to 25 cm first, because they arrive as floats.
+ */
+function siteHash(x, z, salt) {
+  let h = Math.imul(2166136261 ^ salt, 16777619);
+  h = Math.imul(h ^ Math.round(x * 4), 16777619);
+  h = Math.imul(h ^ Math.round(z * 4), 16777619);
+  h ^= h >>> 13;
+  return (h >>> 0);
+}
+
+/**
+ * One number that differs between seeds.
+ *
+ * Not the spawn: it is chosen near the middle of the window, so it is (0, 0)
+ * on every golden seed and anything keyed off it is the same world to world.
+ * The landmark and the routed sites are where the seed actually shows.
+ */
+function worldKey(world) {
+  let h = siteHash(world.spawn[0], world.spawn[2], (world.size || 0) & 255);
+  if (world.lmPos) h = siteHash(world.lmPos[0], world.lmPos[2], h & 255);
+  const sites = world.sites || [];
+  for (let i = 0; i < sites.length; i++) h = siteHash(sites[i][0], sites[i][1], (h + i) & 255);
+  return h >>> 0;
+}
+
+/**
+ * What the machine with this index was built out of, and therefore drops.
+ *
+ * Its **own** discipline, which is the rule in §6 — a fight previews its loot.
+ * The consequence is the interesting part: every machine in this world is tech,
+ * so fighting alone can never give you two traditions, and fusion needs
+ * something fighting cannot provide. That is what the caches are for.
+ */
+function spoilModule(world, i, trad) {
+  const pool = MODS_BY_TRAD[trad === undefined ? TRAD.TECH : trad];
+  return pool[(worldKey(world) + i) % pool.length];
+}
+
+/** Ground under (x, z) that a 0.4 m box can stand on, or -Infinity. */
+function standing(col, x, z, ceilY) {
+  const y = col.supportUnder(x, z, 0.4, ceilY === undefined ? Infinity : ceilY);
+  if (y === -Infinity) return -Infinity;
+  if (col.overlaps(x, z, 0.4, y + EPS, y + 1.2 - EPS)) return -Infinity;
+  return y;
+}
+
+/**
+ * Can the movement budget get there?
+ *
+ * The generator already floods the world under the step/vault/jump/fall rules
+ * and marks what it never touched (src/gen/reach.mjs). A cache on a ruin's roof
+ * is a cache nobody collects, and the flood is the only thing that knows.
+ */
+function reachable(world, x, z) {
+  const R = world.reach, M = world.M, half = world.half;
+  if (!R || !M) return true;
+  const a = Math.min(M - 1, Math.max(0, Math.round(x + half)));
+  const b = Math.min(M - 1, Math.max(0, Math.round(z + half)));
+  return !!R[a * M + b];
+}
+
+/**
+ * Where the caches are: the landmark first, because it is the thing you can see
+ * from anywhere, then the lit sites along the trail. Derived from the world, in
+ * a fixed order, so both machines agree without being told.
+ */
+function cacheSites(col, world) {
+  const spawn = world.spawn, out = [];
+  const ring = [[5.5, 0], [0, 5.5], [-5.5, 0], [0, -5.5], [4, 4], [-4, -4]];
+
+  function place(cx, cz, ceilY) {
+    for (let r = 0; r < ring.length; r++) {
+      const x = cx + ring[r][0], z = cz + ring[r][1];
+      if (hyp(x - spawn[0], z - spawn[2]) < CACHE_MIN_WALK) continue;
+      if (!reachable(world, x, z)) continue;
+      const y = standing(col, x, z, ceilY);
+      if (y === -Infinity) continue;
+      /* Not on top of another one: two caches in one place is one cache. */
+      let clash = false;
+      for (let q = 0; q < out.length; q++) if (hyp(out[q].x - x, out[q].z - z) < 4) clash = true;
+      if (clash) continue;
+      out.push({ x, y, z, mod: 0, fus: 0, site: out.length });
+      return true;
+    }
+    return false;
+  }
+
+  if (world.lmPos) place(world.lmPos[0], world.lmPos[2], world.lmPos[1] + MOVE.vault);
+
+  /* The ruin and the holding the trails were routed to: the two places in the
+     window that are already *somewhere*, rather than somewhere with a lamp on
+     it. Cell indices, so they come back through the half-offset. */
+  const sites = world.sites || [], half = world.size ? world.size / 2 : 0;
+  for (let i = 0; i < sites.length && out.length < CACHES; i++) {
+    place(-half + sites[i][0], -half + sites[i][1], undefined);
+  }
+
+  const lamps = world.lamps || [];
+  /* Spread along the trail rather than taking the first few, which stand
+     together at whichever end the route was laid from. */
+  const stride = Math.max(1, Math.floor(lamps.length / CACHES));
+  for (let i = 0; i < lamps.length && out.length < CACHES; i += stride) {
+    place(lamps[i][0], lamps[i][2], lamps[i][1] + MOVE.vault);
+  }
+
+  /* What each one holds. Both walk their list from a seed-dependent start
+     rather than being drawn independently, which is the difference between
+     "four caches" and "four *different* caches": a second copy of a recipe you
+     already know is not a reason to cross a valley, and four tech modules in a
+     world whose machines are all tech is a world where nothing can fuse.
+     Nine modules and a stride of four means no two caches hold the same one,
+     and three of them always span at least two traditions. */
+  const key = worldKey(world);
+  for (let i = 0; i < out.length; i++) {
+    out[i].mod = (key + i * 4) % MODULES.length;
+    out[i].fus = (key + i) % FUSIONS.length;
+  }
+  return out;
+}
+
+/**
+ * Everything on the ground, and who has taken what.
+ *
+ * `spoilCount` is how many machines are in the world: one spoil each, which
+ * exists from the moment that machine falls. Index-aligned with the encounter's
+ * enemies, which is what lets a guest place them from the machine wire it is
+ * already receiving instead of being sent a second list.
+ */
+function makeLootField(col, world, spoilCount, trad) {
+  const caches = cacheSites(col, world);
+  const spoils = [];
+  for (let i = 0; i < (spoilCount || 0); i++) {
+    spoils.push({ x: 0, y: 0, z: 0, mod: spoilModule(world, i, trad), down: 0, site: i });
+  }
+  let taken = 0;
+
+  /* One bit each, caches from the bottom and spoils from bit 16 — which is the
+     whole of what crosses the wire, and also a ceiling: sixteen caches and
+     fifteen machines in one window. Both are far above what a window holds. */
+  const bitOf = (kind, i) => 1 << (kind === 'cache' ? i : 16 + i);
+
+  function open() {
+    const out = [];
+    for (let i = 0; i < caches.length; i++) {
+      if (!(taken & bitOf('cache', i))) out.push({ kind: 'cache', i, item: caches[i] });
+    }
+    for (let i = 0; i < spoils.length; i++) {
+      if (spoils[i].down && !(taken & bitOf('spoil', i))) out.push({ kind: 'spoil', i, item: spoils[i] });
+    }
+    return out;
+  }
+
+  return {
+    caches, spoils,
+    get taken() { return taken; },
+    open,
+
+    /** Host: that machine has fallen, so what it was made of is on the ground. */
+    drop(i, e) {
+      if (!spoils[i] || spoils[i].down) return;
+      spoils[i].x = e.x; spoils[i].y = e.y; spoils[i].z = e.z; spoils[i].down = 1;
+    },
+
+    /**
+     * Guest: the machines arrived in the snapshot, and a fallen one is standing
+     * over its own spoil. Nothing extra had to be sent for this.
+     */
+    observe(foes, deadState) {
+      if (!foes) return;
+      for (let i = 0; i < foes.length && i < spoils.length; i++) {
+        if (foes[i].s !== deadState || spoils[i].down) continue;
+        spoils[i].x = foes[i].x; spoils[i].y = foes[i].y; spoils[i].z = foes[i].z;
+        spoils[i].down = 1;
+      }
+    },
+
+    /**
+     * Host: hand anything a living player is standing on to that player.
+     *
+     * A cache is all or nothing — its recipe comes with its module, so a full
+     * inventory leaves the whole thing where it is rather than taking the
+     * knowledge and dropping the goods. Walk back when you have room.
+     */
+    collect(players) {
+      const got = [];
+      const items = open();
+      for (let q = 0; q < items.length; q++) {
+        const o = items[q], it = o.item;
+        for (let p = 0; p < players.length; p++) {
+          const a = players[p];
+          if (!a || a.dead || !a.gear) continue;
+          if (hyp(a.x - it.x, a.z - it.z) > PICKUP_R) continue;
+          if (Math.abs(a.y - it.y) > PICKUP_Y) continue;
+          if (!takeModule(a.gear, it.mod)) break;         /* full: leave it there */
+          const learned = o.kind === 'cache' ? learnFusion(a.gear, it.fus) : false;
+          taken |= bitOf(o.kind, o.i);
+          a.picked = (a.picked || 0) + 1;
+          got.push({ who: p, kind: o.kind, mod: it.mod, fus: learned ? it.fus : -1 });
+          break;
+        }
+      }
+      return got;
+    },
+
+    /** The whole state of the loot in the world, as one integer. */
+    wire() { return taken; },
+    applyWire(m) { taken = m | 0; },
+  };
+}
 /* ---------- src/sim/actor.mjs ---------- */
 /**
  * The character controller, written against the published movement budget
@@ -2031,6 +2692,7 @@ function practicePosts(col, spawn) {
  * a voxel world an AABB is exact where a capsule is only approximate, and it
  * cannot wedge itself on a corner the way a capsule can.
  */
+
 
 
 
@@ -2068,6 +2730,12 @@ const VAULT_TIME = 0.35;
 const TERMINAL = 45;
 
 function makeActor(x, y, z) {
+  /* Every actor carries a frame, machines included. An empty lattice computes
+     exactly the constants in combat.mjs, so a sentry plays the game it always
+     played; giving it one anyway means there is no actor anywhere whose rules
+     have to be looked up somewhere else. */
+  const gear = makeGear();
+  const st = gear.st;
   return {
     x, y, z, vx: 0, vy: 0, vz: 0,
     grounded: false,
@@ -2084,12 +2752,19 @@ function makeActor(x, y, z) {
     faceX: 0, faceZ: 1,
     /* ---- combat (src/sim/combat.mjs owns the rules; the state lives here so
        that one snapshot is the whole actor) ---- */
-    hp: PLAYER_HP, maxHp: PLAYER_HP,
+    /* ---- the lattice (src/sim/lattice.mjs owns the rules; like combat, the
+       state lives here so that one snapshot is the whole actor) ---- */
+    gear,
+    /** The stats the lattice works out to. Never written except through gear. */
+    st,
+    /** How many things this actor has picked up. Counted, not simulated. */
+    picked: 0,
+    hp: st.maxHp, maxHp: st.maxHp,
     /** Seconds of flinch left. The renderer's business, nobody else's. */
     hurtT: 0,
     /** A heavy machine does not pull itself over a ledge — see src/sim/enemy.mjs. */
     canVault: true,
-    stamina: STAMINA_MAX,
+    stamina: st.maxStamina,
     /** Seconds before stamina starts coming back. */
     staminaHold: 0,
     /** null, or { t, hit } — hit is a bitmask of targets already cut this swing. */
@@ -2132,8 +2807,12 @@ function snapshot(a) {
                        x1: a.vault.x1, y1: a.vault.y1, z1: a.vault.z1 } : null,
     vaults: a.vaults, inWater: a.inWater, swimming: a.swimming,
     faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
-    hp: a.hp, hurtT: a.hurtT,
+    hp: a.hp, maxHp: a.maxHp, hurtT: a.hurtT,
     stamina: a.stamina, staminaHold: a.staminaHold,
+    /* Nine small numbers, and the stats are recomputed from them on the way
+       back in — so the two ends cannot disagree about what a lattice means
+       without first disagreeing about the lattice. */
+    gear: gearWire(a.gear), picked: a.picked,
     swing: a.swing ? { t: a.swing.t, hit: a.swing.hit } : null,
     dodge: a.dodge ? { t: a.dodge.t, dx: a.dodge.dx, dz: a.dodge.dz } : null,
     hits: a.hits,
@@ -2149,7 +2828,9 @@ function restore(a, s) {
                         x1: s.vault.x1, y1: s.vault.y1, z1: s.vault.z1 } : null;
   a.vaults = s.vaults; a.inWater = s.inWater; a.swimming = s.swimming;
   a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
-  a.hp = s.hp; a.hurtT = s.hurtT;
+  if (s.gear) { applyGearWire(a.gear, s.gear); a.st = a.gear.st; }
+  a.hp = s.hp; a.maxHp = s.maxHp === undefined ? a.st.maxHp : s.maxHp;
+  a.hurtT = s.hurtT; a.picked = s.picked || 0;
   a.stamina = s.stamina; a.staminaHold = s.staminaHold;
   a.swing = s.swing ? { t: s.swing.t, hit: s.swing.hit } : null;
   a.dodge = s.dodge ? { t: s.dodge.t, dx: s.dodge.dx, dz: s.dodge.dz } : null;
@@ -2170,9 +2851,12 @@ function display(a) {
   const r3 = (v) => Math.round(v * 1000) / 1000;
   return {
     x: r3(a.x), y: r3(a.y), z: r3(a.z), fx: r3(a.faceX), fz: r3(a.faceZ),
-    g: a.grounded ? 1 : 0, d: a.dead || 0, hp: a.hp,
+    g: a.grounded ? 1 : 0, d: a.dead || 0, hp: a.hp, mh: a.maxHp,
     sw: a.swing ? Math.round(a.swing.t * 1000) / 1000 : -1,
     dv: a.dodge ? 1 : 0, u: Math.round(a.hurtT * 100) / 100,
+    /* The arc is drawn at the reach it cuts at, so a partner who has socketed
+       a sigil looks like they can reach what they can reach. */
+    rc: r3(statsOf(a).reach),
   };
 }
 
@@ -2180,6 +2864,10 @@ function display(a) {
 function applyDisplay(a, m) {
   a.faceX = m.fx; a.faceZ = m.fz;
   a.grounded = !!m.g; a.dead = m.d || null; a.hp = m.hp; a.hurtT = m.u;
+  if (m.mh !== undefined) a.maxHp = m.mh;
+  /* A drawn-only actor's stats are its own object, so writing the one field
+     that is sent does not reach anybody else's numbers. */
+  if (m.rc !== undefined) a.st.reach = m.rc;
   a.swing = m.sw >= 0 ? { t: m.sw, hit: 0 } : null;
   a.dodge = m.dv ? { t: 0, dx: m.fx, dz: m.fz } : null;
   return a;
@@ -2290,11 +2978,16 @@ function step(col, a, input, targets, dt = TICK) {
   if (a.dodge) {
     /* A dodge owns the horizontal for its whole window: it is a distance, not
        a nudge, and a player steering out of it would make it a sprint. */
-    a.vx = a.dodge.dx * DODGE_SPEED;
-    a.vz = a.dodge.dz * DODGE_SPEED;
+    const ds = dodgeSpeed(a);
+    a.vx = a.dodge.dx * ds;
+    a.vz = a.dodge.dz * ds;
   } else {
     const base = a.swimming ? SWIM_SPEED : (a.inWater ? WADE_SPEED : RUN);
-    const speed = base * speedScale(a);
+    /* The lattice scales how fast you go, not how far you jump: the budget in
+       DECISIONS §3 is what the terrain was sized against, and a module that
+       quietly cleared a wider canyon would be the exact failure the solved
+       jump above exists to prevent. */
+    const speed = base * speedScale(a) * statsOf(a).speed;
     const wx = (input.mx || 0) * speed, wz = (input.mz || 0) * speed;
     if (a.grounded || a.swimming) { a.vx = wx; a.vz = wz; }
     else { a.vx += (wx - a.vx) * AIR_CONTROL; a.vz += (wz - a.vz) * AIR_CONTROL; }
@@ -2388,8 +3081,11 @@ function step(col, a, input, targets, dt = TICK) {
  *                and the side-stepping below are for.
  *
  * No AI architecture, as the issue says — a state machine and a steering
- * direction. No spawn rules, no repopulation, no loot.
+ * direction. No spawn rules and no repopulation; a machine does now leave
+ * behind the discipline it was built from, which is the other half of "a fight
+ * previews its loot" (§6) and lives in src/sim/loot.mjs.
  */
+
 
 
 
@@ -2576,7 +3272,8 @@ function jolt(e) {
  * bit the guest does *not* run is obvious: it draws what the host sends and
  * simulates none of it.
  */
-function makeEncounter(col, spawn, posts) {
+function makeEncounter(col, world, posts) {
+  const spawn = world.spawn;
   /* Beyond sight from the spawn, so they are found rather than met: these
      things are holding positions, not patrolling. */
   const ring = [[14, 3], [-11, -13], [5, 19]];
@@ -2589,9 +3286,12 @@ function makeEncounter(col, spawn, posts) {
   }
   const targets = (posts || []).concat(enemies);
   const postCount = (posts || []).length;
+  /* Derived from the same world the machines were placed in, and index-aligned
+     with them — see src/sim/loot.mjs for why that means nothing has to be sent. */
+  const loot = makeLootField(col, world, enemies.length);
 
   return {
-    enemies, targets, postCount,
+    enemies, targets, postCount, loot,
 
     /** One tick: the machines act, then whatever the players cut takes it. */
     step(players, dt = TICK) {
@@ -2599,11 +3299,27 @@ function makeEncounter(col, spawn, posts) {
       for (const p of players) {
         if (!p || !p.hits) continue;
         const mask = p.hits;
-        applyHits(p, targets, SWING_DAMAGE);
+        /* No damage argument: what a swing is worth is the swinger's business,
+           and their lattice is what decides it. */
+        applyHits(p, targets);
         /* A hit interrupts a machine that was not already committed. The posts
            are the first entries and feel nothing. */
         for (let i = postCount; i < targets.length; i++) if (mask & (1 << i)) jolt(targets[i]);
       }
+      /* What is left of a machine, and then whoever walks over it. */
+      for (let i = 0; i < enemies.length; i++) if (enemies[i].dead) loot.drop(i, enemies[i]);
+      return loot.collect(players);
+    },
+
+    /**
+     * Guest: fold an authoritative snapshot back into the copy this end derived
+     * for itself. The machines are drawn from `foes`; a fallen one is standing
+     * over its own spoil, so where the loot is needs no message of its own, and
+     * `takenBits` — one integer — is the whole of what has been picked up.
+     */
+    observeWire(foes, takenBits) {
+      loot.observe(foes, EST.DEAD);
+      if (takenBits !== undefined && takenBits !== null) loot.applyWire(takenBits);
     },
 
     /**
@@ -3017,13 +3733,22 @@ function makeLoopback(opts) {
  *
  * Nothing about the terrain crosses the wire. The world is a pure function of
  * its seed, so the host sends the seed once and the guest grows the same world
- * itself. Later that is what makes edits, enemies and loot affordable: they are
- * deltas against something both ends already have.
+ * itself. That is what makes edits, enemies and loot affordable: they are
+ * deltas against something both ends already have. Loot is the first one to
+ * take the promise up — the caches are derived from the world on both machines
+ * and a machine's spoil lies where that machine fell, so the whole of what is
+ * on the ground travels as **one integer** of what has been picked up.
+ *
+ * Gear is the exception that proves the rule: it rides the *snapshot*, because
+ * a lattice is not derivable from anything and because `step` reads it. A
+ * guest replaying inputs after a correction has to replay them with the host's
+ * lattice, or the replay lands somewhere the host never was.
  *
  * The transport is an interface (src/net/transport.mjs). Steam Networking
  * implements the same three methods later; the prototype uses two browser
  * windows and a loopback pair in the tests.
  */
+
 
 
 /** Snapshots per second is this divided into the tick rate: 60 / 3 = 20 Hz. */
@@ -3041,6 +3766,21 @@ const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, 
 const copyInput = (i) => ({ mx: i.mx || 0, mz: i.mz || 0, jump: !!i.jump,
                             attack: !!i.attack, dodge: !!i.dodge,
                             aimX: i.aimX || 0, aimZ: i.aimZ || 0 });
+
+/**
+ * Seating and unseating a module is **not** an input.
+ *
+ * Inputs are replayed — that is the whole point of them — and replaying "put
+ * the module I am carrying into slot 2" four times is not the same as doing it
+ * once. So gear changes go as their own message, the host applies each exactly
+ * once, and the result comes back in the next snapshot. A menu click can afford
+ * the round trip; the reconciliation cannot afford a non-idempotent input.
+ */
+const ACT = { SOCKET: 0, UNSOCKET: 1 };
+
+function applyAct(a, m) {
+  return m.k === ACT.SOCKET ? seatOn(a, m.s, m.c) : pullFrom(a, m.s);
+}
 
 /**
  * Somewhere to put the second player: near the first, but not inside a tree.
@@ -3073,6 +3813,10 @@ function makeHost(opts) {
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
     if (m.t === 'join') { joined = true; return; }
+    /* The guest asking for its own lattice to change. Authority is not shared:
+       it is applied here or it does not happen, and the next snapshot is how
+       the guest finds out which. */
+    if (m.t === 'act') { applyAct(peer, m); return; }
     if (m.t === 'input') {
       seen++;
       if (inbox.length < MAX_PENDING) inbox.push({ seq: m.seq, input: copyInput(m) });
@@ -3088,6 +3832,13 @@ function makeHost(opts) {
     get tick() { return t; },
     /** Drawn from the same data that is sent, so a gap in one shows in both. */
     get foes() { return encounter ? encounter.wire() : null; },
+    /** What is still on the ground, as the bitmask that goes over the wire. */
+    get loot() { return encounter && encounter.loot ? encounter.loot.wire() : 0; },
+
+    /** This machine's own player seats a module. No wire: it is the authority. */
+    act(kind, slot, carriedIndex) {
+      return applyAct(me, { k: kind, s: slot, c: carriedIndex });
+    },
     get stats() { return { t, joined, queued: inbox.length, inputs: seen }; },
 
     /** One authoritative tick. `localInput` is this machine's own player. */
@@ -3112,6 +3863,8 @@ function makeHost(opts) {
           you: snapshot(peer),
           them: display(me),
           foes: encounter ? encounter.wire() : null,
+          /* Every drop in the world, as one integer — see src/sim/loot.mjs. */
+          lt: encounter && encounter.loot ? encounter.loot.wire() : 0,
         });
       }
       return this;
@@ -3129,8 +3882,8 @@ function makeHost(opts) {
  */
 function makeGuest(opts) {
   const { transport, build } = opts;
-  let col = null, me = null, peer = null, cfg = null;
-  let foes = null;
+  let col = null, me = null, peer = null, cfg = null, encounter = null;
+  let foes = null, lootBits = 0;
   let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0;
   const pending = [];
   let target = null;                       /* last authoritative host state */
@@ -3144,6 +3897,9 @@ function makeGuest(opts) {
       cfg = m.cfg;
       const world = build(m.cfg);
       col = world.col;
+      /* Optional, and only ever drawn: if this end derived an encounter of its
+         own, the snapshots are folded into it rather than into a second list. */
+      encounter = world.encounter || null;
       me = spawnNear(col, m.spawn[0], m.spawn[2]);
       peer = placeOnGround(col, m.spawn[0], m.spawn[2]);
       ready = true;
@@ -3166,6 +3922,8 @@ function makeGuest(opts) {
       for (const p of pending) { step(col, me, p.input, null); replayed++; }
       target = m.them;
       foes = m.foes;
+      lootBits = m.lt || 0;
+      if (encounter && encounter.observeWire) encounter.observeWire(foes, lootBits);
     }
   });
 
@@ -3179,6 +3937,15 @@ function makeGuest(opts) {
     get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck }; },
     /** Whatever the host last said was in the world. Drawn, never stepped. */
     get foes() { return foes; },
+    /** And what of it has been picked up, by either of them. */
+    get loot() { return lootBits; },
+
+    /** Ask the host to seat a module. It decides; the next snapshot answers. */
+    act(kind, slot, carriedIndex) {
+      if (!ready) return false;
+      transport.send({ t: 'act', k: kind, s: slot, c: carriedIndex });
+      return true;
+    },
     /** The last thing the host said about us, before any replay on top of it.
         The gap between this and `me` is exactly what prediction is buying. */
     get authoritative() { return target ? lastYou : null; },
@@ -3208,7 +3975,7 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,sin:sin,cos:cos,exp:exp,hyp:hyp,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,applyHits:applyHits,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,sin:sin,cos:cos,exp:exp,hyp:hyp,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -3384,10 +4151,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var sweep=new THREE.Mesh(arcGeo,new THREE.MeshBasicMaterial(
       {color:0xffe9c4,transparent:true,opacity:0.8,side:THREE.DoubleSide,depthWrite:false}));
     sweep.rotation.x=Math.PI/2; sweep.position.y=h*0.5; sweep.visible=false; g.add(sweep);
+    /* Rebuilt when the lattice changes what the blade covers: a sigil that
+       widened the hitbox and not the arc would be a lie drawn on the floor. */
+    blade.scale.z=1;
 
     g.traverse(function(o){ if(o.isMesh){ o.castShadow=true; o.userData.keep=true; } });
     sweep.castShadow=false;
-    return {g:g,arm:arm,sweep:sweep,fade:0};
+    return {g:g,arm:arm,blade:blade,sweep:sweep,fade:0,reach:-1,arc:-1};
   }
   /**
    * A sentry automaton. Squat and wide, because from 45 degrees you mostly see
@@ -3418,6 +4188,64 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return {g:g,skirt:skirt,body:body,plate:plate,wedge:wedge,bar:bar};
   }
   var foeMeshes=[];
+
+  /* ---------- what is on the ground ----------
+     A cache and a machine's spoil are the same object with different framing:
+     a floating module, coloured by the tradition it belongs to, so a drop
+     previews what it is from across the clearing — the same claim the sentry's
+     top plate makes about its telegraph. A cache stands on a plinth and wears a
+     second ring, because it is the one that also holds knowledge. */
+  var TRADCOL=[0xd9a25e,0x4fc3cd,0x8fd14f];
+  function makeLootMesh(isCache){
+    var g=new THREE.Group();
+    var cube=new THREE.Mesh(new THREE.BoxGeometry(0.34,0.34,0.34),
+      new THREE.MeshBasicMaterial({color:0xffffff}));
+    cube.position.y=isCache?0.95:0.45; g.add(cube);
+    var ring=new THREE.Mesh(new THREE.RingGeometry(0.42,0.62,20),
+      new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.45,
+                                   side:THREE.DoubleSide,depthWrite:false}));
+    ring.rotation.x=Math.PI/2; ring.position.y=0.08; g.add(ring);
+    var halo=null, plinth=null;
+    if(isCache){
+      plinth=new THREE.Mesh(new THREE.CylinderGeometry(0.34,0.44,0.55,6),
+        new THREE.MeshLambertMaterial({color:0x4a443e}));
+      plinth.position.y=0.28; plinth.castShadow=true; g.add(plinth);
+      halo=new THREE.Mesh(new THREE.RingGeometry(0.78,0.96,24),
+        new THREE.MeshBasicMaterial({color:0xe8e3d7,transparent:true,opacity:0.30,
+                                     side:THREE.DoubleSide,depthWrite:false}));
+      halo.rotation.x=Math.PI/2; halo.position.y=0.06; g.add(halo);
+    }
+    g.traverse(function(o){ if(o.isMesh) o.userData.keep=true; });
+    g.visible=false;
+    return {g:g,cube:cube,ring:ring,halo:halo,plinth:plinth,cache:isCache};
+  }
+  var lootMeshes=[];
+  function poseLoot(){
+    var field=encounter&&encounter.loot;
+    var items=field?field.open():[];
+    var q;
+    for(q=0;q<lootMeshes.length;q++) lootMeshes[q].g.visible=false;
+    for(q=0;q<items.length&&q<lootMeshes.length;q++){
+      var o=items[q], it=o.item, m=lootMeshes[q];
+      /* The pool is not index-aligned with the field — a cache mesh has a
+         plinth and a spoil does not, so the right one has to be found. */
+      var want=o.kind==='cache';
+      if(m.cache!==want){
+        for(var r=q+1;r<lootMeshes.length;r++) if(lootMeshes[r].cache===want){
+          var t=lootMeshes[q]; lootMeshes[q]=lootMeshes[r]; lootMeshes[r]=t; break;
+        }
+        m=lootMeshes[q];
+        if(m.cache!==want) continue;
+      }
+      var c=TRADCOL[QS.MODULES[it.mod].trad];
+      m.cube.material.color.setHex(c);
+      m.ring.material.color.setHex(c);
+      m.g.position.set(it.x,it.y,it.z);
+      m.cube.rotation.y=tm*1.1; m.cube.rotation.x=0.5;
+      m.cube.position.y=(m.cache?0.95:0.45)+Math.sin(tm*1.8+it.x)*0.06;
+      m.g.visible=true;
+    }
+  }
 
   /** Everything the machine is about to do, said in a colour and a height. */
   function poseFoe(f,m){
@@ -3466,7 +4294,19 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(t<mid) return -1.35+2.75*((t-QS.WINDUP)/QS.ACTIVE);
     return 1.40*(1-(t-mid)/(QS.SWING_TIME-mid));
   }
+  /* The reach and arc the lattice works out to, made into geometry — once per
+     change, not once per frame. */
+  function tuneSweep(av,a){
+    var st=QS.statsOf(a);
+    if(av.reach===st.reach&&av.arc===st.arc) return;
+    av.reach=st.reach; av.arc=st.arc;
+    if(av.sweep.geometry) av.sweep.geometry.dispose();
+    av.sweep.geometry=new THREE.RingGeometry(0.5,st.reach,22,1,Math.PI/2-st.arc/2,st.arc);
+    av.blade.scale.z=st.reach/QS.REACH;
+    av.blade.position.z=0.58*av.blade.scale.z;
+  }
   function poseAvatar(av,a){
+    tuneSweep(av,a);
     av.g.position.set(a.x,a.y,a.z);
     av.g.rotation.y=Math.atan2(a.faceX,a.faceZ);
     av.arm.rotation.y=bladeAngle(a);
@@ -3494,6 +4334,40 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
 
   function player(){ return session ? session.me : solo; }
   function other(){ return session ? session.peer : null; }
+  function gear(){ var a=player(); return a?a.gear:null; }
+
+  /**
+   * Seating a module goes through the session when there is one, because the
+   * host is the authority on what is in whose lattice — the guest asks and the
+   * next snapshot answers. Alone, there is nobody to ask.
+   */
+  function act(kind,slot,ci){
+    var a=player(); if(!a) return false;
+    if(session) return session.act(kind,slot,ci);
+    return kind===QS.ACT.SOCKET?QS.seatOn(a,slot,ci):QS.pullFrom(a,slot);
+  }
+
+  /* What was in the last thing picked up, said once and then faded. Derived by
+     watching the lattice rather than by listening for an event, so it reads the
+     same whether this machine did the picking up or was told about it. */
+  var toastEl=document.getElementById('toast'), toastT=0;
+  var seenPicked=-1, seenKnown=0, seenCarried=0;
+  function says2(msg){ toastEl.textContent=msg; toastEl.classList.add('on'); toastT=3.4; }
+  function watchPickups(){
+    var a=player(); if(!a||!a.gear) return;
+    var g=a.gear;
+    if(seenPicked<0){ seenPicked=a.picked; seenKnown=g.known; seenCarried=g.carried.length; return; }
+    if(a.picked!==seenPicked){
+      var lines=[];
+      if(g.carried.length>seenCarried) lines.push('picked up  '+QS.MODULES[g.carried[g.carried.length-1]].name);
+      var fresh=g.known&~seenKnown;
+      for(var f=0;f<QS.FUSIONS.length;f++) if(fresh&(1<<f)) lines.push('learned    '+QS.FUSIONS[f].name);
+      if(lines.length) says2(lines.join('\n'));
+      seenPicked=a.picked;
+    }
+    if(g.known!==seenKnown||g.carried.length!==seenCarried||latSig()!==latShown) drawLattice();
+    seenKnown=g.known; seenCarried=g.carried.length;
+  }
 
   function spawn(){
     /* A guest does not get to decide where it is — the host does. */
@@ -3506,6 +4380,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var b=player();
     QS.warpTo(cam,b.x,b.y,b.z);
     deadEl.style.display='none';
+    drawLattice();
   }
 
   /** Build (or rebuild) the world and its scene. Returns what a session needs. */
@@ -3534,13 +4409,23 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     postHits=posts.map(function(){return 0;});
     postFlash=posts.map(function(){return 0;});
 
-    /* The machines. They come with the world because they are placed from it —
-       a guest is sent what they look like, never what they are. */
-    encounter=QS.makeEncounter(col,data.spawn,posts);
+    /* The machines, and what they and the world leave lying around. Both come
+       with the world because both are placed from it — a guest is sent what
+       they look like and one integer of what has been picked up, never what
+       they are or where the caches went. */
+    encounter=QS.makeEncounter(col,data,posts);
     targets=encounter.targets;
     foeMeshes.forEach(function(f){ built.scene.remove(f.g); });
     foeMeshes=encounter.enemies.map(function(){ var f=makeFoe(); built.scene.add(f.g); return f; });
-    return {col:col,spawn:data.spawn,targets:targets};
+    lootMeshes.forEach(function(m){
+      m.g.traverse(function(o){ if(o.isMesh&&o.geometry) o.geometry.dispose(); });
+    });
+    lootMeshes=[];
+    encounter.loot.caches.forEach(function(){ lootMeshes.push(makeLootMesh(true)); });
+    encounter.loot.spoils.forEach(function(){ lootMeshes.push(makeLootMesh(false)); });
+    lootMeshes.forEach(function(m){ built.scene.add(m.g); });
+    drawLattice();
+    return {col:col,spawn:data.spawn,targets:targets,encounter:encounter};
   }
   function regen(seedStr){
     if(session){ says('leave the game first'); return; }
@@ -3645,10 +4530,130 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          put the host's numbers into; it never steps them. */
       var w=buildFor(cfg);
       seedin.value=cfg.seed;
+      /* `encounter` rides along so the session can fold each snapshot's
+         machines and loot bitmask back into the copy this end derived. */
       return w;
     }});
     hostBtn.disabled=true;
     says('<b>Joining.</b> Waiting for the host…',true);
+  }
+
+  /* ---------- the lattice panel ----------
+     Drawn as the thing it is: cells and the edges between them. The edge is
+     the point — a module's own effect is a line of text, but whether two of
+     them touch is the decision the frame exists to pose — so the edges are
+     what change colour. Grey is a pair that cannot fuse, dashed amber is one
+     that could if you knew how, and solid cyan is one that does. */
+  var latSvg=document.getElementById('latsvg'), packEl=document.getElementById('pack'),
+      fusEl=document.getElementById('fusions'), hintEl=document.getElementById('lathint');
+  var picked=-1, latShown='';
+  var NS='http://www.w3.org/2000/svg';
+  var HEXR=27, PAD=30;
+
+  function latSig(){
+    var g=gear();
+    return g?(g.frame+'|'+g.slots.join(',')+'|'+g.carried.join(',')+'|'+g.known+'|'+picked):'';
+  }
+  function el(name,attrs){
+    var n=document.createElementNS(NS,name);
+    for(var k in attrs) if(attrs.hasOwnProperty(k)) n.setAttribute(k,attrs[k]);
+    return n;
+  }
+  function hexPath(cx,cy){
+    var pts=[],i;
+    for(i=0;i<6;i++){
+      var ang=i*Math.PI/3;
+      pts.push((cx+HEXR*Math.cos(ang)).toFixed(2)+','+(cy+HEXR*Math.sin(ang)).toFixed(2));
+    }
+    return pts.join(' ');
+  }
+  var TRADHEX=['#d9a25e','#4fc3cd','#8fd14f'];
+
+  function drawLattice(){
+    var g=gear();
+    latShown=latSig();
+    latSvg.textContent=''; packEl.textContent=''; fusEl.textContent='';
+    if(!g) return;
+    var frame=QS.FRAMES[g.frame], cells=frame.cells, i;
+    var pts=cells.map(function(c){ var p=QS.hexXY(c); return {x:p.x*HEXR,y:p.y*HEXR}; });
+    var minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+    pts.forEach(function(p){ minx=Math.min(minx,p.x); maxx=Math.max(maxx,p.x);
+                             miny=Math.min(miny,p.y); maxy=Math.max(maxy,p.y); });
+    pts.forEach(function(p){ p.x+=PAD-minx; p.y+=PAD-miny; });
+    var w=(maxx-minx)+PAD*2, h=(maxy-miny)+PAD*2;
+    latSvg.setAttribute('viewBox','0 0 '+w.toFixed(0)+' '+h.toFixed(0));
+    latSvg.setAttribute('width',Math.round(w)); latSvg.setAttribute('height',Math.round(h));
+
+    var latent=QS.latentFusions(g);
+    frame.edges.forEach(function(e){
+      var a=g.slots[e[0]], b=g.slots[e[1]];
+      var col='#2a333d', dash='', wid=2;
+      if(a>=0&&b>=0&&QS.MODULES[a].trad!==QS.MODULES[b].trad){
+        var r=QS.recipeFor(a,b);
+        if(r>=0&&QS.knows(g,r)){ col='#4fc3cd'; wid=4; }
+        else if(r>=0){ col='#d9a25e'; dash='4 3'; wid=3; }
+      }
+      var ln=el('line',{x1:pts[e[0]].x,y1:pts[e[0]].y,x2:pts[e[1]].x,y2:pts[e[1]].y,
+                        stroke:col,'stroke-width':wid});
+      if(dash) ln.setAttribute('stroke-dasharray',dash);
+      latSvg.appendChild(ln);
+    });
+
+    cells.forEach(function(c,si){
+      var mod=g.slots[si], p=pts[si];
+      var poly=el('polygon',{points:hexPath(p.x,p.y),
+        fill:mod>=0?'#151a20':'#0f1319',
+        stroke:mod>=0?TRADHEX[QS.MODULES[mod].trad]:'#3a4652',
+        'stroke-width':mod>=0?2:1.5});
+      poly.setAttribute('class','hexfill');
+      poly.addEventListener('click',function(){
+        var note='';
+        if(mod>=0){
+          if(!act(QS.ACT.UNSOCKET,si,0)&&!session) note='Nothing to put it in — the pack is full.';
+          picked=-1;
+        } else if(picked>=0){ act(QS.ACT.SOCKET,si,picked); picked=-1; }
+        else note='Nothing chosen — pick a module first.';
+        drawLattice();
+        /* A guest's click went to the host and the answer arrives with the next
+           snapshot, so there is nothing to say about it here. */
+        if(note) hintEl.textContent=note;
+      });
+      latSvg.appendChild(poly);
+      var label=el('text',{x:p.x,y:p.y+4,'text-anchor':'middle',
+        'font-family':'IBM Plex Mono, monospace','font-size':'10',
+        fill:mod>=0?TRADHEX[QS.MODULES[mod].trad]:'#3a4652','pointer-events':'none'});
+      label.textContent=mod>=0?QS.MODULES[mod].key.slice(0,4).toLowerCase():'—';
+      latSvg.appendChild(label);
+    });
+
+    /* Carried. The limit is part of the design, so it is on the label. */
+    var head=document.createElement('span');
+    head.className='chip dead';
+    head.innerHTML='pack '+g.carried.length+'/'+QS.CARRY;
+    packEl.appendChild(head);
+    g.carried.forEach(function(mod,ci){
+      var b=document.createElement('button');
+      b.type='button'; b.className='chip'+(picked===ci?' sel':'');
+      b.style.color=TRADHEX[QS.MODULES[mod].trad];
+      b.innerHTML=QS.MODULES[mod].name+'<i>'+QS.MODULES[mod].says+'</i>';
+      b.addEventListener('click',function(){ picked=picked===ci?-1:ci; drawLattice(); });
+      packEl.appendChild(b);
+    });
+
+    /* The recipe book. What is not known is not named: knowing that something
+       exists and not what it is, is what sends you to the next cache. */
+    QS.FUSIONS.forEach(function(f,fi){
+      var known=QS.knows(g,fi), live=g.fused.indexOf(fi)>=0;
+      var row=document.createElement('div');
+      if(known) row.className='on';
+      row.innerHTML=known?('<span>'+(live?'<b>'+f.name+'</b>':f.name)+'</span><span>'+f.says+'</span>')
+                         :'<span>· · ·</span><span>not yet found</span>';
+      fusEl.appendChild(row);
+    });
+
+    var latentText=latent.length?(latent.length+' edge'+(latent.length>1?'s':'')+' would fuse if you knew how')
+                               :(picked>=0?'Now choose a socket.':'Pick a module, then a socket.');
+    hintEl.textContent=latentText;
   }
 
   /* ---------- bindings panel ---------- */
@@ -3710,6 +4715,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var hits=player().hits;
     if(hits) for(var q=0;q<postHits.length;q++) if(hits&(1<<q)){ postHits[q]++; postFlash[q]=0.18; }
 
+    watchPickups();
+
     var b=player();
     if(!warped){ QS.warpTo(cam,b.x,b.y,b.z); warped=true; }
     if(b.dead&&!wasDead){
@@ -3742,6 +4749,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       foeMeshes[fq].g.visible=!!fm;
       if(fm) poseFoe(foeMeshes[fq],fm);
     }
+    poseLoot();
     for(var q=0;q<postMeshes.length;q++){
       var lit=postFlash[q]>0;
       postMeshes[q].material.color.setHex(lit?0xffd9a0:0x6b5a45);
@@ -3790,15 +4798,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(built.wmat){ built.wmat.uniforms.uTime.value=tm; built.wmat.uniforms.uWind.value.copy(wind); }
 
     for(var q=0;q<postFlash.length;q++) if(postFlash[q]>0) postFlash[q]-=dt;
+    if(toastT>0){ toastT-=dt; if(toastT<=0) toastEl.classList.remove('on'); }
     avatar.fade=Math.max(0,avatar.fade-dt/SWEEP_FADE);
     peerAvatar.fade=Math.max(0,peerAvatar.fade-dt/SWEEP_FADE);
     draw();
 
     if(!a){ hud.textContent='waiting for the host…'; staminaEl.style.display='none'; return; }
     staminaEl.style.display='block';
-    staminaFill.style.width=(100*a.stamina/QS.STAMINA_MAX).toFixed(1)+'%';
-    staminaFill.style.background=a.stamina<QS.SWING_COST?'#a5553a':'#d9a25e';
-    hpFill.style.width=(100*a.hp/QS.PLAYER_HP).toFixed(1)+'%';
+    staminaFill.style.width=(100*a.stamina/a.st.maxStamina).toFixed(1)+'%';
+    staminaFill.style.background=a.stamina<a.st.swingCost?'#a5553a':'#d9a25e';
+    hpFill.style.width=(100*a.hp/a.maxHp).toFixed(1)+'%';
     var state=a.dead?('dead · '+a.dead)
       :(a.vault?'vaulting':(a.swimming?'swimming'
         :(a.inWater?'wading':(a.grounded?'grounded':'airborne'))));
@@ -3809,11 +4818,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var ph=['','wind-up','ACTIVE','recovery'][QS.phase(a)];
     var live=session?session.foes:(encounter?encounter.wire():null);
     var standing=(live||[]).filter(function(m){return m.s!==QS.EST.DEAD;}).length;
+    var lf=encounter&&encounter.loot?encounter.loot.open().length:0;
+    var gg=a.gear;
     hud.textContent=
       'x '+a.x.toFixed(1)+'  y '+a.y.toFixed(2)+'  z '+a.z.toFixed(1)+'\n'+
       state+(ph?('  ·  '+ph):(QS.dodging(a)?'  ·  dodge':''))+'   '+spd.toFixed(2)+' m/s\n'+
-      'hp '+a.hp.toFixed(0)+'/'+QS.PLAYER_HP+'   stamina '+a.stamina.toFixed(0)+
+      'hp '+a.hp.toFixed(0)+'/'+a.maxHp.toFixed(0)+'   stamina '+a.stamina.toFixed(0)+
         '   machines '+standing+'/'+foeMeshes.length+'\n'+
+      'reach '+a.st.reach.toFixed(2)+' m   damage '+a.st.damage.toFixed(0)+
+        '   seated '+(gg?gg.slots.filter(function(v){return v>=0;}).length:0)+'/'+
+        (gg?gg.slots.length:0)+'   fused '+(gg?gg.fused.length:0)+
+        '   loose '+lf+'\n'+
       /* Steps are counted from where the view starts, not from zero: the
          snaps sit on START_YAW + n quarters, so dividing the raw angle by a
          quarter never lands on an integer. */
@@ -3843,6 +4858,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     get foes(){return session?session.foes:(encounter?encounter.wire():null);},
     /** The actual machines, for a test that needs to put one back how it was. */
     get machines(){return encounter?encounter.enemies:null;},
+    /** The lattice, what is still on the ground, and the two verbs over them. */
+    get gear(){return gear();},
+    get loose(){return encounter&&encounter.loot?encounter.loot.open():[];},
+    give:function(mod){ var g=gear(); var ok=!!g&&QS.takeModule(g,mod); drawLattice(); return ok; },
+    socket:function(slot,ci){ var r=act(QS.ACT.SOCKET,slot,ci); drawLattice(); return r; },
+    unsocket:function(slot){ var r=act(QS.ACT.UNSOCKET,slot,0); drawLattice(); return r; },
     /* The swing arc's visibility is the thing #23 is actually about, so the
        gate gets to assert it rather than infer it from a screenshot. */
     get sweeping(){return avatar.sweep.visible;},
