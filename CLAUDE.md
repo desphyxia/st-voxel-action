@@ -3,11 +3,12 @@
 A 45° isometric two-player online co-op action RPG on three.js. Worlds are seeded and bounded;
 terrain features are sized in whole metres on a 1 m grid and built from 25 cm voxels.
 
-**Status: pre-production, and playable.** What exists is the seeded terrain generator
+**Status: pre-production, and playable, by two.** What exists is the seeded terrain generator
 (`src/gen/`), collision, a character controller, an isometric camera and a remappable input
-layer (`src/sim/`), a build you can open and walk around in (`docs/play/`), the concept plate,
-and a design decision record. There is no second player, no netcode and no combat. Do not start
-engine work without checking `docs/DECISIONS.md` first.
+layer (`src/sim/`), host-authoritative netcode with client prediction (`src/net/`), a build you
+can open and walk around in — with a second window if you want company (`docs/play/`), the
+concept plate, and a design decision record. There is no combat and nothing to fight. Do not
+start engine work without checking `docs/DECISIONS.md` first.
 
 ## Where things are
 
@@ -17,7 +18,8 @@ engine work without checking `docs/DECISIONS.md` first.
 | `docs/PROTOTYPE.md` | **Read this second.** What "playable" means, the path to it, and the rules that keep every merge playable. |
 | `src/gen/` | The terrain generator. Plain ES modules — no DOM, no three.js. See `src/README.md`. |
 | `src/sim/` | Collision, the character controller, the isometric camera and the input table — all written against the movement budget and all free of the DOM and three.js, which is why they can be asserted in node. |
-| `docs/play/index.html` | **The playable build.** Open it in a browser and walk around. Carries an inlined copy of `src/gen` and `src/sim`. |
+| `src/net/` | The wire: a three-method transport interface, a loopback double with latency and loss, and the host/guest sessions. No DOM either. |
+| `docs/play/index.html` | **The playable build.** Open it in a browser and walk around; *Host a game* opens a second window and puts another character in the same world. Carries an inlined copy of `src/gen`, `src/sim` and `src/net`. |
 | `docs/concept/index.html` | The concept plate: the design document, the renderer, and an inlined copy of `src/gen` it draws. |
 | `tools/` | Headless render and verify harness. Dev only. |
 | `README.md` | Short public summary of the project. |
@@ -45,17 +47,18 @@ node tools/bundle-gen.mjs           # rewrite the inlined blocks from src/
 node tools/bundle-gen.mjs --check   # fail if either page is out of date
 ```
 
-Two pages carry a bundle: the plate gets `src/gen`, the playable build gets `src/gen` **and**
-`src/sim`. A new module has to be added to `MODULES` in the bundler, in dependency order, or it
-bundles silently and the page throws on load.
+Two pages carry a bundle: the plate gets `src/gen`, the playable build gets `src/gen`,
+`src/sim` **and** `src/net`. A new module has to be added to `MODULES` in the bundler, in
+dependency order, or it bundles silently and the page throws on load.
 
 Edit the modules, run the bundler, commit both. The smoke test fails if they have drifted, and
 also fails if the plate's worlds stop matching the ones node generates from `src/gen`.
 
-One rule inside `src/gen`: **no `Math.sin`, `cos`, `exp`, `pow` or `hypot`.** The spec only
-approximates them and engines disagree — node 22 and Chromium 141 already return different
-sines — which silently breaks plate/node parity and would give two players different worlds
-from the same seed. Use `src/gen/exact.mjs`. The smoke test's MATH check catches it.
+One rule across **all of `src/`**: **no `Math.sin`, `cos`, `exp`, `pow` or `hypot`.** The spec
+only approximates them and engines disagree — node 22 and Chromium 141 already return different
+sines. In `src/gen` that gives two players different worlds from the same seed; in `src/sim` and
+`src/net` it gives them different trajectories through it, and a guest that can never quite land
+on the host's answer. Use `src/gen/exact.mjs`. The smoke test's MATH check catches it.
 
 ## Working on the plate
 

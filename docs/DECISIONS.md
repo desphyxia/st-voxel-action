@@ -128,6 +128,8 @@ generator workstream in its own right — not a content pass.
 | --- | --- |
 | Terrain rendering | Greedy-meshed chunks with baked per-face AO; props stay instanced |
 | Netcode | Host-authoritative peer-to-peer over Steam Networking |
+| Client model | **The guest predicts and reconciles.** It applies its own input immediately, and on each authoritative snapshot restores the host's state wholesale and replays every input the host had not yet seen. The replay lands on the host's answer *exactly*, not near it, because the controller is deterministic — which is what the pinned arithmetic was for |
+| What crosses the wire | **A seed and two characters.** The world is a pure function of its seed, so terrain is never sent; later, edits, enemies and loot are deltas against something both ends already have |
 | Save ownership | **Shared world, host only** — accepted deliberately. One world, one save, one owner; the pair plays together or not at all |
 | Platform | Steam desktop first, wrapped (Electron or Tauri); browser build is a test harness |
 | Art pipeline | Hybrid — hand-authored `.vox` for characters, creatures and hero structures; trees, boulders, walls and clutter stay procedural |

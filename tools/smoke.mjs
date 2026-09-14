@@ -30,6 +30,8 @@
  *                 built to pin it: step, vault, jump, fall, wade, swim, magma.
  *   5b. VIEW      camera-relative movement survives a 90 degree snap, the two
  *                 aiming models agree, and every action is bound and rebindable.
+ *   5c. NET       a host and a guest agree exactly after latency and packet
+ *                 loss, the host is authoritative, and no terrain crosses.
  *   6. PLAY       a character survives five simulated minutes on every seed
  *                 without falling through the world or ending up inside it.
  *   7. PARITY     the plate's worlds are identical to node's, digest included.
@@ -38,6 +40,8 @@
  *                 change; --update re-records it deliberately.
  *   9. RENDER     the plate still draws, and the playable build boots, moves a
  *                 character under the camera it is given, and draws too.
+ *  10. NET (page) two windows, postMessage between them, and a key pressed in
+ *                 one moving a character in the other.
  *
  * As the prototype gains verbs, each one adds an assertion here — that is the
  * ratchet. See docs/PROTOTYPE.md.
@@ -50,7 +54,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+import { budgetSuite, viewSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 
 const argv = process.argv.slice(2);
@@ -81,7 +85,7 @@ check(stale.length === 0, `SYNC: ${TARGETS.length} pages carry the current src`,
    enough to give two players different worlds from the same seed. */
 const UNPINNED = /Math\.(sin|cos|tan|asin|acos|atan|atan2|exp|expm1|log|log2|log10|log1p|pow|hypot|cbrt|sinh|cosh|tanh|fround)\b|\*\*/g;
 const strays = [];
-for (const dir of ['src/gen', 'src/sim']) {
+for (const dir of ['src/gen', 'src/sim', 'src/net']) {
   for (const f of readdirSync(join(ROOT, dir)).filter((n) => n.endsWith('.mjs'))) {
     if (f === 'exact.mjs') continue;                     /* where they are allowed to appear */
     const src = readFileSync(join(ROOT, dir, f), 'utf8')
@@ -89,7 +93,7 @@ for (const dir of ['src/gen', 'src/sim']) {
     for (const m of src.match(UNPINNED) || []) strays.push(`${dir}/${f}: ${m}`);
   }
 }
-check(strays.length === 0, 'MATH: src/gen and src/sim use only pinned arithmetic',
+check(strays.length === 0, 'MATH: src/ uses only pinned arithmetic',
       strays.length ? `${strays.join(', ')} — use src/gen/exact.mjs` : '');
 
 const t0 = Date.now();
@@ -112,6 +116,13 @@ if (NODE_HALF) for (const r of budgetSuite()) check(r.ok, `MOVE: ${r.label}`, r.
    rotate the view" and "a mouse point and a stick direction mean the same
    thing" are exactly the claims a screenshot cannot make. */
 if (NODE_HALF) for (const r of viewSuite()) check(r.ok, `VIEW: ${r.label}`, r.detail);
+
+/* ---------- NET: two players, one world, one authority ----------
+   A host and a guest over a loopback wire with latency and loss dialled in. The
+   claim these are really testing is the controller's determinism: replaying the
+   same inputs from the same state has to reproduce the host exactly, or a guest
+   can only ever be approximately where it thinks it is. */
+if (NODE_HALF) for (const r of netSuite()) check(r.ok, `NET: ${r.label}`, r.detail);
 
 const t1 = Date.now();
 let jumped = 0, vaulted = 0;
@@ -304,6 +315,68 @@ if (BROWSER_HALF) {
       });
       check(bPainted > 50, 'BUILD: draws', `${bPainted} sampled`);
       check(bErrors.length === 0, 'BUILD: no errors while playing', bErrors.slice(0, 3).join(' | '));
+
+      /* ---------- NET in a browser ----------
+         The loopback suite proves the protocol; this proves the page is wired
+         to a real one. Two windows, postMessage between them, and the guest's
+         key ending up in the host's copy of the guest.
+
+         Driven through QSPLAY.run rather than wall clock: two software-rendered
+         scenes on a runner manage a frame or two a second, and a test that waits
+         for them measures the renderer, not the netcode. */
+      const [peerPage] = await Promise.all([
+        bp.waitForEvent('popup', { timeout: PATIENCE }),
+        bp.evaluate(() => window.QSPLAY.host()),
+      ]);
+      peerPage.setDefaultTimeout(PATIENCE);
+      peerPage.on('pageerror', (e) => bErrors.push(`peer: ${e.message}`));
+      peerPage.on('console', (m) => {
+        if (m.type() === 'error' && !/ERR_/.test(m.text())) bErrors.push(`peer: ${m.text()}`);
+      });
+      await peerPage.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null,
+                                     { timeout: PATIENCE });
+      await bp.waitForFunction(() => window.QSPLAY.connected, null, { timeout: PATIENCE });
+      await peerPage.waitForFunction(() => window.QSPLAY.connected, null, { timeout: PATIENCE });
+      const roles = [await bp.evaluate(() => window.QSPLAY.role),
+                     await peerPage.evaluate(() => window.QSPLAY.role)];
+      check(roles[0] === 'host' && roles[1] === 'guest', 'NET: two windows, one host',
+            roles.join(' / '));
+
+      /* The guest never received any terrain — only a seed — so if it is
+         standing on the same ground as the host, it grew it. */
+      const sameWorld = await peerPage.evaluate(() => window.QSPLAY.actor.y);
+      check(Number.isFinite(sameWorld) && sameWorld > 0,
+            'NET: the guest grew the world from the seed it was sent',
+            `standing at y ${sameWorld.toFixed(2)}`);
+
+      const before = await bp.evaluate(() => ({ x: window.QSPLAY.peer.x, z: window.QSPLAY.peer.z }));
+      await peerPage.evaluate(() => window.QSPLAY.input.press('KeyW'));
+      /* Alternating evaluates, because each one yields to the event loop and
+         that is what lets postMessage actually deliver between the two. */
+      for (let q = 0; q < 20; q++) {
+        await peerPage.evaluate(() => window.QSPLAY.run(4));
+        await bp.evaluate(() => window.QSPLAY.run(4));
+      }
+      await peerPage.evaluate(() => window.QSPLAY.input.release('KeyW'));
+      for (let q = 0; q < 12; q++) {
+        await peerPage.evaluate(() => window.QSPLAY.run(4));
+        await bp.evaluate(() => window.QSPLAY.run(4));
+      }
+      const after = await bp.evaluate(() => ({ x: window.QSPLAY.peer.x, z: window.QSPLAY.peer.z }));
+      const guestSays = await peerPage.evaluate(() => ({
+        x: window.QSPLAY.actor.x, z: window.QSPLAY.actor.z, stats: window.QSPLAY.stats }));
+      const moved = Math.hypot(after.x - before.x, after.z - before.z);
+      const gap = Math.hypot(after.x - guestSays.x, after.z - guestSays.z);
+      check(moved > 1, 'NET: a key in one window moves a character in the other',
+            `${moved.toFixed(2)} m`);
+      check(gap < 0.6, 'NET: and both windows agree where it ended up',
+            `${gap.toFixed(3)} m apart, ${guestSays.stats.corrections} corrections, ` +
+            `${guestSays.stats.replayed} inputs replayed`);
+
+      await bp.screenshot({ path: join(OUT, 'play.png') });
+      await peerPage.screenshot({ path: join(OUT, 'play-guest.png') });
+      check(bErrors.length === 0, 'NET: no errors in either window', bErrors.slice(0, 3).join(' | '));
+      await peerPage.close();
       await bp.close();
     }
 

@@ -7,6 +7,7 @@ The game. Today that is the terrain generator and nothing else — see
 | --- | --- |
 | `gen/` | The seeded terrain generator. Plain ES modules: no DOM, no three.js, no renderer. |
 | `sim/` | Collision, the character controller, the isometric camera and the input table. Same rules: no DOM, no three.js, no renderer. |
+| `net/` | The transport interface, a loopback double, and the host and guest sessions. Same rules again. |
 
 ## src/gen
 
@@ -106,6 +107,38 @@ Fixed timestep, no randomness, no wall clock. That is what lets
 wade, swim, magma — in node, and run a five-minute soak on all six golden seeds,
 with no browser anywhere. `docs/play/index.html` drives the same `step` from a
 fixed-step accumulator, so what you play is what the gate measured.
+
+## src/net
+
+```js
+import { makeLoopback } from './src/net/transport.mjs';
+import { makeHost, makeGuest } from './src/net/session.mjs';
+
+const wire = makeLoopback({ latency: 6, loss: 0.2 });
+const host = makeHost({ col, spawn, transport: wire.a, cfg });
+const guest = makeGuest({ transport: wire.b, build: (cfg) => ({ col: myCol, spawn }) });
+// each tick:  wire.pump(); host.step(hostInput); guest.step(guestInput);
+```
+
+The host owns the simulation and runs both characters. The guest runs its own
+immediately from its own input — otherwise every step would cost a round trip —
+and then reconciles: an authoritative snapshot is restored **wholesale**, and
+every input the host had not yet seen is replayed on top of it.
+
+That only works because `step` is deterministic. The smoke test asserts the
+strong form of it: after latency, after twenty percent packet loss, once
+everyone stops moving the two ends hold *identical* state, not similar state.
+
+`transport.mjs` is three methods — `send`, `onMessage`, `close` — and assumes
+nothing about reliability or ordering, because the session is written not to
+need either. A lost input is never re-sent; the host repeats what it has and the
+next snapshot puts the guest right. Steam Networking implements the same three
+methods later; the playable build currently speaks postMessage between two
+browser windows, and `makeLoopback` is what the tests drive.
+
+Nothing about the terrain crosses. The host sends a seed and the guest grows the
+same world itself, which is what makes edits, enemies and loot affordable later:
+they are deltas against something both ends already have.
 
 ### Known debt
 

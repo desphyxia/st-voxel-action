@@ -86,6 +86,39 @@ export function placeOnGround(col, x, z, fromY) {
   return a;
 }
 
+/**
+ * The whole of an actor's state, as plain numbers.
+ *
+ * Everything `step` reads or writes, including the vault in progress — leave a
+ * field out and a guest replaying from a snapshot diverges from the host mid
+ * climb. The controller is deterministic, so restoring this and re-applying the
+ * same inputs reproduces the same trajectory exactly; that is the whole basis
+ * of the reconciliation in src/net.
+ */
+export function snapshot(a) {
+  return {
+    x: a.x, y: a.y, z: a.z, vx: a.vx, vy: a.vy, vz: a.vz,
+    grounded: a.grounded, apex: a.apex,
+    vault: a.vault ? { t: a.vault.t, x0: a.vault.x0, y0: a.vault.y0, z0: a.vault.z0,
+                       x1: a.vault.x1, y1: a.vault.y1, z1: a.vault.z1 } : null,
+    vaults: a.vaults, inWater: a.inWater, swimming: a.swimming,
+    faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
+    ticks: a.ticks, travelled: a.travelled, blocked: a.blocked,
+  };
+}
+
+/** The inverse. `a` is reused rather than replaced so references stay valid. */
+export function restore(a, s) {
+  a.x = s.x; a.y = s.y; a.z = s.z; a.vx = s.vx; a.vy = s.vy; a.vz = s.vz;
+  a.grounded = s.grounded; a.apex = s.apex;
+  a.vault = s.vault ? { t: s.vault.t, x0: s.vault.x0, y0: s.vault.y0, z0: s.vault.z0,
+                        x1: s.vault.x1, y1: s.vault.y1, z1: s.vault.z1 } : null;
+  a.vaults = s.vaults; a.inWater = s.inWater; a.swimming = s.swimming;
+  a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
+  a.ticks = s.ticks; a.travelled = s.travelled; a.blocked = s.blocked;
+  return a;
+}
+
 /** Is the actor's box inside solid ground? Must never be true after a tick. */
 export function embedded(col, a) {
   return col.overlaps(a.x, a.z, ACTOR.radius, a.y + EPS, a.y + ACTOR.height - EPS);

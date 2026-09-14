@@ -33,6 +33,9 @@
              color:#ffd7cf;background:rgba(10,13,17,.8);border:1px solid #6b3030;padding:10px 16px}
   .bar{display:flex;flex-wrap:wrap;align-items:center;gap:9px}
   .bar .cap{font-size:13px;color:var(--dim);flex:1 1 200px;min-width:0}
+  .netstat{font-size:13px;color:var(--dim);margin-top:8px}
+  .netstat b{color:var(--text);font-weight:500}
+  .netstat.live b{color:var(--sand)}
   .seedbox{display:flex;align-items:center;border:1px solid var(--line);border-radius:2px;
            background:var(--ink2);overflow:hidden}
   .seedbox label{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
@@ -45,6 +48,8 @@
              padding:7px 11px;cursor:pointer}
   button.ctl:hover{color:var(--text);border-color:var(--line2)}
   button.ctl:focus-visible{outline:2px solid var(--magic);outline-offset:2px}
+  button.ctl:disabled{opacity:.4;cursor:default}
+  button.ctl:disabled:hover{color:var(--muted);border-color:var(--line)}
   .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:18px;align-items:start}
   .card{border:1px solid var(--line);background:var(--ink2);padding:15px 16px;
         display:flex;flex-direction:column;gap:10px}
@@ -73,9 +78,9 @@
   <header>
     <h1>Quarterstone · playable build</h1>
     <p class="lede">The first thing here you can actually play. One 64 × 64 m window of a seeded world,
-      one character, and the movement budget the terrain was sized against. No combat, no second player,
-      no enemies — this exists to answer one question, which is whether moving through this world feels
-      like anything.</p>
+      the movement budget the terrain was sized against, and — if you open a second window — someone
+      else in it with you. No combat and nothing to fight: this exists to answer one question, which is
+      whether moving through this world feels like anything.</p>
   </header>
 
   <section>
@@ -91,7 +96,11 @@
       <span class="seedbox"><label for="seedin">Seed</label><input id="seedin" value="QUARTERSTONE" spellcheck="false" autocomplete="off"></span>
       <button class="ctl" id="regen" type="button">Generate</button>
       <button class="ctl" id="respawn" type="button">Respawn</button>
+      <button class="ctl" id="hostbtn" type="button">Host a game</button>
     </div>
+    <p class="netstat" id="netstat">Playing alone. <b>Host a game</b> opens a second window on
+      this machine and puts another character in the same world — the host decides what happened,
+      the guest predicts and reconciles.</p>
   </section>
 
   <div class="cols">
@@ -113,9 +122,11 @@
     <div class="card">
       <h2>What this is not</h2>
       <p>The instanced-box renderer is the concept plate's, not the shipping approach — the greedy mesher
-        replaces it once streaming forces the issue. There is no second player, no netcode and no combat.
-        The world is one window: walk to the edge and you meet a wall, because that is where the generated
-        window stops.</p>
+        replaces it once streaming forces the issue. There is no combat and nothing to fight. The world is
+        one window: walk to the edge and you meet a wall, because that is where the generated window stops.</p>
+      <p>The two windows talk through <code>postMessage</code>, which is a prototype's transport and
+        nothing more. It sits behind the same three methods Steam Networking will implement, so none of
+        the session logic knows the difference — which was the point of doing this now rather than later.</p>
       <p>Aim drives facing and nothing else yet. What a mouse point and a stick direction each <em>mean</em>
         once there is an ability to place is still open.</p>
     </div>
@@ -1819,6 +1830,39 @@ function placeOnGround(col, x, z, fromY) {
   return a;
 }
 
+/**
+ * The whole of an actor's state, as plain numbers.
+ *
+ * Everything `step` reads or writes, including the vault in progress — leave a
+ * field out and a guest replaying from a snapshot diverges from the host mid
+ * climb. The controller is deterministic, so restoring this and re-applying the
+ * same inputs reproduces the same trajectory exactly; that is the whole basis
+ * of the reconciliation in src/net.
+ */
+function snapshot(a) {
+  return {
+    x: a.x, y: a.y, z: a.z, vx: a.vx, vy: a.vy, vz: a.vz,
+    grounded: a.grounded, apex: a.apex,
+    vault: a.vault ? { t: a.vault.t, x0: a.vault.x0, y0: a.vault.y0, z0: a.vault.z0,
+                       x1: a.vault.x1, y1: a.vault.y1, z1: a.vault.z1 } : null,
+    vaults: a.vaults, inWater: a.inWater, swimming: a.swimming,
+    faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
+    ticks: a.ticks, travelled: a.travelled, blocked: a.blocked,
+  };
+}
+
+/** The inverse. `a` is reused rather than replaced so references stay valid. */
+function restore(a, s) {
+  a.x = s.x; a.y = s.y; a.z = s.z; a.vx = s.vx; a.vy = s.vy; a.vz = s.vz;
+  a.grounded = s.grounded; a.apex = s.apex;
+  a.vault = s.vault ? { t: s.vault.t, x0: s.vault.x0, y0: s.vault.y0, z0: s.vault.z0,
+                        x1: s.vault.x1, y1: s.vault.y1, z1: s.vault.z1 } : null;
+  a.vaults = s.vaults; a.inWater = s.inWater; a.swimming = s.swimming;
+  a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
+  a.ticks = s.ticks; a.travelled = s.travelled; a.blocked = s.blocked;
+  return a;
+}
+
 /** Is the actor's box inside solid ground? Must never be true after a tick. */
 function embedded(col, a) {
   return col.overlaps(a.x, a.z, ACTOR.radius, a.y + EPS, a.y + ACTOR.height - EPS);
@@ -2266,7 +2310,280 @@ function makeInput(bindings) {
     usedBy(code) { return (byCode.get(code) || []).slice(); },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,sin:sin,cos:cos,exp:exp,hyp:hyp,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput};
+/* ---------- src/net/transport.mjs ---------- */
+/**
+ * The wire, as an interface and one test double.
+ *
+ * The decision (docs/DECISIONS.md §7) is host-authoritative peer-to-peer over
+ * Steam Networking. None of that exists yet and none of it needs to, because
+ * the thing worth getting right now is the *shape*: who decides, what crosses,
+ * and what happens when it arrives late or not at all. Steam Networking, a
+ * WebRTC data channel and two browser windows shouting at each other through
+ * postMessage are all the same three methods.
+ *
+ *   send(msg)        fire and forget, unreliable and unordered by assumption
+ *   onMessage(fn)    register a receiver; may fire at any time
+ *   close()
+ *
+ * Anything above that — reliability, ordering, retries — is the session's
+ * problem, and the session is written not to need them. Nothing here knows what
+ * a message means.
+ *
+ * makeLoopback is the double: a connected pair, driven by an explicit pump
+ * rather than by timers, with latency measured in ticks and loss from a seeded
+ * stream. That is what lets a five-hundred-tick desync test be a test rather
+ * than a coin toss.
+ */
+
+
+/**
+ * Two endpoints, wired to each other.
+ *
+ *   latency  extra ticks on top of the one tick nothing can travel faster than
+ *   loss     0..1, applied per message per direction
+ *   seed     names the loss stream, so a failing case can be re-run
+ */
+function makeLoopback(opts) {
+  const o = opts || {};
+  const latency = o.latency || 0;
+  const loss = o.loss || 0;
+  const rnd = mulberry32(xmur3(String(o.seed === undefined ? 'loopback' : o.seed))());
+
+  let clock = 0;
+  const queues = { a: [], b: [] };     /* messages waiting to arrive at each side */
+  const handlers = { a: [], b: [] };
+  const stat = { sent: 0, dropped: 0, delivered: 0, bytes: 0 };
+
+  function endpoint(self, other) {
+    let open = true;
+    return {
+      send(msg) {
+        if (!open) return;
+        stat.sent++;
+        /* Serialised on the way in, exactly as a real transport would: this is
+           what catches a message that smuggled a live object reference across
+           and then mutated under the receiver. */
+        const wire = JSON.stringify(msg);
+        stat.bytes += wire.length;
+        if (loss > 0 && rnd() < loss) { stat.dropped++; return; }
+        queues[other].push({ due: clock + 1 + latency, wire });
+      },
+      onMessage(fn) { handlers[self].push(fn); },
+      close() { open = false; },
+    };
+  }
+
+  const a = endpoint('a', 'b'), b = endpoint('b', 'a');
+
+  /** One tick of wire time. Deliver whatever is due, then move on. */
+  function pump() {
+    clock++;
+    for (const side of ['a', 'b']) {
+      const keep = [];
+      for (const item of queues[side]) {
+        if (item.due > clock) { keep.push(item); continue; }
+        stat.delivered++;
+        const msg = JSON.parse(item.wire);
+        for (const fn of handlers[side]) fn(msg);
+      }
+      queues[side] = keep;
+    }
+  }
+
+  return { a, b, pump, stat, get clock() { return clock; } };
+}
+/* ---------- src/net/session.mjs ---------- */
+/**
+ * Two players in one world, host-authoritative.
+ *
+ * The host owns the simulation. It runs both characters, and what it says
+ * happened is what happened. The guest runs its own character immediately from
+ * its own input — otherwise every step would cost a round trip — and then
+ * reconciles: when an authoritative snapshot arrives it is restored wholesale,
+ * and every input the host had not yet seen is replayed on top. What the player
+ * feels is their own latency-free movement; what they get is the host's answer.
+ *
+ * That only works because the controller is deterministic. Fixed timestep, no
+ * randomness, no wall clock, and arithmetic that returns the same bits on every
+ * engine (src/gen/exact.mjs) — replaying the same inputs from the same state
+ * reproduces the host exactly rather than approximately. This is what #20 and
+ * the pinned-math work were really for.
+ *
+ * Nothing about the terrain crosses the wire. The world is a pure function of
+ * its seed, so the host sends the seed once and the guest grows the same world
+ * itself. Later that is what makes edits, enemies and loot affordable: they are
+ * deltas against something both ends already have.
+ *
+ * The transport is an interface (src/net/transport.mjs). Steam Networking
+ * implements the same three methods later; the prototype uses two browser
+ * windows and a loopback pair in the tests.
+ */
+
+
+/** Snapshots per second is this divided into the tick rate: 60 / 3 = 20 Hz. */
+const SEND_EVERY = 3;
+/** How often the host re-announces itself until a guest answers. */
+const HELLO_EVERY = 20;
+/** Longest replay after a correction. Four seconds of input at 60 Hz. */
+const MAX_PENDING = 240;
+/** How hard the guest pulls its picture of the host toward the last snapshot. */
+const SMOOTH = 0.25;
+
+const HOST = 0, GUEST = 1;
+
+const IDLE = { mx: 0, mz: 0, jump: false, aimX: 0, aimZ: 0 };
+const copyInput = (i) => ({ mx: i.mx || 0, mz: i.mz || 0, jump: !!i.jump,
+                            aimX: i.aimX || 0, aimZ: i.aimZ || 0 });
+
+/**
+ * Somewhere to put the second player: near the first, but not inside a tree.
+ * A ring of offsets, then the spawn itself if none of them is clear.
+ */
+function spawnNear(col, x, z) {
+  const ring = [[1.5, 0], [0, 1.5], [-1.5, 0], [0, -1.5], [2.5, 2.5], [-2.5, -2.5]];
+  for (const [dx, dz] of ring) {
+    const a = placeOnGround(col, x + dx, z + dz);
+    if (a.grounded && !embedded(col, a)) return a;
+  }
+  return placeOnGround(col, x, z);
+}
+
+/* ------------------------------------------------------------------ host ---- */
+
+function makeHost(opts) {
+  const { col, spawn, transport, cfg } = opts;
+  const sendEvery = opts.sendEvery || SEND_EVERY;
+  const me = placeOnGround(col, spawn[0], spawn[2]);
+  const peer = spawnNear(col, spawn[0], spawn[2]);
+
+  /* Inputs arrive in bursts or not at all; they are consumed one a tick, which
+     is the jitter buffer. A starved tick repeats the last input rather than
+     dropping to idle — a player who stutters should keep running, not stop. */
+  const inbox = [];
+  let last = { seq: 0, input: copyInput(IDLE) };
+  let t = 0, joined = false, seen = 0;
+
+  transport.onMessage((m) => {
+    if (!m || typeof m !== 'object') return;
+    if (m.t === 'join') { joined = true; return; }
+    if (m.t === 'input') {
+      seen++;
+      if (inbox.length < MAX_PENDING) inbox.push({ seq: m.seq, input: copyInput(m) });
+    }
+  });
+
+  function announce() { transport.send({ t: 'hello', cfg, spawn, id: GUEST }); }
+  announce();
+
+  return {
+    role: 'host', me, peer, cfg,
+    get connected() { return joined; },
+    get tick() { return t; },
+    get stats() { return { t, joined, queued: inbox.length, inputs: seen }; },
+
+    /** One authoritative tick. `localInput` is this machine's own player. */
+    step(localInput) {
+      t++;
+      if (!joined && t % HELLO_EVERY === 0) announce();
+
+      const next = inbox.length ? inbox.shift() : last;
+      last = next;
+
+      step(col, me, copyInput(localInput || IDLE));
+      step(col, peer, next.input);
+
+      if (t % sendEvery === 0) {
+        transport.send({ t: 'snap', tick: t, ack: next.seq,
+                         you: snapshot(peer), them: snapshot(me) });
+      }
+      return this;
+    },
+  };
+}
+
+/* ----------------------------------------------------------------- guest ---- */
+
+/**
+ * `build(cfg)` is handed the host's world config and must return
+ * `{ col, spawn }` — the guest grows the world itself rather than being sent
+ * it. Until that happens the session is not `ready` and stepping it does
+ * nothing.
+ */
+function makeGuest(opts) {
+  const { transport, build } = opts;
+  let col = null, me = null, peer = null, cfg = null;
+  let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0;
+  const pending = [];
+  let target = null;                       /* last authoritative host state */
+  let lastYou = null;                      /* ...and the last word on us */
+
+  transport.onMessage((m) => {
+    if (!m || typeof m !== 'object') return;
+
+    if (m.t === 'hello') {
+      if (ready) { transport.send({ t: 'join' }); return; }   /* a repeat beacon */
+      cfg = m.cfg;
+      const world = build(m.cfg);
+      col = world.col;
+      me = spawnNear(col, m.spawn[0], m.spawn[2]);
+      peer = placeOnGround(col, m.spawn[0], m.spawn[2]);
+      ready = true;
+      transport.send({ t: 'join' });
+      return;
+    }
+
+    if (m.t === 'snap' && ready) {
+      /* Wholesale, not a nudge: the host's word replaces ours, and then every
+         input it had not seen yet is put back on top. Skipping the replay is
+         what makes a corrected client feel like it is being dragged backwards. */
+      restore(me, m.you);
+      lastYou = m.you;
+      lastAck = m.ack;
+      corrections++;
+      while (pending.length && pending[0].seq <= m.ack) pending.shift();
+      for (const p of pending) { step(col, me, p.input); replayed++; }
+      target = m.them;
+    }
+  });
+
+  return {
+    role: 'guest',
+    get ready() { return ready; },
+    get me() { return me; },
+    get peer() { return peer; },
+    get cfg() { return cfg; },
+    get connected() { return ready; },
+    get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck }; },
+    /** The last thing the host said about us, before any replay on top of it.
+        The gap between this and `me` is exactly what prediction is buying. */
+    get authoritative() { return target ? lastYou : null; },
+
+    /** One predicted tick. Sends the input, applies it locally straight away. */
+    step(localInput) {
+      if (!ready) return this;
+      seq++;
+      const input = copyInput(localInput || IDLE);
+      transport.send({ t: 'input', seq, mx: input.mx, mz: input.mz, jump: input.jump,
+                       aimX: input.aimX, aimZ: input.aimZ });
+      pending.push({ seq, input });
+      if (pending.length > MAX_PENDING) pending.shift();
+      step(col, me, input);
+
+      /* The other player arrives at 20 Hz and is drawn, not simulated, so it is
+         eased rather than snapped. Proper snapshot interpolation on a delay
+         buffer is a refinement; this is enough to see someone move. */
+      if (target) {
+        peer.x += (target.x - peer.x) * SMOOTH;
+        peer.y += (target.y - peer.y) * SMOOTH;
+        peer.z += (target.z - peer.z) * SMOOTH;
+        peer.faceX = target.faceX; peer.faceZ = target.faceZ;
+        peer.grounded = target.grounded; peer.dead = target.dead;
+      }
+      return this;
+    },
+  };
+}
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,sin:sin,cos:cos,exp:exp,hyp:hyp,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -2411,15 +2728,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   }
 
   /* ---------- the character ---------- */
-  function makeAvatar(){
+  function makeAvatar(cloth,skin){
     function box(w,h,d,c){return new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
       new THREE.MeshLambertMaterial({color:c}));}
     var g=new THREE.Group();
     /* Sized from ACTOR so what you see is what collides. */
     var r=ACTOR.radius, h=ACTOR.height;
     var legs=box(r*1.2,h*0.31,r*0.86,0x33302c); legs.position.y=h*0.155; g.add(legs);
-    var torso=box(r*1.49,h*0.34,r*1.03,0x2f6f7a); torso.position.y=h*0.49; g.add(torso);
-    var head=box(r*0.97,h*0.18,r*0.91,0xc99a6e); head.position.y=h*0.75; g.add(head);
+    var torso=box(r*1.49,h*0.34,r*1.03,cloth); torso.position.y=h*0.49; g.add(torso);
+    var head=box(r*0.97,h*0.18,r*0.91,skin); head.position.y=h*0.75; g.add(head);
     var pack=box(r*0.86,h*0.17,r*0.46,0x4a4038); pack.position.set(0,h*0.53,-r*0.69); g.add(pack);
     /* A wedge on the nose, so facing is visible without an animation system. */
     var nose=new THREE.Mesh(new THREE.ConeGeometry(r*0.30,r*0.75,4),
@@ -2428,31 +2745,52 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     g.traverse(function(o){ if(o.isMesh){ o.castShadow=true; o.userData.keep=true; } });
     return g;
   }
-  var avatar=makeAvatar();
+  var avatar=makeAvatar(0x2f6f7a,0xc99a6e), peerAvatar=makeAvatar(0xa5642a,0xb5855c);
+  peerAvatar.visible=false;
 
   /* ---------- state ---------- */
   var camera=new THREE.OrthographicCamera(-1,1,1,-1,0.1,420);
-  var cam=QS.makeCamera({}), input=QS.makeInput(), built=null, col=null, actor=null;
+  var cam=QS.makeCamera({}), input=QS.makeInput(), built=null, col=null;
+  /* `solo` is the character when nobody else is here; once a session exists it
+     owns the characters instead, and `solo` is left behind. */
+  var solo=null, session=null, wire=null, role='solo', warped=false;
   var vp={w:1,h:1}, tm=0, deaths=0, fps=60, wind=new THREE.Vector2(0.72,0.69);
-  var camV=new THREE.Vector3(), camT=new THREE.Vector3();
+  var camT=new THREE.Vector3();
+
+  function player(){ return session ? session.me : solo; }
+  function other(){ return session ? session.peer : null; }
 
   function spawn(){
-    actor=QS.placeOnGround(col,built.data.spawn[0],built.data.spawn[2]);
-    QS.warpTo(cam,actor.x,actor.y,actor.z);
+    /* A guest does not get to decide where it is — the host does. */
+    if(role==='guest') return;
+    var a=QS.placeOnGround(col,built.data.spawn[0],built.data.spawn[2]);
+    if(session){ session.me.x=a.x; session.me.y=a.y; session.me.z=a.z;
+                 session.me.vx=session.me.vy=session.me.vz=0;
+                 session.me.dead=null; session.me.grounded=a.grounded; session.me.apex=a.y; }
+    else solo=a;
+    var b=player();
+    QS.warpTo(cam,b.x,b.y,b.z);
     deadEl.style.display='none';
   }
-  function regen(seedStr){
-    var data=QS.buildWorld({seed:seedStr,size:64,force:null,ox:0,oz:0});
+
+  /** Build (or rebuild) the world and its scene. Returns what a session needs. */
+  function buildFor(cfg){
+    var data=QS.buildWorld(cfg);
     if(built) built.scene.traverse(function(n){
       if((n.isMesh||n.isInstancedMesh)&&!n.userData.keep){
         if(n.geometry&&n.geometry!==boxGeo) n.geometry.dispose();
         if(n.material&&n.material.dispose) n.material.dispose();
       }
     });
-    built=buildScene(data); built.data=data;
-    built.scene.add(avatar);
+    built=buildScene(data); built.data=data; built.cfg=cfg;
+    built.scene.add(avatar); built.scene.add(peerAvatar);
     col=QS.colliderForWorld(data);
-    spawn();
+    return {col:col,spawn:data.spawn};
+  }
+  function regen(seedStr){
+    if(session){ says('leave the game first'); return; }
+    buildFor({seed:seedStr,size:64,force:null,ox:0,oz:0});
+    solo=null; spawn();
   }
 
   function resize(){
@@ -2496,6 +2834,58 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     }
   }
 
+  /* ---------- two players ----------
+     Two windows on one machine, shouting at each other through postMessage.
+     It sits behind the same three-method interface a WebRTC data channel or
+     Steam Networking implements later (src/net/transport.mjs), so none of the
+     session logic knows or cares which one it is talking over. postMessage
+     rather than BroadcastChannel because a page opened from disk has an opaque
+     origin, and this has to work from a file as well as from a URL. */
+  var netstat=document.getElementById('netstat'), hostBtn=document.getElementById('hostbtn');
+  function says(msg,live){
+    netstat.innerHTML=msg;
+    netstat.classList.toggle('live',!!live);
+  }
+  function windowTransport(target){
+    var handlers=[];
+    window.addEventListener('message',function(e){
+      if(!e.data||e.data.qs!==1) return;
+      for(var q=0;q<handlers.length;q++) handlers[q](e.data.m);
+    });
+    return {
+      send:function(m){ var w=target(); if(!w) return;
+                        try{ w.postMessage({qs:1,m:m},'*'); }catch(err){} },
+      onMessage:function(f){ handlers.push(f); },
+      close:function(){}
+    };
+  }
+  function startHost(){
+    if(session||!built) return;
+    var peerWin=window.open(location.href.split('#')[0]+'#join','qs-peer',
+                            'width=1060,height=760');
+    if(!peerWin){ says('The browser blocked the second window — allow pop-ups and try again.'); return; }
+    role='host';
+    wire=windowTransport(function(){ return peerWin; });
+    /* The host announces itself on a beacon until someone answers, so the
+       second window can take as long as it likes to load. */
+    session=QS.makeHost({col:col,spawn:built.data.spawn,transport:wire,cfg:built.cfg});
+    if(solo){ session.me.x=solo.x; session.me.y=solo.y; session.me.z=solo.z; }
+    hostBtn.disabled=true;
+    says('<b>Hosting.</b> Waiting for the second window to join…',true);
+  }
+  function startGuest(){
+    role='guest';
+    wire=windowTransport(function(){ return window.opener; });
+    session=QS.makeGuest({transport:wire, build:function(cfg){
+      /* Nothing about the terrain came over the wire — only its seed did. */
+      var w=buildFor(cfg);
+      seedin.value=cfg.seed;
+      return w;
+    }});
+    hostBtn.disabled=true;
+    says('<b>Joining.</b> Waiting for the host…',true);
+  }
+
   /* ---------- bindings panel ---------- */
   function drawBinds(){
     var host=document.getElementById('binds'), b=input.bindings();
@@ -2525,27 +2915,37 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   seedin.addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.stopPropagation(); doGen(); } });
 
   /* ---------- the loop ---------- */
-  function aimHeading(){
-    var s=input.aim, h=QS.aimFromStick(cam,s.x,s.y);
+  function aimHeading(a){
+    var st=input.aim, h=QS.aimFromStick(cam,st.x,st.y);
     if(h) return h;
     var c=input.cursor;
-    if(c.active) return QS.aimFromPointer(cam,c.x,c.y,vp,actor);
+    if(c.active) return QS.aimFromPointer(cam,c.x,c.y,vp,a);
     return null;
   }
   function tick(){
     if(input.took('rotateLeft')) QS.snap(cam,-1);
     if(input.took('rotateRight')) QS.snap(cam,1);
     if(input.took('respawn')) spawn();
-    var ax=input.axes(), m=QS.moveFrom(cam,ax.ix,ax.iy), h=aimHeading();
-    var wasDead=actor.dead;
-    QS.step(col,actor,{mx:m.mx,mz:m.mz,jump:input.took('jump'),
-                       aimX:h?h.x:0, aimZ:h?h.z:0});
-    if(actor.dead&&!wasDead){
-      deaths++; deadMsg.textContent=actor.dead==='fall'?'that was too far down'
-        :(actor.dead==='magma'?'magma is lethal':'out of the world');
+
+    var a=player();
+    /* A guest has nothing to drive until the host has told it which world it
+       is standing in. Its input is simply not sampled until then. */
+    if(!a){ if(session) session.step(null); return; }
+
+    var ax=input.axes(), m=QS.moveFrom(cam,ax.ix,ax.iy), h=aimHeading(a);
+    var wasDead=a.dead;
+    var inp={mx:m.mx,mz:m.mz,jump:input.took('jump'),aimX:h?h.x:0,aimZ:h?h.z:0};
+    if(session) session.step(inp); else QS.step(col,a,inp);
+
+    var b=player();
+    if(!warped){ QS.warpTo(cam,b.x,b.y,b.z); warped=true; }
+    if(b.dead&&!wasDead){
+      deaths++; deadMsg.textContent=b.dead==='fall'?'that was too far down'
+        :(b.dead==='magma'?'magma is lethal':'out of the world');
       deadEl.style.display='grid';
     }
-    QS.follow(cam,actor.x,actor.y,actor.z);
+    if(!b.dead) deadEl.style.display='none';
+    QS.follow(cam,b.x,b.y,b.z);
   }
 
   /* Separate from the loop so it can be called on demand: WebGL clears its
@@ -2554,8 +2954,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      That is how the smoke test checks the build draws at all. */
   function draw(){
     if(!built) return;
-    avatar.position.set(actor.x,actor.y,actor.z);
-    avatar.rotation.y=Math.atan2(actor.faceX,actor.faceZ);
+    var a=player();
+    avatar.visible=!!a;
+    if(a){ avatar.position.set(a.x,a.y,a.z); avatar.rotation.y=Math.atan2(a.faceX,a.faceZ); }
+    var o=other(), show=!!(o&&session&&session.connected);
+    peerAvatar.visible=show;
+    if(show){ peerAvatar.position.set(o.x,o.y,o.z);
+              peerAvatar.rotation.y=Math.atan2(o.faceX,o.faceZ); }
     var e=QS.eye(cam);
     camera.position.set(e.x,e.y,e.z);
     camT.set(cam.tx,cam.ty,cam.tz); camera.lookAt(camT);
@@ -2565,57 +2970,79 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     renderer.render(built.scene,camera);
   }
 
-  var acc=0, last=0, frames=0, fpsAt=0;
+  var acc=0, last=0, frames=0, fpsAt=0, wasConnected=false;
   function frame(now){
     requestAnimationFrame(frame);
-    if(!built) return;
     if(!last){ last=now; fpsAt=now; }
     var dt=Math.min((now-last)/1000,0.25); last=now;
     tm+=dt; acc+=dt;
     pollPad();
     /* Fixed step, so the trajectory does not depend on the frame rate — the
-       same reason the smoke test can assert it. */
+       same reason the smoke test can assert it, and the same reason a guest's
+       replay lands on the host's answer rather than near it. */
     var guard=0;
     while(acc>=TICK&&guard++<8){ tick(); acc-=TICK; }
+
+    if(session&&session.connected&&!wasConnected){
+      wasConnected=true;
+      says(role==='host'
+        ? '<b>Hosting.</b> The other window is in the same world, grown from the same seed — '
+          + 'nothing about the terrain crossed between them.'
+        : '<b>Joined.</b> You are predicting locally and reconciling against the host.',true);
+    }
+    if(!built) return;
 
     frames++;
     if(now-fpsAt>500){ fps=frames*1000/(now-fpsAt); frames=0; fpsAt=now; }
 
+    var a=player();
     var wa=0.6+Math.sin(tm*0.06)*0.7;
     wind.set(Math.cos(wa),Math.sin(wa));
     if(built.gmat){ built.gmat.uniforms.uTime.value=tm; built.gmat.uniforms.uWind.value.copy(wind);
-      built.gmat.uniforms.uP0.value.set(actor.x,actor.y,actor.z); }
+      if(a) built.gmat.uniforms.uP0.value.set(a.x,a.y,a.z); }
     if(built.wmat){ built.wmat.uniforms.uTime.value=tm; built.wmat.uniforms.uWind.value.copy(wind); }
 
     draw();
 
-    var state=actor.dead?('dead · '+actor.dead)
-      :(actor.vault?'vaulting':(actor.swimming?'swimming'
-        :(actor.inWater?'wading':(actor.grounded?'grounded':'airborne'))));
-    var spd=Math.sqrt(actor.vx*actor.vx+actor.vz*actor.vz);
+    if(!a){ hud.textContent='waiting for the host…'; return; }
+    var state=a.dead?('dead · '+a.dead)
+      :(a.vault?'vaulting':(a.swimming?'swimming'
+        :(a.inWater?'wading':(a.grounded?'grounded':'airborne'))));
+    var spd=Math.sqrt(a.vx*a.vx+a.vz*a.vz);
+    var net=!session?'solo'
+      :(role+(session.connected?' · linked':' · waiting')
+        +(role==='guest'?('  seq '+session.stats.seq+'  fixes '+session.stats.corrections):''));
     hud.textContent=
-      'x '+actor.x.toFixed(1)+'  y '+actor.y.toFixed(2)+'  z '+actor.z.toFixed(1)+'\n'+
+      'x '+a.x.toFixed(1)+'  y '+a.y.toFixed(2)+'  z '+a.z.toFixed(1)+'\n'+
       state+'   '+spd.toFixed(2)+' m/s\n'+
       /* Steps are counted from where the view starts, not from zero: the
          snaps sit on START_YAW + n quarters, so dividing the raw angle by a
          quarter never lands on an integer. */
-      'view '+((Math.round((cam.yawTo-QS.START_YAW)/QS.QUARTER)%4+4)%4)+'/4   vaults '+actor.vaults+
-      '   deaths '+deaths+'\n'+fps.toFixed(0)+' fps';
+      'view '+((Math.round((cam.yawTo-QS.START_YAW)/QS.QUARTER)%4+4)%4)+'/4   vaults '+a.vaults+
+      '   deaths '+deaths+'\n'+net+'   '+fps.toFixed(0)+' fps';
   }
 
   resize();
-  regen(seedin.value||'QUARTERSTONE');
+  hostBtn.addEventListener('click',function(){ startHost(); stage.focus(); });
+  /* Opened by a host: do not generate anything, wait to be told which world. */
+  if(location.hash.indexOf('join')>=0&&window.opener) startGuest();
+  else regen(seedin.value||'QUARTERSTONE');
   stage.focus();
   requestAnimationFrame(frame);
   /* A handle for the smoke test, and for anyone poking at this in a console.
      `run` steps the simulation the same fixed way the loop does, which is what
      lets the gate assert the wiring exactly instead of waiting on wall clock. */
   window.QSPLAY={
-    get actor(){return actor;}, get cam(){return cam;}, input:input,
-    get ready(){return !!built;},
+    get actor(){return player();}, get peer(){return other();},
+    get cam(){return cam;}, input:input,
+    get ready(){return !!built&&!!player();},
+    get role(){return role;},
+    get connected(){return !!session&&session.connected;},
+    get stats(){return session?session.stats:null;},
     run:function(n){ for(var q=0;q<(n||1);q++) tick(); },
     draw:draw,
-    screen:function(){ return QS.project(cam,{x:actor.x,y:actor.y,z:actor.z},vp); },
+    host:startHost,
+    screen:function(){ var a=player(); return QS.project(cam,{x:a.x,y:a.y,z:a.z},vp); },
     respawn:spawn
   };
 })();

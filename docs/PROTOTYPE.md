@@ -59,9 +59,11 @@ optimised for never rewriting anything; this optimises for playing something.
    quarter-turn snap, camera-relative movement that survives a snap, both aiming models, and a
    remappable binding table — all in `src/sim/`, all assertable in node. `docs/play/index.html`
    is the build: open it and walk around. **The bar at the top of this document is met.**
-5. **Two players moving.** Earlier than comfortable: authority discovered late is a rewrite,
-   discovered now it is an interface. Plain WebRTC or WebSockets behind an interface Steam
-   Networking can later implement. No Electron wrapper needed to prototype.
+5. ~~**Two players moving.**~~ **Done** (#22). Host-authoritative, with the guest predicting
+   locally and reconciling — exactly, because the controller is deterministic. The transport is
+   three methods (`src/net/transport.mjs`); the prototype speaks postMessage between two browser
+   windows, and Steam Networking implements the same interface later. Nothing about the terrain
+   crosses the wire: the world is a pure function of its seed.
 6. **One frame, one attack, stamina, dodge.** Longblade only.
 7. **One enemy** with a telegraph and a death.
 
@@ -78,7 +80,7 @@ is what actually holds.
 
 | Layer | What it does |
 | --- | --- |
-| `tools/smoke.mjs` | The assertions. Bundle sync, headless generation, the movement budget, the camera and input table, a five-minute soak per seed, boot, cross-engine math, plate/node parity, golden-master, sanity invariants, and a render of both pages. |
+| `tools/smoke.mjs` | The assertions, in two halves. `--node` (seconds): bundle sync, pinned arithmetic, generation, the movement budget, the camera and input table, two networked sessions over a lossy wire, a five-minute soak per seed, golden-master, sanity invariants. `--browser` (minutes): boot, cross-engine math, plate/node parity, both renders, and two windows playing together. |
 | `tools/hooks/pre-push` | Runs `--node` before anything leaves the machine — genuinely seconds, so it survives contact with 1am. Install: `node tools/hooks/install.mjs` |
 | `.github/workflows/ci.yml` | Two required jobs in parallel on every push and PR: `checks` (the node half, under a minute) and `browser` (boot, parity, and both renders). |
 | This document | The bar, in the place a new session will look. |

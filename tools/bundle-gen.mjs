@@ -29,6 +29,7 @@ const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'rng', 'biomes', 'field', 'erosion', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index'],
   'src/sim': ['collider', 'actor', 'camera', 'input'],
+  'src/net': ['transport', 'session'],
 };
 
 /** The generator's public surface: what the concept plate draws with. */
@@ -37,14 +38,15 @@ const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERI
                  /* the pinned math, so the smoke test can compare it across engines */
                  'sin', 'cos', 'exp', 'hyp'];
 
-/** Everything the playable build needs on top of it. */
+/** Everything the playable build needs on top of it: the simulation and the wire. */
 const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld',
                  'ACTOR', 'TICK', 'RUN', 'GRAVITY', 'JUMP_V', 'JUMP_APEX',
                  'makeActor', 'placeOnGround', 'embedded', 'step',
                  'makeCamera', 'snap', 'warpTo', 'follow', 'eye', 'basis', 'moveFrom',
                  'project', 'groundAt', 'heading', 'aimFromPointer', 'aimFromStick',
                  'setView', 'VIEW', 'QUARTER', 'START_YAW',
-                 'ACTIONS', 'DEFAULT_BINDINGS', 'defaultBindings', 'makeInput'];
+                 'ACTIONS', 'DEFAULT_BINDINGS', 'defaultBindings', 'makeInput',
+                 'snapshot', 'restore', 'makeLoopback', 'makeHost', 'makeGuest', 'spawnNear'];
 
 /**
  * The two pages that carry a bundle. The plate is a design document and gets
@@ -52,7 +54,8 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld',
  */
 export const TARGETS = [
   { file: PLATE, name: 'docs/concept/index.html', dirs: ['src/gen'], api: GEN_API },
-  { file: PLAY, name: 'docs/play/index.html', dirs: ['src/gen', 'src/sim'], api: GEN_API.concat(SIM_API) },
+  { file: PLAY, name: 'docs/play/index.html', dirs: ['src/gen', 'src/sim', 'src/net'],
+    api: GEN_API.concat(SIM_API) },
 ];
 
 function strip(src) {

@@ -1,10 +1,11 @@
 /**
  * Driving the character controller without a player.
  *
- * Three things live here, and none is part of the game: a suite of micro-worlds
+ * Four things live here, and none is part of the game: a suite of micro-worlds
  * that pin each clause of the movement budget, a five-minute soak that turns a
  * wanderer loose on a generated world and watches for it to fall through, and a
- * suite for the camera and the input table.
+ * suite for the camera and the input table, and a pair of networked sessions
+ * talking over a wire with whatever latency and loss the case calls for.
  *
  * The soak's wanderer is deliberately cautious — it turns away from magma and
  * from drops it would not survive — because the soak is asking whether the world
@@ -12,13 +13,17 @@
  * ways to die are pinned by the budget suite instead, where they can be exact.
  */
 import { V, MOVE } from '../../src/gen/constants.mjs';
-import { sin, cos } from '../../src/gen/exact.mjs';
+import { sin, cos, hyp } from '../../src/gen/exact.mjs';
 import { mulberry32, xmur3 } from '../../src/gen/rng.mjs';
 import { makeCollider, colliderForWorld, LIQUID, EPS } from '../../src/sim/collider.mjs';
 import { placeOnGround, step, embedded, ACTOR, TICK, RUN } from '../../src/sim/actor.mjs';
 import { makeCamera, moveFrom, project, aimFromStick, aimFromPointer,
          START_YAW, QUARTER, snap } from '../../src/sim/camera.mjs';
 import { makeInput, defaultBindings, ACTIONS } from '../../src/sim/input.mjs';
+import { makeLoopback } from '../../src/net/transport.mjs';
+import { makeHost, makeGuest } from '../../src/net/session.mjs';
+import { buildWorld } from '../../src/gen/index.mjs';
+import { GOLDEN_SEEDS } from './harness.mjs';
 
 /** Five minutes, the bar in docs/PROTOTYPE.md. */
 export const SOAK_TICKS = Math.round(300 / TICK);
@@ -329,6 +334,188 @@ export function viewSuite() {
   const ax2 = inp2.axes();
   say('a held key beats a drifting stick', ax2.ix === -1 && ax2.iy === 0,
       `ix ${ax2.ix}, iy ${ax2.iy}`);
+
+  return out;
+}
+
+/* ------------------------------------------------------------------- net ---- */
+
+const dist2 = (a, b) => hyp(a.x - b.x, a.z - b.z);
+
+/**
+ * One host and one guest on one seed, wired through a loopback with whatever
+ * latency and loss the case wants. Returns both sessions plus the wire, so a
+ * test can read the stats it cares about.
+ */
+/**
+ * Host and guest each hold their own collider, built from their own copy of the
+ * world — that separation is the claim, so the suite keeps it. It only builds
+ * them once between them: a seed grows the same world every time, and nine
+ * cases paying for eighteen generations would put the node half of the gate
+ * back over the line it was split to get under.
+ */
+const WORLDS = new Map();
+function sides(seedName) {
+  if (!WORLDS.has(seedName)) {
+    const cfg = GOLDEN_SEEDS.find((c) => c.nm === seedName);
+    const world = buildWorld(cfg);
+    WORLDS.set(seedName, {
+      cfg, spawn: world.spawn,
+      hostCol: colliderForWorld(world),
+      guestCol: colliderForWorld(buildWorld(cfg)),
+    });
+  }
+  return WORLDS.get(seedName);
+}
+
+function twoPlayers(seedName, wire) {
+  const w = sides(seedName || 'meadow');
+  const host = makeHost({ col: w.hostCol, spawn: w.spawn, transport: wire.a, cfg: w.cfg });
+  const guest = makeGuest({
+    transport: wire.b,
+    build: () => ({ col: w.guestCol, spawn: w.spawn }),
+  });
+  return { host, guest, wire, col: w.hostCol };
+}
+
+/** A deterministic wander, so both players move without anyone driving them. */
+function scripted(phase) {
+  return (t) => {
+    const a = t * 0.017 + phase;
+    return { mx: cos(a), mz: sin(a), jump: t % 131 === 0 };
+  };
+}
+
+function run(pair, ticks, hostIn, guestIn, onTick) {
+  for (let t = 0; t < ticks; t++) {
+    pair.wire.pump();
+    pair.host.step(hostIn ? hostIn(t) : null);
+    pair.guest.step(guestIn ? guestIn(t) : null);
+    if (onTick) onTick(t);
+  }
+}
+
+/** Everyone stops moving and the wire drains. Both ends must end up identical. */
+function settle(pair, ticks) { run(pair, ticks || 120, () => ({}), () => ({})); }
+
+export function netSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  /* 1. The handshake, and that a world is grown rather than shipped. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({}));
+    run(p, 30, scripted(0), scripted(2));
+    say('a guest joins from a seed alone', p.host.connected && p.guest.ready,
+        `host ${p.host.connected ? 'joined' : 'alone'}, guest ${p.guest.ready ? 'ready' : 'waiting'}`);
+  }
+
+  /* 2. What actually crosses. Terrain is a pure function of its seed, so the
+        wire should carry a seed and two characters and nothing else — checked
+        by looking at every message, not by assuming. */
+  {
+    const wire = makeLoopback({});
+    const p = twoPlayers('meadow', wire);
+    const msgs = [];
+    for (const side of ['a', 'b']) {
+      const ep = wire[side], send = ep.send.bind(ep);
+      ep.send = (m) => { msgs.push(m); return send(m); };
+    }
+    run(p, 600, scripted(0), scripted(2));
+    const bad = [];
+    for (const m of msgs) {
+      for (const [k, v] of Object.entries(m)) {
+        if (Array.isArray(v) && v.length > 3) bad.push(`${m.t}.${k}[${v.length}]`);
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+          for (const [k2, v2] of Object.entries(v)) {
+            if (Array.isArray(v2) && v2.length > 3) bad.push(`${m.t}.${k}.${k2}[${v2.length}]`);
+          }
+        }
+      }
+    }
+    const kbs = wire.stat.bytes / (600 / 60) / 1024;
+    say('no terrain crosses the wire', bad.length === 0, bad.slice(0, 3).join(', '));
+    say('the wire stays small', kbs < 30,
+        `${kbs.toFixed(1)} kB/s of JSON — a packed format is worth roughly 100x of it`);
+  }
+
+  /* 3. With a perfect wire, prediction and authority are the same thing: once
+        everyone stops and the last snapshot lands, the two ends must hold
+        identical state, not merely similar. Anything else is a desync. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({}));
+    run(p, 400, scripted(0), scripted(2));
+    settle(p, 120);
+    const d = dist2(p.guest.me, p.host.peer);
+    say('a clean wire ends in agreement, exactly', d === 0 && p.guest.me.y === p.host.peer.y,
+        `${d.toFixed(9)} m apart, dy ${(p.guest.me.y - p.host.peer.y).toFixed(9)}`);
+  }
+
+  /* 4. The same, over a wire worth calling a wire. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 6 }));
+    run(p, 400, scripted(0), scripted(2));
+    settle(p, 150);
+    const d = dist2(p.guest.me, p.host.peer);
+    say('117 ms of latency ends in agreement', d < 1e-9, `${d.toFixed(9)} m apart`);
+  }
+
+  /* 5. And over a bad one. A lost input is never re-sent — the host repeats
+        what it has and the next snapshot puts the guest right. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 6, loss: 0.2, seed: 'lossy' }));
+    run(p, 500, scripted(0), scripted(2));
+    settle(p, 200);
+    const d = dist2(p.guest.me, p.host.peer);
+    say('a fifth of the packets lost, still no desync', d < 1e-9,
+        `${d.toFixed(9)} m apart, ${p.wire.stat.dropped} dropped`);
+  }
+
+  /* 6. Prediction is not a stale snapshot with a nice name. Under latency the
+        guest's own character must sit ahead of the last thing the host said
+        about it, by roughly the round trip — that gap *is* the replay. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 6 }));
+    let lead = 0;
+    run(p, 300, scripted(0), scripted(2), () => {
+      const a = p.guest.authoritative;
+      if (a) lead = Math.max(lead, dist2(p.guest.me, a));
+    });
+    say('the guest leads the last word from the host', lead > 0.15 && p.guest.stats.replayed > 0,
+        `${lead.toFixed(2)} m ahead, ${p.guest.stats.replayed} inputs replayed`);
+  }
+
+  /* 7. Authority. A guest whose position is wrong — cheating, a bug, a bad
+        merge — is corrected, not negotiated with. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 2 }));
+    run(p, 120, scripted(0), scripted(2));
+    const before = { x: p.host.peer.x, z: p.host.peer.z };
+    p.guest.me.x += 40; p.guest.me.z -= 40;
+    run(p, 40, scripted(0), scripted(2));
+    const pulled = dist2(p.guest.me, p.host.peer);
+    const hostMoved = dist2(p.host.peer, before);
+    say('the host is authoritative', pulled < 0.5 && hostMoved < 5,
+        `guest pulled back to ${pulled.toFixed(2)} m; host never saw the jump (${hostMoved.toFixed(2)} m)`);
+  }
+
+  /* 8. The point of all of it: each of them can see the other move. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 4 }));
+    run(p, 10, scripted(0), scripted(2));          /* let the handshake finish */
+    const g0 = { x: p.guest.peer.x, z: p.guest.peer.z };
+    const h0 = { x: p.host.peer.x, z: p.host.peer.z };
+    /* Furthest reached, not where they ended up: the scripted walk is a circle,
+       so after a full turn both are back where they started and a displacement
+       test would say nobody moved. */
+    let sawHost = 0, sawGuest = 0;
+    run(p, 400, scripted(0), scripted(2), () => {
+      sawHost = Math.max(sawHost, dist2(p.guest.peer, g0));
+      sawGuest = Math.max(sawGuest, dist2(p.host.peer, h0));
+    });
+    say('each player sees the other move', sawHost > 2 && sawGuest > 2,
+        `guest saw ${sawHost.toFixed(1)} m, host saw ${sawGuest.toFixed(1)} m`);
+  }
 
   return out;
 }
