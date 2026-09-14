@@ -10,14 +10,38 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Two jobs, both required, in parallel. The split is the point: almost all the
+# wall clock is Chromium — downloading it, booting it, and rendering in software
+# on a runner with no GPU — and almost all the signal is in the half that needs
+# none of that. A gate slow enough to be resented is a gate that gets bypassed.
+# See issue #25.
 jobs:
-  smoke:
-    name: Smoke test
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install harness dependencies
+        working-directory: tools
+        run: npm ci
+
+      # Bundle sync, pinned arithmetic, generation, the movement budget, the
+      # camera and input table, and a five-minute soak on every golden seed —
+      # all of it without a browser, in a couple of seconds.
+      - name: Node checks
+        run: node tools/smoke.mjs --node
+
+  browser:
+    name: Browser
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -34,13 +58,13 @@ jobs:
 
       # Renders in software here, so this asserts correctness and proxy metrics
       # only. Real frame rate is checked by hand on a GPU — see docs/PROTOTYPE.md.
-      - name: Smoke test
-        run: node tools/smoke.mjs
+      - name: Browser checks
+        run: node tools/smoke.mjs --browser
 
-      - name: Upload render
+      - name: Upload renders
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-render
+          name: renders
           path: .render/*.png
           if-no-files-found: ignore

@@ -1,9 +1,17 @@
 /**
  * Smoke test — the gate that keeps the build playable.
  *
- *   node tools/smoke.mjs                 # assert
+ *   node tools/smoke.mjs                 # assert everything
+ *   node tools/smoke.mjs --node          # only what needs no browser (~2 s)
+ *   node tools/smoke.mjs --browser       # only what does
+ *   node tools/smoke.mjs --quick         # everything but the render (pre-push hook)
  *   node tools/smoke.mjs --update        # re-record the golden baseline
- *   node tools/smoke.mjs --quick         # skip the render pass (pre-push hook)
+ *
+ * The --node / --browser split exists for CI, which runs them as two jobs. The
+ * node half catches most real regressions and comes back in well under a
+ * minute; the browser half has to boot Chromium and render in software, and no
+ * amount of care makes that fast. A gate slow enough to be resented is a gate
+ * that gets bypassed — see issue #25.
  *
  * What is asserted today, because today there is no game yet:
  *
@@ -40,14 +48,17 @@
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROOT, preparePage, launch, tilesDone, GOLDEN_SEEDS, measureSeeds, measureWorld,
-         generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
+import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
+         someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 
 const argv = process.argv.slice(2);
 const UPDATE = argv.includes('--update');
 const QUICK = argv.includes('--quick');
+/* Which halves to run. Neither flag means both. */
+const NODE_HALF = !argv.includes('--browser');
+const BROWSER_HALF = !argv.includes('--node') && !UPDATE;
 const OUT = join(ROOT, '.render');
 const BASELINE = join(ROOT, 'tools/baseline.json');
 const TARGET = join(ROOT, 'docs/concept/index.html');
@@ -93,18 +104,18 @@ check(measured.length === GOLDEN_SEEDS.length, 'NODE: src/gen generates every se
    budget against a micro-world built for it; PLAY turns a wanderer loose on
    each generated seed for five simulated minutes, which is the bar in
    docs/PROTOTYPE.md. */
-for (const r of budgetSuite()) check(r.ok, `MOVE: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of budgetSuite()) check(r.ok, `MOVE: ${r.label}`, r.detail);
 
 /* ---------- VIEW: the camera and the input table ----------
    Both are pure functions of an angle and a lookup, which is the whole reason
    they live in src/sim rather than in the page: "up is still up after you
    rotate the view" and "a mouse point and a stick direction mean the same
    thing" are exactly the claims a screenshot cannot make. */
-for (const r of viewSuite()) check(r.ok, `VIEW: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of viewSuite()) check(r.ok, `VIEW: ${r.label}`, r.detail);
 
 const t1 = Date.now();
 let jumped = 0, vaulted = 0;
-for (let i = 0; i < worlds.length; i++) {
+for (let i = 0; NODE_HALF && i < worlds.length; i++) {
   const s = soak(worlds[i], GOLDEN_SEEDS[i].nm);
   jumped += s.jumps; vaulted += s.vaults;
   check(s.survived, `PLAY: ${s.seed} five minutes without falling through`,
@@ -117,59 +128,14 @@ for (let i = 0; i < worlds.length; i++) {
   check(s.travelled > 300, `PLAY: ${s.seed} covers ground`,
         `${s.travelled} m walked, ${s.displaced} m from spawn`);
 }
-check(jumped > 0 && vaulted > 0, 'PLAY: jumps and vaults happen on real terrain',
-      `${jumped} jumps, ${vaulted} vaults across ${worlds.length} seeds`);
+if (NODE_HALF) {
+  check(jumped > 0 && vaulted > 0, 'PLAY: jumps and vaults happen on real terrain',
+        `${jumped} jumps, ${vaulted} vaults across ${worlds.length} seeds`);
+}
 const playMs = Date.now() - t1;
 
-/* The plate generates its hero world synchronously on load, so even
-   DOMContentLoaded can take minutes under software rendering on a slow runner.
-   Playwright's 30 s default is nowhere near enough — this failed in CI once. */
-const PATIENCE = 600000;
-
-const browser = await launch();
-try {
-  /* ---------- BOOT + PARITY ---------- */
-  const page = await browser.newPage();
-  page.setDefaultTimeout(PATIENCE);
-  page.setDefaultNavigationTimeout(PATIENCE);
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) errors.push(m.text()); });
-
-  const file = preparePage({ target: TARGET, outDir: OUT, name: 'smoke.html' });
-  await page.goto(`file://${file}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
-  await page.waitForFunction(() => !!(window.QS && window.QS.buildWorld), null, { timeout: PATIENCE });
-
-  const inPage = await page.evaluate(
-    ([cfgs, fnSrc, measureSrc]) => new Function(`return (${fnSrc})`)()(cfgs, measureSrc),
-    [GOLDEN_SEEDS, measureSeeds.toString(), measureWorld.toString()]);
-
-  check(errors.length === 0, 'BOOT: no page errors', errors.slice(0, 3).join(' | '));
-  check(inPage.length === GOLDEN_SEEDS.length, 'BOOT: every seed generated in the plate');
-
-  /* ---------- MATH ----------
-     Two engines, one sample. If this fails, something in src/gen/exact.mjs has
-     picked up an operation the spec only approximates and every PARITY check
-     below is about to fail for that reason and no other. */
-  const exact = await import('../src/gen/exact.mjs');
-  const pageMath = await page.evaluate(
-    (src) => new Function(`return (${src})`)()(window.QS), mathProbe.toString());
-  const nodeMath = mathProbe(exact);
-  check(pageMath === nodeMath, 'MATH: pinned math agrees across engines',
-        pageMath === nodeMath ? '' : `node ${nodeMath} → plate ${pageMath}`);
-
-  for (const want of measured) {
-    const diffs = diffMeasure(want, inPage.find((m) => m.seed === want.seed));
-    check(diffs.length === 0, `PARITY: ${want.seed} plate matches src/gen`, diffs.join(', '));
-  }
-
-  /* The plate renders its hero continuously from requestAnimationFrame. Leave
-     this page open and it competes with the render pass below for the whole
-     run — on a 4-core box in software that is the difference between 90 s and
-     a timeout. It has done its job; close it. */
-  await page.close();
-
-  /* ---------- GOLDEN ---------- */
+/* ---------- GOLDEN: node work, so it runs without a browser ---------- */
+if (NODE_HALF) {
   if (UPDATE) {
     writeFileSync(BASELINE, JSON.stringify(measured, null, 1) + '\n');
     console.log(`\nbaseline re-recorded (${measured.length} seeds, ${genMs} ms)`);
@@ -201,100 +167,153 @@ try {
     }
   }
 
-  /* ---------- RENDER ---------- */
-  if (!QUICK && !UPDATE) {
-    const rp = await browser.newPage({ viewport: { width: 1100, height: 800 } });
-    rp.setDefaultTimeout(PATIENCE);
-    rp.setDefaultNavigationTimeout(PATIENCE);
-    const rErrors = [];
-    rp.on('pageerror', (e) => rErrors.push(e.message));
-    const rfile = preparePage({ target: TARGET, outDir: OUT, name: 'smoke-render.html' });
-    await rp.goto(`file://${rfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
-    await rp.waitForFunction(tilesDone, null, { timeout: PATIENCE });
-    await rp.screenshot({ path: join(OUT, 'smoke.png') });
-    check(rErrors.length === 0, 'RENDER: draws without errors', rErrors.slice(0, 2).join(' | '));
-    const painted = await rp.evaluate(() => {
-      const c = document.querySelector('.tile canvas');
-      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-      let n = 0;
-      for (let i = 3; i < d.length; i += 4000) if (d[i] > 0) n++;
-      return n;
-    });
-    check(painted > 50, 'RENDER: biome plates have pixels', `${painted} sampled`);
-    await rp.close();
-
-    /* ---------- BUILD: the thing you can actually play ----------
-       The VIEW checks above prove the camera maths; this proves the page is
-       wired to it. Held key in, character moves up the screen — at every one of
-       the four view steps, which is the bar in issue #21. Deterministic because
-       QSPLAY.run steps the same fixed tick the loop does, so none of it waits on
-       a software renderer's frame rate. */
-    const bp = await browser.newPage({ viewport: { width: 1100, height: 700 } });
-    bp.setDefaultTimeout(PATIENCE);
-    bp.setDefaultNavigationTimeout(PATIENCE);
-    const bErrors = [];
-    bp.on('pageerror', (e) => bErrors.push(e.message));
-    bp.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) bErrors.push(m.text()); });
-    const bfile = preparePage({ target: PLAY_TARGET, outDir: OUT, name: 'play.html' });
-    await bp.goto(`file://${bfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
-    await bp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
-    check(bErrors.length === 0, 'BUILD: boots with no page errors', bErrors.slice(0, 3).join(' | '));
-
-    const spawned = await bp.evaluate(() => {
-      const a = window.QSPLAY.actor;
-      return { y: a.y, grounded: a.grounded, embedded: window.QSPLAY.actor.dead };
-    });
-    check(spawned.grounded && !spawned.embedded, 'BUILD: the character spawns standing on the world',
-          `y ${spawned.y.toFixed(2)}, ${spawned.grounded ? 'grounded' : 'in the air'}`);
-
-    const walked = await bp.evaluate(() => {
-      const P = window.QSPLAY, out = [];
-      for (let q = 0; q < 4; q++) {
-        P.respawn();
-        const a0 = P.screen();
-        P.input.press('KeyW');
-        P.run(45);
-        P.input.release('KeyW');
-        const a1 = P.screen();
-        out.push({ step: q, dx: a1.x - a0.x, dy: a1.y - a0.y });
-        /* Snap the view a quarter and settle the easing before the next pass. */
-        P.input.press('KeyE'); P.run(1); P.input.release('KeyE'); P.run(90);
-      }
-      return out;
-    });
-    /* The follow camera keeps the character near the middle, so the screen
-       displacement is small — what matters is that it is upward and that no
-       view step sends it sideways or down. */
-    const offAxis = walked.filter((w) => !(w.dy < -0.5 && Math.abs(w.dx) < Math.abs(w.dy)));
-    check(offAxis.length === 0, 'BUILD: holding up walks up the screen at every view step',
-          offAxis.length ? offAxis.map((w) => `step ${w.step} (${w.dx.toFixed(1)}, ${w.dy.toFixed(1)})`).join(', ')
-                         : walked.map((w) => w.dy.toFixed(1)).join(' / '));
-
-    await bp.screenshot({ path: join(OUT, 'play.png') });
-    const bPainted = await bp.evaluate(() => {
-      /* Draw and read in one task: WebGL clears the drawing buffer as soon as
-         the browser gets a turn, so a read after an animation frame sees black. */
-      window.QSPLAY.draw();
-      const c = document.querySelector('#cv');
-      const g = document.createElement('canvas');
-      g.width = c.width; g.height = c.height;
-      const x = g.getContext('2d');
-      x.drawImage(c, 0, 0);
-      const d = x.getImageData(0, 0, g.width, g.height).data;
-      let n = 0;
-      for (let i = 0; i < d.length; i += 4000) if (d[i] + d[i + 1] + d[i + 2] > 60) n++;
-      return n;
-    });
-    check(bPainted > 50, 'BUILD: draws', `${bPainted} sampled`);
-    check(bErrors.length === 0, 'BUILD: no errors while playing', bErrors.slice(0, 3).join(' | '));
-    await bp.close();
-  }
-
-  console.log(`\ngeneration: ${genMs} ms for ${measured.length} seeds`);
-  console.log(`simulation: ${playMs} ms for ${measured.length} x five minutes`);
-} finally {
-  await browser.close();
 }
+
+/* The plate generates its hero world synchronously on load, so even
+   DOMContentLoaded can take minutes under software rendering on a slow runner.
+   Playwright's 30 s default is nowhere near enough — this failed in CI once. */
+const PATIENCE = 600000;
+
+if (BROWSER_HALF) {
+  const browser = await launch();
+  try {
+    /* ---------- BOOT + PARITY ---------- */
+    const page = await browser.newPage();
+    page.setDefaultTimeout(PATIENCE);
+    page.setDefaultNavigationTimeout(PATIENCE);
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+    page.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) errors.push(m.text()); });
+
+    const file = preparePage({ target: TARGET, outDir: OUT, name: 'smoke.html' });
+    await page.goto(`file://${file}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+    await page.waitForFunction(() => !!(window.QS && window.QS.buildWorld), null, { timeout: PATIENCE });
+
+    const inPage = await page.evaluate(
+      ([cfgs, fnSrc, measureSrc]) => new Function(`return (${fnSrc})`)()(cfgs, measureSrc),
+      [GOLDEN_SEEDS, measureSeeds.toString(), measureWorld.toString()]);
+
+    check(errors.length === 0, 'BOOT: no page errors', errors.slice(0, 3).join(' | '));
+    check(inPage.length === GOLDEN_SEEDS.length, 'BOOT: every seed generated in the plate');
+
+    /* ---------- MATH ----------
+       Two engines, one sample. If this fails, something in src/gen/exact.mjs has
+       picked up an operation the spec only approximates and every PARITY check
+       below is about to fail for that reason and no other. */
+    const exact = await import('../src/gen/exact.mjs');
+    const pageMath = await page.evaluate(
+      (src) => new Function(`return (${src})`)()(window.QS), mathProbe.toString());
+    const nodeMath = mathProbe(exact);
+    check(pageMath === nodeMath, 'MATH: pinned math agrees across engines',
+          pageMath === nodeMath ? '' : `node ${nodeMath} → plate ${pageMath}`);
+
+    for (const want of measured) {
+      const diffs = diffMeasure(want, inPage.find((m) => m.seed === want.seed));
+      check(diffs.length === 0, `PARITY: ${want.seed} plate matches src/gen`, diffs.join(', '));
+    }
+
+    /* The plate renders its hero continuously from requestAnimationFrame. Leave
+       this page open and it competes with the render pass below for the whole
+       run — on a 4-core box in software that is the difference between 90 s and
+       a timeout. It has done its job; close it. */
+    await page.close();
+
+    /* ---------- RENDER ---------- */
+    if (!QUICK && !UPDATE) {
+      const rp = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+      rp.setDefaultTimeout(PATIENCE);
+      rp.setDefaultNavigationTimeout(PATIENCE);
+      const rErrors = [];
+      rp.on('pageerror', (e) => rErrors.push(e.message));
+      const rfile = preparePage({ target: TARGET, outDir: OUT, name: 'smoke-render.html' });
+      await rp.goto(`file://${rfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      await rp.waitForFunction(someTileDone, null, { timeout: PATIENCE });
+      await rp.screenshot({ path: join(OUT, 'smoke.png') });
+      check(rErrors.length === 0, 'RENDER: draws without errors', rErrors.slice(0, 2).join(' | '));
+      const painted = await rp.evaluate(() => {
+        const c = document.querySelector('.tile canvas');
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 3; i < d.length; i += 4000) if (d[i] > 0) n++;
+        return n;
+      });
+      check(painted > 50, 'RENDER: a biome plate has pixels', `${painted} sampled`);
+      await rp.close();
+
+      /* ---------- BUILD: the thing you can actually play ----------
+         The VIEW checks above prove the camera maths; this proves the page is
+         wired to it. Held key in, character moves up the screen — at every one of
+         the four view steps, which is the bar in issue #21. Deterministic because
+         QSPLAY.run steps the same fixed tick the loop does, so none of it waits on
+         a software renderer's frame rate. */
+      const bp = await browser.newPage({ viewport: { width: 1100, height: 700 } });
+      bp.setDefaultTimeout(PATIENCE);
+      bp.setDefaultNavigationTimeout(PATIENCE);
+      const bErrors = [];
+      bp.on('pageerror', (e) => bErrors.push(e.message));
+      bp.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) bErrors.push(m.text()); });
+      const bfile = preparePage({ target: PLAY_TARGET, outDir: OUT, name: 'play.html' });
+      await bp.goto(`file://${bfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      await bp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      check(bErrors.length === 0, 'BUILD: boots with no page errors', bErrors.slice(0, 3).join(' | '));
+
+      const spawned = await bp.evaluate(() => {
+        const a = window.QSPLAY.actor;
+        return { y: a.y, grounded: a.grounded, embedded: window.QSPLAY.actor.dead };
+      });
+      check(spawned.grounded && !spawned.embedded, 'BUILD: the character spawns standing on the world',
+            `y ${spawned.y.toFixed(2)}, ${spawned.grounded ? 'grounded' : 'in the air'}`);
+
+      const walked = await bp.evaluate(() => {
+        const P = window.QSPLAY, out = [];
+        for (let q = 0; q < 4; q++) {
+          P.respawn();
+          const a0 = P.screen();
+          P.input.press('KeyW');
+          P.run(45);
+          P.input.release('KeyW');
+          const a1 = P.screen();
+          out.push({ step: q, dx: a1.x - a0.x, dy: a1.y - a0.y });
+          /* Snap the view a quarter and settle the easing before the next pass. */
+          P.input.press('KeyE'); P.run(1); P.input.release('KeyE'); P.run(90);
+        }
+        return out;
+      });
+      /* The follow camera keeps the character near the middle, so the screen
+         displacement is small — what matters is that it is upward and that no
+         view step sends it sideways or down. */
+      const offAxis = walked.filter((w) => !(w.dy < -0.5 && Math.abs(w.dx) < Math.abs(w.dy)));
+      check(offAxis.length === 0, 'BUILD: holding up walks up the screen at every view step',
+            offAxis.length ? offAxis.map((w) => `step ${w.step} (${w.dx.toFixed(1)}, ${w.dy.toFixed(1)})`).join(', ')
+                           : walked.map((w) => w.dy.toFixed(1)).join(' / '));
+
+      await bp.screenshot({ path: join(OUT, 'play.png') });
+      const bPainted = await bp.evaluate(() => {
+        /* Draw and read in one task: WebGL clears the drawing buffer as soon as
+           the browser gets a turn, so a read after an animation frame sees black. */
+        window.QSPLAY.draw();
+        const c = document.querySelector('#cv');
+        const g = document.createElement('canvas');
+        g.width = c.width; g.height = c.height;
+        const x = g.getContext('2d');
+        x.drawImage(c, 0, 0);
+        const d = x.getImageData(0, 0, g.width, g.height).data;
+        let n = 0;
+        for (let i = 0; i < d.length; i += 4000) if (d[i] + d[i + 1] + d[i + 2] > 60) n++;
+        return n;
+      });
+      check(bPainted > 50, 'BUILD: draws', `${bPainted} sampled`);
+      check(bErrors.length === 0, 'BUILD: no errors while playing', bErrors.slice(0, 3).join(' | '));
+      await bp.close();
+    }
+
+  } finally {
+    await browser.close();
+  }
+}
+
+console.log(`\ngeneration: ${genMs} ms for ${measured.length} seeds`);
+if (NODE_HALF) console.log(`simulation: ${playMs} ms for ${measured.length} x five minutes`);
 
 if (fails.length) {
   console.error(`\n${fails.length} check(s) failed:\n  ${fails.join('\n  ')}`);

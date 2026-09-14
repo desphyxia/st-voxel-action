@@ -12,8 +12,12 @@ if [ ! -d "tools/node_modules" ]; then
   echo "pre-push: tools/node_modules missing, skipping (run npm install in tools/)"
   exit 0
 fi
-echo "pre-push: running smoke test (quick)…"
-node tools/smoke.mjs --quick || {
+# The node half: bundle sync, pinned arithmetic, the movement budget, the camera
+# and input table, a five-minute soak per golden seed. Seconds, and it catches
+# most real regressions. The browser half is CI's job (issue #25) — a local gate
+# that takes a minute is a local gate that gets bypassed, which it was, twice.
+echo "pre-push: running smoke test…"
+node tools/smoke.mjs --node || {
   echo ""
   echo "pre-push: BLOCKED — the build is not in a playable state."
   echo "pre-push: fix it, or SKIP_SMOKE=1 git push with a Smoke-Skipped trailer."

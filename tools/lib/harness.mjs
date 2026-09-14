@@ -81,6 +81,16 @@ export function launch() {
 export const tilesDone = () =>
   [...document.querySelectorAll('.wait')].every((w) => w.style.display === 'none');
 
+/**
+ * The first tile only. The plate renders its six biome tiles one after another,
+ * and under software rendering that is most of the smoke test's wall clock —
+ * for a check whose whole claim is "the renderer still draws". The six seeds
+ * are already compared voxel by voxel by PARITY and GOLDEN; drawing one of them
+ * proves the renderer, and issue #25 asked for exactly this trade.
+ */
+export const someTileDone = () =>
+  [...document.querySelectorAll('.wait')].some((w) => w.style.display === 'none');
+
 /** Seeds the golden-master baseline is measured against. */
 export const GOLDEN_SEEDS = [
   { nm: 'meadow', seed: 'ALDER-RUN', force: 0, size: 32, ox: 700, oz: 430 },

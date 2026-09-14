@@ -79,8 +79,8 @@ is what actually holds.
 | Layer | What it does |
 | --- | --- |
 | `tools/smoke.mjs` | The assertions. Bundle sync, headless generation, the movement budget, the camera and input table, a five-minute soak per seed, boot, cross-engine math, plate/node parity, golden-master, sanity invariants, and a render of both pages. |
-| `tools/hooks/pre-push` | Runs `--quick` before anything leaves the machine. Seconds. Install: `node tools/hooks/install.mjs` |
-| `.github/workflows/ci.yml` | Full smoke on every push and PR, with the render pass. |
+| `tools/hooks/pre-push` | Runs `--node` before anything leaves the machine — genuinely seconds, so it survives contact with 1am. Install: `node tools/hooks/install.mjs` |
+| `.github/workflows/ci.yml` | Two required jobs in parallel on every push and PR: `checks` (the node half, under a minute) and `browser` (boot, parity, and both renders). |
 | This document | The bar, in the place a new session will look. |
 
 ### The rules

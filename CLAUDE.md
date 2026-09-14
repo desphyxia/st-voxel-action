@@ -73,11 +73,16 @@ from scratch.
 This is enforced, not aspirational — see `docs/PROTOTYPE.md`.
 
 ```
-node tools/smoke.mjs            # the gate: sync, node, boot, parity, golden, render
-node tools/smoke.mjs --quick    # same without the render pass (seconds)
+node tools/smoke.mjs            # everything
+node tools/smoke.mjs --node     # only what needs no browser — a few seconds
+node tools/smoke.mjs --browser  # only what does — minutes, software rendering
+node tools/smoke.mjs --quick    # everything but the render pass
 node tools/smoke.mjs --update   # re-record the golden baseline, deliberately
 node tools/hooks/install.mjs    # install the pre-push hook (once per clone)
 ```
+
+CI runs the two halves as two required jobs in parallel, so a regression in the half that
+matters comes back in well under a minute. The pre-push hook runs `--node` for the same reason.
 
 The smoke test is the executable specification of what the prototype can do. **An issue that
 adds a player-facing verb must add an assertion covering it.** Internal systems only have to
