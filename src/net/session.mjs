@@ -36,8 +36,9 @@ export const SMOOTH = 0.25;
 
 export const HOST = 0, GUEST = 1;
 
-const IDLE = { mx: 0, mz: 0, jump: false, aimX: 0, aimZ: 0 };
+const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, aimZ: 0 };
 const copyInput = (i) => ({ mx: i.mx || 0, mz: i.mz || 0, jump: !!i.jump,
+                            attack: !!i.attack, dodge: !!i.dodge,
                             aimX: i.aimX || 0, aimZ: i.aimZ || 0 });
 
 /**
@@ -56,7 +57,7 @@ export function spawnNear(col, x, z) {
 /* ------------------------------------------------------------------ host ---- */
 
 export function makeHost(opts) {
-  const { col, spawn, transport, cfg } = opts;
+  const { col, spawn, transport, cfg, targets } = opts;
   const sendEvery = opts.sendEvery || SEND_EVERY;
   const me = placeOnGround(col, spawn[0], spawn[2]);
   const peer = spawnNear(col, spawn[0], spawn[2]);
@@ -94,8 +95,8 @@ export function makeHost(opts) {
       const next = inbox.length ? inbox.shift() : last;
       last = next;
 
-      step(col, me, copyInput(localInput || IDLE));
-      step(col, peer, next.input);
+      step(col, me, copyInput(localInput || IDLE), targets);
+      step(col, peer, next.input, targets);
 
       if (t % sendEvery === 0) {
         transport.send({ t: 'snap', tick: t, ack: next.seq,
@@ -116,7 +117,7 @@ export function makeHost(opts) {
  */
 export function makeGuest(opts) {
   const { transport, build } = opts;
-  let col = null, me = null, peer = null, cfg = null;
+  let col = null, me = null, peer = null, cfg = null, targets = null;
   let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0;
   const pending = [];
   let target = null;                       /* last authoritative host state */
@@ -130,6 +131,9 @@ export function makeGuest(opts) {
       cfg = m.cfg;
       const world = build(m.cfg);
       col = world.col;
+      /* The same posts the host is swinging at, derived the same way from the
+         same world — nothing about them crosses either. */
+      targets = world.targets || null;
       me = spawnNear(col, m.spawn[0], m.spawn[2]);
       peer = placeOnGround(col, m.spawn[0], m.spawn[2]);
       ready = true;
@@ -146,7 +150,7 @@ export function makeGuest(opts) {
       lastAck = m.ack;
       corrections++;
       while (pending.length && pending[0].seq <= m.ack) pending.shift();
-      for (const p of pending) { step(col, me, p.input); replayed++; }
+      for (const p of pending) { step(col, me, p.input, targets); replayed++; }
       target = m.them;
     }
   });
@@ -169,10 +173,11 @@ export function makeGuest(opts) {
       seq++;
       const input = copyInput(localInput || IDLE);
       transport.send({ t: 'input', seq, mx: input.mx, mz: input.mz, jump: input.jump,
+                       attack: input.attack, dodge: input.dodge,
                        aimX: input.aimX, aimZ: input.aimZ });
       pending.push({ seq, input });
       if (pending.length > MAX_PENDING) pending.shift();
-      step(col, me, input);
+      step(col, me, input, targets);
 
       /* The other player arrives at 20 Hz and is drawn, not simulated, so it is
          eased rather than snapped. Proper snapshot interpolation on a delay

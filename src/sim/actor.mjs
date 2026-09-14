@@ -21,6 +21,8 @@
  */
 import { MOVE, clamp } from '../gen/constants.mjs';
 import { EPS, LIQUID } from './collider.mjs';
+import { STAMINA_MAX, advanceCombat, beginSwing, beginDodge,
+         speedScale, sweep, DODGE_SPEED } from './combat.mjs';
 
 /** One simulation tick. Every constant below assumes it. */
 export const TICK = 1 / 60;
@@ -69,6 +71,17 @@ export function makeActor(x, y, z) {
         direction of travel does. Phase 0 uses it for nothing but the model's
         heading — issue #1 decides what aim means once there is an ability. */
     faceX: 0, faceZ: 1,
+    /* ---- combat (src/sim/combat.mjs owns the rules; the state lives here so
+       that one snapshot is the whole actor) ---- */
+    stamina: STAMINA_MAX,
+    /** Seconds before stamina starts coming back. */
+    staminaHold: 0,
+    /** null, or { t, hit } — hit is a bitmask of targets already cut this swing. */
+    swing: null,
+    /** null, or { t, dx, dz }. */
+    dodge: null,
+    /** Targets the arc covered this tick, as a bitmask. Cleared every tick. */
+    hits: 0,
     /** null while alive, else 'fall' | 'magma' | 'void'. */
     dead: null,
     /** Path length, summed per axis. Not displacement — see the soak. */
@@ -103,6 +116,10 @@ export function snapshot(a) {
                        x1: a.vault.x1, y1: a.vault.y1, z1: a.vault.z1 } : null,
     vaults: a.vaults, inWater: a.inWater, swimming: a.swimming,
     faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
+    stamina: a.stamina, staminaHold: a.staminaHold,
+    swing: a.swing ? { t: a.swing.t, hit: a.swing.hit } : null,
+    dodge: a.dodge ? { t: a.dodge.t, dx: a.dodge.dx, dz: a.dodge.dz } : null,
+    hits: a.hits,
     ticks: a.ticks, travelled: a.travelled, blocked: a.blocked,
   };
 }
@@ -115,6 +132,10 @@ export function restore(a, s) {
                         x1: s.vault.x1, y1: s.vault.y1, z1: s.vault.z1 } : null;
   a.vaults = s.vaults; a.inWater = s.inWater; a.swimming = s.swimming;
   a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
+  a.stamina = s.stamina; a.staminaHold = s.staminaHold;
+  a.swing = s.swing ? { t: s.swing.t, hit: s.swing.hit } : null;
+  a.dodge = s.dodge ? { t: s.dodge.t, dx: s.dodge.dx, dz: s.dodge.dz } : null;
+  a.hits = s.hits;
   a.ticks = s.ticks; a.travelled = s.travelled; a.blocked = s.blocked;
   return a;
 }
@@ -149,6 +170,7 @@ function slide(col, a, nx, nz) {
 function tryVault(col, a, dx, dz) {
   const r = ACTOR.radius, h = ACTOR.height;
   if (!a.grounded || (dx === 0 && dz === 0)) return false;
+  if (a.swing || a.dodge) return false;        /* committed means committed */
   const probe = 0.4;
   const top = col.supportUnder(a.x + dx * probe, a.z + dz * probe, r, a.y + MOVE.vault + EPS);
   if (!(top > a.y + MOVE.step + EPS) || top - a.y > MOVE.vault + EPS) return false;
@@ -167,11 +189,13 @@ function tryVault(col, a, dx, dz) {
 /**
  * Advance one tick.
  *
- * `input` is { mx, mz, jump } — a heading of length 0..1 and a boolean —
- * optionally with { aimX, aimZ }, a unit heading to face. Nothing else reaches
- * the controller: no camera, no renderer, no clock.
+ * `input` is { mx, mz, jump, attack, dodge } — a heading of length 0..1 and
+ * three booleans — optionally with { aimX, aimZ }, a unit heading to face.
+ * Nothing else reaches the controller: no camera, no renderer, no clock.
+ *
+ * `targets` is an optional list of `{ x, y, z, r }` for the swing to sweep.
  */
-export function step(col, a, input, dt = TICK) {
+export function step(col, a, input, targets, dt = TICK) {
   if (a.dead) return a;
   a.ticks++;
   a.blocked = false;
@@ -203,6 +227,12 @@ export function step(col, a, input, dt = TICK) {
     if (l > 1e-9) { a.faceX = input.mx / l; a.faceZ = input.mz / l; }
   }
 
+  /* Combat timers run before intent, so a swing that finishes this tick hands
+     control back on this tick rather than the next one. */
+  advanceCombat(a, dt);
+  if (input.attack) beginSwing(a);
+  if (input.dodge) beginDodge(a, input.mx || 0, input.mz || 0);
+
   const liquid = col.liquidAt(a.x, a.z);
   if (liquid.kind === LIQUID.MAGMA && a.y <= liquid.level + 0.35) { a.dead = 'magma'; return a; }
 
@@ -211,12 +241,20 @@ export function step(col, a, input, dt = TICK) {
   a.swimming = submerged > MOVE.wade;
 
   /* ---- intent ---- */
-  const speed = a.swimming ? SWIM_SPEED : (a.inWater ? WADE_SPEED : RUN);
-  const wx = (input.mx || 0) * speed, wz = (input.mz || 0) * speed;
-  if (a.grounded || a.swimming) { a.vx = wx; a.vz = wz; }
-  else { a.vx += (wx - a.vx) * AIR_CONTROL; a.vz += (wz - a.vz) * AIR_CONTROL; }
+  if (a.dodge) {
+    /* A dodge owns the horizontal for its whole window: it is a distance, not
+       a nudge, and a player steering out of it would make it a sprint. */
+    a.vx = a.dodge.dx * DODGE_SPEED;
+    a.vz = a.dodge.dz * DODGE_SPEED;
+  } else {
+    const base = a.swimming ? SWIM_SPEED : (a.inWater ? WADE_SPEED : RUN);
+    const speed = base * speedScale(a);
+    const wx = (input.mx || 0) * speed, wz = (input.mz || 0) * speed;
+    if (a.grounded || a.swimming) { a.vx = wx; a.vz = wz; }
+    else { a.vx += (wx - a.vx) * AIR_CONTROL; a.vz += (wz - a.vz) * AIR_CONTROL; }
+  }
 
-  if (input.jump && (a.grounded || a.swimming)) {
+  if (input.jump && !a.swing && !a.dodge && (a.grounded || a.swimming)) {
     a.vy = a.swimming ? JUMP_V * 0.35 : JUMP_V;
     a.grounded = false;
     a.apex = a.y;
@@ -273,5 +311,8 @@ export function step(col, a, input, dt = TICK) {
   if (!a.grounded && a.y > a.apex) a.apex = a.y;
 
   if (a.y < -1) a.dead = 'void';
+
+  /* The blade lands where the tick ended, not where it started. */
+  if (targets) sweep(a, targets);
   return a;
 }

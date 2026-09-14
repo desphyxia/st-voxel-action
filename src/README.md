@@ -6,7 +6,7 @@ The game. Today that is the terrain generator and nothing else — see
 | Path | What it is |
 | --- | --- |
 | `gen/` | The seeded terrain generator. Plain ES modules: no DOM, no three.js, no renderer. |
-| `sim/` | Collision, the character controller, the isometric camera and the input table. Same rules: no DOM, no three.js, no renderer. |
+| `sim/` | Collision, the character controller, the isometric camera, the input table and combat. Same rules: no DOM, no three.js, no renderer. |
 | `net/` | The transport interface, a loopback double, and the host and guest sessions. Same rules again. |
 
 ## src/gen
@@ -107,6 +107,17 @@ Fixed timestep, no randomness, no wall clock. That is what lets
 wade, swim, magma — in node, and run a five-minute soak on all six golden seeds,
 with no browser anywhere. `docs/play/index.html` drives the same `step` from a
 fixed-step accumulator, so what you play is what the gate measured.
+
+`combat.mjs` is the first verb that is not movement: one committed swing and a
+dodge, gated by a stamina pool. Three windows — wind-up, active, recovery — and
+during the active one the actor goes nowhere and cannot cancel into anything. A
+dodge cancels the recovery and only the recovery.
+
+None of those numbers are balance, and they are not meant to be: #9 decides what
+a hit is worth. They are sized to be *legible*, because the question underneath
+#23 is whether a committed swing reads at 45° where the character is forty
+pixels tall. `sweep` reports that the arc covered a target this tick and stops
+there — as a bitmask, which is also how it goes over the wire.
 
 ## src/net
 

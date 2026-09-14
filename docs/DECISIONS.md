@@ -48,6 +48,8 @@ same world — not credits.
 | Defence | Dodge is universal; blocking is frame-dependent (the bulwark's root wall is the extreme case) |
 | Targeting | Mouse free-aim; **twin-stick free aim** on gamepad |
 | Movement budget | Step up 1 m · vault 2 m · jump a 2.5 m gap · survive a 6 m drop · wade 0.75 m · swim deeper · magma lethal |
+| Swing shape | **Wind-up, active, recovery — committed throughout.** The active window pins you in place and cannot be cancelled by jump, vault or dodge; a dodge cancels the *recovery* and nothing else, which is the only escape hatch and costs stamina you wanted for the next swing |
+| What is drawn vs what is dangerous | **Different questions.** The hitbox is the active window; the arc on screen outlives it and fades. At 45° the active window is an eighth of a second and the character is forty pixels tall — a visual that lasted exactly as long as the hitbox would not be seen |
 | Character physics | **Solved from the budget, not tuned.** Run speed is the only free number; gravity, jump speed and airtime follow from it so that a jump clears exactly `MOVE.jump` and no more. A jump that quietly cleared 3.2 m would stop canyons being obstacles, and nobody would notice for months |
 
 ## 4. Gear and progression

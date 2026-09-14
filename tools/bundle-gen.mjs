@@ -28,7 +28,7 @@ export const END = '/* QS-BUNDLE-END */';
 const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'rng', 'biomes', 'field', 'erosion', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index'],
-  'src/sim': ['collider', 'actor', 'camera', 'input'],
+  'src/sim': ['collider', 'combat', 'actor', 'camera', 'input'],
   'src/net': ['transport', 'session'],
 };
 
@@ -42,6 +42,9 @@ const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERI
 const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld',
                  'ACTOR', 'TICK', 'RUN', 'GRAVITY', 'JUMP_V', 'JUMP_APEX',
                  'makeActor', 'placeOnGround', 'embedded', 'step',
+                 'PHASE', 'phase', 'swingProgress', 'dodging', 'invulnerable',
+                 'STAMINA_MAX', 'SWING_COST', 'DODGE_COST', 'SWING_TIME', 'WINDUP', 'ACTIVE',
+                 'REACH', 'ARC', 'DODGE_TIME', 'DODGE_DIST', 'practicePosts',
                  'makeCamera', 'snap', 'warpTo', 'follow', 'eye', 'basis', 'moveFrom',
                  'project', 'groundAt', 'heading', 'aimFromPointer', 'aimFromStick',
                  'setView', 'VIEW', 'QUARTER', 'START_YAW',
@@ -57,6 +60,31 @@ export const TARGETS = [
   { file: PLAY, name: 'docs/play/index.html', dirs: ['src/gen', 'src/sim', 'src/net'],
     api: GEN_API.concat(SIM_API) },
 ];
+
+/**
+ * The transform below is a flat concatenation into one scope, so an import that
+ * renames anything is a lie: `import { advance as advanceCombat }` bundles to a
+ * scope that only ever defined `advance`, and the page throws a ReferenceError
+ * on the first tick. A namespace import has the same problem.
+ *
+ * This is the same class of trap as a module missing from MODULES, and it cost
+ * the same kind of afternoon. Fail here, where the message can say what to do.
+ */
+function assertPlainImports(dir, name, src) {
+  const bad = [];
+  const lines = src.split('\n');
+  for (const line of lines) {
+    if (!/^\s*(import|export)\b/.test(line) || !/from\s*'/.test(line)) continue;
+    if (/\bimport\s*\*\s*as\b/.test(line)) bad.push(line.trim());
+    else if (/\{[^}]*\bas\b[^}]*\}/.test(line)) bad.push(line.trim());
+  }
+  if (bad.length) {
+    throw new Error(
+      `${dir}/${name}.mjs renames an import, which the bundle cannot carry.\n` +
+      bad.map((b) => `  ${b}`).join('\n') +
+      '\n  Everything is concatenated into one scope — rename the export instead.');
+  }
+}
 
 function strip(src) {
   return src
@@ -90,8 +118,9 @@ export function renderBundle(target) {
   for (const dir of target.dirs) {
     assertComplete(dir);
     for (const m of MODULES[dir]) {
-      const src = strip(readFileSync(join(ROOT, `${dir}/${m}.mjs`), 'utf8')).trim();
-      parts.push(`/* ---------- ${dir}/${m}.mjs ---------- */\n${src}`);
+      const raw = readFileSync(join(ROOT, `${dir}/${m}.mjs`), 'utf8');
+      assertPlainImports(dir, m, raw);
+      parts.push(`/* ---------- ${dir}/${m}.mjs ---------- */\n${strip(raw).trim()}`);
     }
   }
   return [

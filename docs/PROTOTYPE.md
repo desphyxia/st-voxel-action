@@ -64,7 +64,10 @@ optimised for never rewriting anything; this optimises for playing something.
    three methods (`src/net/transport.mjs`); the prototype speaks postMessage between two browser
    windows, and Steam Networking implements the same interface later. Nothing about the terrain
    crosses the wire: the world is a pure function of its seed.
-6. **One frame, one attack, stamina, dodge.** Longblade only.
+6. ~~**One frame, one attack, stamina, dodge.**~~ **Done** (#23). Longblade only, no sockets.
+   Wind-up, active, recovery; during the active window you go nowhere and cannot cancel. A dodge
+   cancels the recovery and nothing else. None of the numbers are balance — #9 decides that —
+   and the finding is recorded on the issue: the arc reads at 45°, the blade does not.
 7. **One enemy** with a telegraph and a death.
 
 **Deliberately deferred, and recorded as debt:** the instanced-box renderer stays until

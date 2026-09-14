@@ -28,6 +28,10 @@
        padding:8px 11px;pointer-events:none;white-space:pre;max-width:calc(100% - 20px);overflow:hidden}
   .hud b{color:var(--text);font-weight:500}
   .hud .warn{color:var(--sand)}
+  .stamina{position:absolute;left:12px;bottom:12px;width:180px;height:7px;
+           border:1px solid var(--line2);background:rgba(10,13,17,.6);display:none}
+  .stamina i{display:block;height:100%;width:100%;background:var(--sand);
+             transition:width .06s linear}
   .dead{position:absolute;inset:0;display:none;place-items:center;background:rgba(40,8,8,.42)}
   .dead span{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;
              color:#ffd7cf;background:rgba(10,13,17,.8);border:1px solid #6b3030;padding:10px 16px}
@@ -78,21 +82,23 @@
   <header>
     <h1>Quarterstone · playable build</h1>
     <p class="lede">The first thing here you can actually play. One 64 × 64 m window of a seeded world,
-      the movement budget the terrain was sized against, and — if you open a second window — someone
-      else in it with you. No combat and nothing to fight: this exists to answer one question, which is
-      whether moving through this world feels like anything.</p>
+      the movement budget the terrain was sized against, one committed swing, and — if you open a second
+      window — someone else in it with you. Nothing fights back yet. This exists to answer two questions:
+      whether moving through this world feels like anything, and whether a swing reads at all from up here.</p>
   </header>
 
   <section>
     <div class="stage" id="stage" tabindex="0">
       <canvas id="cv"></canvas>
       <div class="hud" id="hud"></div>
+      <div class="stamina" id="stamina"><i id="staminafill"></i></div>
       <div class="dead" id="dead"><span id="deadmsg">dead</span></div>
       <div class="fallback" id="fallback">This browser could not start WebGL, so there is nothing to play here.</div>
     </div>
     <div class="bar">
-      <p class="cap"><b>WASD</b> to move, camera-relative · <b>Space</b> to jump · <b>Q</b>/<b>E</b> to turn
-        the view · <b>R</b> to respawn · mouse or right stick to aim. Click the view first to give it the keyboard.</p>
+      <p class="cap"><b>WASD</b> to move, camera-relative · <b>Space</b> to jump · <b>click</b> or <b>F</b> to
+        swing · <b>Shift</b> to dodge · <b>Q</b>/<b>E</b> to turn the view · <b>R</b> to respawn · mouse or
+        right stick to aim. Click the view first to give it the keyboard.</p>
       <span class="seedbox"><label for="seedin">Seed</label><input id="seedin" value="QUARTERSTONE" spellcheck="false" autocomplete="off"></span>
       <button class="ctl" id="regen" type="button">Generate</button>
       <button class="ctl" id="respawn" type="button">Respawn</button>
@@ -120,10 +126,23 @@
         stick moves, right stick aims, A jumps, the shoulders turn the view.</p>
     </div>
     <div class="card">
+      <h2>One swing</h2>
+      <p>Wind-up, active, recovery. During the active window you go nowhere at all — committed means
+        committed, and you cannot jump, vault or dodge out of it. A dodge <em>can</em> cancel the
+        recovery, which is the only escape hatch and costs stamina you might have wanted for the
+        next swing.</p>
+      <p>None of these numbers are balance. Issue #9 decides what a hit is worth; what this is for is
+        the question underneath it — whether a committed swing reads at 45°, where the character is
+        forty pixels tall and half the arc is foreshortened. That is why the arc is drawn on the
+        ground: the blade itself is three voxels wide and mostly behind the character.</p>
+      <p>The posts are there to hit. They do not hit back — that is #24.</p>
+    </div>
+    <div class="card">
       <h2>What this is not</h2>
       <p>The instanced-box renderer is the concept plate's, not the shipping approach — the greedy mesher
-        replaces it once streaming forces the issue. There is no combat and nothing to fight. The world is
-        one window: walk to the edge and you meet a wall, because that is where the generated window stops.</p>
+        replaces it once streaming forces the issue. One frame of eight, no sockets, no fusions, and
+        nothing that fights back. The world is one window: walk to the edge and you meet a wall, because
+        that is where the generated window stops.</p>
       <p>The two windows talk through <code>postMessage</code>, which is a prototype's transport and
         nothing more. It sits behind the same three methods Steam Networking will implement, so none of
         the session logic knows the difference — which was the point of doing this now rather than later.</p>
@@ -1741,6 +1760,196 @@ function colliderForWorld(world) {
 
   return c.finish();
 }
+/* ---------- src/sim/combat.mjs ---------- */
+/**
+ * The first combat verb: one committed swing, one dodge, and a stamina pool
+ * that makes you choose between them.
+ *
+ * These numbers are placeholders and are meant to be. Issue #9 decides what a
+ * hit is worth; what this is for is the question underneath all of it — whether
+ * a committed swing reads at all under a 45 degree camera, where the character
+ * is forty pixels tall and half the arc is foreshortened. So the windows are
+ * sized to be *legible* rather than to be balanced: a wind-up long enough to
+ * see coming, an active window short enough that spacing matters, and a
+ * recovery long enough that a miss costs something.
+ *
+ * What it deliberately does not do is decide what a hit *does*. `sweep` reports
+ * that the arc covered a target this tick and stops there. Damage, poise,
+ * stagger and the rest belong to #9 and to whatever #24 puts in front of you.
+ *
+ * Pure functions of an actor and a number, like everything else in src/sim, so
+ * a guest replaying inputs reproduces the host's swing exactly rather than
+ * approximately.
+ */
+
+
+
+/* ---- stamina: the thing that makes a swing a decision ---- */
+const STAMINA_MAX = 100;
+const SWING_COST = 25;
+const DODGE_COST = 20;
+/** Per second, once it starts coming back. */
+const STAMINA_REGEN = 30;
+/** Seconds of nothing after spending, so a pool cannot be drip-fed. */
+const STAMINA_HOLD = 0.5;
+
+/* ---- the swing, in three windows ---- */
+const WINDUP = 0.25;
+const ACTIVE = 0.12;
+const RECOVER = 0.40;
+const SWING_TIME = WINDUP + ACTIVE + RECOVER;
+
+/** Longblade reach and arc. One frame of eight; the other seven are not here. */
+const REACH = 1.6;
+/** Total arc, radians. Roughly a hundred degrees — a cut, not a spin. */
+const ARC = 1.75;
+/** Precomputed, because the test below wants a comparison and not a call. */
+const COS_HALF_ARC = cos(ARC / 2);
+/** How far above or below the actor's feet a target can be and still be cut. */
+const SPAN = 1.6;
+
+/* ---- how much of yourself you keep while swinging ---- */
+const WINDUP_SPEED = 0.35;
+const ACTIVE_SPEED = 0;
+const RECOVER_SPEED = 0.6;
+
+/* ---- the dodge ---- */
+const DODGE_TIME = 0.28;
+const DODGE_DIST = 3.2;
+const DODGE_SPEED = DODGE_DIST / DODGE_TIME;
+/** Invulnerable for most of it, but not the tail: a dodge ends before you do. */
+const DODGE_IFRAMES = 0.20;
+
+const PHASE = { NONE: 0, WINDUP: 1, ACTIVE: 2, RECOVER: 3 };
+
+/** Which window a swing is in, or NONE. */
+function phase(a) {
+  if (!a.swing) return PHASE.NONE;
+  if (a.swing.t < WINDUP) return PHASE.WINDUP;
+  if (a.swing.t < WINDUP + ACTIVE) return PHASE.ACTIVE;
+  return PHASE.RECOVER;
+}
+
+/** 0..1 through the whole swing. What an animation would read. */
+function swingProgress(a) { return a.swing ? clamp(a.swing.t / SWING_TIME, 0, 1) : 0; }
+
+function dodging(a) { return !!a.dodge; }
+function invulnerable(a) { return !!a.dodge && a.dodge.t < DODGE_IFRAMES; }
+
+/** What fraction of running speed this actor is allowed right now. */
+function speedScale(a) {
+  if (a.dodge) return 0;                       /* the dash sets velocity itself */
+  switch (phase(a)) {
+    case PHASE.WINDUP: return WINDUP_SPEED;
+    case PHASE.ACTIVE: return ACTIVE_SPEED;
+    case PHASE.RECOVER: return RECOVER_SPEED;
+    default: return 1;
+  }
+}
+
+function canSwing(a) {
+  return !a.swing && !a.dodge && !a.vault && !a.swimming && a.stamina >= SWING_COST;
+}
+
+/**
+ * A dodge may be started from nothing, or out of a swing's recovery — but never
+ * out of the wind-up or the active window. That is the whole meaning of
+ * "committed": once the blade is moving you are going to finish the motion.
+ */
+function canDodge(a) {
+  if (a.dodge || a.vault || a.swimming || a.stamina < DODGE_COST) return false;
+  return !a.swing || phase(a) === PHASE.RECOVER;
+}
+
+function beginSwing(a) {
+  if (!canSwing(a)) return false;
+  a.swing = { t: 0, hit: 0 };
+  a.stamina -= SWING_COST;
+  a.staminaHold = STAMINA_HOLD;
+  return true;
+}
+
+function beginDodge(a, dx, dz) {
+  if (!canDodge(a)) return false;
+  let ux = dx, uz = dz;
+  const l = hyp(ux, uz);
+  /* No heading held: dodge the way you are looking. */
+  if (l < 1e-6) { ux = a.faceX; uz = a.faceZ; }
+  else { ux /= l; uz /= l; }
+  a.swing = null;                              /* cancels recovery, never active */
+  a.dodge = { t: 0, dx: ux, dz: uz };
+  a.stamina -= DODGE_COST;
+  a.staminaHold = STAMINA_HOLD;
+  return true;
+}
+
+/**
+ * Advance the timers. Called once a tick, before movement reads speedScale.
+ *
+ * Named for what it advances rather than just `advance`, because the bundler
+ * flattens every module into one scope and a name only makes sense there if it
+ * still makes sense next to `step`.
+ */
+function advanceCombat(a, dt) {
+  a.hits = 0;
+  if (a.swing) { a.swing.t += dt; if (a.swing.t >= SWING_TIME) a.swing = null; }
+  if (a.dodge) { a.dodge.t += dt; if (a.dodge.t >= DODGE_TIME) a.dodge = null; }
+
+  if (a.staminaHold > 0) a.staminaHold = Math.max(0, a.staminaHold - dt);
+  else if (a.stamina < STAMINA_MAX) {
+    a.stamina = Math.min(STAMINA_MAX, a.stamina + STAMINA_REGEN * dt);
+  }
+}
+
+/**
+ * Everything the arc covers this tick that it has not already covered during
+ * this swing. Targets are `{ x, y, z, r }`; the return is a bitmask of indices,
+ * which is also how it goes over the wire — an array here would be one more
+ * thing to keep the two ends agreeing about.
+ *
+ * A target is hit once per swing. Without that a three-tick active window is
+ * three hits, and the first thing anyone would do is call that a bug.
+ */
+function sweep(a, targets) {
+  if (!targets || !targets.length || phase(a) !== PHASE.ACTIVE) return 0;
+  let mask = 0;
+  for (let i = 0; i < targets.length && i < 32; i++) {
+    if (a.swing.hit & (1 << i)) continue;
+    const t = targets[i];
+    const dx = t.x - a.x, dz = t.z - a.z;
+    const d = hyp(dx, dz);
+    if (d > REACH + (t.r || 0)) continue;
+    if (Math.abs((t.y || 0) - a.y) > SPAN) continue;
+    /* Angle between facing and the target, via the dot product — atan2 is not
+       one of the operations the spec pins (see src/gen/exact.mjs). */
+    if (d > 1e-6) {
+      const cosang = (dx * a.faceX + dz * a.faceZ) / d;
+      if (cosang < COS_HALF_ARC) continue;
+    }
+    mask |= (1 << i);
+  }
+  a.swing.hit |= mask;
+  a.hits = mask;
+  return mask;
+}
+
+/**
+ * Somewhere to swing at, until #24 puts something here that swings back.
+ *
+ * Derived from the world rather than placed by hand, so a host and a guest end
+ * up with the same posts in the same order without any of it crossing the wire.
+ */
+function practicePosts(col, spawn) {
+  const out = [];
+  const ring = [[3, 0], [-3, 1.5], [1.5, -3.5], [-2, -3]];
+  for (const [dx, dz] of ring) {
+    const x = spawn[0] + dx, z = spawn[2] + dz;
+    const y = col.supportUnder(x, z, 0.4, spawn[1] + MOVE.vault);
+    if (y === -Infinity) continue;
+    out.push({ x, y, z, r: 0.45 });
+  }
+  return out;
+}
 /* ---------- src/sim/actor.mjs ---------- */
 /**
  * The character controller, written against the published movement budget
@@ -1763,6 +1972,7 @@ function colliderForWorld(world) {
  * a voxel world an AABB is exact where a capsule is only approximate, and it
  * cannot wedge itself on a corner the way a capsule can.
  */
+
 
 
 
@@ -1813,6 +2023,17 @@ function makeActor(x, y, z) {
         direction of travel does. Phase 0 uses it for nothing but the model's
         heading — issue #1 decides what aim means once there is an ability. */
     faceX: 0, faceZ: 1,
+    /* ---- combat (src/sim/combat.mjs owns the rules; the state lives here so
+       that one snapshot is the whole actor) ---- */
+    stamina: STAMINA_MAX,
+    /** Seconds before stamina starts coming back. */
+    staminaHold: 0,
+    /** null, or { t, hit } — hit is a bitmask of targets already cut this swing. */
+    swing: null,
+    /** null, or { t, dx, dz }. */
+    dodge: null,
+    /** Targets the arc covered this tick, as a bitmask. Cleared every tick. */
+    hits: 0,
     /** null while alive, else 'fall' | 'magma' | 'void'. */
     dead: null,
     /** Path length, summed per axis. Not displacement — see the soak. */
@@ -1847,6 +2068,10 @@ function snapshot(a) {
                        x1: a.vault.x1, y1: a.vault.y1, z1: a.vault.z1 } : null,
     vaults: a.vaults, inWater: a.inWater, swimming: a.swimming,
     faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
+    stamina: a.stamina, staminaHold: a.staminaHold,
+    swing: a.swing ? { t: a.swing.t, hit: a.swing.hit } : null,
+    dodge: a.dodge ? { t: a.dodge.t, dx: a.dodge.dx, dz: a.dodge.dz } : null,
+    hits: a.hits,
     ticks: a.ticks, travelled: a.travelled, blocked: a.blocked,
   };
 }
@@ -1859,6 +2084,10 @@ function restore(a, s) {
                         x1: s.vault.x1, y1: s.vault.y1, z1: s.vault.z1 } : null;
   a.vaults = s.vaults; a.inWater = s.inWater; a.swimming = s.swimming;
   a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
+  a.stamina = s.stamina; a.staminaHold = s.staminaHold;
+  a.swing = s.swing ? { t: s.swing.t, hit: s.swing.hit } : null;
+  a.dodge = s.dodge ? { t: s.dodge.t, dx: s.dodge.dx, dz: s.dodge.dz } : null;
+  a.hits = s.hits;
   a.ticks = s.ticks; a.travelled = s.travelled; a.blocked = s.blocked;
   return a;
 }
@@ -1893,6 +2122,7 @@ function slide(col, a, nx, nz) {
 function tryVault(col, a, dx, dz) {
   const r = ACTOR.radius, h = ACTOR.height;
   if (!a.grounded || (dx === 0 && dz === 0)) return false;
+  if (a.swing || a.dodge) return false;        /* committed means committed */
   const probe = 0.4;
   const top = col.supportUnder(a.x + dx * probe, a.z + dz * probe, r, a.y + MOVE.vault + EPS);
   if (!(top > a.y + MOVE.step + EPS) || top - a.y > MOVE.vault + EPS) return false;
@@ -1911,11 +2141,13 @@ function tryVault(col, a, dx, dz) {
 /**
  * Advance one tick.
  *
- * `input` is { mx, mz, jump } — a heading of length 0..1 and a boolean —
- * optionally with { aimX, aimZ }, a unit heading to face. Nothing else reaches
- * the controller: no camera, no renderer, no clock.
+ * `input` is { mx, mz, jump, attack, dodge } — a heading of length 0..1 and
+ * three booleans — optionally with { aimX, aimZ }, a unit heading to face.
+ * Nothing else reaches the controller: no camera, no renderer, no clock.
+ *
+ * `targets` is an optional list of `{ x, y, z, r }` for the swing to sweep.
  */
-function step(col, a, input, dt = TICK) {
+function step(col, a, input, targets, dt = TICK) {
   if (a.dead) return a;
   a.ticks++;
   a.blocked = false;
@@ -1947,6 +2179,12 @@ function step(col, a, input, dt = TICK) {
     if (l > 1e-9) { a.faceX = input.mx / l; a.faceZ = input.mz / l; }
   }
 
+  /* Combat timers run before intent, so a swing that finishes this tick hands
+     control back on this tick rather than the next one. */
+  advanceCombat(a, dt);
+  if (input.attack) beginSwing(a);
+  if (input.dodge) beginDodge(a, input.mx || 0, input.mz || 0);
+
   const liquid = col.liquidAt(a.x, a.z);
   if (liquid.kind === LIQUID.MAGMA && a.y <= liquid.level + 0.35) { a.dead = 'magma'; return a; }
 
@@ -1955,12 +2193,20 @@ function step(col, a, input, dt = TICK) {
   a.swimming = submerged > MOVE.wade;
 
   /* ---- intent ---- */
-  const speed = a.swimming ? SWIM_SPEED : (a.inWater ? WADE_SPEED : RUN);
-  const wx = (input.mx || 0) * speed, wz = (input.mz || 0) * speed;
-  if (a.grounded || a.swimming) { a.vx = wx; a.vz = wz; }
-  else { a.vx += (wx - a.vx) * AIR_CONTROL; a.vz += (wz - a.vz) * AIR_CONTROL; }
+  if (a.dodge) {
+    /* A dodge owns the horizontal for its whole window: it is a distance, not
+       a nudge, and a player steering out of it would make it a sprint. */
+    a.vx = a.dodge.dx * DODGE_SPEED;
+    a.vz = a.dodge.dz * DODGE_SPEED;
+  } else {
+    const base = a.swimming ? SWIM_SPEED : (a.inWater ? WADE_SPEED : RUN);
+    const speed = base * speedScale(a);
+    const wx = (input.mx || 0) * speed, wz = (input.mz || 0) * speed;
+    if (a.grounded || a.swimming) { a.vx = wx; a.vz = wz; }
+    else { a.vx += (wx - a.vx) * AIR_CONTROL; a.vz += (wz - a.vz) * AIR_CONTROL; }
+  }
 
-  if (input.jump && (a.grounded || a.swimming)) {
+  if (input.jump && !a.swing && !a.dodge && (a.grounded || a.swimming)) {
     a.vy = a.swimming ? JUMP_V * 0.35 : JUMP_V;
     a.grounded = false;
     a.apex = a.y;
@@ -2017,6 +2263,9 @@ function step(col, a, input, dt = TICK) {
   if (!a.grounded && a.y > a.apex) a.apex = a.y;
 
   if (a.y < -1) a.dead = 'void';
+
+  /* The blade lands where the tick ended, not where it started. */
+  if (targets) sweep(a, targets);
   return a;
 }
 /* ---------- src/sim/camera.mjs ---------- */
@@ -2201,13 +2450,14 @@ function setView(cam, v) { cam.view = clamp(v, 6, 40); return cam; }
  * the same three numbers either way.
  *
  * Codes are `KeyboardEvent.code` — physical keys, so WASD stays under the same
- * fingers on an AZERTY keyboard — plus `Pad<n>` for gamepad buttons.
+ * fingers on an AZERTY keyboard — plus `Pad<n>` for gamepad buttons and
+ * `Mouse<n>` for mouse buttons.
  */
 
 /** Every action the prototype has. Adding a verb adds a row here. */
 const ACTIONS = [
   'moveUp', 'moveDown', 'moveLeft', 'moveRight',
-  'jump', 'rotateLeft', 'rotateRight', 'respawn',
+  'jump', 'attack', 'dodge', 'rotateLeft', 'rotateRight', 'respawn',
 ];
 
 const DEFAULT_BINDINGS = {
@@ -2216,6 +2466,8 @@ const DEFAULT_BINDINGS = {
   moveLeft: ['KeyA', 'ArrowLeft'],
   moveRight: ['KeyD', 'ArrowRight'],
   jump: ['Space', 'Pad0'],
+  attack: ['Mouse0', 'KeyF', 'Pad2'],
+  dodge: ['ShiftLeft', 'Pad1'],
   rotateLeft: ['KeyQ', 'Pad4'],
   rotateRight: ['KeyE', 'Pad5'],
   respawn: ['KeyR', 'Pad9'],
@@ -2431,8 +2683,9 @@ const SMOOTH = 0.25;
 
 const HOST = 0, GUEST = 1;
 
-const IDLE = { mx: 0, mz: 0, jump: false, aimX: 0, aimZ: 0 };
+const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, aimZ: 0 };
 const copyInput = (i) => ({ mx: i.mx || 0, mz: i.mz || 0, jump: !!i.jump,
+                            attack: !!i.attack, dodge: !!i.dodge,
                             aimX: i.aimX || 0, aimZ: i.aimZ || 0 });
 
 /**
@@ -2451,7 +2704,7 @@ function spawnNear(col, x, z) {
 /* ------------------------------------------------------------------ host ---- */
 
 function makeHost(opts) {
-  const { col, spawn, transport, cfg } = opts;
+  const { col, spawn, transport, cfg, targets } = opts;
   const sendEvery = opts.sendEvery || SEND_EVERY;
   const me = placeOnGround(col, spawn[0], spawn[2]);
   const peer = spawnNear(col, spawn[0], spawn[2]);
@@ -2489,8 +2742,8 @@ function makeHost(opts) {
       const next = inbox.length ? inbox.shift() : last;
       last = next;
 
-      step(col, me, copyInput(localInput || IDLE));
-      step(col, peer, next.input);
+      step(col, me, copyInput(localInput || IDLE), targets);
+      step(col, peer, next.input, targets);
 
       if (t % sendEvery === 0) {
         transport.send({ t: 'snap', tick: t, ack: next.seq,
@@ -2511,7 +2764,7 @@ function makeHost(opts) {
  */
 function makeGuest(opts) {
   const { transport, build } = opts;
-  let col = null, me = null, peer = null, cfg = null;
+  let col = null, me = null, peer = null, cfg = null, targets = null;
   let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0;
   const pending = [];
   let target = null;                       /* last authoritative host state */
@@ -2525,6 +2778,9 @@ function makeGuest(opts) {
       cfg = m.cfg;
       const world = build(m.cfg);
       col = world.col;
+      /* The same posts the host is swinging at, derived the same way from the
+         same world — nothing about them crosses either. */
+      targets = world.targets || null;
       me = spawnNear(col, m.spawn[0], m.spawn[2]);
       peer = placeOnGround(col, m.spawn[0], m.spawn[2]);
       ready = true;
@@ -2541,7 +2797,7 @@ function makeGuest(opts) {
       lastAck = m.ack;
       corrections++;
       while (pending.length && pending[0].seq <= m.ack) pending.shift();
-      for (const p of pending) { step(col, me, p.input); replayed++; }
+      for (const p of pending) { step(col, me, p.input, targets); replayed++; }
       target = m.them;
     }
   });
@@ -2564,10 +2820,11 @@ function makeGuest(opts) {
       seq++;
       const input = copyInput(localInput || IDLE);
       transport.send({ t: 'input', seq, mx: input.mx, mz: input.mz, jump: input.jump,
+                       attack: input.attack, dodge: input.dodge,
                        aimX: input.aimX, aimZ: input.aimZ });
       pending.push({ seq, input });
       if (pending.length > MAX_PENDING) pending.shift();
-      step(col, me, input);
+      step(col, me, input, targets);
 
       /* The other player arrives at 20 Hz and is drawn, not simulated, so it is
          eased rather than snapped. Proper snapshot interpolation on a delay
@@ -2583,7 +2840,7 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,sin:sin,cos:cos,exp:exp,hyp:hyp,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,sin:sin,cos:cos,exp:exp,hyp:hyp,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -2742,11 +2999,56 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var nose=new THREE.Mesh(new THREE.ConeGeometry(r*0.30,r*0.75,4),
       new THREE.MeshBasicMaterial({color:0xd9a25e}));
     nose.rotation.x=Math.PI/2; nose.position.set(0,h*0.62,r*0.95); g.add(nose);
+
+    /* The longblade. One frame of eight, no sockets in it — #23 is about
+       whether a committed swing reads, not about gear. */
+    var arm=new THREE.Group(); arm.position.set(r*0.7,h*0.52,0); g.add(arm);
+    var blade=box(0.07,0.09,1.15,0x9aa1a7); blade.position.z=0.58; arm.add(blade);
+    var guard=box(0.30,0.07,0.10,0x6b6660); arm.add(guard);
+
+    /* The arc is what actually reads at forty pixels tall — the blade itself is
+       three voxels wide and half behind the character. It sits at blade height
+       rather than on the ground: the detail pass moves the surface by up to half
+       a metre, so anything drawn at ankle height disappears into the voxels of
+       whatever the character happens to be standing next to. Learned by drawing
+       it on the floor first and finding 19 pale pixels where an arc should be. */
+    var arcGeo=new THREE.RingGeometry(0.5,QS.REACH,22,1,Math.PI/2-QS.ARC/2,QS.ARC);
+    var sweep=new THREE.Mesh(arcGeo,new THREE.MeshBasicMaterial(
+      {color:0xffe9c4,transparent:true,opacity:0.8,side:THREE.DoubleSide,depthWrite:false}));
+    sweep.rotation.x=Math.PI/2; sweep.position.y=h*0.5; sweep.visible=false; g.add(sweep);
+
     g.traverse(function(o){ if(o.isMesh){ o.castShadow=true; o.userData.keep=true; } });
-    return g;
+    sweep.castShadow=false;
+    return {g:g,arm:arm,sweep:sweep,fade:0};
   }
+  /** Seconds the swing trail takes to fade out, well past the 0.12 s hitbox. */
+  var SWEEP_FADE=0.22;
   var avatar=makeAvatar(0x2f6f7a,0xc99a6e), peerAvatar=makeAvatar(0xa5642a,0xb5855c);
-  peerAvatar.visible=false;
+  peerAvatar.g.visible=false;
+
+  /** Where the blade is through the swing: back, through, and home again. */
+  function bladeAngle(a){
+    if(!a.swing) return 0;
+    var t=a.swing.t, mid=QS.WINDUP+QS.ACTIVE;
+    if(t<QS.WINDUP) return -1.35*(t/QS.WINDUP);
+    if(t<mid) return -1.35+2.75*((t-QS.WINDUP)/QS.ACTIVE);
+    return 1.40*(1-(t-mid)/(QS.SWING_TIME-mid));
+  }
+  function poseAvatar(av,a){
+    av.g.position.set(a.x,a.y,a.z);
+    av.g.rotation.y=Math.atan2(a.faceX,a.faceZ);
+    av.arm.rotation.y=bladeAngle(a);
+    /* The trail outlives the hitbox on purpose. The active window is seven
+       ticks — an eighth of a second — and at this zoom that is one frame of
+       something you were not looking at. What is drawn and what is dangerous
+       are different questions, and only the second one is in src/sim. */
+    if(QS.phase(a)===QS.PHASE.ACTIVE) av.fade=1;
+    av.sweep.visible=av.fade>0.02;
+    av.sweep.material.opacity=0.85*av.fade;
+    av.sweep.scale.setScalar(1+(1-av.fade)*0.22);
+    /* A dodge is a flicker, not a fade — it has to be legible in 17 ticks. */
+    av.g.scale.y=QS.dodging(a)?0.78:1;
+  }
 
   /* ---------- state ---------- */
   var camera=new THREE.OrthographicCamera(-1,1,1,-1,0.1,420);
@@ -2754,6 +3056,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   /* `solo` is the character when nobody else is here; once a session exists it
      owns the characters instead, and `solo` is left behind. */
   var solo=null, session=null, wire=null, role='solo', warped=false;
+  var targets=null, postMeshes=[], postHits=[], postFlash=[];
   var vp={w:1,h:1}, tm=0, deaths=0, fps=60, wind=new THREE.Vector2(0.72,0.69);
   var camT=new THREE.Vector3();
 
@@ -2783,9 +3086,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       }
     });
     built=buildScene(data); built.data=data; built.cfg=cfg;
-    built.scene.add(avatar); built.scene.add(peerAvatar);
+    built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
     col=QS.colliderForWorld(data);
-    return {col:col,spawn:data.spawn};
+
+    /* Something to swing at until #24 puts something here that swings back.
+       Derived from the world on both machines rather than sent, like the
+       terrain — see src/sim/combat.mjs. */
+    targets=QS.practicePosts(col,data.spawn);
+    postMeshes=targets.map(function(t){
+      var m=new THREE.Mesh(new THREE.CylinderGeometry(t.r,t.r*1.15,1.5,8),
+        new THREE.MeshLambertMaterial({color:0x6b5a45}));
+      m.position.set(t.x,t.y+0.75,t.z); m.castShadow=true; m.userData.keep=false;
+      built.scene.add(m); return m;
+    });
+    postHits=targets.map(function(){return 0;});
+    postFlash=targets.map(function(){return 0;});
+    return {col:col,spawn:data.spawn,targets:targets};
   }
   function regen(seedStr){
     if(session){ says('leave the game first'); return; }
@@ -2819,7 +3135,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var r=stage.getBoundingClientRect();
     input.pointer(e.clientX-r.left,e.clientY-r.top);
   });
-  stage.addEventListener('pointerdown',function(){ stage.focus(); });
+  stage.addEventListener('pointerdown',function(e){
+    stage.focus();
+    input.press('Mouse'+(e.button||0));
+  });
+  stage.addEventListener('pointerup',function(e){ input.release('Mouse'+(e.button||0)); });
+  stage.addEventListener('contextmenu',function(e){ e.preventDefault(); });
 
   function pollPad(){
     if(!navigator.getGamepads) return;
@@ -2842,6 +3163,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      rather than BroadcastChannel because a page opened from disk has an opaque
      origin, and this has to work from a file as well as from a URL. */
   var netstat=document.getElementById('netstat'), hostBtn=document.getElementById('hostbtn');
+  var staminaEl=document.getElementById('stamina'), staminaFill=document.getElementById('staminafill');
   function says(msg,live){
     netstat.innerHTML=msg;
     netstat.classList.toggle('live',!!live);
@@ -2868,7 +3190,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     wire=windowTransport(function(){ return peerWin; });
     /* The host announces itself on a beacon until someone answers, so the
        second window can take as long as it likes to load. */
-    session=QS.makeHost({col:col,spawn:built.data.spawn,transport:wire,cfg:built.cfg});
+    session=QS.makeHost({col:col,spawn:built.data.spawn,transport:wire,cfg:built.cfg,
+                         targets:targets});
     if(solo){ session.me.x=solo.x; session.me.y=solo.y; session.me.z=solo.z; }
     hostBtn.disabled=true;
     says('<b>Hosting.</b> Waiting for the second window to join…',true);
@@ -2934,8 +3257,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
 
     var ax=input.axes(), m=QS.moveFrom(cam,ax.ix,ax.iy), h=aimHeading(a);
     var wasDead=a.dead;
-    var inp={mx:m.mx,mz:m.mz,jump:input.took('jump'),aimX:h?h.x:0,aimZ:h?h.z:0};
-    if(session) session.step(inp); else QS.step(col,a,inp);
+    var inp={mx:m.mx,mz:m.mz,jump:input.took('jump'),
+             attack:input.took('attack'),dodge:input.took('dodge'),
+             aimX:h?h.x:0,aimZ:h?h.z:0};
+    if(session) session.step(inp); else QS.step(col,a,inp,targets);
+
+    /* Hits are a bitmask cleared every tick, and the loop runs several ticks a
+       frame — so they have to be read here, not in draw. */
+    var hits=player().hits;
+    if(hits) for(var q=0;q<postHits.length;q++) if(hits&(1<<q)){ postHits[q]++; postFlash[q]=0.18; }
 
     var b=player();
     if(!warped){ QS.warpTo(cam,b.x,b.y,b.z); warped=true; }
@@ -2955,12 +3285,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   function draw(){
     if(!built) return;
     var a=player();
-    avatar.visible=!!a;
-    if(a){ avatar.position.set(a.x,a.y,a.z); avatar.rotation.y=Math.atan2(a.faceX,a.faceZ); }
+    avatar.g.visible=!!a;
+    if(a) poseAvatar(avatar,a);
     var o=other(), show=!!(o&&session&&session.connected);
-    peerAvatar.visible=show;
-    if(show){ peerAvatar.position.set(o.x,o.y,o.z);
-              peerAvatar.rotation.y=Math.atan2(o.faceX,o.faceZ); }
+    peerAvatar.g.visible=show;
+    if(show) poseAvatar(peerAvatar,o);
+    for(var q=0;q<postMeshes.length;q++){
+      var lit=postFlash[q]>0;
+      postMeshes[q].material.color.setHex(lit?0xffd9a0:0x6b5a45);
+      postMeshes[q].scale.y=lit?0.92:1;
+    }
     var e=QS.eye(cam);
     camera.position.set(e.x,e.y,e.z);
     camT.set(cam.tx,cam.ty,cam.tz); camera.lookAt(camT);
@@ -2970,7 +3304,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     renderer.render(built.scene,camera);
   }
 
-  var acc=0, last=0, frames=0, fpsAt=0, wasConnected=false;
+  var acc=0, last=0, frames=0, fpsAt=0, wasConnected=false, paused=false;
   function frame(now){
     requestAnimationFrame(frame);
     if(!last){ last=now; fpsAt=now; }
@@ -2981,7 +3315,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        same reason the smoke test can assert it, and the same reason a guest's
        replay lands on the host's answer rather than near it. */
     var guard=0;
-    while(acc>=TICK&&guard++<8){ tick(); acc-=TICK; }
+    if(paused) acc=0;
+    else while(acc>=TICK&&guard++<8){ tick(); acc-=TICK; }
 
     if(session&&session.connected&&!wasConnected){
       wasConnected=true;
@@ -3002,9 +3337,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       if(a) built.gmat.uniforms.uP0.value.set(a.x,a.y,a.z); }
     if(built.wmat){ built.wmat.uniforms.uTime.value=tm; built.wmat.uniforms.uWind.value.copy(wind); }
 
+    for(var q=0;q<postFlash.length;q++) if(postFlash[q]>0) postFlash[q]-=dt;
+    avatar.fade=Math.max(0,avatar.fade-dt/SWEEP_FADE);
+    peerAvatar.fade=Math.max(0,peerAvatar.fade-dt/SWEEP_FADE);
     draw();
 
-    if(!a){ hud.textContent='waiting for the host…'; return; }
+    if(!a){ hud.textContent='waiting for the host…'; staminaEl.style.display='none'; return; }
+    staminaEl.style.display='block';
+    staminaFill.style.width=(100*a.stamina/QS.STAMINA_MAX).toFixed(1)+'%';
+    staminaFill.style.background=a.stamina<QS.SWING_COST?'#a5553a':'#d9a25e';
     var state=a.dead?('dead · '+a.dead)
       :(a.vault?'vaulting':(a.swimming?'swimming'
         :(a.inWater?'wading':(a.grounded?'grounded':'airborne'))));
@@ -3012,9 +3353,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var net=!session?'solo'
       :(role+(session.connected?' · linked':' · waiting')
         +(role==='guest'?('  seq '+session.stats.seq+'  fixes '+session.stats.corrections):''));
+    var ph=['','wind-up','ACTIVE','recovery'][QS.phase(a)];
+    var struck=postHits.reduce(function(k,v){return k+v;},0);
     hud.textContent=
       'x '+a.x.toFixed(1)+'  y '+a.y.toFixed(2)+'  z '+a.z.toFixed(1)+'\n'+
-      state+'   '+spd.toFixed(2)+' m/s\n'+
+      state+(ph?('  ·  '+ph):(QS.dodging(a)?'  ·  dodge':''))+'   '+spd.toFixed(2)+' m/s\n'+
+      'stamina '+a.stamina.toFixed(0)+'/'+QS.STAMINA_MAX+'   posts struck '+struck+'\n'+
       /* Steps are counted from where the view starts, not from zero: the
          snaps sit on START_YAW + n quarters, so dividing the raw angle by a
          quarter never lands on an integer. */
@@ -3039,7 +3383,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     get role(){return role;},
     get connected(){return !!session&&session.connected;},
     get stats(){return session?session.stats:null;},
+    get targets(){return targets;},
+    /* The swing arc's visibility is the thing #23 is actually about, so the
+       gate gets to assert it rather than infer it from a screenshot. */
+    get sweeping(){return avatar.sweep.visible;},
+    get struck(){return postHits.reduce(function(k,v){return k+v;},0);},
     run:function(n){ for(var q=0;q<(n||1);q++) tick(); },
+    /* Hands the clock to the caller. The loop keeps drawing, so a test can hold
+       a single tick of a swing still and look at it; without this the three
+       windows are over before a screenshot lands. */
+    pause:function(on){ paused=on!==false; },
     draw:draw,
     host:startHost,
     screen:function(){ var a=player(); return QS.project(cam,{x:a.x,y:a.y,z:a.z},vp); },

@@ -30,7 +30,9 @@
  *                 built to pin it: step, vault, jump, fall, wade, swim, magma.
  *   5b. VIEW      camera-relative movement survives a 90 degree snap, the two
  *                 aiming models agree, and every action is bound and rebindable.
- *   5c. NET       a host and a guest agree exactly after latency and packet
+ *   5c. COMBAT    a committed swing: three windows, a stamina cost, an arc that
+ *                 is an arc, and a dodge that cancels recovery and nothing else.
+ *   5d. NET       a host and a guest agree exactly after latency and packet
  *                 loss, the host is authoritative, and no terrain crosses.
  *   6. PLAY       a character survives five simulated minutes on every seed
  *                 without falling through the world or ending up inside it.
@@ -42,6 +44,8 @@
  *                 character under the camera it is given, and draws too.
  *  10. NET (page) two windows, postMessage between them, and a key pressed in
  *                 one moving a character in the other.
+ *  11. BUILD      a swing winds up, draws an arc you can actually count pixels
+ *                 of, and strikes what is in front of it once.
  *
  * As the prototype gains verbs, each one adds an assertion here — that is the
  * ratchet. See docs/PROTOTYPE.md.
@@ -54,7 +58,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+import { budgetSuite, viewSuite, combatSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 
 const argv = process.argv.slice(2);
@@ -116,6 +120,12 @@ if (NODE_HALF) for (const r of budgetSuite()) check(r.ok, `MOVE: ${r.label}`, r.
    rotate the view" and "a mouse point and a stick direction mean the same
    thing" are exactly the claims a screenshot cannot make. */
 if (NODE_HALF) for (const r of viewSuite()) check(r.ok, `VIEW: ${r.label}`, r.detail);
+
+/* ---------- COMBAT: the first verb that is not movement ----------
+   None of these numbers are balance — #9 decides that. What is pinned here is
+   the shape: that a swing is committed rather than merely slow, that it costs
+   something, and that the arc is an arc. */
+if (NODE_HALF) for (const r of combatSuite()) check(r.ok, `COMBAT: ${r.label}`, r.detail);
 
 /* ---------- NET: two players, one world, one authority ----------
    A host and a guest over a loopback wire with latency and loss dialled in. The
@@ -315,6 +325,53 @@ if (BROWSER_HALF) {
       });
       check(bPainted > 50, 'BUILD: draws', `${bPainted} sampled`);
       check(bErrors.length === 0, 'BUILD: no errors while playing', bErrors.slice(0, 3).join(' | '));
+
+      /* ---------- BUILD: does a swing read? ----------
+         The literal question in issue #23. Everything else about the swing is
+         asserted in node, where it is maths; whether you can *see* it is only
+         answerable by counting lit pixels where the arc should be, against the
+         same frame with no swing in it. */
+      const reads = await bp.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS;
+        const pale = () => {
+          P.draw();
+          const c = document.querySelector('#cv');
+          const g = document.createElement('canvas');
+          g.width = c.width; g.height = c.height;
+          const x = g.getContext('2d');
+          x.drawImage(c, 0, 0);
+          const s = P.screen(), R = 90;
+          const d = x.getImageData(Math.max(0, (s.x - R) | 0), Math.max(0, (s.y - R) | 0),
+                                   R * 2, R * 2).data;
+          let n = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            if (d[i] > 210 && d[i + 1] > 195 && d[i + 2] > 150) n++;
+          }
+          return n;
+        };
+        /* Stand next to a practice post, facing it, with the clock stopped. */
+        P.pause(true);
+        const t = P.targets[0], a = P.actor;
+        a.x = t.x - 1.15; a.z = t.z - 0.25; a.y = t.y;
+        a.faceX = 1; a.faceZ = 0; a.vx = 0; a.vz = 0;
+        a.stamina = QS.STAMINA_MAX; a.staminaHold = 0; a.swing = null; a.dodge = null;
+        QS.warpTo(P.cam, a.x, a.y, a.z);
+        const before = pale(), struckBefore = P.struck;
+        P.input.press('KeyF'); P.run(1); P.input.release('KeyF');
+        const windup = QS.phase(a) === QS.PHASE.WINDUP;
+        while (QS.phase(a) !== QS.PHASE.ACTIVE) P.run(1);
+        P.run(2);
+        const during = pale(), sweeping = P.sweeping;
+        while (a.swing) P.run(1);
+        P.pause(false);
+        return { before, during, sweeping, windup, struck: P.struck - struckBefore };
+      });
+      check(reads.windup && reads.sweeping, 'BUILD: a swing has a wind-up and shows its arc',
+            `${reads.windup ? 'wound up' : 'no wind-up'}, ${reads.sweeping ? 'arc drawn' : 'ARC MISSING'}`);
+      check(reads.during > reads.before + 40, 'BUILD: and the arc is visible on screen',
+            `${reads.before} lit pixels idle, ${reads.during} mid-swing`);
+      check(reads.struck === 1, 'BUILD: a post in the arc is struck, once',
+            `${reads.struck} hits`);
 
       /* ---------- NET in a browser ----------
          The loopback suite proves the protocol; this proves the page is wired

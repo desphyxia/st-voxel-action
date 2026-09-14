@@ -8,13 +8,14 @@
  * the same three numbers either way.
  *
  * Codes are `KeyboardEvent.code` — physical keys, so WASD stays under the same
- * fingers on an AZERTY keyboard — plus `Pad<n>` for gamepad buttons.
+ * fingers on an AZERTY keyboard — plus `Pad<n>` for gamepad buttons and
+ * `Mouse<n>` for mouse buttons.
  */
 
 /** Every action the prototype has. Adding a verb adds a row here. */
 export const ACTIONS = [
   'moveUp', 'moveDown', 'moveLeft', 'moveRight',
-  'jump', 'rotateLeft', 'rotateRight', 'respawn',
+  'jump', 'attack', 'dodge', 'rotateLeft', 'rotateRight', 'respawn',
 ];
 
 export const DEFAULT_BINDINGS = {
@@ -23,6 +24,8 @@ export const DEFAULT_BINDINGS = {
   moveLeft: ['KeyA', 'ArrowLeft'],
   moveRight: ['KeyD', 'ArrowRight'],
   jump: ['Space', 'Pad0'],
+  attack: ['Mouse0', 'KeyF', 'Pad2'],
+  dodge: ['ShiftLeft', 'Pad1'],
   rotateLeft: ['KeyQ', 'Pad4'],
   rotateRight: ['KeyE', 'Pad5'],
   respawn: ['KeyR', 'Pad9'],

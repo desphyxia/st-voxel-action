@@ -5,10 +5,10 @@ terrain features are sized in whole metres on a 1 m grid and built from 25 cm vo
 
 **Status: pre-production, and playable, by two.** What exists is the seeded terrain generator
 (`src/gen/`), collision, a character controller, an isometric camera and a remappable input
-layer (`src/sim/`), host-authoritative netcode with client prediction (`src/net/`), a build you
-can open and walk around in — with a second window if you want company (`docs/play/`), the
-concept plate, and a design decision record. There is no combat and nothing to fight. Do not
-start engine work without checking `docs/DECISIONS.md` first.
+layer, one committed swing and a dodge (`src/sim/`), host-authoritative netcode with client
+prediction (`src/net/`), a build you can open and walk around in — with a second window if you
+want company (`docs/play/`), the concept plate, and a design decision record. Nothing fights
+back yet. Do not start engine work without checking `docs/DECISIONS.md` first.
 
 ## Where things are
 
@@ -17,7 +17,7 @@ start engine work without checking `docs/DECISIONS.md` first.
 | `docs/DECISIONS.md` | **Read this first.** 43 decisions from design interviews, plus open items and unresolved tensions. The authority on what the game is. |
 | `docs/PROTOTYPE.md` | **Read this second.** What "playable" means, the path to it, and the rules that keep every merge playable. |
 | `src/gen/` | The terrain generator. Plain ES modules — no DOM, no three.js. See `src/README.md`. |
-| `src/sim/` | Collision, the character controller, the isometric camera and the input table — all written against the movement budget and all free of the DOM and three.js, which is why they can be asserted in node. |
+| `src/sim/` | Collision, the character controller, the isometric camera, the input table and the first combat verb — all written against the movement budget and all free of the DOM and three.js, which is why they can be asserted in node. |
 | `src/net/` | The wire: a three-method transport interface, a loopback double with latency and loss, and the host/guest sessions. No DOM either. |
 | `docs/play/index.html` | **The playable build.** Open it in a browser and walk around; *Host a game* opens a second window and puts another character in the same world. Carries an inlined copy of `src/gen`, `src/sim` and `src/net`. |
 | `docs/concept/index.html` | The concept plate: the design document, the renderer, and an inlined copy of `src/gen` it draws. |
@@ -48,8 +48,10 @@ node tools/bundle-gen.mjs --check   # fail if either page is out of date
 ```
 
 Two pages carry a bundle: the plate gets `src/gen`, the playable build gets `src/gen`,
-`src/sim` **and** `src/net`. A new module has to be added to `MODULES` in the bundler, in
-dependency order, or it bundles silently and the page throws on load.
+`src/sim` **and** `src/net`. Two traps the bundler now fails on rather than letting through,
+because it concatenates everything into one scope: a module missing from `MODULES`, and an
+import that **renames** anything (`import { advance as advanceCombat }` bundles to a scope that
+only ever defined `advance`). Rename the export instead.
 
 Edit the modules, run the bundler, commit both. The smoke test fails if they have drifted, and
 also fails if the plate's worlds stop matching the ones node generates from `src/gen`.

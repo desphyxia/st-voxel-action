@@ -1,7 +1,7 @@
 /**
  * Driving the character controller without a player.
  *
- * Four things live here, and none is part of the game: a suite of micro-worlds
+ * Five things live here, and none is part of the game: a suite of micro-worlds
  * that pin each clause of the movement budget, a five-minute soak that turns a
  * wanderer loose on a generated world and watches for it to fall through, and a
  * suite for the camera and the input table, and a pair of networked sessions
@@ -20,6 +20,7 @@ import { placeOnGround, step, embedded, ACTOR, TICK, RUN } from '../../src/sim/a
 import { makeCamera, moveFrom, project, aimFromStick, aimFromPointer,
          START_YAW, QUARTER, snap } from '../../src/sim/camera.mjs';
 import { makeInput, defaultBindings, ACTIONS } from '../../src/sim/input.mjs';
+import * as CB from '../../src/sim/combat.mjs';
 import { makeLoopback } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest } from '../../src/net/session.mjs';
 import { buildWorld } from '../../src/gen/index.mjs';
@@ -359,10 +360,14 @@ function sides(seedName) {
   if (!WORLDS.has(seedName)) {
     const cfg = GOLDEN_SEEDS.find((c) => c.nm === seedName);
     const world = buildWorld(cfg);
+    const hostCol = colliderForWorld(world), guestCol = colliderForWorld(buildWorld(cfg));
     WORLDS.set(seedName, {
-      cfg, spawn: world.spawn,
-      hostCol: colliderForWorld(world),
-      guestCol: colliderForWorld(buildWorld(cfg)),
+      cfg, spawn: world.spawn, hostCol, guestCol,
+      /* Derived on each side from its own world, never sent. If the two ends
+         disagreed about where the posts are, a swing would land on one and not
+         the other and the exact-agreement tests would say so. */
+      hostTargets: CB.practicePosts(hostCol, world.spawn),
+      guestTargets: CB.practicePosts(guestCol, world.spawn),
     });
   }
   return WORLDS.get(seedName);
@@ -370,19 +375,25 @@ function sides(seedName) {
 
 function twoPlayers(seedName, wire) {
   const w = sides(seedName || 'meadow');
-  const host = makeHost({ col: w.hostCol, spawn: w.spawn, transport: wire.a, cfg: w.cfg });
+  const host = makeHost({ col: w.hostCol, spawn: w.spawn, transport: wire.a, cfg: w.cfg,
+                          targets: w.hostTargets });
   const guest = makeGuest({
     transport: wire.b,
-    build: () => ({ col: w.guestCol, spawn: w.spawn }),
+    build: () => ({ col: w.guestCol, spawn: w.spawn, targets: w.guestTargets }),
   });
   return { host, guest, wire, col: w.hostCol };
 }
 
-/** A deterministic wander, so both players move without anyone driving them. */
+/**
+ * A deterministic wander, so both players move without anyone driving them —
+ * swinging and dodging on the way, which is how the combat state gets dragged
+ * through snapshot, restore and replay rather than only the position.
+ */
 function scripted(phase) {
   return (t) => {
     const a = t * 0.017 + phase;
-    return { mx: cos(a), mz: sin(a), jump: t % 131 === 0 };
+    return { mx: cos(a), mz: sin(a),
+             jump: t % 131 === 0, attack: t % 73 === 0, dodge: t % 109 === 0 };
   };
 }
 
@@ -499,6 +510,32 @@ export function netSuite() {
         `guest pulled back to ${pulled.toFixed(2)} m; host never saw the jump (${hostMoved.toFixed(2)} m)`);
   }
 
+  /* 8b. And swing. Combat state is part of the actor, so it rides the same
+         snapshot and the same replay — if it did not, a guest would watch its
+         own sword pass through nothing on the host's copy. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 5 }));
+    run(p, 20, null, null);
+    let hostSawSwing = 0, hostSawDodge = 0;
+    run(p, 400, scripted(0), scripted(2), () => {
+      if (p.host.peer.swing) hostSawSwing++;
+      if (p.host.peer.dodge) hostSawDodge++;
+    });
+    settle(p, 150);
+    say('a swing on one machine happens on the other', hostSawSwing > 30 && hostSawDodge > 10,
+        `${hostSawSwing} ticks swinging, ${hostSawDodge} dodging, as the host saw it`);
+
+    /* Stamina is the one thing that does *not* end up equal, and should not:
+       it is still moving while position has settled, so the guest — predicting
+       a round trip ahead — reads a little higher. That lead is the invariant
+       worth pinning. Asserting equality here would be asserting that prediction
+       had stopped working. */
+    const lead = p.guest.me.stamina - p.host.peer.stamina;
+    const roundTrip = CB.STAMINA_REGEN * (5 + 4) * TICK;
+    say('stamina leads by a round trip and no more', lead >= 0 && lead <= roundTrip,
+        `guest is ${lead.toFixed(2)} ahead, a round trip is worth ${roundTrip.toFixed(2)}`);
+  }
+
   /* 8. The point of all of it: each of them can see the other move. */
   {
     const p = twoPlayers('meadow', makeLoopback({ latency: 4 }));
@@ -515,6 +552,181 @@ export function netSuite() {
     });
     say('each player sees the other move', sawHost > 2 && sawGuest > 2,
         `guest saw ${sawHost.toFixed(1)} m, host saw ${sawGuest.toFixed(1)} m`);
+  }
+
+  return out;
+}
+
+/* ---------------------------------------------------------------- combat ---- */
+
+/** A flat floor and an actor standing on it, facing +x. */
+function arena() {
+  const c = makeCollider(20, V);
+  c.addBox(-19.9, 19.9, -19.9, 19.9, -2, 0);
+  c.finish();
+  const a = placeOnGround(c, 0, 0);
+  a.faceX = 1; a.faceZ = 0;
+  return { col: c, a };
+}
+const FACE = { mx: 0, mz: 0, aimX: 1, aimZ: 0 };
+const swing = () => Object.assign({ attack: true }, FACE);
+const hold = () => Object.assign({}, FACE);
+
+/** Run `n` ticks of the same input and hand back the phases seen, in order. */
+function phaseTrace(col, a, n, input, targets) {
+  const seen = [];
+  for (let t = 0; t < n; t++) {
+    step(col, a, t === 0 ? input : hold(), targets);
+    const p = CB.phase(a);
+    if (!seen.length || seen[seen.length - 1][0] !== p) seen.push([p, 1]);
+    else seen[seen.length - 1][1]++;
+  }
+  return seen;
+}
+
+/**
+ * The first combat verb. Issue #23 is explicit that none of these numbers are
+ * balance — what is being pinned is the *shape*: that a swing is committed,
+ * that it costs something, and that the arc is an arc rather than a circle.
+ */
+export function combatSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const ticks = (sec) => Math.round(sec / TICK);
+
+  /* 1. Three windows, in order, for as long as they say. */
+  {
+    const { col, a } = arena();
+    const trace = phaseTrace(col, a, ticks(CB.SWING_TIME) + 4, swing());
+    const order = trace.map((p) => p[0]).join(',');
+    const want = [CB.PHASE.WINDUP, CB.PHASE.ACTIVE, CB.PHASE.RECOVER, CB.PHASE.NONE].join(',');
+    say('a swing runs wind-up, active, recovery', order === want, order);
+    const active = (trace.find((p) => p[0] === CB.PHASE.ACTIVE) || [0, 0])[1];
+    say('the active window is the short one',
+        active > 0 && active <= ticks(CB.ACTIVE) + 1 && active < ticks(CB.WINDUP),
+        `${active} ticks of ${ticks(CB.SWING_TIME)}`);
+  }
+
+  /* 2. Committed. Not "slowed" — during the active window you go nowhere, and
+        you cannot cancel into a jump or a vault either. */
+  {
+    const { col, a } = arena();
+    step(col, a, swing());
+    let windup = 0, activeMoved = 0, recover = 0, x = a.x;
+    for (let t = 1; t < ticks(CB.SWING_TIME); t++) {
+      const before = a.x;
+      step(col, a, Object.assign({ mx: 1 }, FACE, { mx: 1 }));
+      const d = a.x - before;
+      const p = CB.phase(a);
+      if (p === CB.PHASE.WINDUP) windup += d;
+      else if (p === CB.PHASE.ACTIVE) activeMoved += d;
+      else recover += d;
+    }
+    const free = RUN * TICK;
+    say('the active window pins you in place', Math.abs(activeMoved) < 1e-9,
+        `${activeMoved.toFixed(6)} m`);
+    say('wind-up and recovery cost speed, not all of it',
+        windup > 0 && recover > 0 && windup < ticks(CB.WINDUP) * free * 0.6
+          && recover < ticks(CB.RECOVER) * free * 0.8,
+        `${windup.toFixed(2)} m of wind-up, ${recover.toFixed(2)} m of recovery`);
+  }
+
+  /* 3. Stamina is the reason a swing is a decision. */
+  {
+    const { col, a } = arena();
+    const before = a.stamina;
+    step(col, a, swing());
+    say('a swing costs stamina', a.stamina === before - CB.SWING_COST,
+        `${before} → ${a.stamina}`);
+
+    a.stamina = CB.SWING_COST - 1; a.swing = null; a.staminaHold = 0;
+    step(col, a, swing());
+    say('an empty pool refuses the swing', a.swing === null, a.swing ? 'it swung anyway' : '');
+  }
+
+  /* 4. ...and it comes back on a delay, so it cannot be drip-fed. */
+  {
+    const { col, a } = arena();
+    step(col, a, swing());
+    const spent = a.stamina;
+    for (let t = 0; t < ticks(CB.STAMINA_HOLD) - 2; t++) step(col, a, hold());
+    const held = a.stamina;
+    for (let t = 0; t < ticks(1); t++) step(col, a, hold());
+    say('stamina waits, then comes back', held === spent && a.stamina > spent + 20,
+        `${spent.toFixed(0)} held to ${held.toFixed(0)}, then ${a.stamina.toFixed(0)}`);
+  }
+
+  /* 5. An arc, not a circle: in front is cut, behind is not, and reach is what
+        it says on the frame. */
+  {
+    const { col, a } = arena();
+    const targets = [
+      { x: 1.2, y: a.y, z: 0, r: 0 },        /* in front, inside reach   */
+      { x: -1.2, y: a.y, z: 0, r: 0 },       /* behind                   */
+      { x: 0, y: a.y, z: 1.2, r: 0 },        /* square on, outside 100°  */
+      { x: CB.REACH + 0.8, y: a.y, z: 0, r: 0 }, /* in front, too far    */
+    ];
+    let mask = 0;
+    step(col, a, swing(), targets);
+    for (let t = 1; t < ticks(CB.SWING_TIME); t++) { step(col, a, hold(), targets); mask |= a.hits; }
+    say('the arc cuts what is in front of it', (mask & 1) !== 0, `mask ${mask}`);
+    say('and nothing behind or beyond', (mask & ~1) === 0,
+        ['behind', 'to the side', 'out of reach'].filter((_, i) => mask & (2 << i)).join(', ') || '');
+  }
+
+  /* 6. Once per swing. A three-tick active window is not three hits. */
+  {
+    const { col, a } = arena();
+    const targets = [{ x: 1.0, y: a.y, z: 0, r: 0 }];
+    let hits = 0;
+    step(col, a, swing(), targets);
+    for (let t = 1; t < ticks(CB.SWING_TIME) + 2; t++) {
+      step(col, a, hold(), targets);
+      if (a.hits) hits++;
+    }
+    say('a target is cut once per swing', hits === 1, `${hits} hits`);
+  }
+
+  /* 7. The dodge: a distance, not a nudge, and it costs. */
+  {
+    const { col, a } = arena();
+    const x0 = a.x, st0 = a.stamina;
+    step(col, a, Object.assign({ dodge: true }, FACE));
+    let n = 1;
+    while (a.dodge) { step(col, a, hold()); n++; }
+    const d = a.x - x0;
+    say('a dodge covers the distance it claims',
+        Math.abs(d - CB.DODGE_DIST) < CB.DODGE_DIST * 0.12,
+        `${d.toFixed(2)} m of ${CB.DODGE_DIST} in ${n} ticks`);
+    say('a dodge costs stamina', st0 - a.stamina >= CB.DODGE_COST, `${st0 - a.stamina}`);
+  }
+
+  /* 8. The invulnerability ends before the dodge does — the tail is where a
+        dodge is punished, and without it the verb has no downside. */
+  {
+    const { col, a } = arena();
+    step(col, a, Object.assign({ dodge: true }, FACE));
+    let inv = 0, total = 0;
+    while (a.dodge) { if (CB.invulnerable(a)) inv++; total++; step(col, a, hold()); }
+    say('invulnerability ends before the dodge does', inv > 0 && inv < total,
+        `${inv} of ${total} ticks`);
+  }
+
+  /* 9. A dodge is the way out of a recovery, and the way out of nothing else. */
+  {
+    const { col, a } = arena();
+    step(col, a, swing());
+    for (let t = 1; CB.phase(a) !== CB.PHASE.ACTIVE; t++) step(col, a, hold());
+    step(col, a, Object.assign({ dodge: true }, FACE));
+    const duringActive = !a.dodge;
+    while (CB.phase(a) !== CB.PHASE.RECOVER && a.swing) step(col, a, hold());
+    a.stamina = CB.STAMINA_MAX; a.staminaHold = 0;
+    step(col, a, Object.assign({ dodge: true }, FACE));
+    const duringRecovery = !!a.dodge && a.swing === null;
+    say('a dodge cancels recovery but never the swing itself',
+        duringActive && duringRecovery,
+        `${duringActive ? 'active held' : 'ACTIVE CANCELLED'}, ` +
+        `${duringRecovery ? 'recovery cancelled' : 'recovery stuck'}`);
   }
 
   return out;
