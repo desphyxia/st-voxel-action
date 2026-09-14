@@ -22,9 +22,13 @@ terrain work has been serving all along.
 
 It is a floor, not a ceiling. The bar **ratchets**: see below.
 
-**Met, as of #21.** `docs/play/index.html` is that build. What it cannot yet tell us is anything
-about the game: there is no second player, no combat and nothing to fight. The next bar is
-**#24 — the first build anyone can have an opinion about.**
+**Met, as of #21**, and passed. `docs/play/index.html` is that build, and as of #24 it is
+**move and fight** — the first build anyone can form an opinion about, which was the whole point
+of the ordering. Phase 0 is complete.
+
+What it still cannot tell us is whether the *game* is good: one frame of eight, no sockets, no
+fusions, one archetype of twelve, no loot, no progression and no reason to go anywhere. That is
+Phase 1, and it is no longer gated on being able to play.
 
 ### The movement budget it is measured against
 
@@ -68,7 +72,10 @@ optimised for never rewriting anything; this optimises for playing something.
    Wind-up, active, recovery; during the active window you go nowhere and cannot cancel. A dodge
    cancels the recovery and nothing else. None of the numbers are balance — #9 decides that —
    and the finding is recorded on the issue: the arc reads at 45°, the blade does not.
-7. **One enemy** with a telegraph and a death.
+7. ~~**One enemy** with a telegraph and a death.~~ **Done** (#24). A sentry automaton that
+   notices, closes, telegraphs, swings, staggers and dies — under the same movement budget the
+   player walks, through the same controller. **Phase 0 is complete: the prototype is
+   *move and fight*.**
 
 **Deliberately deferred, and recorded as debt:** the instanced-box renderer stays until
 streaming forces the mesher — it handles a single window fine. Also deferred: LOD, region

@@ -1,7 +1,7 @@
 /**
  * Driving the character controller without a player.
  *
- * Five things live here, and none is part of the game: a suite of micro-worlds
+ * Six things live here, and none is part of the game: a suite of micro-worlds
  * that pin each clause of the movement budget, a five-minute soak that turns a
  * wanderer loose on a generated world and watches for it to fall through, and a
  * suite for the camera and the input table, and a pair of networked sessions
@@ -21,6 +21,7 @@ import { makeCamera, moveFrom, project, aimFromStick, aimFromPointer,
          START_YAW, QUARTER, snap } from '../../src/sim/camera.mjs';
 import { makeInput, defaultBindings, ACTIONS } from '../../src/sim/input.mjs';
 import * as CB from '../../src/sim/combat.mjs';
+import * as EN from '../../src/sim/enemy.mjs';
 import { makeLoopback } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest } from '../../src/net/session.mjs';
 import { buildWorld } from '../../src/gen/index.mjs';
@@ -373,15 +374,18 @@ function sides(seedName) {
   return WORLDS.get(seedName);
 }
 
-function twoPlayers(seedName, wire) {
+function twoPlayers(seedName, wire, withFoes) {
   const w = sides(seedName || 'meadow');
+  /* Fresh every time: the machines in it die, and a suite that shared them
+     would be testing whatever the previous case left standing. */
+  const encounter = withFoes ? EN.makeEncounter(w.hostCol, w.spawn, w.hostTargets) : null;
   const host = makeHost({ col: w.hostCol, spawn: w.spawn, transport: wire.a, cfg: w.cfg,
-                          targets: w.hostTargets });
+                          targets: encounter ? encounter.targets : w.hostTargets, encounter });
   const guest = makeGuest({
     transport: wire.b,
-    build: () => ({ col: w.guestCol, spawn: w.spawn, targets: w.guestTargets }),
+    build: () => ({ col: w.guestCol, spawn: w.spawn }),
   });
-  return { host, guest, wire, col: w.hostCol };
+  return { host, guest, wire, col: w.hostCol, encounter };
 }
 
 /**
@@ -534,6 +538,36 @@ export function netSuite() {
     const roundTrip = CB.STAMINA_REGEN * (5 + 4) * TICK;
     say('stamina leads by a round trip and no more', lead >= 0 && lead <= roundTrip,
         `guest is ${lead.toFixed(2)} ahead, a round trip is worth ${roundTrip.toFixed(2)}`);
+  }
+
+  /* 8c. The world is the host's. A guest is sent what the machines look like
+         and simulates none of it — so if the host's copy stops moving, so does
+         the guest's, and if the host kills one it is dead on both. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 4 }), true);
+    run(p, 40, scripted(0), scripted(2));
+    const sawFoes = (p.guest.foes || []).length;
+    const first = p.encounter.enemies[0];
+    /* Reach over and kill one the way a hit would. */
+    first.hp = 0; first.dead = 'struck';
+    run(p, 60, scripted(0), scripted(2));
+    const guestFoe = (p.guest.foes || [])[0];
+    say('the guest is sent the machines and simulates none of them',
+        sawFoes === p.encounter.enemies.length && !!guestFoe,
+        `${sawFoes} of ${p.encounter.enemies.length}`);
+    say('a machine the host killed is dead on the guest too',
+        !!guestFoe && guestFoe.h === 0 && guestFoe.s === EN.EST.DEAD,
+        guestFoe ? `hp ${guestFoe.h}, state ${guestFoe.s}` : 'no machine arrived');
+  }
+
+  /* 8d. And the wire still fits, with three machines in it. */
+  {
+    const wire = makeLoopback({});
+    const p = twoPlayers('meadow', wire, true);
+    run(p, 600, scripted(0), scripted(2));
+    const kbs = wire.stat.bytes / (600 / 60) / 1024;
+    say('three machines on the wire still fit the budget', kbs < 30,
+        `${kbs.toFixed(1)} kB/s with two players and ${p.encounter.enemies.length} machines`);
   }
 
   /* 8. The point of all of it: each of them can see the other move. */
@@ -727,6 +761,190 @@ export function combatSuite() {
         duringActive && duringRecovery,
         `${duringActive ? 'active held' : 'ACTIVE CANCELLED'}, ` +
         `${duringRecovery ? 'recovery cancelled' : 'recovery stuck'}`);
+  }
+
+  return out;
+}
+
+/* ----------------------------------------------------------------- enemy ---- */
+
+/** A flat arena with one sentry in it and a player facing it. */
+function duel(gap) {
+  const c = makeCollider(20, V);
+  c.addBox(-19.9, 19.9, -19.9, 19.9, -2, 0);
+  c.finish();
+  const p = placeOnGround(c, 0, 0);
+  p.faceX = 1; p.faceZ = 0;
+  const e = EN.makeSentry(c, gap === undefined ? 4 : gap, 0);
+  return { col: c, p, e, targets: [e] };
+}
+
+/** Step both, with the player holding still and facing the machine. */
+function watch(d, ticks, playerInput, onTick) {
+  for (let t = 0; t < ticks; t++) {
+    const dx = d.e.x - d.p.x, dz = d.e.z - d.p.z, l = hyp(dx, dz) || 1;
+    const inp = Object.assign({ aimX: dx / l, aimZ: dz / l },
+                              playerInput ? playerInput(t, d) : null);
+    step(d.col, d.p, inp, d.targets);
+    CB.applyHits(d.p, d.targets, CB.SWING_DAMAGE);
+    EN.stepSentry(d.col, d.e, [d.p]);
+    if (onTick) onTick(t);
+    if (d.p.dead || d.e.dead) break;
+  }
+  return d;
+}
+
+/** Run until the machine is in `state`, or give up. */
+function until(d, state, cap) {
+  let n = 0;
+  while (d.e.ai.state !== state && n < (cap || 2000)) { watch(d, 1); n++; }
+  return n < (cap || 2000);
+}
+
+/**
+ * One enemy that closes, telegraphs, swings and dies — issue #24. The telegraph
+ * is the part that matters: from 45 degrees you see the top of things, and a
+ * wind-up you cannot read is a fight you cannot learn.
+ */
+export function enemySuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const ticks = (sec) => Math.round(sec / TICK);
+
+  /* 1. It stands on the world like anything else does. */
+  {
+    const d = duel();
+    say('a sentry spawns standing on the ground',
+        d.e.grounded && !embedded(d.col, d.e) && d.e.hp === EN.SENTRY.hp,
+        `y ${d.e.y.toFixed(2)}, ${d.e.hp} hp`);
+  }
+
+  /* 2. It notices, closes, and gets into range under its own steam. */
+  {
+    const d = duel(9);
+    const start = hyp(d.e.x - d.p.x, d.e.z - d.p.z);
+    let floated = 0;
+    watch(d, 600, null, () => { if (!d.e.grounded && d.e.vy === 0) floated++; });
+    const end = hyp(d.e.x - d.p.x, d.e.z - d.p.z);
+    say('it closes the distance on foot', end < start - 5 && floated === 0,
+        `${start.toFixed(1)} m to ${end.toFixed(1)} m, ${floated} ticks hovering`);
+  }
+
+  /* 3. The telegraph: a window before anything can hurt you, and nothing lands
+        during it. This is the assertion the whole issue is about. */
+  {
+    const d = duel(3);
+    const ok = until(d, EN.EST.TELEGRAPH);
+    const hpAtTell = d.p.hp;
+    let hurtDuringTell = false;
+    let n = 0;
+    while (d.e.ai.state === EN.EST.TELEGRAPH && n < 200) {
+      watch(d, 1);
+      /* The tick that ends the tell is the tick the strike opens on, and the
+         blow lands inside it — so only count damage that arrived while the
+         machine was still winding up. */
+      if (d.e.ai.state === EN.EST.TELEGRAPH && d.p.hp < hpAtTell) hurtDuringTell = true;
+      n++;
+    }
+    say('it telegraphs, and the telegraph is the long part',
+        ok && !hurtDuringTell && n >= ticks(EN.TELEGRAPH_TIME) - 1 && n > ticks(EN.STRIKE_TIME) * 3,
+        `${n} ticks of tell, ${ticks(EN.STRIKE_TIME)} of strike`);
+  }
+
+  /* 4. And then it actually hits you. */
+  {
+    const d = duel(2.0);
+    const before = d.p.hp;
+    until(d, EN.EST.STRIKE);
+    watch(d, 4);
+    say('the strike lands on someone standing in it', d.p.hp === before - EN.SENTRY.damage,
+        `${before} → ${d.p.hp}`);
+  }
+
+  /* 5. The one that matters for #23: dodge through it and it costs nothing.
+        Not "less" — nothing, because the dodge's invulnerability is the whole
+        reason the verb exists. */
+  {
+    const d = duel(2.0);
+    until(d, EN.EST.TELEGRAPH);
+    const before = d.p.hp;
+    let dodged = false;
+    watch(d, 200, (t, dd) => {
+      /* Dodge just before the blow, so the i-frames cover the strike tick. */
+      if (!dodged && dd.e.ai.state === EN.EST.TELEGRAPH
+          && EN.TELEGRAPH_TIME - dd.e.ai.t <= CB.DODGE_IFRAMES * 0.5) {
+        dodged = true;
+        return { dodge: true, mx: -1, mz: 0 };
+      }
+      return null;
+    }, () => {});
+    say('a dodge through the strike costs nothing', dodged && d.p.hp === before,
+        dodged ? `${before} → ${d.p.hp}` : 'never got the timing');
+  }
+
+  /* 6. The opening. A recovery longer than a whole player swing is the
+        difference between "you survived" and "you got something for it". */
+  {
+    const d = duel(2.0);
+    until(d, EN.EST.RECOVER);
+    let n = 0;
+    while (d.e.ai.state === EN.EST.RECOVER && n < 300) { watch(d, 1); n++; }
+    say('the recovery is long enough to punish', n >= ticks(CB.SWING_TIME),
+        `${n} ticks of opening, a whole swing is ${ticks(CB.SWING_TIME)}`);
+  }
+
+  /* 7. It dies, in the number of hits the numbers say, and stays dead. */
+  {
+    const d = duel(1.3);
+    const want = Math.ceil(EN.SENTRY.hp / CB.SWING_DAMAGE);
+    let landed = 0;
+    watch(d, 2000, (t, dd) => {
+      const l = hyp(dd.e.x - dd.p.x, dd.e.z - dd.p.z);
+      return l > 1.3 ? { mx: (dd.e.x - dd.p.x) / l, mz: (dd.e.z - dd.p.z) / l }
+                     : { attack: !dd.p.swing };
+    }, () => { if (d.p.hits) landed++; });
+    const restedAt = { x: d.e.x, z: d.e.z };
+    watch(d, 120);
+    say('it dies in the hits the numbers say, and stays dead',
+        d.e.dead === 'struck' && landed === want
+          && hyp(d.e.x - restedAt.x, d.e.z - restedAt.z) < 1e-9,
+        `${landed} hits of ${want}, ${d.e.dead || 'alive'}`);
+  }
+
+  /* 8. It is heavy: it does not pull itself over a ledge the way a player can.
+        Going *around* is #15's navigation graph; not walking up a wall is this
+        issue's problem, and is the half that would look like a bug. */
+  {
+    const c = makeCollider(20, V);
+    c.addBox(-19.9, 0, -6, 6, -2, 0);
+    c.addBox(0.3, 19.9, -6, 6, -2, MOVE.vault);     /* a ledge a player vaults */
+    c.finish();
+    const p = placeOnGround(c, 6, 0);                /* up on the ledge */
+    const e = EN.makeSentry(c, -3, 0);
+    let sidestepped = false;
+    for (let t = 0; t < 900; t++) {
+      EN.stepSentry(c, e, [p]);
+      if (e.ai.sideT > 0) sidestepped = true;
+      if (e.vaults > 0) break;
+    }
+    say('a sentry does not vault, it goes around',
+        e.vaults === 0 && e.y < MOVE.vault - 0.1 && sidestepped,
+        `${e.vaults} vaults, y ${e.y.toFixed(2)}, ${sidestepped ? 'stepped aside' : 'pressed into it'}`);
+  }
+
+  /* 9. A hit interrupts a machine that has not committed yet — but never one
+        that has, which is the same rule the player plays by. */
+  {
+    const d = duel(2.0);
+    until(d, EN.EST.CLOSE);
+    const enc = { targets: d.targets };
+    EN.jolt(d.e);
+    const staggered = d.e.ai.state === EN.EST.STAGGER;
+    until(d, EN.EST.STRIKE);
+    EN.jolt(d.e);
+    const heldThrough = d.e.ai.state === EN.EST.STRIKE;
+    say('a hit staggers it, unless it has already committed', staggered && heldThrough,
+        `${staggered ? 'staggered' : 'shrugged'}, ${heldThrough ? 'held the strike' : 'STRIKE CANCELLED'}`);
   }
 
   return out;

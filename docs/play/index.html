@@ -28,10 +28,13 @@
        padding:8px 11px;pointer-events:none;white-space:pre;max-width:calc(100% - 20px);overflow:hidden}
   .hud b{color:var(--text);font-weight:500}
   .hud .warn{color:var(--sand)}
-  .stamina{position:absolute;left:12px;bottom:12px;width:180px;height:7px;
-           border:1px solid var(--line2);background:rgba(10,13,17,.6);display:none}
-  .stamina i{display:block;height:100%;width:100%;background:var(--sand);
-             transition:width .06s linear}
+  .vitals{position:absolute;left:12px;bottom:12px;width:190px;display:none}
+  .vitals .bar{height:8px;border:1px solid var(--line2);background:rgba(10,13,17,.6);
+               margin-bottom:3px}
+  .vitals .bar.st{height:6px}
+  .vitals i{display:block;height:100%;width:100%;transition:width .06s linear}
+  .vitals .hp i{background:#c9563a}
+  .vitals .st i{background:var(--sand)}
   .dead{position:absolute;inset:0;display:none;place-items:center;background:rgba(40,8,8,.42)}
   .dead span{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;
              color:#ffd7cf;background:rgba(10,13,17,.8);border:1px solid #6b3030;padding:10px 16px}
@@ -82,16 +85,19 @@
   <header>
     <h1>Quarterstone · playable build</h1>
     <p class="lede">The first thing here you can actually play. One 64 × 64 m window of a seeded world,
-      the movement budget the terrain was sized against, one committed swing, and — if you open a second
-      window — someone else in it with you. Nothing fights back yet. This exists to answer two questions:
-      whether moving through this world feels like anything, and whether a swing reads at all from up here.</p>
+      the movement budget the terrain was sized against, one committed swing, three sentry automata still
+      holding a position, and — if you open a second window — someone else in it with you. This is
+      <b>move and fight</b>: the first build anyone can form an opinion about.</p>
   </header>
 
   <section>
     <div class="stage" id="stage" tabindex="0">
       <canvas id="cv"></canvas>
       <div class="hud" id="hud"></div>
-      <div class="stamina" id="stamina"><i id="staminafill"></i></div>
+      <div class="vitals" id="vitals">
+        <div class="bar hp"><i id="hpfill"></i></div>
+        <div class="bar st"><i id="staminafill"></i></div>
+      </div>
       <div class="dead" id="dead"><span id="deadmsg">dead</span></div>
       <div class="fallback" id="fallback">This browser could not start WebGL, so there is nothing to play here.</div>
     </div>
@@ -135,14 +141,28 @@
         the question underneath it — whether a committed swing reads at 45°, where the character is
         forty pixels tall and half the arc is foreshortened. That is why the arc is drawn on the
         ground: the blade itself is three voxels wide and mostly behind the character.</p>
-      <p>The posts are there to hit. They do not hit back — that is #24.</p>
+      <p>The posts are there to practise on. The machines are not.</p>
+    </div>
+    <div class="card">
+      <h2>The sentry automaton</h2>
+      <p>A tech war machine still holding a position against an enemy that left. Squat and wide,
+        because from 45° you mostly see the top of things — so the readable surface is its top plate,
+        and that is where the tell goes.</p>
+      <p><b>It stops dead, rises, and the plate flares.</b> The stopping is the tell that works from
+        any distance: everything else in a fight is moving, so a machine that suddenly is not reads
+        instantly. The rise changes its footprint, which is the one silhouette change an overhead view
+        can actually see. The wedge on the ground says where.</p>
+      <p>Its recovery is longer than your whole swing, so dodging through the strike buys a free hit
+        rather than just survival. It outranges you, so you have to come inside its reach to use that.
+        It does not vault — a heavy machine goes around, and going around properly is the navigation
+        graph in #15.</p>
     </div>
     <div class="card">
       <h2>What this is not</h2>
       <p>The instanced-box renderer is the concept plate's, not the shipping approach — the greedy mesher
-        replaces it once streaming forces the issue. One frame of eight, no sockets, no fusions, and
-        nothing that fights back. The world is one window: walk to the edge and you meet a wall, because
-        that is where the generated window stops.</p>
+        replaces it once streaming forces the issue. One frame of eight, no sockets, no fusions, one enemy
+        archetype of the twelve #6 will specify, no loot and no respawning. The world is one window: walk
+        to the edge and you meet a wall, because that is where the generated window stops.</p>
       <p>The two windows talk through <code>postMessage</code>, which is a prototype's transport and
         nothing more. It sits behind the same three methods Steam Networking will implement, so none of
         the session logic knows the difference — which was the point of doing this now rather than later.</p>
@@ -1775,7 +1795,7 @@ function colliderForWorld(world) {
  *
  * What it deliberately does not do is decide what a hit *does*. `sweep` reports
  * that the arc covered a target this tick and stops there. Damage, poise,
- * stagger and the rest belong to #9 and to whatever #24 puts in front of you.
+ * stagger and the rest belong to #9 and to the archetypes in enemy.mjs.
  *
  * Pure functions of an actor and a number, like everything else in src/sim, so
  * a guest replaying inputs reproduces the host's swing exactly rather than
@@ -1819,6 +1839,12 @@ const DODGE_DIST = 3.2;
 const DODGE_SPEED = DODGE_DIST / DODGE_TIME;
 /** Invulnerable for most of it, but not the tail: a dodge ends before you do. */
 const DODGE_IFRAMES = 0.20;
+
+/* ---- what a hit costs, until #9 says otherwise ---- */
+const PLAYER_HP = 100;
+const SWING_DAMAGE = 20;
+/** Seconds of flinch after taking a hit. Read by the renderer, nothing else. */
+const HURT_TIME = 0.25;
 
 const PHASE = { NONE: 0, WINDUP: 1, ACTIVE: 2, RECOVER: 3 };
 
@@ -1892,6 +1918,7 @@ function beginDodge(a, dx, dz) {
  */
 function advanceCombat(a, dt) {
   a.hits = 0;
+  if (a.hurtT > 0) a.hurtT = Math.max(0, a.hurtT - dt);
   if (a.swing) { a.swing.t += dt; if (a.swing.t >= SWING_TIME) a.swing = null; }
   if (a.dodge) { a.dodge.t += dt; if (a.dodge.t >= DODGE_TIME) a.dodge = null; }
 
@@ -1899,6 +1926,48 @@ function advanceCombat(a, dt) {
   else if (a.stamina < STAMINA_MAX) {
     a.stamina = Math.min(STAMINA_MAX, a.stamina + STAMINA_REGEN * dt);
   }
+}
+
+/**
+ * Is `t` inside an arc of `reach` and `arc` radians in front of `a`?
+ *
+ * Shared by the player's swing and the enemy's, which have different reaches
+ * and different arcs and must not have different *rules*.
+ */
+function inArc(a, t, reach, arc, span, cosHalf) {
+  const dx = t.x - a.x, dz = t.z - a.z;
+  const d = hyp(dx, dz);
+  if (d > reach + (t.r || 0)) return false;
+  if (Math.abs((t.y || 0) - a.y) > span) return false;
+  if (d <= 1e-6) return true;
+  /* Angle via the dot product — atan2 is not one of the operations the spec
+     pins (see src/gen/exact.mjs). */
+  return (dx * a.faceX + dz * a.faceZ) / d >= (cosHalf === undefined ? cos(arc / 2) : cosHalf);
+}
+
+/**
+ * Take a hit. Returns false if it did not land — dead already, or dodging,
+ * which is the entire reason the dodge exists.
+ */
+function hurt(a, amount, cause) {
+  if (!a || a.dead || a.hp === undefined || invulnerable(a)) return false;
+  a.hp -= amount;
+  a.hurtT = HURT_TIME;
+  if (a.hp <= 0) { a.hp = 0; a.dead = cause || 'struck'; }
+  return true;
+}
+
+/**
+ * Turn this tick's sweep into damage. Targets without hit points — the practice
+ * posts — are reported by `sweep` and simply not hurt by this.
+ */
+function applyHits(a, targets, damage) {
+  if (!a.hits || !targets) return 0;
+  let n = 0;
+  for (let i = 0; i < targets.length && i < 32; i++) {
+    if ((a.hits & (1 << i)) && hurt(targets[i], damage, 'struck')) n++;
+  }
+  return n;
 }
 
 /**
@@ -1916,17 +1985,7 @@ function sweep(a, targets) {
   for (let i = 0; i < targets.length && i < 32; i++) {
     if (a.swing.hit & (1 << i)) continue;
     const t = targets[i];
-    const dx = t.x - a.x, dz = t.z - a.z;
-    const d = hyp(dx, dz);
-    if (d > REACH + (t.r || 0)) continue;
-    if (Math.abs((t.y || 0) - a.y) > SPAN) continue;
-    /* Angle between facing and the target, via the dot product — atan2 is not
-       one of the operations the spec pins (see src/gen/exact.mjs). */
-    if (d > 1e-6) {
-      const cosang = (dx * a.faceX + dz * a.faceZ) / d;
-      if (cosang < COS_HALF_ARC) continue;
-    }
-    mask |= (1 << i);
+    if (t && !t.dead && inArc(a, t, REACH, ARC, SPAN, COS_HALF_ARC)) mask |= (1 << i);
   }
   a.swing.hit |= mask;
   a.hits = mask;
@@ -1934,7 +1993,7 @@ function sweep(a, targets) {
 }
 
 /**
- * Somewhere to swing at, until #24 puts something here that swings back.
+ * Somewhere to swing at that does not swing back. The machines in enemy.mjs do.
  *
  * Derived from the world rather than placed by hand, so a host and a guest end
  * up with the same posts in the same order without any of it crossing the wire.
@@ -2025,6 +2084,11 @@ function makeActor(x, y, z) {
     faceX: 0, faceZ: 1,
     /* ---- combat (src/sim/combat.mjs owns the rules; the state lives here so
        that one snapshot is the whole actor) ---- */
+    hp: PLAYER_HP, maxHp: PLAYER_HP,
+    /** Seconds of flinch left. The renderer's business, nobody else's. */
+    hurtT: 0,
+    /** A heavy machine does not pull itself over a ledge — see src/sim/enemy.mjs. */
+    canVault: true,
     stamina: STAMINA_MAX,
     /** Seconds before stamina starts coming back. */
     staminaHold: 0,
@@ -2034,7 +2098,7 @@ function makeActor(x, y, z) {
     dodge: null,
     /** Targets the arc covered this tick, as a bitmask. Cleared every tick. */
     hits: 0,
-    /** null while alive, else 'fall' | 'magma' | 'void'. */
+    /** null while alive, else 'fall' | 'magma' | 'void' | 'struck'. */
     dead: null,
     /** Path length, summed per axis. Not displacement — see the soak. */
     travelled: 0, ticks: 0, blocked: false,
@@ -2068,6 +2132,7 @@ function snapshot(a) {
                        x1: a.vault.x1, y1: a.vault.y1, z1: a.vault.z1 } : null,
     vaults: a.vaults, inWater: a.inWater, swimming: a.swimming,
     faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
+    hp: a.hp, hurtT: a.hurtT,
     stamina: a.stamina, staminaHold: a.staminaHold,
     swing: a.swing ? { t: a.swing.t, hit: a.swing.hit } : null,
     dodge: a.dodge ? { t: a.dodge.t, dx: a.dodge.dx, dz: a.dodge.dz } : null,
@@ -2084,11 +2149,39 @@ function restore(a, s) {
                         x1: s.vault.x1, y1: s.vault.y1, z1: s.vault.z1 } : null;
   a.vaults = s.vaults; a.inWater = s.inWater; a.swimming = s.swimming;
   a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
+  a.hp = s.hp; a.hurtT = s.hurtT;
   a.stamina = s.stamina; a.staminaHold = s.staminaHold;
   a.swing = s.swing ? { t: s.swing.t, hit: s.swing.hit } : null;
   a.dodge = s.dodge ? { t: s.dodge.t, dx: s.dodge.dx, dz: s.dodge.dz } : null;
   a.hits = s.hits;
   a.ticks = s.ticks; a.travelled = s.travelled; a.blocked = s.blocked;
+  return a;
+}
+
+/**
+ * What someone *else* needs to draw this actor — a fraction of the state
+ * simulating it needs, rounded to millimetres because these are pixels and not
+ * a trajectory anyone replays.
+ *
+ * The other player is drawn by the guest and never simulated by it, so sending
+ * a full snapshot of them would be sending twenty numbers to move a model.
+ */
+function display(a) {
+  const r3 = (v) => Math.round(v * 1000) / 1000;
+  return {
+    x: r3(a.x), y: r3(a.y), z: r3(a.z), fx: r3(a.faceX), fz: r3(a.faceZ),
+    g: a.grounded ? 1 : 0, d: a.dead || 0, hp: a.hp,
+    sw: a.swing ? Math.round(a.swing.t * 1000) / 1000 : -1,
+    dv: a.dodge ? 1 : 0, u: Math.round(a.hurtT * 100) / 100,
+  };
+}
+
+/** The inverse, onto an actor kept only for drawing. */
+function applyDisplay(a, m) {
+  a.faceX = m.fx; a.faceZ = m.fz;
+  a.grounded = !!m.g; a.dead = m.d || null; a.hp = m.hp; a.hurtT = m.u;
+  a.swing = m.sw >= 0 ? { t: m.sw, hit: 0 } : null;
+  a.dodge = m.dv ? { t: 0, dx: m.fx, dz: m.fz } : null;
   return a;
 }
 
@@ -2123,6 +2216,7 @@ function tryVault(col, a, dx, dz) {
   const r = ACTOR.radius, h = ACTOR.height;
   if (!a.grounded || (dx === 0 && dz === 0)) return false;
   if (a.swing || a.dodge) return false;        /* committed means committed */
+  if (a.canVault === false) return false;
   const probe = 0.4;
   const top = col.supportUnder(a.x + dx * probe, a.z + dz * probe, r, a.y + MOVE.vault + EPS);
   if (!(top > a.y + MOVE.step + EPS) || top - a.y > MOVE.vault + EPS) return false;
@@ -2267,6 +2361,266 @@ function step(col, a, input, targets, dt = TICK) {
   /* The blade lands where the tick ended, not where it started. */
   if (targets) sweep(a, targets);
   return a;
+}
+/* ---------- src/sim/enemy.mjs ---------- */
+/**
+ * One enemy: a **sentry automaton**, a tech war machine still holding a
+ * position against an enemy that left (docs/DECISIONS.md §1, §6).
+ *
+ * Issue #24 asks for one archetype, and issue #6 asks four questions of every
+ * archetype. For this one:
+ *
+ *   Silhouette   Squat and wide. From 45 degrees you mostly see the top of
+ *                things, so the readable surface is its top plate — and that is
+ *                where the tell goes.
+ *   Telegraph    It stops dead, rises, and its plate flares. Three tells, and
+ *                the first one is the one that works from above: everything
+ *                else in a fight is moving, so a machine that suddenly is not
+ *                reads instantly at any zoom. The rise changes its footprint,
+ *                which is the one silhouette change an overhead view can see.
+ *   Opening      A 0.9 s recovery — longer than the player's whole swing, so
+ *                the reward for dodging through the strike is a free hit and
+ *                not merely survival.
+ *   Movement     It walks the same movement budget the player does, through
+ *                the same `step`, so it steps up a metre, falls, drowns and
+ *                burns exactly as a player would. It does **not** vault: a
+ *                heavy machine goes around, which is what `canVault = false`
+ *                and the side-stepping below are for.
+ *
+ * No AI architecture, as the issue says — a state machine and a steering
+ * direction. No spawn rules, no repopulation, no loot.
+ */
+
+
+
+
+
+
+const SENTRY = {
+  hp: 60,
+  /** How far it notices you. Deliberately short: it holds a position. */
+  sight: 13,
+  /** Where it decides you are close enough to be worth swinging at. */
+  range: 2.1,
+  /** Longer than the player's and slower — methodical, and it telegraphs. */
+  reach: 2.4,
+  arc: 1.4,
+  span: 2.0,
+  damage: 18,
+  /** Fraction of the player's run speed. It should never simply outrun you. */
+  speed: 0.58,
+};
+const COS_HALF = cos(SENTRY.arc / 2);
+
+const EST = {
+  DORMANT: 0, WAKE: 1, CLOSE: 2, TELEGRAPH: 3, STRIKE: 4, RECOVER: 5, STAGGER: 6, DEAD: 7,
+};
+
+const WAKE_TIME = 0.45;
+/** Long on purpose. This is the thing the whole issue is about. */
+const TELEGRAPH_TIME = 0.65;
+const STRIKE_TIME = 0.12;
+/** Longer than a whole player swing (0.77 s), so the dodge buys a free hit. */
+const RECOVER_TIME = 0.90;
+const STAGGER_TIME = 0.28;
+/** How long it commits to going around something before trying forward again. */
+const SIDESTEP_TIME = 0.5;
+
+function makeSentry(col, x, z) {
+  const e = placeOnGround(col, x, z);
+  e.hp = SENTRY.hp; e.maxHp = SENTRY.hp;
+  e.canVault = false;
+  e.kind = 'sentry';
+  e.ai = { state: EST.DORMANT, t: 0, side: 0, sideT: 0 };
+  return e;
+}
+
+/** Is it in a state where a player's hit should interrupt it? */
+function staggerable(st) {
+  return st === EST.CLOSE || st === EST.WAKE || st === EST.TELEGRAPH;
+}
+
+/**
+ * Where to walk. Straight at the target, unless that is a wall or a drop —
+ * then sideways for a while. A machine that walks off a ledge to reach you is
+ * not menacing, and one that hovers over the gap is worse.
+ */
+function steer(col, e, tx, tz) {
+  const ai = e.ai;
+  let dx = tx - e.x, dz = tz - e.z;
+  const l = hyp(dx, dz);
+  if (l < 1e-6) return { mx: 0, mz: 0 };
+  dx /= l; dz /= l;
+
+  if (ai.sideT > 0) {
+    ai.sideT -= TICK;
+    /* Perpendicular, and the same way each time it commits — deterministic,
+       because both machines in a co-op session have to agree on where this
+       thing walked. */
+    const px = -dz * ai.side, pz = dx * ai.side;
+    return { mx: (dx * 0.35 + px) * SENTRY.speed, mz: (dz * 0.35 + pz) * SENTRY.speed };
+  }
+
+  /* Look one step ahead: a drop it would not survive, or nothing at all. */
+  const ax = e.x + dx * 0.9, az = e.z + dz * 0.9;
+  const g = col.supportUnder(ax, az, ACTOR.radius, e.y + MOVE.step + EPS);
+  const cliff = g === -Infinity || e.y - g > MOVE.fall - 1;
+  if (cliff || e.blocked) {
+    ai.side = ai.side === 0 ? 1 : -ai.side;      /* alternate, never random */
+    ai.sideT = SIDESTEP_TIME;
+  }
+  return { mx: dx * SENTRY.speed, mz: dz * SENTRY.speed };
+}
+
+/** The nearest living player within sight, or null. */
+function pick(e, players) {
+  let best = null, bd = SENTRY.sight;
+  for (const p of players) {
+    if (!p || p.dead) continue;
+    const d = hyp(p.x - e.x, p.z - e.z);
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+
+/**
+ * One tick of one sentry. It produces an input and hands it to the same `step`
+ * the player uses, which is what keeps it honest about the movement budget.
+ */
+function stepSentry(col, e, players, dt = TICK) {
+  const ai = e.ai;
+
+  if (e.dead) {
+    if (ai.state !== EST.DEAD) { ai.state = EST.DEAD; ai.t = 0; }
+    ai.t += dt;
+    return e;
+  }
+
+  ai.t += dt;
+  const target = pick(e, players);
+  let mx = 0, mz = 0, face = null;
+
+  switch (ai.state) {
+    case EST.DORMANT:
+      if (target) { ai.state = EST.WAKE; ai.t = 0; }
+      break;
+
+    case EST.WAKE:
+      if (target) face = target;
+      if (ai.t >= WAKE_TIME) { ai.state = target ? EST.CLOSE : EST.DORMANT; ai.t = 0; }
+      break;
+
+    case EST.CLOSE: {
+      if (!target) { ai.state = EST.DORMANT; ai.t = 0; break; }
+      face = target;
+      const d = hyp(target.x - e.x, target.z - e.z);
+      if (d <= SENTRY.range) { ai.state = EST.TELEGRAPH; ai.t = 0; break; }
+      const s = steer(col, e, target.x, target.z);
+      mx = s.mx; mz = s.mz;
+      break;
+    }
+
+    case EST.TELEGRAPH:
+      /* Stopped dead, and still turning to face you — the turn is what makes
+         running around it during the wind-up not free. */
+      if (target) face = target;
+      if (ai.t >= TELEGRAPH_TIME) { ai.state = EST.STRIKE; ai.t = 0; e.swungAt = 0; }
+      break;
+
+    case EST.STRIKE:
+      /* Facing is locked: what it telegraphed is what it swings at. */
+      if (ai.t >= STRIKE_TIME) { ai.state = EST.RECOVER; ai.t = 0; }
+      break;
+
+    case EST.RECOVER:
+      if (ai.t >= RECOVER_TIME) { ai.state = target ? EST.CLOSE : EST.DORMANT; ai.t = 0; }
+      break;
+
+    case EST.STAGGER:
+      if (ai.t >= STAGGER_TIME) { ai.state = target ? EST.CLOSE : EST.DORMANT; ai.t = 0; }
+      break;
+
+    default:
+      break;
+  }
+
+  const input = { mx, mz, jump: false, attack: false, dodge: false, aimX: 0, aimZ: 0 };
+  if (face) {
+    const dx = face.x - e.x, dz = face.z - e.z, l = hyp(dx, dz);
+    if (l > 1e-6) { input.aimX = dx / l; input.aimZ = dz / l; }
+  }
+  step(col, e, input, null, dt);
+
+  /* The strike itself: one arc, once, on the tick the window opens. */
+  if (ai.state === EST.STRIKE && !e.swungAt) {
+    e.swungAt = 1;
+    for (const p of players) {
+      if (p && !p.dead && inArc(e, p, SENTRY.reach, SENTRY.arc, SENTRY.span, COS_HALF)) {
+        hurt(p, SENTRY.damage, 'struck');
+      }
+    }
+  }
+  return e;
+}
+
+/** Tell it that it has been hit — staggering it if it was not already committed. */
+function jolt(e) {
+  if (e.dead) return;
+  if (staggerable(e.ai.state)) { e.ai.state = EST.STAGGER; e.ai.t = 0; }
+}
+
+/**
+ * Everything in the world that can be swung at, and the thing that steps it.
+ *
+ * One unit so the host and a solo build drive identical code, and so that the
+ * bit the guest does *not* run is obvious: it draws what the host sends and
+ * simulates none of it.
+ */
+function makeEncounter(col, spawn, posts) {
+  /* Beyond sight from the spawn, so they are found rather than met: these
+     things are holding positions, not patrolling. */
+  const ring = [[14, 3], [-11, -13], [5, 19]];
+  const enemies = [];
+  for (const [dx, dz] of ring) {
+    const x = spawn[0] + dx, z = spawn[2] + dz;
+    const y = col.supportUnder(x, z, ACTOR.radius, spawn[1] + MOVE.vault);
+    if (y === -Infinity) continue;
+    enemies.push(makeSentry(col, x, z));
+  }
+  const targets = (posts || []).concat(enemies);
+  const postCount = (posts || []).length;
+
+  return {
+    enemies, targets, postCount,
+
+    /** One tick: the machines act, then whatever the players cut takes it. */
+    step(players, dt = TICK) {
+      for (const e of enemies) stepSentry(col, e, players, dt);
+      for (const p of players) {
+        if (!p || !p.hits) continue;
+        const mask = p.hits;
+        applyHits(p, targets, SWING_DAMAGE);
+        /* A hit interrupts a machine that was not already committed. The posts
+           are the first entries and feel nothing. */
+        for (let i = postCount; i < targets.length; i++) if (mask & (1 << i)) jolt(targets[i]);
+      }
+    },
+
+    /**
+     * What a guest needs to draw them, and nothing else — it does not simulate
+     * enemies, so it does not need the state that simulating them requires.
+     * Rounded, because these are pixels and not a trajectory anyone replays.
+     */
+    wire() {
+      const r3 = (v) => Math.round(v * 1000) / 1000;
+      return enemies.map((e) => ({
+        x: r3(e.x), y: r3(e.y), z: r3(e.z),
+        fx: r3(e.faceX), fz: r3(e.faceZ),
+        s: e.ai.state, t: Math.round(e.ai.t * 100) / 100,
+        h: e.hp, u: Math.round(e.hurtT * 100) / 100,
+      }));
+    },
+  };
 }
 /* ---------- src/sim/camera.mjs ---------- */
 /**
@@ -2704,7 +3058,7 @@ function spawnNear(col, x, z) {
 /* ------------------------------------------------------------------ host ---- */
 
 function makeHost(opts) {
-  const { col, spawn, transport, cfg, targets } = opts;
+  const { col, spawn, transport, cfg, targets, encounter } = opts;
   const sendEvery = opts.sendEvery || SEND_EVERY;
   const me = placeOnGround(col, spawn[0], spawn[2]);
   const peer = spawnNear(col, spawn[0], spawn[2]);
@@ -2732,6 +3086,8 @@ function makeHost(opts) {
     role: 'host', me, peer, cfg,
     get connected() { return joined; },
     get tick() { return t; },
+    /** Drawn from the same data that is sent, so a gap in one shows in both. */
+    get foes() { return encounter ? encounter.wire() : null; },
     get stats() { return { t, joined, queued: inbox.length, inputs: seen }; },
 
     /** One authoritative tick. `localInput` is this machine's own player. */
@@ -2744,10 +3100,19 @@ function makeHost(opts) {
 
       step(col, me, copyInput(localInput || IDLE), targets);
       step(col, peer, next.input, targets);
+      /* The world acts after the players do, and it is the host's world: a
+         guest predicts its own movement and nothing else. */
+      if (encounter) encounter.step([me, peer]);
 
       if (t % sendEvery === 0) {
-        transport.send({ t: 'snap', tick: t, ack: next.seq,
-                         you: snapshot(peer), them: snapshot(me) });
+        transport.send({
+          t: 'snap', tick: t, ack: next.seq,
+          /* Full state for the guest's own character, because it replays from
+             it. Display state for everything it only draws. */
+          you: snapshot(peer),
+          them: display(me),
+          foes: encounter ? encounter.wire() : null,
+        });
       }
       return this;
     },
@@ -2764,7 +3129,8 @@ function makeHost(opts) {
  */
 function makeGuest(opts) {
   const { transport, build } = opts;
-  let col = null, me = null, peer = null, cfg = null, targets = null;
+  let col = null, me = null, peer = null, cfg = null;
+  let foes = null;
   let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0;
   const pending = [];
   let target = null;                       /* last authoritative host state */
@@ -2778,9 +3144,6 @@ function makeGuest(opts) {
       cfg = m.cfg;
       const world = build(m.cfg);
       col = world.col;
-      /* The same posts the host is swinging at, derived the same way from the
-         same world — nothing about them crosses either. */
-      targets = world.targets || null;
       me = spawnNear(col, m.spawn[0], m.spawn[2]);
       peer = placeOnGround(col, m.spawn[0], m.spawn[2]);
       ready = true;
@@ -2797,8 +3160,12 @@ function makeGuest(opts) {
       lastAck = m.ack;
       corrections++;
       while (pending.length && pending[0].seq <= m.ack) pending.shift();
-      for (const p of pending) { step(col, me, p.input, targets); replayed++; }
+      /* Replayed without targets: movement is predicted, damage is not. A guest
+         that guessed at hits would flash things the host never agreed were hit,
+         which is worse than the round trip it saves. */
+      for (const p of pending) { step(col, me, p.input, null); replayed++; }
       target = m.them;
+      foes = m.foes;
     }
   });
 
@@ -2810,6 +3177,8 @@ function makeGuest(opts) {
     get cfg() { return cfg; },
     get connected() { return ready; },
     get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck }; },
+    /** Whatever the host last said was in the world. Drawn, never stepped. */
+    get foes() { return foes; },
     /** The last thing the host said about us, before any replay on top of it.
         The gap between this and `me` is exactly what prediction is buying. */
     get authoritative() { return target ? lastYou : null; },
@@ -2824,7 +3193,7 @@ function makeGuest(opts) {
                        aimX: input.aimX, aimZ: input.aimZ });
       pending.push({ seq, input });
       if (pending.length > MAX_PENDING) pending.shift();
-      step(col, me, input, targets);
+      step(col, me, input, null);
 
       /* The other player arrives at 20 Hz and is drawn, not simulated, so it is
          eased rather than snapped. Proper snapshot interpolation on a delay
@@ -2833,14 +3202,13 @@ function makeGuest(opts) {
         peer.x += (target.x - peer.x) * SMOOTH;
         peer.y += (target.y - peer.y) * SMOOTH;
         peer.z += (target.z - peer.z) * SMOOTH;
-        peer.faceX = target.faceX; peer.faceZ = target.faceZ;
-        peer.grounded = target.grounded; peer.dead = target.dead;
+        applyDisplay(peer, target);
       }
       return this;
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,sin:sin,cos:cos,exp:exp,hyp:hyp,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,sin:sin,cos:cos,exp:exp,hyp:hyp,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,applyHits:applyHits,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -3021,6 +3389,70 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     sweep.castShadow=false;
     return {g:g,arm:arm,sweep:sweep,fade:0};
   }
+  /**
+   * A sentry automaton. Squat and wide, because from 45 degrees you mostly see
+   * the top of things — so the readable surface is its top plate, and that is
+   * where the tell goes: it stops dead, rises, and the plate flares.
+   */
+  function makeFoe(){
+    function box(w,h,d,c){return new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
+      new THREE.MeshLambertMaterial({color:c}));}
+    var g=new THREE.Group();
+    var skirt=box(1.35,0.28,1.35,0x2f2b27); skirt.position.y=0.14; g.add(skirt);
+    var body=box(1.05,0.85,1.05,0x4a443e); body.position.y=0.62; g.add(body);
+    var plate=new THREE.Mesh(new THREE.BoxGeometry(0.92,0.16,0.92),
+      new THREE.MeshBasicMaterial({color:0x3a3532}));
+    plate.position.y=1.12; g.add(plate);
+    /* The danger zone, on the ground in front of it, at the height the player's
+       own arc sits at — anything lower is lost in the voxels. */
+    var wedge=new THREE.Mesh(
+      new THREE.RingGeometry(0.6,QS.SENTRY.reach,22,1,Math.PI/2-QS.SENTRY.arc/2,QS.SENTRY.arc),
+      new THREE.MeshBasicMaterial({color:0xff8a3c,transparent:true,opacity:0,
+                                   side:THREE.DoubleSide,depthWrite:false}));
+    wedge.rotation.x=Math.PI/2; wedge.position.y=0.85; wedge.visible=false; g.add(wedge);
+    var bar=new THREE.Mesh(new THREE.PlaneGeometry(1.2,0.12),
+      new THREE.MeshBasicMaterial({color:0xc9563a,side:THREE.DoubleSide,depthWrite:false}));
+    bar.position.y=1.7; g.add(bar);
+    g.traverse(function(o){ if(o.isMesh){ o.userData.keep=true; } });
+    skirt.castShadow=true; body.castShadow=true;
+    return {g:g,skirt:skirt,body:body,plate:plate,wedge:wedge,bar:bar};
+  }
+  var foeMeshes=[];
+
+  /** Everything the machine is about to do, said in a colour and a height. */
+  function poseFoe(f,m){
+    var EST=QS.EST, dead=m.s===EST.DEAD;
+    f.g.position.set(m.x,m.y,m.z);
+    f.g.rotation.z=dead?0.9:0;                 /* toppled, and it stays toppled */
+    f.g.rotation.y=Math.atan2(m.fx,m.fz);
+    var rise=dead?0:(m.s===EST.DORMANT?0.72:(m.s===EST.TELEGRAPH?1.12:1));
+    f.body.scale.y=rise; f.body.position.y=0.62*rise;
+    f.plate.position.y=0.16+0.85*rise+0.1;
+    var tell=0;
+    if(m.s===EST.TELEGRAPH) tell=Math.min(1,m.t/QS.TELEGRAPH_TIME);
+    else if(m.s===EST.STRIKE) tell=1;
+    var col=dead?0x14110f
+      :(m.s===EST.DORMANT?0x3a3532
+        :(m.s===EST.RECOVER?0x4a2a18
+          :(m.s===EST.STAGGER?0xffffff
+            :(tell?mixHex(0xff9a3c,0xffffff,tell):0xc9722a))));
+    f.plate.material.color.setHex(m.u>0?0xffd7cf:col);
+    f.wedge.visible=!dead&&(m.s===EST.TELEGRAPH||m.s===EST.STRIKE);
+    /* The ramp is the clock: it starts as a stain and finishes nearly solid,
+       so how long you have left is readable without counting frames. Measured
+       on the meadow, the finished wedge composites to about (228, 130, 55)
+       over grass — a hue nothing else on that ground wears. */
+    f.wedge.material.opacity=m.s===EST.STRIKE?0.95:0.22+0.66*tell;
+    f.bar.visible=!dead&&m.h<QS.SENTRY.hp;
+    f.bar.scale.x=Math.max(0.02,m.h/QS.SENTRY.hp);
+    f.bar.position.x=-0.6*(1-f.bar.scale.x);
+    f.bar.rotation.y=cam.yaw; f.bar.rotation.x=-Math.PI/4;
+  }
+  function mixHex(a,b,t){
+    var ar=(a>>16)&255,ag=(a>>8)&255,ab=a&255,br=(b>>16)&255,bg=(b>>8)&255,bb=b&255;
+    return (((ar+(br-ar)*t)|0)<<16)|(((ag+(bg-ag)*t)|0)<<8)|((ab+(bb-ab)*t)|0);
+  }
+
   /** Seconds the swing trail takes to fade out, well past the 0.12 s hitbox. */
   var SWEEP_FADE=0.22;
   var avatar=makeAvatar(0x2f6f7a,0xc99a6e), peerAvatar=makeAvatar(0xa5642a,0xb5855c);
@@ -3056,7 +3488,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   /* `solo` is the character when nobody else is here; once a session exists it
      owns the characters instead, and `solo` is left behind. */
   var solo=null, session=null, wire=null, role='solo', warped=false;
-  var targets=null, postMeshes=[], postHits=[], postFlash=[];
+  var targets=null, encounter=null, postMeshes=[], postHits=[], postFlash=[];
   var vp={w:1,h:1}, tm=0, deaths=0, fps=60, wind=new THREE.Vector2(0.72,0.69);
   var camT=new THREE.Vector3();
 
@@ -3089,18 +3521,25 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
     col=QS.colliderForWorld(data);
 
-    /* Something to swing at until #24 puts something here that swings back.
+    /* Something to swing at that does not swing back — the machines below do.
        Derived from the world on both machines rather than sent, like the
        terrain — see src/sim/combat.mjs. */
-    targets=QS.practicePosts(col,data.spawn);
-    postMeshes=targets.map(function(t){
+    var posts=QS.practicePosts(col,data.spawn);
+    postMeshes=posts.map(function(t){
       var m=new THREE.Mesh(new THREE.CylinderGeometry(t.r,t.r*1.15,1.5,8),
         new THREE.MeshLambertMaterial({color:0x6b5a45}));
       m.position.set(t.x,t.y+0.75,t.z); m.castShadow=true; m.userData.keep=false;
       built.scene.add(m); return m;
     });
-    postHits=targets.map(function(){return 0;});
-    postFlash=targets.map(function(){return 0;});
+    postHits=posts.map(function(){return 0;});
+    postFlash=posts.map(function(){return 0;});
+
+    /* The machines. They come with the world because they are placed from it —
+       a guest is sent what they look like, never what they are. */
+    encounter=QS.makeEncounter(col,data.spawn,posts);
+    targets=encounter.targets;
+    foeMeshes.forEach(function(f){ built.scene.remove(f.g); });
+    foeMeshes=encounter.enemies.map(function(){ var f=makeFoe(); built.scene.add(f.g); return f; });
     return {col:col,spawn:data.spawn,targets:targets};
   }
   function regen(seedStr){
@@ -3163,7 +3602,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      rather than BroadcastChannel because a page opened from disk has an opaque
      origin, and this has to work from a file as well as from a URL. */
   var netstat=document.getElementById('netstat'), hostBtn=document.getElementById('hostbtn');
-  var staminaEl=document.getElementById('stamina'), staminaFill=document.getElementById('staminafill');
+  var staminaEl=document.getElementById('vitals'), staminaFill=document.getElementById('staminafill'),
+      hpFill=document.getElementById('hpfill');
   function says(msg,live){
     netstat.innerHTML=msg;
     netstat.classList.toggle('live',!!live);
@@ -3191,7 +3631,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* The host announces itself on a beacon until someone answers, so the
        second window can take as long as it likes to load. */
     session=QS.makeHost({col:col,spawn:built.data.spawn,transport:wire,cfg:built.cfg,
-                         targets:targets});
+                         targets:targets,encounter:encounter});
     if(solo){ session.me.x=solo.x; session.me.y=solo.y; session.me.z=solo.z; }
     hostBtn.disabled=true;
     says('<b>Hosting.</b> Waiting for the second window to join…',true);
@@ -3200,7 +3640,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     role='guest';
     wire=windowTransport(function(){ return window.opener; });
     session=QS.makeGuest({transport:wire, build:function(cfg){
-      /* Nothing about the terrain came over the wire — only its seed did. */
+      /* Nothing about the terrain came over the wire — only its seed did. The
+         guest still builds the encounter, but only so that it has models to
+         put the host's numbers into; it never steps them. */
       var w=buildFor(cfg);
       seedin.value=cfg.seed;
       return w;
@@ -3260,7 +3702,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var inp={mx:m.mx,mz:m.mz,jump:input.took('jump'),
              attack:input.took('attack'),dodge:input.took('dodge'),
              aimX:h?h.x:0,aimZ:h?h.z:0};
-    if(session) session.step(inp); else QS.step(col,a,inp,targets);
+    if(session){ session.step(inp); }
+    else { QS.step(col,a,inp,targets); if(encounter) encounter.step([a]); }
 
     /* Hits are a bitmask cleared every tick, and the loop runs several ticks a
        frame — so they have to be read here, not in draw. */
@@ -3271,7 +3714,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(!warped){ QS.warpTo(cam,b.x,b.y,b.z); warped=true; }
     if(b.dead&&!wasDead){
       deaths++; deadMsg.textContent=b.dead==='fall'?'that was too far down'
-        :(b.dead==='magma'?'magma is lethal':'out of the world');
+        :(b.dead==='magma'?'magma is lethal'
+          :(b.dead==='struck'?'the machine got you':'out of the world'));
       deadEl.style.display='grid';
     }
     if(!b.dead) deadEl.style.display='none';
@@ -3290,6 +3734,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var o=other(), show=!!(o&&session&&session.connected);
     peerAvatar.g.visible=show;
     if(show) poseAvatar(peerAvatar,o);
+    /* Solo and host draw from the wire format too, so a field the guest needs
+       and does not get is missing from everyone's picture, not just theirs. */
+    var foes=session?session.foes:(encounter?encounter.wire():null);
+    for(var fq=0;fq<foeMeshes.length;fq++){
+      var fm=foes&&foes[fq];
+      foeMeshes[fq].g.visible=!!fm;
+      if(fm) poseFoe(foeMeshes[fq],fm);
+    }
     for(var q=0;q<postMeshes.length;q++){
       var lit=postFlash[q]>0;
       postMeshes[q].material.color.setHex(lit?0xffd9a0:0x6b5a45);
@@ -3346,6 +3798,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     staminaEl.style.display='block';
     staminaFill.style.width=(100*a.stamina/QS.STAMINA_MAX).toFixed(1)+'%';
     staminaFill.style.background=a.stamina<QS.SWING_COST?'#a5553a':'#d9a25e';
+    hpFill.style.width=(100*a.hp/QS.PLAYER_HP).toFixed(1)+'%';
     var state=a.dead?('dead · '+a.dead)
       :(a.vault?'vaulting':(a.swimming?'swimming'
         :(a.inWater?'wading':(a.grounded?'grounded':'airborne'))));
@@ -3354,11 +3807,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       :(role+(session.connected?' · linked':' · waiting')
         +(role==='guest'?('  seq '+session.stats.seq+'  fixes '+session.stats.corrections):''));
     var ph=['','wind-up','ACTIVE','recovery'][QS.phase(a)];
-    var struck=postHits.reduce(function(k,v){return k+v;},0);
+    var live=session?session.foes:(encounter?encounter.wire():null);
+    var standing=(live||[]).filter(function(m){return m.s!==QS.EST.DEAD;}).length;
     hud.textContent=
       'x '+a.x.toFixed(1)+'  y '+a.y.toFixed(2)+'  z '+a.z.toFixed(1)+'\n'+
       state+(ph?('  ·  '+ph):(QS.dodging(a)?'  ·  dodge':''))+'   '+spd.toFixed(2)+' m/s\n'+
-      'stamina '+a.stamina.toFixed(0)+'/'+QS.STAMINA_MAX+'   posts struck '+struck+'\n'+
+      'hp '+a.hp.toFixed(0)+'/'+QS.PLAYER_HP+'   stamina '+a.stamina.toFixed(0)+
+        '   machines '+standing+'/'+foeMeshes.length+'\n'+
       /* Steps are counted from where the view starts, not from zero: the
          snaps sit on START_YAW + n quarters, so dividing the raw angle by a
          quarter never lands on an integer. */
@@ -3384,6 +3839,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     get connected(){return !!session&&session.connected;},
     get stats(){return session?session.stats:null;},
     get targets(){return targets;},
+    /** The machines, in the same shape the wire carries them. */
+    get foes(){return session?session.foes:(encounter?encounter.wire():null);},
+    /** The actual machines, for a test that needs to put one back how it was. */
+    get machines(){return encounter?encounter.enemies:null;},
     /* The swing arc's visibility is the thing #23 is actually about, so the
        gate gets to assert it rather than infer it from a screenshot. */
     get sweeping(){return avatar.sweep.visible;},

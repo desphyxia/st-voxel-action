@@ -32,7 +32,9 @@
  *                 aiming models agree, and every action is bound and rebindable.
  *   5c. COMBAT    a committed swing: three windows, a stamina cost, an arc that
  *                 is an arc, and a dodge that cancels recovery and nothing else.
- *   5d. NET       a host and a guest agree exactly after latency and packet
+ *   5d. ENEMY     one machine that closes, telegraphs, swings, staggers and
+ *                 dies — and a dodge through its strike that costs nothing.
+ *   5e. NET       a host and a guest agree exactly after latency and packet
  *                 loss, the host is authoritative, and no terrain crosses.
  *   6. PLAY       a character survives five simulated minutes on every seed
  *                 without falling through the world or ending up inside it.
@@ -45,7 +47,8 @@
  *  10. NET (page) two windows, postMessage between them, and a key pressed in
  *                 one moving a character in the other.
  *  11. BUILD      a swing winds up, draws an arc you can actually count pixels
- *                 of, and strikes what is in front of it once.
+ *                 of, and strikes what is in front of it once; and a machine
+ *                 notices, closes, telegraphs visibly, and can be killed.
  *
  * As the prototype gains verbs, each one adds an assertion here — that is the
  * ratchet. See docs/PROTOTYPE.md.
@@ -58,7 +61,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+import { budgetSuite, viewSuite, combatSuite, enemySuite, netSuite, soak,
+         SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 
 const argv = process.argv.slice(2);
@@ -126,6 +130,12 @@ if (NODE_HALF) for (const r of viewSuite()) check(r.ok, `VIEW: ${r.label}`, r.de
    the shape: that a swing is committed rather than merely slow, that it costs
    something, and that the arc is an arc. */
 if (NODE_HALF) for (const r of combatSuite()) check(r.ok, `COMBAT: ${r.label}`, r.detail);
+
+/* ---------- ENEMY: something that fights back ----------
+   The telegraph is what these are really about. From 45 degrees you see the top
+   of things, and a wind-up you cannot read is a fight you cannot learn — so the
+   assertions are about windows and openings, not about damage. */
+if (NODE_HALF) for (const r of enemySuite()) check(r.ok, `ENEMY: ${r.label}`, r.detail);
 
 /* ---------- NET: two players, one world, one authority ----------
    A host and a guest over a loopback wire with latency and loss dialled in. The
@@ -372,6 +382,94 @@ if (BROWSER_HALF) {
             `${reads.before} lit pixels idle, ${reads.during} mid-swing`);
       check(reads.struck === 1, 'BUILD: a post in the arc is struck, once',
             `${reads.struck} hits`);
+
+      /* ---------- BUILD: does the telegraph read? ----------
+         The question issue #24 turns on. Counting a colour band the way the
+         swing check does is the wrong instrument here: the wedge is a
+         translucent overlay, so what lands on screen is the terrain's colour
+         mixed with the tell's, and no fixed band both catches that mix and
+         excludes dry grass. So hold the machine still and toggle only the
+         tell: two frames of the same world, one winding up and one not, and
+         count the pixels that go orange between them. Nothing else moves, so
+         every pixel counted is the telegraph. */
+      const tells = await bp.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS;
+        const grab = () => {
+          P.draw();
+          const c = document.querySelector('#cv');
+          const g = document.createElement('canvas');
+          g.width = c.width; g.height = c.height;
+          const x = g.getContext('2d');
+          x.drawImage(c, 0, 0);
+          return { d: x.getImageData(0, 0, g.width, g.height).data, w: g.width };
+        };
+        P.pause(true);
+        const foes = P.foes;
+        if (!foes || !foes.length) return { foes: 0 };
+        const m = foes[0], a = P.actor;
+        /* Put the machine back the way it was found: the checks above walked
+           the character around, and one of these may already have noticed. */
+        const live = P.machines[0];
+        live.ai.state = QS.EST.DORMANT; live.ai.t = 0; live.ai.sideT = 0;
+        live.hp = QS.SENTRY.hp; live.dead = null;
+        /* Just outside its reach, facing it. */
+        a.x = m.x - 3.0; a.z = m.z; a.y = m.y; a.faceX = 1; a.faceZ = 0;
+        a.vx = 0; a.vz = 0; a.hp = QS.PLAYER_HP; a.dead = null;
+        QS.warpTo(P.cam, a.x, a.y, a.z);
+        P.run(1);
+        let n = 0, tele = 0, sawWake = false, sawClose = false;
+        while (n < 1200) {
+          P.run(1); n++;
+          a.hp = QS.PLAYER_HP;                   /* this is a rendering test */
+          const s = P.foes[0].s;
+          if (s === QS.EST.WAKE) sawWake = true;
+          if (s === QS.EST.CLOSE) sawClose = true;
+          if (s === QS.EST.TELEGRAPH) { tele++; if (tele >= 36) break; }
+        }
+        /* Late in the wind-up, where the tell is at its most emphatic. */
+        const lit = grab();
+        const held = live.ai.t;
+        live.ai.state = QS.EST.CLOSE; live.ai.t = 0;
+        const dark = grab();                     /* same frame, no tell */
+        live.ai.state = QS.EST.TELEGRAPH; live.ai.t = held;
+        let orange = 0, cx = 0, cy = 0;
+        for (let i = 0; i < lit.d.length; i += 4) {
+          const dr = lit.d[i] - dark.d[i], db = lit.d[i + 2] - dark.d[i + 2];
+          if (dr > 20 && dr - db > 30) {
+            orange++;
+            const q = i / 4; cx += q % lit.w; cy += (q / lit.w) | 0;
+          }
+        }
+        const s = P.screen();
+        const off = orange ? Math.hypot(cx / orange - s.x, cy / orange - s.y) : Infinity;
+        /* Then kill it, to prove the loop closes. */
+        let guard = 0;
+        while (!P.foes[0] || (P.foes[0].s !== QS.EST.DEAD && guard < 4000)) {
+          guard++;
+          const f = P.foes[0], dx = f.x - a.x, dz = f.z - a.z;
+          const l = Math.hypot(dx, dz) || 1;
+          a.hp = QS.PLAYER_HP;
+          a.stamina = QS.STAMINA_MAX; a.staminaHold = 0;
+          if (l > 1.3) { a.x += (dx / l) * 0.04; a.z += (dz / l) * 0.04; }
+          else if (!a.swing) { P.input.press('KeyF'); P.run(1); P.input.release('KeyF'); continue; }
+          a.faceX = dx / l; a.faceZ = dz / l;
+          P.run(1);
+        }
+        P.pause(false);
+        return { foes: foes.length, orange, off, tele, sawWake, sawClose,
+                 dead: P.foes[0] && P.foes[0].s === QS.EST.DEAD, hp: P.foes[0] && P.foes[0].h };
+      });
+      check(tells.foes > 0 && tells.sawWake && tells.sawClose,
+            'BUILD: a machine notices and closes',
+            `${tells.foes} machines, ${tells.sawWake ? 'woke' : 'NEVER WOKE'}, `
+            + `${tells.sawClose ? 'closed' : 'NEVER CLOSED'}`);
+      /* Big enough to see, and near enough to the character to be seen while
+         you are looking at the fight rather than hunting for it. */
+      check(tells.orange > 300 && tells.off < 160,
+            'BUILD: and its telegraph is visible on screen',
+            `${tells.orange} px turn orange, ${Number.isFinite(tells.off) ? tells.off.toFixed(0) : '-'} px from the character`);
+      check(tells.dead && tells.hp === 0, 'BUILD: and it can be killed',
+            tells.dead ? 'down' : `still up on ${tells.hp} hp`);
 
       /* ---------- NET in a browser ----------
          The loopback suite proves the protocol; this proves the page is wired

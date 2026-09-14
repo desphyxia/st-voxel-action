@@ -28,7 +28,7 @@ export const END = '/* QS-BUNDLE-END */';
 const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'rng', 'biomes', 'field', 'erosion', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index'],
-  'src/sim': ['collider', 'combat', 'actor', 'camera', 'input'],
+  'src/sim': ['collider', 'combat', 'actor', 'enemy', 'camera', 'input'],
   'src/net': ['transport', 'session'],
 };
 
@@ -41,10 +41,13 @@ const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERI
 /** Everything the playable build needs on top of it: the simulation and the wire. */
 const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld',
                  'ACTOR', 'TICK', 'RUN', 'GRAVITY', 'JUMP_V', 'JUMP_APEX',
-                 'makeActor', 'placeOnGround', 'embedded', 'step',
+                 'makeActor', 'placeOnGround', 'embedded', 'step', 'display', 'applyDisplay',
                  'PHASE', 'phase', 'swingProgress', 'dodging', 'invulnerable',
                  'STAMINA_MAX', 'SWING_COST', 'DODGE_COST', 'SWING_TIME', 'WINDUP', 'ACTIVE',
                  'REACH', 'ARC', 'DODGE_TIME', 'DODGE_DIST', 'practicePosts',
+                 'PLAYER_HP', 'SWING_DAMAGE', 'HURT_TIME', 'hurt', 'applyHits',
+                 'SENTRY', 'EST', 'makeSentry', 'stepSentry', 'makeEncounter',
+                 'WAKE_TIME', 'TELEGRAPH_TIME', 'STRIKE_TIME', 'RECOVER_TIME',
                  'makeCamera', 'snap', 'warpTo', 'follow', 'eye', 'basis', 'moveFrom',
                  'project', 'groundAt', 'heading', 'aimFromPointer', 'aimFromStick',
                  'setView', 'VIEW', 'QUARTER', 'START_YAW',

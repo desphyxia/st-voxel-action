@@ -6,7 +6,7 @@ The game. Today that is the terrain generator and nothing else — see
 | Path | What it is |
 | --- | --- |
 | `gen/` | The seeded terrain generator. Plain ES modules: no DOM, no three.js, no renderer. |
-| `sim/` | Collision, the character controller, the isometric camera, the input table and combat. Same rules: no DOM, no three.js, no renderer. |
+| `sim/` | Collision, the character controller, the isometric camera, the input table, combat and the enemy. Same rules: no DOM, no three.js, no renderer. |
 | `net/` | The transport interface, a loopback double, and the host and guest sessions. Same rules again. |
 
 ## src/gen
@@ -118,6 +118,22 @@ a hit is worth. They are sized to be *legible*, because the question underneath
 #23 is whether a committed swing reads at 45° where the character is forty
 pixels tall. `sweep` reports that the arc covered a target this tick and stops
 there — as a bitmask, which is also how it goes over the wire.
+
+`enemy.mjs` is one archetype — a sentry automaton — and the encounter that
+holds them. It produces an input and hands it to the same `step` the player
+uses, which is what keeps it honest about the movement budget: it steps a metre,
+falls, drowns and burns exactly as a player would, and `canVault = false` is why
+a heavy machine goes around instead of pulling itself over a ledge.
+
+The interesting part is the telegraph, and the rule it produced: **the tell goes
+on the surface the camera can see.** At 45° you look at the top of things, so a
+raised arm is foreshortened to nothing. This one stops dead, rises, and lights
+its top plate — and the stopping is the tell that works at any zoom, because
+everything else in a fight is moving.
+
+`makeEncounter` also defines the wire format for enemies, and the host draws
+from that same format rather than from its own actors. If a field the guest
+needs were missing, the host's picture would break too.
 
 ## src/net
 

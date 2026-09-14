@@ -12,7 +12,7 @@
  *
  * What it deliberately does not do is decide what a hit *does*. `sweep` reports
  * that the arc covered a target this tick and stops there. Damage, poise,
- * stagger and the rest belong to #9 and to whatever #24 puts in front of you.
+ * stagger and the rest belong to #9 and to the archetypes in enemy.mjs.
  *
  * Pure functions of an actor and a number, like everything else in src/sim, so
  * a guest replaying inputs reproduces the host's swing exactly rather than
@@ -56,6 +56,12 @@ export const DODGE_DIST = 3.2;
 export const DODGE_SPEED = DODGE_DIST / DODGE_TIME;
 /** Invulnerable for most of it, but not the tail: a dodge ends before you do. */
 export const DODGE_IFRAMES = 0.20;
+
+/* ---- what a hit costs, until #9 says otherwise ---- */
+export const PLAYER_HP = 100;
+export const SWING_DAMAGE = 20;
+/** Seconds of flinch after taking a hit. Read by the renderer, nothing else. */
+export const HURT_TIME = 0.25;
 
 export const PHASE = { NONE: 0, WINDUP: 1, ACTIVE: 2, RECOVER: 3 };
 
@@ -129,6 +135,7 @@ export function beginDodge(a, dx, dz) {
  */
 export function advanceCombat(a, dt) {
   a.hits = 0;
+  if (a.hurtT > 0) a.hurtT = Math.max(0, a.hurtT - dt);
   if (a.swing) { a.swing.t += dt; if (a.swing.t >= SWING_TIME) a.swing = null; }
   if (a.dodge) { a.dodge.t += dt; if (a.dodge.t >= DODGE_TIME) a.dodge = null; }
 
@@ -136,6 +143,48 @@ export function advanceCombat(a, dt) {
   else if (a.stamina < STAMINA_MAX) {
     a.stamina = Math.min(STAMINA_MAX, a.stamina + STAMINA_REGEN * dt);
   }
+}
+
+/**
+ * Is `t` inside an arc of `reach` and `arc` radians in front of `a`?
+ *
+ * Shared by the player's swing and the enemy's, which have different reaches
+ * and different arcs and must not have different *rules*.
+ */
+export function inArc(a, t, reach, arc, span, cosHalf) {
+  const dx = t.x - a.x, dz = t.z - a.z;
+  const d = hyp(dx, dz);
+  if (d > reach + (t.r || 0)) return false;
+  if (Math.abs((t.y || 0) - a.y) > span) return false;
+  if (d <= 1e-6) return true;
+  /* Angle via the dot product — atan2 is not one of the operations the spec
+     pins (see src/gen/exact.mjs). */
+  return (dx * a.faceX + dz * a.faceZ) / d >= (cosHalf === undefined ? cos(arc / 2) : cosHalf);
+}
+
+/**
+ * Take a hit. Returns false if it did not land — dead already, or dodging,
+ * which is the entire reason the dodge exists.
+ */
+export function hurt(a, amount, cause) {
+  if (!a || a.dead || a.hp === undefined || invulnerable(a)) return false;
+  a.hp -= amount;
+  a.hurtT = HURT_TIME;
+  if (a.hp <= 0) { a.hp = 0; a.dead = cause || 'struck'; }
+  return true;
+}
+
+/**
+ * Turn this tick's sweep into damage. Targets without hit points — the practice
+ * posts — are reported by `sweep` and simply not hurt by this.
+ */
+export function applyHits(a, targets, damage) {
+  if (!a.hits || !targets) return 0;
+  let n = 0;
+  for (let i = 0; i < targets.length && i < 32; i++) {
+    if ((a.hits & (1 << i)) && hurt(targets[i], damage, 'struck')) n++;
+  }
+  return n;
 }
 
 /**
@@ -153,17 +202,7 @@ export function sweep(a, targets) {
   for (let i = 0; i < targets.length && i < 32; i++) {
     if (a.swing.hit & (1 << i)) continue;
     const t = targets[i];
-    const dx = t.x - a.x, dz = t.z - a.z;
-    const d = hyp(dx, dz);
-    if (d > REACH + (t.r || 0)) continue;
-    if (Math.abs((t.y || 0) - a.y) > SPAN) continue;
-    /* Angle between facing and the target, via the dot product — atan2 is not
-       one of the operations the spec pins (see src/gen/exact.mjs). */
-    if (d > 1e-6) {
-      const cosang = (dx * a.faceX + dz * a.faceZ) / d;
-      if (cosang < COS_HALF_ARC) continue;
-    }
-    mask |= (1 << i);
+    if (t && !t.dead && inArc(a, t, REACH, ARC, SPAN, COS_HALF_ARC)) mask |= (1 << i);
   }
   a.swing.hit |= mask;
   a.hits = mask;
@@ -171,7 +210,7 @@ export function sweep(a, targets) {
 }
 
 /**
- * Somewhere to swing at, until #24 puts something here that swings back.
+ * Somewhere to swing at that does not swing back. The machines in enemy.mjs do.
  *
  * Derived from the world rather than placed by hand, so a host and a guest end
  * up with the same posts in the same order without any of it crossing the wire.

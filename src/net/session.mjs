@@ -23,7 +23,8 @@
  * implements the same three methods later; the prototype uses two browser
  * windows and a loopback pair in the tests.
  */
-import { TICK, placeOnGround, step, snapshot, restore, embedded, ACTOR } from '../sim/actor.mjs';
+import { TICK, placeOnGround, step, snapshot, restore, display, applyDisplay,
+         embedded, ACTOR } from '../sim/actor.mjs';
 
 /** Snapshots per second is this divided into the tick rate: 60 / 3 = 20 Hz. */
 export const SEND_EVERY = 3;
@@ -57,7 +58,7 @@ export function spawnNear(col, x, z) {
 /* ------------------------------------------------------------------ host ---- */
 
 export function makeHost(opts) {
-  const { col, spawn, transport, cfg, targets } = opts;
+  const { col, spawn, transport, cfg, targets, encounter } = opts;
   const sendEvery = opts.sendEvery || SEND_EVERY;
   const me = placeOnGround(col, spawn[0], spawn[2]);
   const peer = spawnNear(col, spawn[0], spawn[2]);
@@ -85,6 +86,8 @@ export function makeHost(opts) {
     role: 'host', me, peer, cfg,
     get connected() { return joined; },
     get tick() { return t; },
+    /** Drawn from the same data that is sent, so a gap in one shows in both. */
+    get foes() { return encounter ? encounter.wire() : null; },
     get stats() { return { t, joined, queued: inbox.length, inputs: seen }; },
 
     /** One authoritative tick. `localInput` is this machine's own player. */
@@ -97,10 +100,19 @@ export function makeHost(opts) {
 
       step(col, me, copyInput(localInput || IDLE), targets);
       step(col, peer, next.input, targets);
+      /* The world acts after the players do, and it is the host's world: a
+         guest predicts its own movement and nothing else. */
+      if (encounter) encounter.step([me, peer]);
 
       if (t % sendEvery === 0) {
-        transport.send({ t: 'snap', tick: t, ack: next.seq,
-                         you: snapshot(peer), them: snapshot(me) });
+        transport.send({
+          t: 'snap', tick: t, ack: next.seq,
+          /* Full state for the guest's own character, because it replays from
+             it. Display state for everything it only draws. */
+          you: snapshot(peer),
+          them: display(me),
+          foes: encounter ? encounter.wire() : null,
+        });
       }
       return this;
     },
@@ -117,7 +129,8 @@ export function makeHost(opts) {
  */
 export function makeGuest(opts) {
   const { transport, build } = opts;
-  let col = null, me = null, peer = null, cfg = null, targets = null;
+  let col = null, me = null, peer = null, cfg = null;
+  let foes = null;
   let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0;
   const pending = [];
   let target = null;                       /* last authoritative host state */
@@ -131,9 +144,6 @@ export function makeGuest(opts) {
       cfg = m.cfg;
       const world = build(m.cfg);
       col = world.col;
-      /* The same posts the host is swinging at, derived the same way from the
-         same world — nothing about them crosses either. */
-      targets = world.targets || null;
       me = spawnNear(col, m.spawn[0], m.spawn[2]);
       peer = placeOnGround(col, m.spawn[0], m.spawn[2]);
       ready = true;
@@ -150,8 +160,12 @@ export function makeGuest(opts) {
       lastAck = m.ack;
       corrections++;
       while (pending.length && pending[0].seq <= m.ack) pending.shift();
-      for (const p of pending) { step(col, me, p.input, targets); replayed++; }
+      /* Replayed without targets: movement is predicted, damage is not. A guest
+         that guessed at hits would flash things the host never agreed were hit,
+         which is worse than the round trip it saves. */
+      for (const p of pending) { step(col, me, p.input, null); replayed++; }
       target = m.them;
+      foes = m.foes;
     }
   });
 
@@ -163,6 +177,8 @@ export function makeGuest(opts) {
     get cfg() { return cfg; },
     get connected() { return ready; },
     get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck }; },
+    /** Whatever the host last said was in the world. Drawn, never stepped. */
+    get foes() { return foes; },
     /** The last thing the host said about us, before any replay on top of it.
         The gap between this and `me` is exactly what prediction is buying. */
     get authoritative() { return target ? lastYou : null; },
@@ -177,7 +193,7 @@ export function makeGuest(opts) {
                        aimX: input.aimX, aimZ: input.aimZ });
       pending.push({ seq, input });
       if (pending.length > MAX_PENDING) pending.shift();
-      step(col, me, input, targets);
+      step(col, me, input, null);
 
       /* The other player arrives at 20 Hz and is drawn, not simulated, so it is
          eased rather than snapped. Proper snapshot interpolation on a delay
@@ -186,8 +202,7 @@ export function makeGuest(opts) {
         peer.x += (target.x - peer.x) * SMOOTH;
         peer.y += (target.y - peer.y) * SMOOTH;
         peer.z += (target.z - peer.z) * SMOOTH;
-        peer.faceX = target.faceX; peer.faceZ = target.faceZ;
-        peer.grounded = target.grounded; peer.dead = target.dead;
+        applyDisplay(peer, target);
       }
       return this;
     },

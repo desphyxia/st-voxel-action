@@ -21,7 +21,7 @@
  */
 import { MOVE, clamp } from '../gen/constants.mjs';
 import { EPS, LIQUID } from './collider.mjs';
-import { STAMINA_MAX, advanceCombat, beginSwing, beginDodge,
+import { STAMINA_MAX, PLAYER_HP, advanceCombat, beginSwing, beginDodge,
          speedScale, sweep, DODGE_SPEED } from './combat.mjs';
 
 /** One simulation tick. Every constant below assumes it. */
@@ -73,6 +73,11 @@ export function makeActor(x, y, z) {
     faceX: 0, faceZ: 1,
     /* ---- combat (src/sim/combat.mjs owns the rules; the state lives here so
        that one snapshot is the whole actor) ---- */
+    hp: PLAYER_HP, maxHp: PLAYER_HP,
+    /** Seconds of flinch left. The renderer's business, nobody else's. */
+    hurtT: 0,
+    /** A heavy machine does not pull itself over a ledge — see src/sim/enemy.mjs. */
+    canVault: true,
     stamina: STAMINA_MAX,
     /** Seconds before stamina starts coming back. */
     staminaHold: 0,
@@ -82,7 +87,7 @@ export function makeActor(x, y, z) {
     dodge: null,
     /** Targets the arc covered this tick, as a bitmask. Cleared every tick. */
     hits: 0,
-    /** null while alive, else 'fall' | 'magma' | 'void'. */
+    /** null while alive, else 'fall' | 'magma' | 'void' | 'struck'. */
     dead: null,
     /** Path length, summed per axis. Not displacement — see the soak. */
     travelled: 0, ticks: 0, blocked: false,
@@ -116,6 +121,7 @@ export function snapshot(a) {
                        x1: a.vault.x1, y1: a.vault.y1, z1: a.vault.z1 } : null,
     vaults: a.vaults, inWater: a.inWater, swimming: a.swimming,
     faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
+    hp: a.hp, hurtT: a.hurtT,
     stamina: a.stamina, staminaHold: a.staminaHold,
     swing: a.swing ? { t: a.swing.t, hit: a.swing.hit } : null,
     dodge: a.dodge ? { t: a.dodge.t, dx: a.dodge.dx, dz: a.dodge.dz } : null,
@@ -132,11 +138,39 @@ export function restore(a, s) {
                         x1: s.vault.x1, y1: s.vault.y1, z1: s.vault.z1 } : null;
   a.vaults = s.vaults; a.inWater = s.inWater; a.swimming = s.swimming;
   a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
+  a.hp = s.hp; a.hurtT = s.hurtT;
   a.stamina = s.stamina; a.staminaHold = s.staminaHold;
   a.swing = s.swing ? { t: s.swing.t, hit: s.swing.hit } : null;
   a.dodge = s.dodge ? { t: s.dodge.t, dx: s.dodge.dx, dz: s.dodge.dz } : null;
   a.hits = s.hits;
   a.ticks = s.ticks; a.travelled = s.travelled; a.blocked = s.blocked;
+  return a;
+}
+
+/**
+ * What someone *else* needs to draw this actor — a fraction of the state
+ * simulating it needs, rounded to millimetres because these are pixels and not
+ * a trajectory anyone replays.
+ *
+ * The other player is drawn by the guest and never simulated by it, so sending
+ * a full snapshot of them would be sending twenty numbers to move a model.
+ */
+export function display(a) {
+  const r3 = (v) => Math.round(v * 1000) / 1000;
+  return {
+    x: r3(a.x), y: r3(a.y), z: r3(a.z), fx: r3(a.faceX), fz: r3(a.faceZ),
+    g: a.grounded ? 1 : 0, d: a.dead || 0, hp: a.hp,
+    sw: a.swing ? Math.round(a.swing.t * 1000) / 1000 : -1,
+    dv: a.dodge ? 1 : 0, u: Math.round(a.hurtT * 100) / 100,
+  };
+}
+
+/** The inverse, onto an actor kept only for drawing. */
+export function applyDisplay(a, m) {
+  a.faceX = m.fx; a.faceZ = m.fz;
+  a.grounded = !!m.g; a.dead = m.d || null; a.hp = m.hp; a.hurtT = m.u;
+  a.swing = m.sw >= 0 ? { t: m.sw, hit: 0 } : null;
+  a.dodge = m.dv ? { t: 0, dx: m.fx, dz: m.fz } : null;
   return a;
 }
 
@@ -171,6 +205,7 @@ function tryVault(col, a, dx, dz) {
   const r = ACTOR.radius, h = ACTOR.height;
   if (!a.grounded || (dx === 0 && dz === 0)) return false;
   if (a.swing || a.dodge) return false;        /* committed means committed */
+  if (a.canVault === false) return false;
   const probe = 0.4;
   const top = col.supportUnder(a.x + dx * probe, a.z + dz * probe, r, a.y + MOVE.vault + EPS);
   if (!(top > a.y + MOVE.step + EPS) || top - a.y > MOVE.vault + EPS) return false;

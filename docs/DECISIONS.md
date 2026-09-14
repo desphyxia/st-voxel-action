@@ -108,6 +108,24 @@ Three sources, all derived from the premise:
 
 Rival heirs were explicitly excluded: there is no human opposition.
 
+### The first archetype, specified
+
+One of the three tradition sources, taken to the level #6 asks for, because #24 needed it built.
+The other eleven are still open.
+
+**Sentry automaton** — tech, still holding a position against an enemy that left.
+
+| | |
+| --- | --- |
+| Silhouette | Squat and wide. From 45° you mostly see the **top** of things, so the readable surface is its top plate — and that is where the tell goes |
+| Telegraph | **It stops dead, rises, and the plate flares.** The stopping is the tell that works at any zoom: everything else in a fight is moving. The rise changes its footprint, which is the one silhouette change an overhead view can see. A wedge on the ground says where |
+| Opening | A recovery **longer than the player's whole swing**, so dodging through the strike buys a free hit rather than only survival |
+| Against the budget | Walks the same budget the player does, through the same controller — steps a metre, falls, drowns, burns. **Does not vault**: a heavy machine goes around. It outranges the player, so closing is a decision |
+
+The general rule this produced, and which every later archetype inherits: **the tell goes on the
+surface the camera can see.** Anything staged in a vertical plane — a raised arm, a leaned-back
+wind-up — is foreshortened to nothing from above.
+
 ### Weapon sites
 
 The destinations of the main drive, one per tradition: a **tech furnace** half-buried in the
