@@ -22,11 +22,17 @@ engine work without checking `docs/DECISIONS.md` first.
 | `tools/` | Headless render and verify harness. Dev only. |
 | `README.md` | Short public summary of the project. |
 
-**Published artifact:** https://claude.ai/code/artifact/10034b02-a25d-4f5b-ab04-cea2076ceee8
+**Published artifacts.** Both are live, interactive copies of a file in this repo. To
+**update** one from a session that did not publish it, pass its URL as the `url` argument —
+publishing without it silently creates a second artifact instead.
 
-That is the live, interactive version of `docs/concept/index.html`. To **update** it from a
-session that did not publish it, pass that URL as the `url` argument — publishing without it
-silently creates a second artifact instead.
+| Page | Artifact |
+| --- | --- |
+| `docs/play/index.html` — the playable build | https://claude.ai/code/artifact/f9c19fb9-115e-4055-8990-b0ae823c4f5c |
+| `docs/concept/index.html` — the concept plate | https://claude.ai/code/artifact/10034b02-a25d-4f5b-ab04-cea2076ceee8 |
+
+Neither is published automatically. When a change lands that alters what either page *shows*,
+republish it, or the live copy quietly drifts from the repo.
 
 ## Working on the generator
 
