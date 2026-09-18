@@ -5358,38 +5358,74 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
 
      One material for every chunk, built once: a carve rebuilds geometry, and
      recompiling a shader per bite would be the expensive half of a remesh. */
+  /* The palette as a texture, one texel per entry, sampled with nearest.
+     A uniform array indexed by a computed value is not guaranteed in GLSL ES
+     1.0 — only a constant index expression is — and a texture fetch is. */
+  var palTex=(function(){
+    var n=QS.PALETTE.length, d=new Uint8Array(n*4);
+    for(var i=0;i<n;i++){
+      d[i*4]=QS.PALETTE[i]>>16&255; d[i*4+1]=QS.PALETTE[i]>>8&255;
+      d[i*4+2]=QS.PALETTE[i]&255;   d[i*4+3]=255;
+    }
+    var t=new THREE.DataTexture(d,n,1,THREE.RGBAFormat);
+    t.magFilter=t.minFilter=THREE.NearestFilter;
+    t.generateMipmaps=false; t.needsUpdate=true;
+    return t;
+  })();
+
   function meshMaterial(){
     var m=new THREE.MeshLambertMaterial({vertexColors:true});
     m.onBeforeCompile=function(sh){
-      sh.vertexShader='varying vec3 vWP;\n'+sh.vertexShader.replace(
-        '#include <begin_vertex>',
-        '#include <begin_vertex>\n  vWP=(modelMatrix*vec4(position,1.0)).xyz;');
-      sh.fragmentShader='varying vec3 vWP;\n'
+      sh.uniforms.uPal={value:palTex};
+      sh.uniforms.uPalN={value:QS.PALETTE.length};
+      sh.vertexShader='attribute vec2 aGroup;\nvarying vec3 vWP;\nvarying vec2 vGroup;\n'
+        +sh.vertexShader.replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\n  vWP=(modelMatrix*vec4(position,1.0)).xyz;\n  vGroup=aGroup;');
+      sh.fragmentShader='uniform sampler2D uPal;\nuniform float uPalN;\n'
+        +'varying vec3 vWP;\nvarying vec2 vGroup;\n'
         +'float qsGrain(vec3 p){ p=fract(p*0.1031); p+=dot(p,p.yzx+33.33); return fract((p.x+p.y)*p.z); }\n'
         +sh.fragmentShader.replace(
           '#include <color_fragment>',
-          '#include <color_fragment>\n  diffuseColor.rgb*=0.90+0.20*qsGrain(floor(vWP/'+QS.V.toFixed(2)+'));');
+          '#include <color_fragment>\n'
+          +'  vec3 qsCell=floor(vWP/'+QS.V.toFixed(2)+');\n'
+          /* Two independent draws, because the generator makes them from two:
+             pickPal chooses the colour and the shade is rolled after it. One
+             hash for both would tie the darkest stone to one particular hue. */
+          +'  float qsPick=min(floor(qsGrain(qsCell)*vGroup.y),vGroup.y-1.0);\n'
+          +'  float qsShade=0.90+0.20*qsGrain(qsCell+vec3(19.0,7.0,3.0));\n'
+          +'  vec3 qsCol=texture2D(uPal,vec2((vGroup.x+qsPick+0.5)/uPalN,0.5)).rgb;\n'
+          +'  diffuseColor.rgb*=qsCol*qsShade;');
     };
     return m;
   }
 
-  /* One chunk's geometry. Colour is the palette group dimmed by baked
-     occlusion — #28 is what makes this a lookup rather than a per-voxel float
-     the mesh would have had to carry, and carrying it is what would stop faces
-     merging at all. */
+  /* How many colours each palette group holds, indexed by the group's base —
+     which is what a quad carries. The mesher does not need to know this and is
+     not told; it is a property of the palette, and the renderer is where the
+     palette is resolved (#28). */
+  var PAL_N=(function(){
+    var t=new Uint8Array(QS.PALETTE.length);
+    for(var k in QS.PAL) t[QS.PAL[k].at]=QS.PAL[k].n;
+    return t;
+  })();
+
   function chunkGeometry(data,cx,cz){
     var m=QS.meshChunk(data,cx,cz), n=m.pos.length/3;
-    var col=new Float32Array(n*3);
+    /* The vertex colour is now the baked occlusion and nothing else. The hue
+       is chosen per 25 cm cell in the shader, from the group this quad carries
+       — see meshMaterial. */
+    var col=new Float32Array(n*3), grp=new Float32Array(n*2);
     for(var v=0;v<n;v++){
       var k=AO_STEP[m.ao[v]];
-      col[v*3]=QS.palR(m.pal[v],128)*k;
-      col[v*3+1]=QS.palG(m.pal[v],128)*k;
-      col[v*3+2]=QS.palB(m.pal[v],128)*k;
+      col[v*3]=k; col[v*3+1]=k; col[v*3+2]=k;
+      grp[v*2]=m.pal[v]; grp[v*2+1]=PAL_N[m.pal[v]]||1;
     }
     var g=new THREE.BufferGeometry();
     g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(m.pos),3));
     g.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(m.nor),3));
     g.setAttribute('color',new THREE.BufferAttribute(col,3));
+    g.setAttribute('aGroup',new THREE.BufferAttribute(grp,2));
     g.setIndex(m.idx);
     g.userData={quads:m.quads};
     return g;
