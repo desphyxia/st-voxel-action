@@ -36,8 +36,16 @@ publishing without it silently creates a second artifact instead.
 
 | Page | Artifact |
 | --- | --- |
-| `docs/play/index.html` — the playable build | https://claude.ai/code/artifact/f9c19fb9-115e-4055-8990-b0ae823c4f5c |
+| `docs/play/index.html` — the playable build | https://claude.ai/artifact/H3kZLpjDurCiH2DMEFfr8k |
 | `docs/concept/index.html` — the concept plate | https://claude.ai/code/artifact/10034b02-a25d-4f5b-ab04-cea2076ceee8 |
+
+**The playable build moved to a new artifact**, and the old one is abandoned rather than
+retired on purpose. From 2026-09-18 the artifact service returns HTTP 503 for *content reads*
+of `f9c19fb9-115e-4055-8990-b0ae823c4f5c` — through both of its address forms — while
+`action: "list"` still returns its metadata happily. A publish will not overwrite a page it
+cannot first read, so that artifact can no longer be updated from here. It is still live and
+still serves the build as it stood before the fullscreen option, which makes it actively
+misleading: prefer the URL above. If the read ever recovers, the two can be reconciled.
 
 Neither is published automatically. When a change lands that alters what either page *shows*,
 republish it, or the live copy quietly drifts from the repo.
