@@ -723,11 +723,21 @@ if (BROWSER_HALF) {
         const far = P.input.axes();
         out.clamped = Math.sqrt(far.ix * far.ix + far.iy * far.iy);
 
+        /* From the spawn, not from wherever the checks above left the character.
+           They walk it into a cache, through a machine's arc and around a post,
+           and it can finish anywhere — against a wall, in water, on magma. This
+           check is about whether analog magnitude survives the trip from thumb
+           to actor, so it has to run somewhere there is room to walk. */
+        P.respawn();
         const a = P.actor;
         a.dead = null; a.vx = 0; a.vz = 0;
         const x0 = a.x, z0 = a.z;
         P.run(60);
         out.walked = Math.sqrt((P.actor.x - x0) ** 2 + (P.actor.z - z0) ** 2);
+        /* Reported on failure, because "0.00 m" alone does not say whether the
+           character was blocked, drowned or killed on the way. */
+        out.from = [Math.round(x0 * 100) / 100, Math.round(z0 * 100) / 100];
+        out.ended = P.actor.dead || (P.actor.swimming ? 'swimming' : (P.actor.blocked ? 'blocked' : 'walking'));
         ev(stage, 'pointerup', ox + 400, oy, 7);
         out.released = P.input.axes().ix;
 
@@ -760,7 +770,8 @@ if (BROWSER_HALF) {
             + `clamped ${touch.clamped.toFixed(6)} past its travel, ${touch.released} on release`);
       check(touch.walked > 3.5 && touch.walked < 4.5,
             'BUILD: and it walks the character at the speed it asks for',
-            `${touch.walked.toFixed(2)} m in 60 ticks, RUN is ${touch.run}`);
+            `${touch.walked.toFixed(2)} m in 60 ticks, RUN is ${touch.run}`
+            + `, from ${touch.from.join(',')}, ${touch.ended}`);
       check(touch.tapSwung === false && touch.buttonSwung === true && touch.cursorActive === false,
             'BUILD: a tap on open ground does not swing, the button does',
             `${touch.tapSwung ? 'TAP SWUNG' : 'tap quiet'}, `
