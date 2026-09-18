@@ -52,12 +52,17 @@ cannot first read, so that artifact can no longer be updated from here. It is st
 still serves the build as it stood before the fullscreen option, which makes it actively
 misleading: prefer the URL above. If the read ever recovers, the two can be reconciled.
 
-**Both artifacts need `force: true` to republish, every time.** Not a plate quirk — measured on
-both pages on 2026-09-18. A publish will not overwrite a version it has not "viewed", viewing
-means reading the saved copy *whole*, and **chunked reads do not satisfy the check**: the play
-build was read completely, all 5,447 lines in six contiguous chunks, and the publish was refused
-anyway. The files are 239 KB and 151 KB against the Read tool's 25k-token single-call cap, so
-there is no way to clear it by reading harder. Do not spend the context finding that out again.
+**Force is needed once per session, not once per publish.** A publish will not overwrite a
+version the session has not "viewed" — but *publishing* a version counts as viewing it. So the
+first republish in a fresh session is refused and every later one in that session goes straight
+through. On 2026-09-18 both pages were forced once and then republished twice more with no
+argument at all.
+
+**When the first one is refused, reading harder will not help.** Viewing means reading the saved
+copy *whole*, and **chunked reads do not satisfy the check**: the play build was read completely,
+all 5,447 lines in six contiguous chunks, and the publish was refused anyway. At 239 KB and
+151 KB against the Read tool's 25k-token single-call cap there is no way through by reading. Do
+not spend the context finding that out again — that mistake cost about 90k tokens.
 
 The safe check takes one command, and it is stronger than eyeballing a diff. If anything had
 been edited from inside a page, its live copy would differ from the repo file **as it stood at
