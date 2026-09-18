@@ -253,9 +253,9 @@ export function placeClutter(w, kit) {
 
 /** One landmark per region, on the highest flat ground that is not a trail. */
 export function placeLandmark(w, kit) {
-  var M = w.M, cells = w.cells, half = w.half, R = w.R, TRAIL = w.TRAIL,
+  var half = w.half, R = w.R,
       OX = w.OX, OZ = w.OZ, mpos = w.mpos, mcol = w.mcol, mmat = w.mmat,
-      addVox = kit.addVox, flatAt = w.flatAt;
+      addVox = kit.addVox;
   var lmPos=null;
   function landmarkStamp(px,pz,kind,dom,base){
     var a,b,y2,r2;
@@ -298,19 +298,29 @@ export function placeLandmark(w, kit) {
       }
     }
   }
+  /* The region decided this, not the window — see src/gen/region.mjs. One
+     landmark per 128 m region rather than one per window, which is the whole
+     correction: a landmark's existence used to depend on how much of the world
+     you happened to be looking at. A window stamps the ones that fall inside
+     it, which may be none. */
   (function(){
-    var best=null,a,b;
-    for(a=6;a<M-6;a+=2)for(b=6;b<M-6;b+=2){
-      var cq4=cells[a*M+b];
-      if(cq4.water||cq4.magma||TRAIL[a*M+b]) continue;
-      if(!flatAt(a,b,1)) continue;
-      if(!best||cq4.H>best.h) best={a:a,b:b,h:cq4.H,dom:cq4.dom};
+    var regions=w.regions||[], got=[], q;
+    for(q=0;q<regions.length;q++){
+      var lm=regions[q].landmark;
+      if(!lm) continue;
+      var lx=lm.x-OX, lz=lm.z-OZ;                  /* window-local metres */
+      if(lx<-half+2||lz<-half+2||lx>half-2||lz>half-2) continue;
+      got.push({lx:lx,lz:lz,lm:lm});
     }
-    if(!best) return;
-    var kinds=(best.dom===3)?[2,0]:((best.dom===1)?[0,3]:((best.dom===4)?[3,0]:[1,3]));
-    var kind=kinds[Math.abs(Math.round(OX*0.37+OZ*0.11))%kinds.length];
-    landmarkStamp(-half+best.a,-half+best.b,kind,best.dom,best.h);
-    lmPos=[-half+best.a,best.h+(kind===0?12:(kind===1?11:4)),-half+best.b];
+    /* Highest first, so a window overlapping two regions reports the one that
+       actually dominates its skyline. Ties break on region order, which is
+       fixed. */
+    got.sort(function(a,b){ return b.lm.h-a.lm.h; });
+    for(q=0;q<got.length;q++){
+      var e=got[q], k=e.lm.kind;
+      landmarkStamp(e.lx,e.lz,k,e.lm.dom,e.lm.h);
+      if(!lmPos) lmPos=[e.lx,e.lm.h+(k===0?12:(k===1?11:4)),e.lz];
+    }
   })();
   w.lmPos = lmPos;
 }

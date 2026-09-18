@@ -189,6 +189,8 @@ generator workstream in its own right — not a content pass.
 | Save ownership | **Shared world, host only** — accepted deliberately. One world, one save, one owner; the pair plays together or not at all |
 | Platform | Steam desktop first, wrapped (Electron or Tauri); browser build is a test harness |
 | Art pipeline | Hybrid — hand-authored `.vox` for characters, creatures and hero structures; trees, boulders, walls and clutter stay procedural |
+| What a window decides | **Nothing larger than itself.** Sites, the trail between them, its grading, its crossings and the landmark are decided per **region** (64 m, keyed on world coordinates) and a window reports what falls inside it. A window is a view, not an authority — which is what lets the same ground be generated twice and agree, and therefore what lets the world be streamed at all |
+| Generator randomness | **Positional wherever the answer belongs to a place.** A stream's nth value depends on n, so a pass that walks a window draws differently than the same pass walking a window offset by a chunk — the same square metre, a different answer. Erosion was the case that mattered: routes are chosen over the heights it produces |
 | Generator arithmetic | **Only operations the spec pins exactly.** `Math.sin`, `cos`, `exp`, `pow` and `hypot` are implementation-approximated and differ between engine versions; `src/gen/exact.mjs` replaces them. A seed has to grow the same world on both players' machines, and in the tooling that measures it |
 
 ## 8. Presentation

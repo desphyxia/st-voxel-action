@@ -25,3 +25,33 @@ export function makeNoise(seed){
     for(var i=0;i<o;i++){s+=a*n2(x*f,y*f);n+=a;f*=2;a*=0.5;}return s/n;}
   return {n2:n2,fbm:fbm};
 }
+
+/**
+ * Positional randomness: a uniform in [0, 1) that depends only on a seed word
+ * and a world coordinate, never on how many numbers were drawn before it.
+ *
+ * `mulberry32` is a *stream* — the nth value depends on n. That is fine inside
+ * one window and fatal across two: a pass that walks a 64 m window draws a
+ * different sequence than the same pass walking a window offset by a chunk, so
+ * the same square metre of world gets a different number and a different
+ * height. It is the reason the generator can only produce one window at a time
+ * (issue #16).
+ *
+ * This is the replacement for every draw whose answer belongs to a *place*
+ * rather than to a moment in a pass. Integer mixing only — imul, xor and
+ * shifts are exact in every engine, so this needs nothing from src/gen/exact.mjs.
+ */
+export function posRand(sw, x, z, salt) {
+  var h = (sw ^ 0x9e3779b9) | 0;
+  h = Math.imul(h ^ (x | 0), 0x85ebca6b); h = (h << 13) | (h >>> 19);
+  h = Math.imul(h ^ (z | 0), 0xc2b2ae35); h = (h << 17) | (h >>> 15);
+  h = Math.imul(h ^ (salt | 0), 0x27d4eb2f);
+  h ^= h >>> 15; h = Math.imul(h, 0x2545f491); h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
+}
+
+/** A stream seeded from a place, for a pass that needs several draws there. */
+export function posStream(sw, x, z, salt) {
+  var n = 0;
+  return function () { return posRand(sw, x, z, (salt | 0) + (n++) * 0x9e37); };
+}

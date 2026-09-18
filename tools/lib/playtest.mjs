@@ -26,7 +26,8 @@ import * as LT from '../../src/sim/lattice.mjs';
 import * as LO from '../../src/sim/loot.mjs';
 import { makeLoopback } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
-import { buildWorld } from '../../src/gen/index.mjs';
+import { buildWorld, makeGen } from '../../src/gen/index.mjs';
+import { regionAt, clearRegionCache } from '../../src/gen/region.mjs';
 import { GOLDEN_SEEDS } from './harness.mjs';
 
 /** Five minutes, the bar in docs/PROTOTYPE.md. */
@@ -1213,4 +1214,110 @@ function FUSIONS_CROSS() {
     if (LT.MODULES[f.pair[0]].trad === LT.MODULES[f.pair[1]].trad) return false;
   }
   return true;
+}
+
+/* ---------------------------------------------------------------------------
+ * REGION — two views of the same ground agree.
+ *
+ * Issue #16's bar, stated as it states it: "two separately generated adjacent
+ * chunks agree on every trail, crossing, site and landmark that crosses their
+ * boundary."
+ *
+ * The method is the only one that can prove it: build the same world twice at
+ * different window offsets and compare what they say about the ground they
+ * share. Everything is converted to world coordinates first, because that is
+ * the only frame in which the two windows are talking about the same place.
+ *
+ * This is what could not have passed before. The old generator chose its sites,
+ * routed its trails and picked its landmark inside whatever window it happened
+ * to be filling, and erosion drew from a stream that depended on how much of
+ * the window had already been walked — so the same square metre had a different
+ * height depending on where the window started.
+ * ------------------------------------------------------------------------- */
+
+/** World coordinate to cell index in a window built at (ox, oz), or -1. */
+function cellAtWorld(w, ox, oz, x, z) {
+  const i = x - ox + w.half, j = z - oz + w.half;
+  if (i < 0 || j < 0 || i > w.M - 1 || j > w.M - 1) return -1;
+  return i * w.M + j;
+}
+
+export function regionSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const SEED = 'QUARTERSTONE', SIZE = 64;
+
+  /* Three offsets, so the overlap is not always the same shape: one chunk
+     apart, two chunks apart, and a diagonal that crosses a region corner. */
+  const pairs = [[[0, 0], [32, 0]], [[0, 0], [64, 0]], [[0, 0], [32, 32]]];
+  let compared = 0, hBad = 0, tBad = 0;
+  const featureBad = [];
+
+  for (const [[ax, az], [bx, bz]] of pairs) {
+    const A = buildWorld({ seed: SEED, size: SIZE, force: null, ox: ax, oz: az });
+    const B = buildWorld({ seed: SEED, size: SIZE, force: null, ox: bx, oz: bz });
+
+    const lo = (a, b) => Math.max(a - SIZE / 2, b - SIZE / 2);
+    const hi = (a, b) => Math.min(a + SIZE / 2, b + SIZE / 2);
+    for (let x = lo(ax, bx); x <= hi(ax, bx); x++) {
+      for (let z = lo(az, bz); z <= hi(az, bz); z++) {
+        const ia = cellAtWorld(A, ax, az, x, z), ib = cellAtWorld(B, bx, bz, x, z);
+        if (ia < 0 || ib < 0) continue;
+        compared++;
+        if (A.cells[ia].H !== B.cells[ib].H) hBad++;
+        if (A.trail[ia] !== B.trail[ib]) tBad++;
+      }
+    }
+
+    /* Features, in world coordinates, restricted to the ground both can see. */
+    const seen = (w, ox, oz, x, z) => cellAtWorld(w, ox, oz, x, z) >= 0;
+    const sitesOf = (w, ox, oz) => w.sites.map(([i, j]) => [i - w.half + ox, j - w.half + oz]);
+    const bridgesOf = (w, ox, oz) => w.bridges.map((b) => [b[0] + ox, b[1] + oz, b[2], b[3], b[4], b[5]]);
+    const shared = (list, other, oox, ooz) =>
+      list.filter(([x, z]) => seen(other, oox, ooz, Math.round(x), Math.round(z)))
+        .map((v) => v.map((n) => +(+n).toFixed(4)).join(',')).sort();
+
+    const sA = shared(sitesOf(A, ax, az), B, bx, bz), sB = shared(sitesOf(B, bx, bz), A, ax, az);
+    if (sA.join('|') !== sB.join('|')) featureBad.push(`sites ${ax},${az} vs ${bx},${bz}`);
+    const bA = shared(bridgesOf(A, ax, az), B, bx, bz), bB = shared(bridgesOf(B, bx, bz), A, ax, az);
+    if (bA.join('|') !== bB.join('|')) featureBad.push(`crossings ${ax},${az} vs ${bx},${bz}`);
+
+    /* A landmark both windows can see must be the same landmark. */
+    const lmOf = (w, ox, oz) => (w.lmPos ? [w.lmPos[0] + ox, w.lmPos[1], w.lmPos[2] + oz] : null);
+    const la = lmOf(A, ax, az), lb = lmOf(B, bx, bz);
+    if (la && lb && seen(B, bx, bz, Math.round(la[0]), Math.round(la[2]))
+        && seen(A, ax, az, Math.round(lb[0]), Math.round(lb[2]))) {
+      if (la.map((v) => +v.toFixed(4)).join(',') !== lb.map((v) => +v.toFixed(4)).join(',')) {
+        featureBad.push(`landmark ${ax},${az} vs ${bx},${bz}`);
+      }
+    }
+  }
+
+  say('overlapping windows agree on the ground between them',
+      hBad === 0, `${compared} cells compared, ${hBad} height mismatches`);
+  say('and on where the trail runs across it',
+      tBad === 0, `${tBad} trail mismatches over ${compared} cells`);
+  say('and on the sites, crossings and landmarks they can both see',
+      featureBad.length === 0,
+      featureBad.length ? featureBad.join('; ') : 'every shared feature identical');
+
+  /* The pass is pure, not merely cached: a second generator built from the same
+     seed string is a different object and must still answer the same. */
+  {
+    const G1 = makeGen(SEED, null), G2 = makeGen(SEED, null);
+    const r1 = regionAt(G1, 3, -2);
+    /* Without this the cache answers, and the test proves only that a Map
+       returns what was put in it. */
+    clearRegionCache();
+    const r2 = regionAt(G2, 3, -2);
+    const shape = (r) => JSON.stringify({
+      sites: r.sites, bridges: r.bridges, landmark: r.landmark,
+      trail: [...r.trail].sort(), grade: [...r.grade.entries()].sort(),
+    });
+    say('a region is the same wherever it is asked from',
+        shape(r1) === shape(r2) && r1 !== r2,
+        `${r1.trail.size} trail cells, ${r1.grade.size} graded, ${r1.bridges.length} crossings`);
+  }
+
+  return out;
 }

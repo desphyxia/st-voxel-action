@@ -93,11 +93,11 @@ export const someTileDone = () =>
 
 /** Seeds the golden-master baseline is measured against. */
 export const GOLDEN_SEEDS = [
-  { nm: 'meadow', seed: 'ALDER-RUN', force: 0, size: 32, ox: 700, oz: 430 },
-  { nm: 'mesa', seed: 'DRY-KETTLE', force: 1, size: 32, ox: 1400, oz: 860 },
-  { nm: 'fen', seed: 'BLACKREED', force: 2, size: 32, ox: 2100, oz: 1290 },
-  { nm: 'ash', seed: 'CINDERWAKE', force: 3, size: 32, ox: 2800, oz: 1720 },
-  { nm: 'frost', seed: 'HOARFROST-9', force: 4, size: 32, ox: 3500, oz: 2150 },
+  { nm: 'meadow', seed: 'ALDER-RUN', force: 0, size: 64, ox: 704, oz: 448 },
+  { nm: 'mesa', seed: 'DRY-KETTLE', force: 1, size: 64, ox: 1408, oz: 896 },
+  { nm: 'fen', seed: 'BLACKREED', force: 2, size: 64, ox: 2112, oz: 1280 },
+  { nm: 'ash', seed: 'CINDERWAKE', force: 3, size: 64, ox: 2816, oz: 1728 },
+  { nm: 'frost', seed: 'HOARFROST-9', force: 4, size: 64, ox: 3520, oz: 2176 },
   { nm: 'hero', seed: 'QUARTERSTONE', force: null, size: 64, ox: 0, oz: 0 },
 ];
 
@@ -161,10 +161,13 @@ export function measureWorld(d, name) {
     }
   });
 
-  let water = 0, trail = 0, unreach = 0;
+  let water = 0, trail = 0, unreach = 0, wetTrail = 0;
   for (let i = 0; i < d.M * d.M; i++) {
     if (d.cells[i].water) water++;
     if (d.trail[i]) trail++;
+    /* A trail cell standing in water is the route asking you to swim. It is
+       what a crossing is for, and the only honest trigger for requiring one. */
+    if (d.trail[i] && d.cells[i].water) wetTrail++;
   }
   for (let i = 0; i < d.unreach.length; i++) unreach += d.unreach[i];
   return {
@@ -177,6 +180,7 @@ export function measureWorld(d, name) {
     grass: d.grass.ph.length,
     waterCells: water,
     trailCells: trail,
+    wetTrail,
     bridges: d.bridges.length,
     landmark: !!d.lmPos,
     overhang: !!d.ovhPos,

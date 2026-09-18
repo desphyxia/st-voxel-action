@@ -8,7 +8,7 @@
  * `rnd`, the world-build stream, which is ordered rather than positional.
  */
 import { BIOMES } from './biomes.mjs';
-import { xmur3, mulberry32, makeNoise } from './rng.mjs';
+import { xmur3, mulberry32, makeNoise, posRand } from './rng.mjs';
 import { V, CEIL, clamp } from './constants.mjs';
 import { exp } from './exact.mjs';
 
@@ -17,6 +17,11 @@ export function makeGen(seedStr,force){
   var N={h:makeNoise(h()),d:makeNoise(h()),t:makeNoise(h()),m:makeNoise(h()),
          r:makeNoise(h()),p:makeNoise(h()),c:makeNoise(h()),s:makeNoise(h()),v:makeNoise(h())};
   var wx=(h()%9973)/13, wz=(h()%9967)/17, rr=mulberry32(h());
+  /* A seed word for positional randomness, drawn from its own hash of the seed
+     rather than from `h` — taking another value out of `h` would shift every
+     stream below it and change every world for no reason. See rng.mjs. */
+  var sw=xmur3('pos:'+String(seedStr))();
+  function prand(x,z,salt){ return posRand(sw,x,z,salt); }
   function climate(x,z){
     var t,m,i,w=[],s=0;
     if(force!=null){
@@ -105,6 +110,7 @@ export function makeGen(seedStr,force){
     return sp;
   }
   function detail(x,z){ return (Math.round(N.d.fbm(x*0.62,z*0.62,2)*4)-2)*V; }
-  return {cell:cell,detail:detail,climate:climate,rnd:rr,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor};
+  return {cell:cell,detail:detail,climate:climate,rnd:rr,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,
+          sw:sw,prand:prand};
 }
 

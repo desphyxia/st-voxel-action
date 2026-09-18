@@ -42,6 +42,38 @@ read only works on colour. The material answers what a thing *is* — how hard i
 is to carve, whether it burns, whether it conducts, what it sounds like
 underfoot — and the gear design depends on those answers.
 
+### What a window decides, and what it does not
+
+A window is a **view**, not an authority. Anything larger than a window — where the
+two sites are, where the trail between them runs, where it is graded into a cutting,
+where it crosses water, and where the landmark stands — is decided per **region**
+in `src/gen/region.mjs`, and a window reports whatever falls inside it.
+
+A region is 64 m, keyed on world coordinates and centred on the origin, so the
+prototype's default window is exactly one region rather than a quarter of each of
+four. `regionAt(G, rx, rz)` is a pure function of the seed and the region's
+coordinates and is cached; `clearRegionCache()` exists so the smoke test can prove
+the purity rather than test the cache.
+
+This is issue #16, and it is what lets the generator be asked for more than one
+window. It rests on two things being positional rather than ordered:
+
+- `G.cell(x, z)` always was.
+- **Erosion now is.** It used to draw from the ordered stream and skip the window's
+  border ring, so the same square metre had one height when it was interior to a
+  window and another when it sat on the edge. Routes are chosen over those heights,
+  so nothing above could be deterministic until this was. `erodeAt(G, x, z, c)` is
+  the whole of it: a cell, its four neighbours, and a positional draw.
+
+`rng.mjs` has both kinds and the distinction matters: `mulberry32` is a stream whose
+nth value depends on n, and `posRand(sw, x, z, salt)` answers for a *place*. Use the
+stream only where the answer genuinely belongs to a moment in a pass.
+
+**Still window-scoped, and next:** props, clutter, grass and the span undercuts all
+still draw from the ordered stream, so two windows agree on where the trail goes and
+disagree about which boulder sits beside it. Same bug, same fix, many more call
+sites — and chunk streaming (#13) will need it.
+
 ### Three things to know before editing
 
 **The concept plate inlines this code, it does not import it.** `docs/concept/index.html`

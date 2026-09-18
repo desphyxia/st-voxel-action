@@ -148,8 +148,11 @@ the other. Two ordering notes worth knowing before picking something up:
 
 - Material ids (#14) come before the greedy mesher (#12) — they change the per-voxel data
   layout that the mesher, the save deltas and the netcode all read.
-- Region-level determinism (#16) comes before chunk streaming (#13) — it is the reason the
-  generator can currently only produce one window at a time.
+- Region-level determinism (#16) **landed**, which is what unblocked chunk streaming (#13).
+  Sites, trails, crossings and landmarks are decided per 64 m region in `src/gen/region.mjs`
+  and a window only reports what falls inside it. Props, clutter, grass and the span
+  undercuts are still window-scoped and still draw from the ordered stream — streaming will
+  need them moved too.
 
 **Phase 0 comes first.** The path to a playable build is a short, specific sequence in
 `docs/PROTOTYPE.md`, and most of the engine backlog is deliberately deferred behind it. Do not

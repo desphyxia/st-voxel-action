@@ -38,7 +38,11 @@
  *                 a fusion needs a shared edge *and* a recipe found in the
  *                 world, and what is on the ground is derived on both machines
  *                 rather than sent — one integer of it crosses.
- *   5f. NET       a host and a guest agree exactly after latency and packet
+ *   5f. REGION    two windows onto the same ground agree about it — heights,
+ *                 trail, sites, crossings and landmarks. Sites and routes are
+ *                 decided per 128 m region rather than per window (#16), which
+ *                 is what lets the generator be asked for more than one.
+ *   5g. NET       a host and a guest agree exactly after latency and packet
  *                 loss, the host is authoritative, and no terrain crosses.
  *   6. PLAY       a character survives five simulated minutes on every seed
  *                 without falling through the world or ending up inside it.
@@ -69,7 +73,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, netSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, netSuite,
          soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 
@@ -153,6 +157,11 @@ if (NODE_HALF) for (const r of enemySuite()) check(r.ok, `ENEMY: ${r.label}`, r.
    what is lying on the ground is derived on both machines rather than sent. */
 if (NODE_HALF) for (const r of gearSuite()) check(r.ok, `GEAR: ${r.label}`, r.detail);
 
+/* ---------- REGION: two views of the same ground agree ----------
+   Issue #16's bar, and the reason the generator can now be asked for more than
+   one window. Nothing here needs a browser: it is two worlds and a comparison. */
+if (NODE_HALF) for (const r of regionSuite()) check(r.ok, `REGION: ${r.label}`, r.detail);
+
 /* ---------- NET: two players, one world, one authority ----------
    A host and a guest over a loopback wire with latency and loss dialled in. The
    claim these are really testing is the controller's determinism: replaying the
@@ -207,9 +216,15 @@ if (NODE_HALF) {
         check(m.matKinds >= 4, `MATERIAL: ${m.seed} uses a range`,
               `${m.matKinds} distinct`);
         check(m.landmark, `SANITY: ${m.seed} has a landmark`);
-        check(m.waterCells === 0 || m.bridges > 0,
-              `SANITY: ${m.seed} water implies a crossing`,
-              `${m.waterCells} water cells, ${m.bridges} bridges`);
+        /* The property that actually matters is not "there is water, so there
+           must be a bridge" — a river you never have to cross needs nothing.
+           It is that the route never asks you to swim: wherever a trail cell
+           sits on water, there is a crossing. The old form passed vacuously on
+           meadow, whose window happened to contain no water at all. */
+        check(m.wetTrail === 0 || m.bridges > 0,
+              `SANITY: ${m.seed} a trail over water has a crossing`,
+              `${m.wetTrail} trail cells in water, ${m.bridges} crossings, `
+              + `${m.waterCells} water cells in all`);
       }
     }
   }
