@@ -192,7 +192,18 @@ rarely and visibly.
 node tools/render-plate.mjs --diag      # per-seed counts: voxels, water, trails, bridges, reach
 node tools/render-plate.mjs --shots     # page screenshots
 node tools/render-plate.mjs --plates    # the six biome plates as PNGs
+
+node tools/look.mjs                     # the look gate: twelve plates vs the baseline
+node tools/look.mjs --update            # re-record it, deliberately
+node tools/look.mjs --noise             # what two renders of identical input differ by
 ```
+
+**How the world looks is measured too, now** (issue #29). `tools/look-baseline.json` holds a
+signature per plate — layout, palette, texture and coverage — and the `LOOK` checks in
+`smoke.mjs --browser` compare against it. It is not a pixel diff: the bar is *would a person
+notice*. A change to shading, to the palette, or to which renderer draws the terrain will trip
+it, and if the change was intended the answer is `node tools/look.mjs --update`, not a wider
+tolerance.
 
 Run `--diag` before and after any change to the generator. A feature that silently stops being
 produced looks identical to one that was never there. That is not hypothetical: making bridges

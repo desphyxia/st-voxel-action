@@ -5888,6 +5888,57 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     solo=null; spawn();
   }
 
+  /* ---------- a pose the gate can come back to (issue #29) ----------
+     Everything else in this project is asserted by counting, and the entire
+     rendering surface had no measurement at all: #12 rewrote how the world is
+     drawn and was landed on somebody squinting at two screenshots.
+
+     A look baseline needs a frame that is the same frame every time, and the
+     build is full of reasons it would not be. The follow camera eases toward
+     the character. `tm` advances every animation frame whether or not the
+     simulation is paused, and it drives the grass, the water and the wind
+     vector. The character, the machines and the loot are all somewhere
+     slightly different by the time a screenshot lands.
+
+     So this parks all of it: build the named world, pin the clock, put the
+     camera at a stated place with a stated zoom, hide everything that is not
+     the world, and draw exactly one frame. What comes back is the terrain,
+     twice, identically — which is the only thing a baseline can be made of. */
+  var plateMode=false;
+  function plate(spec){
+    spec=spec||{};
+    if(session) return null;
+    if(spec.cfg) buildFor(spec.cfg);
+    if(!built) return null;
+    plateMode=true; paused=true; solo=null;
+
+    /* The clock, and everything derived from it. The wind angle uses
+       src/gen/exact.mjs rather than the Math.sin the live loop uses, and the
+       difference is deliberate: a baseline compared across two engines that
+       disagree about sin is a baseline that fails for a reason nobody changed. */
+    tm=spec.t===undefined?12.5:spec.t;
+    var wa=0.6+QS.sin(tm*0.06)*0.7;
+    wind.set(QS.cos(wa),QS.sin(wa));
+    if(built.gmat){
+      built.gmat.uniforms.uTime.value=tm; built.gmat.uniforms.uWind.value.copy(wind);
+      /* The grass parts around the player. There is no player in a plate, so
+         push that influence out of the world rather than leaving it at 0,0,0
+         where it would flatten the middle of every frame. */
+      built.gmat.uniforms.uP0.value.set(1e5,0,1e5);
+    }
+    if(built.wmat){ built.wmat.uniforms.uTime.value=tm; built.wmat.uniforms.uWind.value.copy(wind); }
+
+    /* The camera, from the world rather than from wherever play left it. */
+    var tx=spec.x===undefined?0:spec.x, tz=spec.z===undefined?0:spec.z;
+    var g=QS.placeOnGround(col,tx,tz);
+    cam.yawTo=spec.yaw===undefined?QS.START_YAW:spec.yaw;
+    QS.warpTo(cam,tx,g.y,tz);
+    QS.setView(cam,spec.view===undefined?20:spec.view);
+    draw();
+    return {seed:built.cfg.seed,x:tx,z:tz,y:g.y,yaw:cam.yaw,view:cam.view,t:tm,
+            w:vp.w,h:vp.h,quads:built.mesh?built.mesh.userData.quads:0};
+  }
+
   function resize(){
     var r=stage.getBoundingClientRect();
     vp.w=Math.max(1,r.width|0); vp.h=Math.max(1,r.height|0);
@@ -6336,6 +6387,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       postMeshes[q].material.color.setHex(lit?0xffd9a0:0x6b5a45);
       postMeshes[q].scale.y=lit?0.92:1;
     }
+    /* Issue #29: a look baseline is of the *world*. A character mid-stride, a
+       machine mid-telegraph and a practice post are all things the gate would
+       then be measuring, and all three move for reasons that have nothing to
+       do with how the terrain is drawn. */
+    if(plateMode){
+      avatar.g.visible=false; peerAvatar.g.visible=false;
+      for(var hq=0;hq<foeMeshes.length;hq++) foeMeshes[hq].g.visible=false;
+      for(hq=0;hq<lootMeshes.length;hq++) lootMeshes[hq].g.visible=false;
+      for(hq=0;hq<postMeshes.length;hq++) postMeshes[hq].visible=false;
+    }
     var e=QS.eye(cam);
     camera.position.set(e.x,e.y,e.z);
     camT.set(cam.tx,cam.ty,cam.tz); camera.lookAt(camT);
@@ -6348,6 +6409,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   var acc=0, last=0, frames=0, fpsAt=0, wasConnected=false, paused=false;
   function frame(now){
     requestAnimationFrame(frame);
+    /* In plate mode the gate owns the clock, the camera and when a frame is
+       drawn. The loop must not touch any of them — `tm` advances here even
+       when the simulation is paused, and it drives grass, water and the wind
+       vector, which is exactly the drift a look baseline cannot tolerate. */
+    if(plateMode) return;
     if(!last){ last=now; fpsAt=now; }
     var dt=Math.min((now-last)/1000,0.25); last=now;
     tm+=dt; acc+=dt;
@@ -6459,6 +6525,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* Issue #12: the gate drives the swap so the side-by-side is two
        screenshots of one camera, not two runs that might differ. */
     setMesh:setMesh,
+    /* Issue #29: the fixed pose the look baseline is made of. */
+    plate:plate,
     carve:carveAt,
     clearEdits:function(){ if(!built) return 0; var n=QS.clearEdits(built.data), g=QS.chunkGrid(built.data);
       for(var a=0;a<g;a++)for(var b=0;b<g;b++) built.mesh.userData.remesh(built.data,a,b);

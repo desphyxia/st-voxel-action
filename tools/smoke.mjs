@@ -83,6 +83,7 @@ import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
+import { captureLook, compare, breaches, describe } from './lib/look.mjs';
 
 const argv = process.argv.slice(2);
 const UPDATE = argv.includes('--update');
@@ -92,6 +93,7 @@ const NODE_HALF = !argv.includes('--browser');
 const BROWSER_HALF = !argv.includes('--node') && !UPDATE;
 const OUT = join(ROOT, '.render');
 const BASELINE = join(ROOT, 'tools/baseline.json');
+const LOOK_BASELINE = join(ROOT, 'tools/look-baseline.json');
 const TARGET = join(ROOT, 'docs/concept/index.html');
 const PLAY_TARGET = join(ROOT, 'docs/play/index.html');
 
@@ -932,6 +934,41 @@ if (BROWSER_HALF) {
       check(bErrors.length === 0, 'NET: no errors in either window', bErrors.slice(0, 3).join(' | '));
       await peerPage.close();
       await bp.close();
+    }
+
+    /* ---------- LOOK: does the world still look like itself? (#29) ----------
+       Twelve plates, six seeds at two poses, each reduced to a signature that
+       answers four questions a person would ask: is it laid out the same, is it
+       the same palette, does it have the same texture, and did anything draw.
+
+       This is the check that #12 should have had to pass. It is deliberately
+       not a pixel compare — the bar is "would a person notice", so it tolerates
+       a few percent and still catches a biome that stopped being drawn.
+       tools/look.mjs is the same measurement with per-plate output and the
+       --noise mode that says what the floor is. */
+    if (!QUICK) {
+      if (!existsSync(LOOK_BASELINE)) {
+        check(false, 'LOOK: baseline exists', 'run node tools/look.mjs --update to record');
+      } else {
+        const lookBase = JSON.parse(readFileSync(LOOK_BASELINE, 'utf8'));
+        const look = await captureLook(browser, preparePage({ target: PLAY_TARGET, outDir: OUT, name: 'look.html' }),
+                                      { seeds: GOLDEN_SEEDS });
+        const moved = [];
+        for (const k of Object.keys(look.plates)) {
+          if (!lookBase.plates[k]) { moved.push(`${k} is not in the baseline`); continue; }
+          const b = breaches(compare(lookBase.plates[k], look.plates[k]));
+          if (b.length) moved.push(`${k}: ${b.join('; ')}`);
+        }
+        check(moved.length === 0, 'LOOK: the world looks the way the baseline says it does',
+              moved.length ? moved.slice(0, 3).join(' | ')
+                             + (moved.length > 3 ? ` (+${moved.length - 3} more)` : '')
+                             + ' — node tools/look.mjs to see all of it'
+                           : `${Object.keys(look.plates).length} plates unchanged: `
+                             + describe(compare(lookBase.plates['hero/wide'], look.plates['hero/wide']))
+                             + ' on hero/wide');
+        check(look.errs.length === 0, 'LOOK: and nothing errored drawing them',
+              look.errs.slice(0, 3).join(' | '));
+      }
     }
 
   } finally {

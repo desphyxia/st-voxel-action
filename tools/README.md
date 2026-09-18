@@ -19,6 +19,10 @@ node tools/render-plate.mjs --plates   # export the six biome plates as PNGs
 
 node tools/compare-renderers.mjs  # the play build's two terrain renderers, measured
 node tools/compare-plates.mjs     # and composed into plates a human can judge
+
+node tools/look.mjs               # the look gate: twelve plates against the baseline
+node tools/look.mjs --update      # re-record tools/look-baseline.json, deliberately
+node tools/look.mjs --noise       # what two renders of identical input differ by
 ```
 
 `smoke.mjs` is the assertion gate and runs in CI; `render-plate.mjs` is for looking at things.
@@ -31,6 +35,22 @@ edge from surface dither. `compare-plates.mjs` takes those two shots and crops t
 places out of each at 3x, because which renderer is better depends on *where* the difference
 falls, and no single number carries that. It generates nothing — re-run `compare-renderers.mjs`
 first or the plates are of a build that no longer exists.
+
+`look.mjs` is the gate those two were the prototype of (issue #29). Six golden seeds at two
+camera poses each, rendered through the real build with its clock pinned and everything that is
+not the world hidden, then reduced to four measures: layout, palette, texture and coverage. It
+runs inside `smoke.mjs --browser` as the `LOOK` checks; the standalone script is for seeing
+which plate moved and by how much.
+
+**`--noise` is the part worth reading before touching a tolerance.** It renders every plate
+twice and reports what identical input differs by. Here that is exactly zero on all twelve, so
+the tolerances in `lib/look.mjs` are *not* a multiple of a measured floor — they are a judgement
+about drivers and machines this sandbox cannot see. Run `--noise` on a new machine before
+trusting them there. What is measured is the other side: swapping the terrain renderer back to
+instanced boxes moves every plate two to four times past the bar.
+
+`--update` re-records the baseline and is a deliberate act, exactly like `smoke.mjs --update`.
+A look change that was intended is recorded; a look change that was not is a bug.
 Shared plumbing lives in `lib/harness.mjs` — both scripts rewrite the plate's three.js CDN tag
 the same way, and both measure a world the same way, and that logic must not be duplicated.
 See `docs/PROTOTYPE.md` for the rules the gate enforces.
