@@ -5198,7 +5198,36 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     g.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(nor),3));
     g.setAttribute('color',new THREE.BufferAttribute(new Float32Array(col),3));
     g.setIndex(idx);
-    var mesh=new THREE.Mesh(g,new THREE.MeshLambertMaterial({vertexColors:true}));
+    /* ---------- putting the grain back ----------
+       The first side-by-side said the mesh was at parity structurally and
+       flatter to look at: the box renderer's per-voxel shade dither was doing
+       more work at this zoom than anyone had credited it with. Putting that
+       variation back into the mesh's *data* is not an option — per-voxel
+       colour is exactly what stops faces merging, which is the whole point of
+       #28 and of this issue.
+
+       So it goes in the fragment shader instead, hashed from the world
+       position floored to the voxel grid. Every fragment inside one merged
+       quad lands in the 25 cm cell it would have been a box in, and gets that
+       box's variation — for no vertex data, no extra draw call, and no effect
+       on what can merge. The +-10% matches the generator's own shade range.
+
+       The hash is sin-free on purpose. GLSL sin is no more pinned across
+       drivers than Math.sin is across engines (src/gen/exact.mjs), and while a
+       tint is not a world and would only shimmer rather than desync, there is
+       no reason to reach for it when fract and dot will do. */
+    var meshMat=new THREE.MeshLambertMaterial({vertexColors:true});
+    meshMat.onBeforeCompile=function(sh){
+      sh.vertexShader='varying vec3 vWP;\n'+sh.vertexShader.replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n  vWP=(modelMatrix*vec4(position,1.0)).xyz;');
+      sh.fragmentShader='varying vec3 vWP;\n'
+        +'float qsGrain(vec3 p){ p=fract(p*0.1031); p+=dot(p,p.yzx+33.33); return fract((p.x+p.y)*p.z); }\n'
+        +sh.fragmentShader.replace(
+          '#include <color_fragment>',
+          '#include <color_fragment>\n  diffuseColor.rgb*=0.90+0.20*qsGrain(floor(vWP/'+QS.V.toFixed(2)+'));');
+    };
+    var mesh=new THREE.Mesh(g,meshMat);
     mesh.castShadow=true; mesh.receiveShadow=true; mesh.frustumCulled=false;
     mesh.userData.quads=quads;
     return mesh;
