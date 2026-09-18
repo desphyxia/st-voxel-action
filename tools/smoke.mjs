@@ -78,8 +78,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, netSuite,
-         soak, SOAK_TICKS } from './lib/playtest.mjs';
+import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, meshSuite,
+         carveSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
@@ -222,6 +222,12 @@ if (NODE_HALF) for (const r of gearSuite()) check(r.ok, `GEAR: ${r.label}`, r.de
    Issue #16's bar, and the reason the generator can now be asked for more than
    one window. Nothing here needs a browser: it is two worlds and a comparison. */
 if (NODE_HALF) for (const r of regionSuite()) check(r.ok, `REGION: ${r.label}`, r.detail);
+
+/* ---------- MESH: the greedy mesher, issue #12 ---------- */
+if (NODE_HALF) for (const r of meshSuite()) check(r.ok, `MESH: ${r.label}`, r.detail);
+
+/* ---------- CARVE: the mesh follows an edit, issue #12 ---------- */
+if (NODE_HALF) for (const r of carveSuite()) check(r.ok, `CARVE: ${r.label}`, r.detail);
 
 /* ---------- NET: two players, one world, one authority ----------
    A host and a guest over a loopback wire with latency and loss dialled in. The
@@ -685,6 +691,58 @@ if (BROWSER_HALF) {
             `${tells.orange} px turn orange, ${Number.isFinite(tells.off) ? tells.off.toFixed(0) : '-'} px from the character`);
       check(tells.dead && tells.hp === 0, 'BUILD: and it can be killed',
             tells.dead ? 'down' : `still up on ${tells.hp} hp`);
+
+      /* ---------- BUILD: the two terrain renderers (#12) ----------
+         Both are in the page at once so the side-by-side the issue asks for is
+         two shots of one camera rather than two runs that might differ. What
+         the gate can hold is that the swap actually swaps, that props survive
+         it — they stay instanced by decision, and hiding them with the terrain
+         was the first bug the comparison caught — and that nothing errors. */
+      const swap = await bp.evaluate(() => {
+        const P = window.QSPLAY;
+        const out = { boxes: P.boxCount, quads: P.meshQuads, started: P.mesh };
+        P.setMesh(false); P.draw();
+        out.offMesh = P.mesh;
+        P.setMesh(true); P.draw();
+        out.onMesh = P.mesh;
+        return out;
+      });
+      check(swap.quads > 0 && swap.boxes * 6 / swap.quads > 5,
+            'BUILD: the mesh draws a fraction of what the boxes do',
+            `${swap.boxes * 6} box faces, ${swap.quads} quads `
+            + `— ${(swap.boxes * 6 / swap.quads).toFixed(1)}x fewer`);
+      check(swap.started === true && swap.offMesh === false && swap.onMesh === true,
+            'BUILD: and the renderer swaps both ways, the mesh by default',
+            `default ${swap.started ? 'mesh' : 'boxes'}, toggles to boxes and back`);
+      check(bErrors.length === 0, 'BUILD: and neither renderer errors',
+            bErrors.slice(0, 3).join(' | '));
+
+      /* ---------- BUILD: the mesh follows an edit (#12) ----------
+         The node half asserts that meshChunk answers differently once a voxel
+         is gone. What only the page can answer is whether the *scene* followed:
+         a chunk whose geometry was swapped for a new one, in a renderer that is
+         holding a world it did not just build. Clearing the edits afterwards
+         has to put the quad count back exactly, or something is remembering
+         what it should have thrown away. */
+      const bit = await bp.evaluate(() => {
+        const P = window.QSPLAY, a = P.actor;
+        const before = P.meshQuads;
+        const r = P.carve(a.x, a.y - 0.2, a.z);
+        P.draw();
+        const after = P.meshQuads;
+        const back = P.clearEdits();
+        P.draw();
+        return { before, after, back, cut: r.cut, chunks: r.chunks, held: r.held,
+                 restored: P.meshQuads };
+      });
+      check(bit.cut > 0 && bit.chunks > 0 && bit.after !== bit.before,
+            'BUILD: a carve takes ground away and the chunk is remeshed in place',
+            `${bit.cut} voxels over ${bit.chunks} chunk(s), ${bit.before} quads -> ${bit.after}`);
+      check(bit.back === bit.cut && bit.restored === bit.before,
+            'BUILD: and putting it back leaves the mesh the generator made',
+            `${bit.back} edits cleared, ${bit.restored} quads against ${bit.before}`);
+      check(bErrors.length === 0, 'BUILD: and carving errors nothing',
+            bErrors.slice(0, 3).join(' | '));
 
       /* ---------- BUILD: fullscreen ----------
          Two paths, because a published artifact runs in an iframe and only gets

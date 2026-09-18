@@ -16,9 +16,21 @@ node tools/smoke.mjs --update    # re-record tools/baseline.json, deliberately
 node tools/render-plate.mjs --diag     # generator stats per seed, no rendering
 node tools/render-plate.mjs --shots    # page screenshots
 node tools/render-plate.mjs --plates   # export the six biome plates as PNGs
+
+node tools/compare-renderers.mjs  # the play build's two terrain renderers, measured
+node tools/compare-plates.mjs     # and composed into plates a human can judge
 ```
 
 `smoke.mjs` is the assertion gate and runs in CI; `render-plate.mjs` is for looking at things.
+
+The two `compare-*` scripts run in that order and answer different halves of one question.
+`compare-renderers.mjs` drives the build's renderer flag, screenshots both, and reports a mean
+luma difference and a local 3x3 variance. **Both are proxies, and the header says why**: adding
+grain moves the first one the wrong way, and at this zoom the second cannot separate a geometric
+edge from surface dither. `compare-plates.mjs` takes those two shots and crops the same four
+places out of each at 3x, because which renderer is better depends on *where* the difference
+falls, and no single number carries that. It generates nothing — re-run `compare-renderers.mjs`
+first or the plates are of a build that no longer exists.
 Shared plumbing lives in `lib/harness.mjs` — both scripts rewrite the plate's three.js CDN tag
 the same way, and both measure a world the same way, and that logic must not be duplicated.
 See `docs/PROTOTYPE.md` for the rules the gate enforces.

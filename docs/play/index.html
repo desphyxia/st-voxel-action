@@ -196,6 +196,7 @@
       <button class="ctl" id="regen" type="button">Generate</button>
       <button class="ctl" id="respawn" type="button">Respawn</button>
       <button class="ctl" id="hostbtn" type="button">Host a game</button>
+      <button class="ctl" id="meshbtn" type="button" title="Swap the terrain renderer: a greedy mesh with baked occlusion, or instanced boxes">Boxes</button>
       <button class="ctl" id="fullbtn" type="button">Fullscreen</button>
     </div>
     <p class="netstat" id="netstat">Playing alone. <b>Host a game</b> opens a second window on
@@ -2373,6 +2374,12 @@ function buildWorld(cfg) {
   flowField(w);                /* one downhill vector per cell */
   sampleGrid(w);               /* 1 m cells resampled onto the voxel grid */
   buildVoxels(w);              /* the terrain voxels themselves */
+  /* Where the terrain ends and the stamps begin. The greedy mesher (#12)
+     replaces the terrain and leaves props instanced — a felled tree must not
+     remesh a chunk — so the renderer needs to know which voxels are which.
+     Taken here rather than inferred from the lattice, because a heuristic that
+     is usually right is the kind of thing that breaks quietly. */
+  w.propStart = w.pos.length / 3;
   var kit = makeStamps(w);
   scatterProps(w, kit);        /* trees, boulders, canyon arcs */
   placeClutter(w, kit);        /* scree, clutter, the sites, lamps, bridges */
@@ -2385,7 +2392,7 @@ function buildWorld(cfg) {
     /* One voxel is pos + pal + shd + mat. Colour is resolved at draw time
        against src/gen/palette.mjs, so a biome restyles without regenerating
        (issue #28). Same four for the emissive pass. */
-    pos: w.pos, pal: w.pal, shd: w.shd, mat: w.mat,
+    pos: w.pos, pal: w.pal, shd: w.shd, mat: w.mat, propStart: w.propStart,
     mpos: w.mpos, mpal: w.mpal, mshd: w.mshd, mmat: w.mmat,
     grass: w.grass, water: w.water, lamps: w.lamps,
     ovhPos: w.ovhPos, lmPos: w.lmPos, trail: w.TRAIL, topi: w.TOPI,
@@ -2396,7 +2403,444 @@ function buildWorld(cfg) {
     sites: w.sites,
     Hs: w.Hs, FLG: w.FLG, NX: w.NX, NZ: w.NZ, half: w.half,
     cells: w.cells, M: w.M, spawn: w.spawn, size: w.size,
+    /* Where this window sits and what grew it. The mesher (src/mesh) needs both
+       to rebuild a column's own positional stream — which is only reproducible
+       at all because of issue #41 — and chunk streaming will want them too. */
+    G: w.G, OX: w.OX, OZ: w.OZ,
   };
+}
+/* ---------- src/mesh/greedy.mjs ---------- */
+/**
+ * Greedy meshing with baked per-face ambient occlusion — issue #12.
+ *
+ * The instanced-box renderer draws six faces for every voxel it emits, whether
+ * or not anything can see them: 817k to 1.04M faces for one 64 m window. The
+ * volume those voxels describe exposes only 173k to 205k faces to open air, and
+ * merging coplanar runs cuts that again. That is the whole argument, and it is
+ * measured rather than assumed — tools/smoke.mjs asserts the ratio.
+ *
+ * Three things this does that the box renderer cannot:
+ *
+ *   - **It meshes the volume, not a shell.** buildVoxels emits a surface and a
+ *     skirt down to the lowest neighbour, which is what a box renderer needs and
+ *     is not a closed surface. The spans in cell.sp are the real solid volume —
+ *     the same ones src/sim/collider.mjs builds from, so what you see and what
+ *     you walk into come from one source.
+ *   - **It drops sealed interiors.** Air that cannot be reached from outside the
+ *     window is a cave, caves are decoration by decision, and meshing their
+ *     walls is 1 to 6.5% of faces nobody will ever be inside to see.
+ *   - **It bakes contact shading.** Per-face AO from neighbour occupancy is what
+ *     gives a voxel world its creases, and it costs nothing at draw time.
+ *
+ * No DOM and no three.js, like everything else that has to be assertable in
+ * node. Output is plain arrays.
+ *
+ * The look shifts, and the issue says so: a merged quad has one material where
+ * six boxes each had their own dithered shade. That per-voxel noise is exactly
+ * what prevents merging, so losing it is the price of the merge rather than an
+ * accident. #28 is what makes the trade clean — colour now comes from the
+ * material at draw time, so a quad carries an id and the renderer decides.
+ */
+
+
+
+
+
+
+/** Voxel levels in a full-height column. */
+const LEVELS = Math.round(CEIL / V);
+
+/* The six face directions, as [axis, sign]. Order is part of the output, so
+   changing it changes every mesh. */
+const DIRS = [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
+
+/**
+ * Every 25 cm level the generated world has solid in this column, top-down
+ * order not guaranteed. One definition, because the mesher's occupancy grid and
+ * a carve have to agree on what is there before one of them removes it.
+ */
+function forSolidY(w, gi, gj, fn) {
+  if (gi < 0 || gj < 0 || gi >= w.NX || gj >= w.NZ) return;
+  var half = w.half, M = w.M;
+  var x = -half + gi * V + V / 2, z = -half + gj * V + V / 2;
+  var ci = clamp(Math.round(x + half), 0, M - 1);
+  var cj = clamp(Math.round(z + half), 0, M - 1);
+  var sp = w.cells[ci * M + cj].sp;
+  /* Every span but the last at its own height; the last one refined to the
+     25 cm height field, exactly as the collider does it. */
+  for (var q = 0; q < sp.length; q++) {
+    var lo = sp[q][0];
+    var hi = q === sp.length - 1 ? Math.min(w.Hs[gi * w.NZ + gj], CEIL) : sp[q][1];
+    for (var y = Math.max(0, Math.floor(lo / V)); y < Math.min(LEVELS, Math.ceil(hi / V)); y++) fn(y);
+  }
+}
+
+/**
+ * Where one carved voxel lives in `w.edits`.
+ *
+ * The edit map is a plain Map hung on the world, keyed by voxel and valued by
+ * the material that was there. It is deliberately the smallest thing that can
+ * answer "is this voxel still here" — the mesher is the only system reading it
+ * today. When collision, the wire and the save format need the same answer it
+ * should move out of src/mesh and grow an authority; see the note in carve.mjs.
+ */
+function editKey(w, gi, gj, y) { return (gi * w.NZ + gj) * LEVELS + y; }
+
+/** Has this voxel been carved away? */
+function isCut(w, gi, gj, y) {
+  return !!(w.edits && w.edits.has(editKey(w, gi, gj, y)));
+}
+
+/** Is this voxel solid right now — generated, and not since carved? */
+function solidVox(w, gi, gj, y) {
+  if (y < 0 || y >= LEVELS || isCut(w, gi, gj, y)) return 0;
+  var hit = 0;
+  forSolidY(w, gi, gj, function (yy) { if (yy === y) hit = 1; });
+  return hit;
+}
+
+/**
+ * The solid volume of one chunk at 25 cm, from the spans — not from the voxels
+ * the generator emitted. `pad` of 1 gives the AO and the face test a ring of
+ * neighbours to read, so a chunk's edge is shaded by the chunk beside it.
+ *
+ * Carved voxels are subtracted afterwards rather than tested per cell: edits
+ * are sparse by nature, so walking the map costs what has been carved instead
+ * of what has not.
+ */
+function chunkOccupancy(w, cx, cz, pad) {
+  pad = pad === undefined ? 1 : pad;
+  var side = Math.round(CHUNK / V);
+  var nx = side + pad * 2, nz = side + pad * 2, ny = LEVELS;
+  var i0 = cx * side - pad, j0 = cz * side - pad;
+  var occ = new Uint8Array(nx * nz * ny);
+  var NZ = w.NZ, NX = w.NX;
+  var a, b, base = 0;
+  function mark(y) { occ[base + y] = 1; }
+  for (a = 0; a < nx; a++) {
+    for (b = 0; b < nz; b++) {
+      var gi = i0 + a, gj = j0 + b;
+      if (gi < 0 || gj < 0 || gi >= NX || gj >= NZ) continue;
+      base = (a * nz + b) * ny;
+      forSolidY(w, gi, gj, mark);
+    }
+  }
+  if (w.edits && w.edits.size) {
+    w.edits.forEach(function (_m, k) {
+      var y = k % ny, cell = (k - y) / ny, gj = cell % NZ, gi = (cell - gj) / NZ;
+      var a2 = gi - i0, b2 = gj - j0;
+      if (a2 < 0 || b2 < 0 || a2 >= nx || b2 >= nz) return;
+      occ[(a2 * nz + b2) * ny + y] = 0;
+    });
+  }
+  return { occ: occ, nx: nx, nz: nz, ny: ny, i0: i0, j0: j0, pad: pad };
+}
+
+/**
+ * Air reachable from outside the chunk box. Anything else is a sealed cave, and
+ * its walls are not meshed — see the note at the top.
+ */
+function openAir(g) {
+  var nx = g.nx, nz = g.nz, ny = g.ny, occ = g.occ;
+  var open = new Uint8Array(nx * nz * ny), q = [], head = 0;
+  function push(a, b, y) {
+    if (a < 0 || b < 0 || y < 0 || a >= nx || b >= nz || y >= ny) return;
+    var k = (a * nz + b) * ny + y;
+    if (occ[k] || open[k]) return;
+    open[k] = 1; q.push(k);
+  }
+  var a, b, y;
+  for (a = 0; a < nx; a++) for (b = 0; b < nz; b++) push(a, b, ny - 1);
+  for (y = 0; y < ny; y++) {
+    for (a = 0; a < nx; a++) { push(a, 0, y); push(a, nz - 1, y); }
+    for (b = 0; b < nz; b++) { push(0, b, y); push(nx - 1, b, y); }
+  }
+  while (head < q.length) {
+    var k = q[head++], yy = k % ny, bb = ((k - yy) / ny) % nz, aa = ((k - yy) / ny - bb) / nz;
+    push(aa + 1, bb, yy); push(aa - 1, bb, yy);
+    push(aa, bb + 1, yy); push(aa, bb - 1, yy);
+    push(aa, bb, yy + 1); push(aa, bb, yy - 1);
+  }
+  return open;
+}
+
+/**
+ * What a solid cell is made of, and which palette group it wears.
+ *
+ * Both, because they are different questions: MAT.ROCK is what you carve and
+ * what your boots sound like, and it is meadow rock or mesa rock depending on
+ * where you are standing. Merging on the palette group is therefore finer than
+ * merging on the material, and it is the one that decides what you see.
+ *
+ * The rules are buildVoxels', reproduced against the same inputs rather than
+ * guessed: the biome is drawn from the column's own positional stream, so the
+ * first value out of PASS.VOX at this column is the same roulette the generator
+ * rolled. That only works because issue #41 made the stream answer for a place
+ * — before it, a mesher could not have reproduced this at all.
+ */
+function surfaceAt(w, gi, gj, y) {
+  var NZ = w.NZ, NX = w.NX, half = w.half, M = w.M;
+  if (gi < 0 || gj < 0 || gi >= NX || gj >= NZ) return { mat: MAT.ROCK, pal: PAL.MEADOW_ROCK.at };
+  var k = gi * NZ + gj, hh = w.Hs[k], flg = w.FLG[k];
+  var x = -half + gi * V + V / 2, z = -half + gj * V + V / 2;
+  var c = w.cells[clamp(Math.round(x + half), 0, M - 1) * M + clamp(Math.round(z + half), 0, M - 1)];
+  var R = w.G.pstream(PASS.VOX, gi + Math.round(w.OX / V), gj + Math.round(w.OZ / V));
+  var b = BIOMES[rouletteBiome(c.w, R)];
+  var top = Math.floor((hh - 0.001) / V);
+  if (y >= top) {
+    if (flg & 2) return { mat: MAT.ASH, pal: PAL.MAGMA_CRUST.at };
+    if (flg & 1) return { mat: b.mat.bed, pal: b.bed.at };
+    if (flg & 4) return { mat: MAT.PATH, pal: PAL.TRODDEN.at };
+    var n0 = gi > 0 ? w.Hs[k - NZ] : hh - 2, n1 = gi < NX - 1 ? w.Hs[k + NZ] : hh - 2;
+    var n2 = gj > 0 ? w.Hs[k - 1] : hh - 2, n3 = gj < NZ - 1 ? w.Hs[k + 1] : hh - 2;
+    return (hh - Math.min(n0, n1, n2, n3)) > 0.9
+      ? { mat: b.mat.rock, pal: b.rock.at } : { mat: b.mat.surf, pal: b.surf.at };
+  }
+  return (y * V < hh - 1.25)
+    ? { mat: b.mat.rock, pal: b.rock.at } : { mat: b.mat.soil, pal: b.soil.at };
+}
+
+/** Vertex AO from the three cells around a corner: the classic 0..3 ramp. */
+function cornerAO(s1, s2, cor) { return (s1 && s2) ? 0 : 3 - (s1 + s2 + cor); }
+
+/**
+ * Mesh one chunk. Returns flat arrays and the counts the gate asserts on.
+ *
+ * Greedy in the usual two passes: build a mask of exposed faces for each slice,
+ * then pull the largest rectangle of equal key out of it until it is empty. The
+ * key is material and the four AO corners packed together — faces only merge
+ * when they would draw identically, which is what keeps the creases.
+ */
+function meshChunk(w, cx, cz) {
+  var g = chunkOccupancy(w, cx, cz), open = openAir(g);
+  var nx = g.nx, nz = g.nz, ny = g.ny, occ = g.occ, pad = g.pad;
+  var pos = [], nor = [], ao = [], mat = [], pal = [], idx = [];
+  var quads = 0, faces = 0, vbase = 0;
+
+  function solid(a, b, y) {
+    if (a < 0 || b < 0 || y < 0 || a >= nx || b >= nz || y >= ny) return 0;
+    return occ[(a * nz + b) * ny + y];
+  }
+  function seen(a, b, y) {
+    if (a < 0 || b < 0 || y < 0 || a >= nx || b >= nz || y >= ny) return 1;
+    return open[(a * nz + b) * ny + y];
+  }
+
+  var side = Math.round(CHUNK / V);
+  for (var d = 0; d < DIRS.length; d++) {
+    var axis = DIRS[d][0], sign = DIRS[d][1];
+    /* u and v are the two axes of the slice; n is the one being swept. */
+    var uA = (axis + 1) % 3, vA = (axis + 2) % 3;
+    var dim = [nx, ny, nz];                       /* index order is (a, y, b) */
+    var lim = [side, ny, side];
+    var off = [pad, 0, pad];
+    var key = new Int32Array(lim[uA] * lim[vA]);
+    var aoq = new Int32Array(lim[uA] * lim[vA]);
+
+    for (var s = 0; s < lim[axis]; s++) {
+      var i, j, p = [0, 0, 0];
+      /* ---- build the mask ---- */
+      for (i = 0; i < lim[uA]; i++) {
+        for (j = 0; j < lim[vA]; j++) {
+          p[axis] = s + off[axis]; p[uA] = i + off[uA]; p[vA] = j + off[vA];
+          var a = p[0], y = p[1], b = p[2];
+          var m = 0, pg = 0, packed = 0;
+          if (solid(a, b, y)) {
+            var q = [0, 0, 0]; q[axis] = sign;
+            var na = a + q[0], nyy = y + q[1], nb = b + q[2];
+            if (!solid(na, nb, nyy) && seen(na, nb, nyy)) {
+              var sf = surfaceAt(w, g.i0 + a, g.j0 + b, y);
+              m = sf.mat; pg = sf.pal;
+              /* the four corners of the face, in the slice's own axes */
+              var e1 = [0, 0, 0], e2 = [0, 0, 0];
+              e1[uA] = 1; e2[vA] = 1;
+              var c0 = cornerAO(solid(na - e1[0], nb - e1[2], nyy - e1[1]),
+                                solid(na - e2[0], nb - e2[2], nyy - e2[1]),
+                                solid(na - e1[0] - e2[0], nb - e1[2] - e2[2], nyy - e1[1] - e2[1]));
+              var c1 = cornerAO(solid(na + e1[0], nb + e1[2], nyy + e1[1]),
+                                solid(na - e2[0], nb - e2[2], nyy - e2[1]),
+                                solid(na + e1[0] - e2[0], nb + e1[2] - e2[2], nyy + e1[1] - e2[1]));
+              var c2 = cornerAO(solid(na + e1[0], nb + e1[2], nyy + e1[1]),
+                                solid(na + e2[0], nb + e2[2], nyy + e2[1]),
+                                solid(na + e1[0] + e2[0], nb + e1[2] + e2[2], nyy + e1[1] + e2[1]));
+              var c3 = cornerAO(solid(na - e1[0], nb - e1[2], nyy - e1[1]),
+                                solid(na + e2[0], nb + e2[2], nyy + e2[1]),
+                                solid(na - e1[0] + e2[0], nb - e1[2] + e2[2], nyy - e1[1] + e2[1]));
+              packed = c0 | (c1 << 2) | (c2 << 4) | (c3 << 6);
+              faces++;
+            } else m = 0;
+          }
+          /* Keyed on the palette group, not the material: two biomes can both
+             be MAT.ROCK and must not merge into one grey face. */
+          key[i * lim[vA] + j] = m ? (pg + 1) : 0;
+          aoq[i * lim[vA] + j] = (packed << 8) | m;
+        }
+      }
+      /* ---- pull rectangles out of it ---- */
+      for (i = 0; i < lim[uA]; i++) {
+        for (j = 0; j < lim[vA];) {
+          var kk = key[i * lim[vA] + j];
+          if (!kk) { j++; continue; }
+          var aa2 = aoq[i * lim[vA] + j], wRun = 1;
+          while (j + wRun < lim[vA] && key[i * lim[vA] + j + wRun] === kk
+                 && aoq[i * lim[vA] + j + wRun] === aa2) wRun++;
+          var hRun = 1, ok = true;
+          while (i + hRun < lim[uA] && ok) {
+            for (var t = 0; t < wRun; t++) {
+              if (key[(i + hRun) * lim[vA] + j + t] !== kk || aoq[(i + hRun) * lim[vA] + j + t] !== aa2) { ok = false; break; }
+            }
+            if (ok) hRun++;
+          }
+          emit(axis, sign, s, i, j, hRun, wRun, kk - 1, aa2 >> 8, aa2 & 255, uA, vA, off);
+          for (var di2 = 0; di2 < hRun; di2++)
+            for (var dj2 = 0; dj2 < wRun; dj2++) key[(i + di2) * lim[vA] + j + dj2] = 0;
+          j += wRun;
+        }
+      }
+    }
+  }
+
+  function emit(axis, sign, s, i, j, hRun, wRun, pg, packed, m, uA, vA, off) {
+    /* world-space corner of the quad, in metres */
+    var o = [0, 0, 0];
+    o[axis] = (s + off[axis] + (sign > 0 ? 1 : 0));
+    o[uA] = i + off[uA]; o[vA] = j + off[vA];
+    var du = [0, 0, 0], dv = [0, 0, 0];
+    du[uA] = hRun; dv[vA] = wRun;
+    var half = w.half;
+    /* index order inside this function is (a, y, b) -> world (x, y, z) */
+    function pt(a, y, b) {
+      pos.push(-half + (g.i0 + a) * V, y * V, -half + (g.j0 + b) * V);
+      nor.push(axis === 0 ? sign : 0, axis === 1 ? sign : 0, axis === 2 ? sign : 0);
+      mat.push(m); pal.push(pg);
+    }
+    pt(o[0], o[1], o[2]);
+    pt(o[0] + du[0], o[1] + du[1], o[2] + du[2]);
+    pt(o[0] + du[0] + dv[0], o[1] + du[1] + dv[1], o[2] + du[2] + dv[2]);
+    pt(o[0] + dv[0], o[1] + dv[1], o[2] + dv[2]);
+    ao.push(packed & 3, (packed >> 2) & 3, (packed >> 4) & 3, (packed >> 6) & 3);
+    /* Split the quad along the darker diagonal, or the crease bends the wrong
+       way and a corner lights up where it should be in shadow. */
+    var a0 = packed & 3, a2 = (packed >> 4) & 3, a1 = (packed >> 2) & 3, a3 = (packed >> 6) & 3;
+    if (a0 + a2 > a1 + a3) idx.push(vbase, vbase + 1, vbase + 2, vbase, vbase + 2, vbase + 3);
+    else idx.push(vbase + 1, vbase + 2, vbase + 3, vbase + 1, vbase + 3, vbase);
+    vbase += 4; quads++;
+  }
+
+  return { pos: pos, nor: nor, ao: ao, mat: mat, pal: pal, idx: idx, quads: quads, faces: faces };
+}
+/* ---------- src/mesh/carve.mjs ---------- */
+/**
+ * Taking a bite out of the world, and working out what has to be remeshed —
+ * issue #12's "remeshes on a carve".
+ *
+ * A carve is three separate questions, and keeping them separate is the point:
+ *
+ *   - **What comes away.** Every solid voxel inside the bite whose material is
+ *     soft enough to pay for. Hardness is the material table's (src/gen/
+ *     materials.mjs): one bite cannot break basalt or worked metal, and magma
+ *     is not carveable at all. The hardest thing that held is reported back, so
+ *     a renderer can say *why* nothing happened.
+ *   - **Where it is recorded.** `w.edits`, a Map from voxel to the material
+ *     that used to be there. Sparse, because a world is mostly unedited, and
+ *     keyed by voxel rather than by chunk so it survives rechunking.
+ *   - **What is now stale.** Not just the chunk the voxel is in. The mesher
+ *     reads a one-voxel ring past its own edge so a seam is shaded by the chunk
+ *     beside it, which means a carve within one voxel of a boundary changes the
+ *     *neighbour's* occlusion too. `chunksTouching` is that ring, and getting
+ *     it wrong shows up as a bright crease along a chunk edge.
+ *
+ * **What this deliberately is not.** A carve recorded here changes what is
+ * drawn and nothing else. Collision still reads the generated spans, so a hole
+ * is a hole you can see and not one you can fall into, and nothing about an
+ * edit crosses the wire. Both are real work and neither belongs to a meshing
+ * issue: destructible ground has to be host-authoritative like everything else
+ * in src/net, and it has to survive a save, which is the same delta format
+ * chunk streaming needs. Until then this is a mesher hook, not a player verb,
+ * and the build exposes it as one.
+ *
+ * No DOM and no three.js, like the rest of src/.
+ */
+
+
+
+
+/** What one bite can pay for. Rock yields, basalt and metal do not. */
+const BITE = 1.0;
+
+/** The radius of a bite, in metres. Two and a half voxels — the plate's. */
+const BITE_R = 0.62;
+
+/** How many chunks a side this world was meshed into. */
+function chunkGrid(w) { return Math.max(1, Math.round(w.size / CHUNK)); }
+
+/**
+ * Every chunk whose mesh reads this voxel: the one it is in, plus any whose
+ * pad ring reaches it. Returned as `cx * grid + cz` so a caller can dedupe in a
+ * Set without stringifying.
+ */
+function chunksTouching(w, gi, gj, into) {
+  var side = Math.round(CHUNK / V), g = chunkGrid(w);
+  var set = into || new Set();
+  for (var di = -1; di <= 1; di++) {
+    for (var dj = -1; dj <= 1; dj++) {
+      var cx = Math.floor((gi + di) / side), cz = Math.floor((gj + dj) / side);
+      if (cx < 0 || cz < 0 || cx >= g || cz >= g) continue;
+      set.add(cx * g + cz);
+    }
+  }
+  return set;
+}
+
+/**
+ * Bite a sphere out of the world at a point, in metres.
+ *
+ * Returns what came away, the hardest material that refused, and the chunks
+ * whose meshes are now stale — in the order a caller should remesh them, which
+ * is any order, because a chunk's mesh depends only on the world.
+ */
+function carve(w, x, y, z, opts) {
+  opts = opts || {};
+  var r = opts.radius === undefined ? BITE_R : opts.radius;
+  var bite = opts.bite === undefined ? BITE : opts.bite;
+  if (!w.edits) w.edits = new Map();
+
+  var half = w.half, r2 = r * r, g = chunkGrid(w);
+  /* The voxel whose centre is at c is at index (c + half - V/2) / V. */
+  var i0 = Math.ceil((x - r + half - V / 2) / V), i1 = Math.floor((x + r + half - V / 2) / V);
+  var j0 = Math.ceil((z - r + half - V / 2) / V), j1 = Math.floor((z + r + half - V / 2) / V);
+  var y0 = Math.ceil((y - r) / V - 0.5), y1 = Math.floor((y + r) / V - 0.5);
+  var cut = 0, held = null, dirty = new Set(), removed = [];
+
+  for (var gi = i0; gi <= i1; gi++) {
+    var dx = (-half + gi * V + V / 2) - x;
+    for (var gj = j0; gj <= j1; gj++) {
+      var dz = (-half + gj * V + V / 2) - z;
+      if (dx * dx + dz * dz >= r2) continue;
+      for (var yy = Math.max(0, y0); yy <= Math.min(LEVELS - 1, y1); yy++) {
+        var dy = (yy * V + V / 2) - y;
+        if (dx * dx + dy * dy + dz * dz >= r2) continue;
+        if (!solidVox(w, gi, gj, yy)) continue;
+        var m = surfaceAt(w, gi, gj, yy).mat, mm = MATERIALS[m];
+        if (mm.hard > bite) { if (!held || mm.hard > held.hard) held = mm; continue; }
+        w.edits.set(editKey(w, gi, gj, yy), m);
+        removed.push(gi, gj, yy);
+        chunksTouching(w, gi, gj, dirty);
+        cut++;
+      }
+    }
+  }
+
+  var chunks = [];
+  dirty.forEach(function (k) { chunks.push([Math.floor(k / g), k % g]); });
+  return { cut: cut, held: held, chunks: chunks, removed: removed };
+}
+
+/** Put everything back. The world is the generator's again. */
+function clearEdits(w) {
+  var n = w.edits ? w.edits.size : 0;
+  if (w.edits) w.edits.clear();
+  return n;
 }
 /* ---------- src/sim/collider.mjs ---------- */
 /**
@@ -4797,7 +5241,7 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -4881,6 +5325,100 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     '   c=mix(vec3(0.48,0.72,0.78),vec3(0.93,0.98,1.0),smoothstep(0.25,0.95,st)); a=0.93; }',
     ' gl_FragColor=vec4(c,a);}'].join('\n');
 
+  /* ---------- the greedy mesh (issue #12) ----------
+     Two renderers live here at once, on purpose. #12's bar is "parity or
+     better with the plate's look, confirmed side by side", and side by side is
+     not something you can do with one renderer in the page. The mesh is what
+     the build draws now; the boxes stay because a comparison needs both, and
+     because #29 will want to point a camera at the pair rather than at a
+     memory of one.
+
+     Boxes draw six faces per voxel whether or not anything can see them. The
+     mesh draws the volume's exposed surface, merged where material, palette
+     group and occlusion all agree — 10.8x fewer faces on the hero window. */
+  var AO_STEP=[0.55,0.72,0.87,1.0];
+  /* ---------- putting the grain back ----------
+     The first side-by-side said the mesh was at parity structurally and
+     flatter to look at: the box renderer's per-voxel shade dither was doing
+     more work at this zoom than anyone had credited it with. Putting that
+     variation back into the mesh's *data* is not an option — per-voxel colour
+     is exactly what stops faces merging, which is the whole point of #28 and
+     of this issue.
+
+     So it goes in the fragment shader instead, hashed from the world position
+     floored to the voxel grid. Every fragment inside one merged quad lands in
+     the 25 cm cell it would have been a box in, and gets that box's variation
+     — for no vertex data, no extra draw call, and no effect on what can merge.
+     The +-10% matches the generator's own shade range.
+
+     The hash is sin-free on purpose. GLSL sin is no more pinned across drivers
+     than Math.sin is across engines (src/gen/exact.mjs), and while a tint is
+     not a world and would only shimmer rather than desync, there is no reason
+     to reach for it when fract and dot will do.
+
+     One material for every chunk, built once: a carve rebuilds geometry, and
+     recompiling a shader per bite would be the expensive half of a remesh. */
+  function meshMaterial(){
+    var m=new THREE.MeshLambertMaterial({vertexColors:true});
+    m.onBeforeCompile=function(sh){
+      sh.vertexShader='varying vec3 vWP;\n'+sh.vertexShader.replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n  vWP=(modelMatrix*vec4(position,1.0)).xyz;');
+      sh.fragmentShader='varying vec3 vWP;\n'
+        +'float qsGrain(vec3 p){ p=fract(p*0.1031); p+=dot(p,p.yzx+33.33); return fract((p.x+p.y)*p.z); }\n'
+        +sh.fragmentShader.replace(
+          '#include <color_fragment>',
+          '#include <color_fragment>\n  diffuseColor.rgb*=0.90+0.20*qsGrain(floor(vWP/'+QS.V.toFixed(2)+'));');
+    };
+    return m;
+  }
+
+  /* One chunk's geometry. Colour is the palette group dimmed by baked
+     occlusion — #28 is what makes this a lookup rather than a per-voxel float
+     the mesh would have had to carry, and carrying it is what would stop faces
+     merging at all. */
+  function chunkGeometry(data,cx,cz){
+    var m=QS.meshChunk(data,cx,cz), n=m.pos.length/3;
+    var col=new Float32Array(n*3);
+    for(var v=0;v<n;v++){
+      var k=AO_STEP[m.ao[v]];
+      col[v*3]=QS.palR(m.pal[v],128)*k;
+      col[v*3+1]=QS.palG(m.pal[v],128)*k;
+      col[v*3+2]=QS.palB(m.pal[v],128)*k;
+    }
+    var g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(m.pos),3));
+    g.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(m.nor),3));
+    g.setAttribute('color',new THREE.BufferAttribute(col,3));
+    g.setIndex(m.idx);
+    g.userData={quads:m.quads};
+    return g;
+  }
+
+  /* The terrain mesh is a chunk per child, not one buffer, because a carve has
+     to be able to rebuild what it touched and nothing else. That is #12's
+     third clause, and it is the same shape #13 will stream into. */
+  function buildMesh(data){
+    var n=QS.chunkGrid(data), mat=meshMaterial(), grp=new THREE.Group(), quads=0;
+    for(var cx=0;cx<n;cx++)for(var cz=0;cz<n;cz++){
+      var g=chunkGeometry(data,cx,cz), mesh=new THREE.Mesh(g,mat);
+      mesh.castShadow=true; mesh.receiveShadow=true; mesh.frustumCulled=false;
+      mesh.userData.chunk=[cx,cz];
+      grp.add(mesh); quads+=g.userData.quads;
+    }
+    grp.userData={quads:quads,grid:n,mat:mat,
+      /* Swap one chunk's geometry for a freshly meshed one and drop the old. */
+      remesh:function(data2,cx,cz){
+        var child=grp.children[cx*n+cz]; if(!child) return 0;
+        var before=child.geometry.userData.quads;
+        child.geometry.dispose();
+        child.geometry=chunkGeometry(data2,cx,cz);
+        grp.userData.quads+=child.geometry.userData.quads-before;
+        return child.geometry.userData.quads;
+      }};
+    return grp;
+  }
+
   function buildScene(data){
     var scene=new THREE.Scene();
     scene.add(new THREE.HemisphereLight(0x9fc3e8,0x4a3a2c,0.62));
@@ -4893,15 +5431,33 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
 
     var m4=new THREE.Matrix4(), col=new THREE.Color(), i;
     var n=data.pos.length/3;
+    /* Terrain first, then the stamps. The greedy mesh replaces only the first
+       part, so they are drawn as two instanced meshes rather than one — props
+       stay instanced by decision (#12) and by necessity: a felled tree must
+       not cost a chunk remesh. */
+    var pStart=data.propStart===undefined?n:data.propStart;
       /* Issue #28: a voxel carries a palette index and a shade byte, not a
          colour. Resolving it here is what makes a restyle possible — change
          PALETTE and redraw, with nothing regenerated. */
-    var vox=new THREE.InstancedMesh(boxGeo,new THREE.MeshLambertMaterial({vertexColors:true}),n);
-    for(i=0;i<n;i++){ m4.makeTranslation(data.pos[i*3],data.pos[i*3+1],data.pos[i*3+2]); vox.setMatrixAt(i,m4);
-      col.setRGB(QS.palR(data.pal[i],data.shd[i]),QS.palG(data.pal[i],data.shd[i]),
-                QS.palB(data.pal[i],data.shd[i])); vox.setColorAt(i,col); }
-    vox.instanceMatrix.needsUpdate=true; if(vox.instanceColor) vox.instanceColor.needsUpdate=true;
-    vox.castShadow=true; vox.receiveShadow=true; vox.frustumCulled=false; scene.add(vox);
+    function boxesFor(lo,hi){
+      var cnt=hi-lo;
+      if(cnt<=0) return null;
+      var im=new THREE.InstancedMesh(boxGeo,new THREE.MeshLambertMaterial({vertexColors:true}),cnt);
+      for(var q2=0;q2<cnt;q2++){ var k2=lo+q2;
+        m4.makeTranslation(data.pos[k2*3],data.pos[k2*3+1],data.pos[k2*3+2]); im.setMatrixAt(q2,m4);
+        col.setRGB(QS.palR(data.pal[k2],data.shd[k2]),QS.palG(data.pal[k2],data.shd[k2]),
+                  QS.palB(data.pal[k2],data.shd[k2])); im.setColorAt(q2,col); }
+      im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
+      im.castShadow=true; im.receiveShadow=true; im.frustumCulled=false; scene.add(im);
+      return im;
+    }
+    var vox=boxesFor(0,pStart), props=boxesFor(pStart,n);
+
+    /* Both terrain renderers are built; only one is visible. Props, water and
+       grass are untouched by either — a felled tree must not remesh a chunk. */
+    var terrainMesh=buildMesh(data);
+    scene.add(terrainMesh);
+    terrainMesh.visible=useMesh; if(vox) vox.visible=!useMesh;
 
     if(data.mpos.length){
       var mn=data.mpos.length/3;
@@ -4951,7 +5507,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     (data.lamps||[]).slice(0,3).forEach(function(l){
       var pl=new THREE.PointLight(0xffb066,0.9,9,2); pl.position.set(l[0],l[1]+0.1,l[2]); scene.add(pl);
     });
-    return {scene:scene,gmat:gmat,wmat:wmat};
+    return {scene:scene,gmat:gmat,wmat:wmat,vox:vox,props:props,mesh:terrainMesh};
   }
 
   /* ---------- the character ---------- */
@@ -5165,6 +5721,70 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   var solo=null, session=null, wire=null, role='solo', warped=false;
   var targets=null, encounter=null, postMeshes=[], postHits=[], postFlash=[];
   var vp={w:1,h:1}, tm=0, deaths=0, fps=60, wind=new THREE.Vector2(0.72,0.69);
+  /* Issue #12's flag, and the mesh is now what the build draws.
+
+     The bar was "parity or better with the plate's look, confirmed side by
+     side", and the side-by-side was looked at: four places at 3x, one camera,
+     one frame. It is a trade rather than a clean win. The mesh gains
+     everything with structure — a pillar meets the ground on a dark contact
+     line, a cut bank creases, the ruin reads as one mass — and it loses where
+     per-voxel dither was selling a material, which is most visible on the
+     wall's coping, where stacked stones become a grey band. Called for the
+     mesh: 10.8x fewer faces, and the losses are recoverable in the shader
+     without putting per-voxel colour back into the record.
+
+     Boxes are still one click away, and the comparison harness still drives
+     both — tools/compare-renderers.mjs and tools/compare-plates.mjs. */
+  var useMesh=true;
+  function setMesh(on){
+    useMesh=!!on;
+    if(built&&built.mesh){ built.mesh.visible=useMesh; if(built.vox) built.vox.visible=!useMesh; }
+    var b2=document.getElementById('meshbtn');
+    if(b2) b2.textContent=useMesh?'Boxes':'Mesh';
+  }
+
+  /* ---------- taking a bite out of it ----------
+     #12's third clause is that the mesh follows an edit. src/mesh/carve.mjs
+     decides what comes away and which chunks that makes stale; this rebuilds
+     those chunks and hides the same voxels in the box renderer, so switching
+     renderers does not switch worlds.
+
+     This is a hook, not a verb, and there is no button for it on purpose. A
+     carve here changes what is drawn and nothing else: collision still reads
+     the generated spans, so the hole is one you can see and not one you can
+     fall into, and nothing about it crosses the wire. Destructible ground has
+     to be host-authoritative like everything else in src/net and has to
+     survive a save — both are real work, and neither belongs to a meshing
+     issue. Until then: QSPLAY.carve(x, y, z) from the console, or from
+     tools/smoke.mjs, which is what asserts the mesh actually followed. */
+  var voxIndex=null;
+  function voxelIndexOf(data){
+    if(voxIndex) return voxIndex;
+    voxIndex=new Map();
+    var pStart=data.propStart===undefined?data.pos.length/3:data.propStart, V2=QS.V;
+    for(var q=0;q<pStart;q++){
+      var gi=Math.round((data.pos[q*3]+data.half-V2/2)/V2);
+      var gj=Math.round((data.pos[q*3+2]+data.half-V2/2)/V2);
+      var y=Math.floor(data.pos[q*3+1]/V2);
+      voxIndex.set((gi*data.NZ+gj)*QS.LEVELS+y,q);
+    }
+    return voxIndex;
+  }
+  var zeroM=new THREE.Matrix4().makeScale(0,0,0), hidM=new THREE.Matrix4(), hidden=[];
+  function carveAt(x,y,z,opts){
+    if(!built) return null;
+    var r=QS.carve(built.data,x,y,z,opts||{});
+    for(var q=0;q<r.chunks.length;q++) built.mesh.userData.remesh(built.data,r.chunks[q][0],r.chunks[q][1]);
+    if(r.cut&&built.vox){
+      var ix=voxelIndexOf(built.data), hid=0;
+      for(var v=0;v<r.removed.length;v+=3){
+        var k=ix.get((r.removed[v]*built.data.NZ+r.removed[v+1])*QS.LEVELS+r.removed[v+2]);
+        if(k!==undefined){ built.vox.setMatrixAt(k,zeroM); hidden.push(k); hid++; }
+      }
+      if(hid) built.vox.instanceMatrix.needsUpdate=true;
+    }
+    return {cut:r.cut,held:r.held?r.held.nm:null,chunks:r.chunks.length,quads:built.mesh.userData.quads};
+  }
   var camT=new THREE.Vector3();
 
   function player(){ return session ? session.me : solo; }
@@ -5227,7 +5847,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         if(n.material&&n.material.dispose) n.material.dispose();
       }
     });
-    built=buildScene(data); built.data=data; built.cfg=cfg;
+    built=buildScene(data); built.data=data; built.cfg=cfg; voxIndex=null; hidden.length=0;
     built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
     col=QS.colliderForWorld(data);
 
@@ -5320,6 +5940,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* Older implementations return undefined rather than a promise. */
     if(r&&r.catch) r.catch(function(){ goMaxed(true); });
   }
+  document.getElementById('meshbtn').addEventListener('click',function(){
+    setMesh(!useMesh); stage.focus();
+  });
   fullBtn.addEventListener('click',function(){ toggleFull(); });
   var exitFs=document.getElementById('exitfs');
   /* The stage swallows pointerdown to take the keyboard, so stop it here or the
@@ -5833,6 +6456,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     pause:function(on){ paused=on!==false; },
     /* Touch mode is detected from the pointer, which a desktop browser driving
        the gate does not have. The assertions turn it on deliberately. */
+    /* Issue #12: the gate drives the swap so the side-by-side is two
+       screenshots of one camera, not two runs that might differ. */
+    setMesh:setMesh,
+    carve:carveAt,
+    clearEdits:function(){ if(!built) return 0; var n=QS.clearEdits(built.data), g=QS.chunkGrid(built.data);
+      for(var a=0;a<g;a++)for(var b=0;b<g;b++) built.mesh.userData.remesh(built.data,a,b);
+      if(hidden.length&&built.vox){
+        for(var q=0;q<hidden.length;q++){ var k=hidden[q];
+          hidM.makeTranslation(built.data.pos[k*3],built.data.pos[k*3+1],built.data.pos[k*3+2]);
+          built.vox.setMatrixAt(k,hidM); }
+        built.vox.instanceMatrix.needsUpdate=true; hidden.length=0;
+      }
+      return n; },
+    get mesh(){ return useMesh; },
+    get meshQuads(){ return built&&built.mesh?built.mesh.userData.quads:0; },
+    get boxCount(){ return built?built.data.pos.length/3:0; },
     setTouch:setTouchMode,
     get touch(){ return touchMode; },
     draw:draw,

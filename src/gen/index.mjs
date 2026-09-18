@@ -59,6 +59,12 @@ export function buildWorld(cfg) {
   flowField(w);                /* one downhill vector per cell */
   sampleGrid(w);               /* 1 m cells resampled onto the voxel grid */
   buildVoxels(w);              /* the terrain voxels themselves */
+  /* Where the terrain ends and the stamps begin. The greedy mesher (#12)
+     replaces the terrain and leaves props instanced — a felled tree must not
+     remesh a chunk — so the renderer needs to know which voxels are which.
+     Taken here rather than inferred from the lattice, because a heuristic that
+     is usually right is the kind of thing that breaks quietly. */
+  w.propStart = w.pos.length / 3;
   var kit = makeStamps(w);
   scatterProps(w, kit);        /* trees, boulders, canyon arcs */
   placeClutter(w, kit);        /* scree, clutter, the sites, lamps, bridges */
@@ -71,7 +77,7 @@ export function buildWorld(cfg) {
     /* One voxel is pos + pal + shd + mat. Colour is resolved at draw time
        against src/gen/palette.mjs, so a biome restyles without regenerating
        (issue #28). Same four for the emissive pass. */
-    pos: w.pos, pal: w.pal, shd: w.shd, mat: w.mat,
+    pos: w.pos, pal: w.pal, shd: w.shd, mat: w.mat, propStart: w.propStart,
     mpos: w.mpos, mpal: w.mpal, mshd: w.mshd, mmat: w.mmat,
     grass: w.grass, water: w.water, lamps: w.lamps,
     ovhPos: w.ovhPos, lmPos: w.lmPos, trail: w.TRAIL, topi: w.TOPI,
@@ -82,5 +88,9 @@ export function buildWorld(cfg) {
     sites: w.sites,
     Hs: w.Hs, FLG: w.FLG, NX: w.NX, NZ: w.NZ, half: w.half,
     cells: w.cells, M: w.M, spawn: w.spawn, size: w.size,
+    /* Where this window sits and what grew it. The mesher (src/mesh) needs both
+       to rebuild a column's own positional stream — which is only reproducible
+       at all because of issue #41 — and chunk streaming will want them too. */
+    G: w.G, OX: w.OX, OZ: w.OZ,
   };
 }

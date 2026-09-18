@@ -24,7 +24,8 @@ anything.
 | `src/gen/` | The terrain generator. Plain ES modules — no DOM, no three.js. See `src/README.md`. |
 | `src/sim/` | Collision, the character controller, the isometric camera, the input table, combat, the first enemy, the socket lattice and what is lying on the ground — all written against the movement budget and all free of the DOM and three.js, which is why they can be asserted in node. |
 | `src/net/` | The wire: a three-method transport interface, a loopback double with latency and loss, and the host/guest sessions. No DOM either. |
-| `docs/play/index.html` | **The playable build.** Open it in a browser and walk around; *Host a game* opens a second window and puts another character in the same world. Carries an inlined copy of `src/gen`, `src/sim` and `src/net`. |
+| `src/mesh/` | Greedy meshing with baked per-face AO, and the edit layer a carve writes into. Reads the generator's spans, not its voxels. No DOM either. |
+| `docs/play/index.html` | **The playable build.** Open it in a browser and walk around; *Host a game* opens a second window and puts another character in the same world. Carries an inlined copy of `src/gen`, `src/mesh`, `src/sim` and `src/net`. |
 | `src/sim/lattice.mjs` | The spine of progression. Read it before touching combat numbers: every constant in `combat.mjs` is now a *base*, and `statsOf(a)` is what an actor actually plays with. |
 | `docs/concept/index.html` | The concept plate: the design document, the renderer, and an inlined copy of `src/gen` it draws. |
 | `tools/` | Headless render and verify harness. Dev only. |
@@ -120,7 +121,7 @@ node tools/bundle-gen.mjs --check   # fail if either page is out of date
 ```
 
 Two pages carry a bundle: the plate gets `src/gen`, the playable build gets `src/gen`,
-`src/sim` **and** `src/net`. `MODULES` in `tools/bundle-gen.mjs` is the dependency order, and
+`src/mesh`, `src/sim` **and** `src/net`. `MODULES` in `tools/bundle-gen.mjs` is the dependency order, and
 it is also the concatenation order — a module may only use names defined above it. Three traps
 the bundler now fails on rather than letting through, all of them consequences of concatenating
 everything into one scope:

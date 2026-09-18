@@ -28,6 +28,7 @@ export const END = '/* QS-BUNDLE-END */';
 const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'palette', 'rng', 'biomes', 'field', 'erosion', 'region', 'ground', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index'],
+  'src/mesh': ['greedy', 'carve'],
   'src/sim': ['collider', 'combat', 'lattice', 'loot', 'actor', 'enemy', 'camera', 'input'],
   'src/net': ['transport', 'session'],
 };
@@ -40,6 +41,10 @@ const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERI
                  'PALETTE', 'PAL', 'palR', 'palG', 'palB', 'shadeValue',
                  /* the pinned math, so the smoke test can compare it across engines */
                  'sin', 'cos', 'exp', 'hyp'];
+
+/** The greedy mesher, behind the build's renderer flag — issue #12. */
+const MESH_API = ['meshChunk', 'chunkOccupancy', 'openAir', 'surfaceAt', 'LEVELS',
+  'isCut', 'solidVox', 'carve', 'clearEdits', 'chunkGrid', 'BITE', 'BITE_R'];
 
 /** Everything the playable build needs on top of it: the simulation and the wire. */
 const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld',
@@ -70,8 +75,8 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld',
  */
 export const TARGETS = [
   { file: PLATE, name: 'docs/concept/index.html', dirs: ['src/gen'], api: GEN_API },
-  { file: PLAY, name: 'docs/play/index.html', dirs: ['src/gen', 'src/sim', 'src/net'],
-    api: GEN_API.concat(SIM_API) },
+  { file: PLAY, name: 'docs/play/index.html', dirs: ['src/gen', 'src/mesh', 'src/sim', 'src/net'],
+    api: GEN_API.concat(MESH_API).concat(SIM_API) },
 ];
 
 /**
