@@ -11,7 +11,8 @@
 import { V, DIRS4, clamp } from './constants.mjs';
 import { sin, cos, hyp } from './exact.mjs';
 import { MAT } from './materials.mjs';
-import { BIOMES, pickFrom, pushShade } from './biomes.mjs';
+import { BIOMES } from './biomes.mjs';
+import { PAL, pickPal, shadeByte } from './palette.mjs';
 import { PASS } from './rng.mjs';
 import { groundCellAt } from './ground.mjs';
 
@@ -20,13 +21,20 @@ const LAMP_SPACING = 40;
 
 /** The stamp kit for one world: pure geometry, pushed into w's voxel arrays. */
 export function makeStamps(w) {
-  var pos = w.pos, col = w.col, mat = w.mat,
-      mpos = w.mpos, mcol = w.mcol, mmat = w.mmat,
+  var pos = w.pos, pal = w.pal, shd = w.shd, mat = w.mat,
+      mpos = w.mpos, mpal = w.mpal, mshd = w.mshd, mmat = w.mmat,
       half = w.half, NX = w.NX, NZ = w.NZ, Hs = w.Hs, FLG = w.FLG, y;
-  /** Every stamp lands through here, so every stamped voxel has a material. */
-  function addVox(px,py,pz,hex,k2,m){
+  /** Every stamp lands through here, so every stamped voxel has a material and
+      a palette entry. `idx` is an index into PALETTE, never a colour: issue #28
+      moved the multiply to draw time so these can be restyled. */
+  function addVox(px,py,pz,idx,k2,m){
     pos.push(Math.round(px/V)*V,Math.round(py/V)*V,Math.round(pz/V)*V);
-    pushShade(col,hex,k2); mat.push(m);
+    pal.push(idx); shd.push(shadeByte(k2)); mat.push(m);
+  }
+  /** Same, for the emissive pass. */
+  function addEm(px,py,pz,idx,k2,m){
+    mpos.push(Math.round(px/V)*V,Math.round(py/V)*V,Math.round(pz/V)*V);
+    mpal.push(idx); mshd.push(shadeByte(k2)); mmat.push(m);
   }
   function surfAt(px,pz){var i2=clamp(Math.round((px+half)/V),0,NX-1),j2=clamp(Math.round((pz+half)/V),0,NZ-1);var k2=i2*NZ+j2;return {y:Hs[k2],f:FLG[k2]};}
   /**
@@ -50,7 +58,7 @@ export function makeStamps(w) {
     var th, r, ax, ay, az;
     if(t==='conifer'){
       th=3+R()*2;
-      if(!onTrail(px,pz)) for(y=0;y<th;y+=V) addVox(px,y0+y,pz,b.k==='frost'?0x4a4038:0x4a3a2c,0.9+R()*0.2,MAT.WOOD);
+      if(!onTrail(px,pz)) for(y=0;y<th;y+=V) addVox(px,y0+y,pz,(b.k==='frost'?PAL.CONIFER_TRUNK_COLD.at:PAL.CONIFER_TRUNK.at),0.9+R()*0.2,MAT.WOOD);
       for(var lv=0;lv<5;lv++){
         var ly=y0+th*0.35+lv*(th*0.15), lr=(1.5-lv*0.24);
         for(ax=-lr;ax<=lr;ax+=V)for(az=-lr;az<=lr;az+=V){
@@ -58,36 +66,36 @@ export function makeStamps(w) {
           /* hoisted so the material can follow the colour; the short-circuit,
              and so the number of R() calls, is unchanged. */
           var capped=(b.k==='frost'&&R()<0.45);
-          addVox(px+ax,ly,pz+az,capped?0xdfe7ee:(R()<0.5?0x2f5233:0x3c6b3e),0.85+R()*0.3,
+          addVox(px+ax,ly,pz+az,(capped?PAL.CONIFER_CAP.at:PAL.CONIFER_LEAF.at+(R()<0.5?0:1)),0.85+R()*0.3,
                  capped?MAT.SNOW:MAT.LEAF);
         }
       }
     } else if(t==='scrub'){
       th=1+R()*1.2;
-      if(!onTrail(px,pz)) for(y=0;y<th;y+=V) addVox(px,y0+y,pz,0x6b5233,0.9+R()*0.2,MAT.WOOD);
+      if(!onTrail(px,pz)) for(y=0;y<th;y+=V) addVox(px,y0+y,pz,PAL.SCRUB_TRUNK.at,0.9+R()*0.2,MAT.WOOD);
       r=0.7+R()*0.4;
       for(ax=-r;ax<=r;ax+=V)for(ay=-r*0.5;ay<=r*0.6;ay+=V)for(az=-r;az<=r;az+=V){
         if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.5)>1-R()*0.3) continue;
-        addVox(px+ax,y0+th+ay,pz+az,R()<0.5?0x6f7f42:0x87904a,0.85+R()*0.3,MAT.LEAF);
+        addVox(px+ax,y0+th+ay,pz+az,PAL.SCRUB_LEAF.at+(R()<0.5?0:1),0.85+R()*0.3,MAT.LEAF);
       }
     } else if(t==='snag'){
       th=2.5+R()*1.8;
       for(y=0;y<th;y+=V){ var sx2=px+(y>th*0.6?V:0);
         if(onTrail(sx2,pz)) continue;
-        addVox(sx2,y0+y,pz,R()<0.5?0x2e2825:0x3a322e,0.85+R()*0.25,MAT.WOOD); }
+        addVox(sx2,y0+y,pz,PAL.SNAG_TRUNK.at+(R()<0.5?0:1),0.85+R()*0.25,MAT.WOOD); }
       for(var br=0;br<3;br++){var bl=0.5+R()*0.7,dirx=R()<0.5?1:-1,by=y0+th*(0.55+br*0.15);
         for(var t2=0;t2<bl;t2+=V){ var bz2=pz+(R()-0.5)*0.3;
           if(onTrail(px+dirx*t2,bz2)) continue;
-          addVox(px+dirx*t2,by+t2*0.4,bz2,0x332b27,0.9,MAT.WOOD); } }
+          addVox(px+dirx*t2,by+t2*0.4,bz2,PAL.SNAG_BRANCH.at,0.9,MAT.WOOD); } }
     } else {
       th=2.5+R()*1.5;
       for(y=0;y<th;y+=V)for(ax=-V;ax<=V;ax+=V)for(az=-V;az<=V;az+=V)
         if(Math.abs(ax)+Math.abs(az)<=V&&!onTrail(px+ax,pz+az))
-          addVox(px+ax,y0+y,pz+az,0x5a4130,0.85+R()*0.3,MAT.WOOD);
+          addVox(px+ax,y0+y,pz+az,PAL.BROAD_TRUNK.at,0.85+R()*0.3,MAT.WOOD);
       r=1.1+R()*0.55;
       for(ax=-r;ax<=r;ax+=V)for(ay=-r*0.8;ay<=r*0.8;ay+=V)for(az=-r;az<=r;az+=V){
         if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.68)>1-R()*0.28) continue;
-        addVox(px+ax,y0+th+r*0.5+ay,pz+az,R()<0.15?0x8ea84b:(R()<0.5?0x4f7a3a:0x628f45),0.8+R()*0.35,MAT.LEAF);
+        addVox(px+ax,y0+th+r*0.5+ay,pz+az,(R()<0.15?PAL.BROAD_LEAF_PALE.at:PAL.BROAD_LEAF.at+(R()<0.5?0:1)),0.8+R()*0.35,MAT.LEAF);
       }
     }
   }
@@ -96,7 +104,7 @@ export function makeStamps(w) {
     for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
       if(onTrail(px+ax,pz+az)) continue;
-      addVox(px+ax,y0+r*0.45+ay,pz+az,pickFrom(b.rock,R),0.85+R()*0.3,b.mat.rock);
+      addVox(px+ax,y0+r*0.45+ay,pz+az,pickPal(b.rock,R),0.85+R()*0.3,b.mat.rock);
     }
   }
   function scree(px,pz,dom,n,R){
@@ -105,25 +113,25 @@ export function makeStamps(w) {
       var n2=(R()<0.3)?2:1;
       for(var a=0;a<n2;a++)for(var b=0;b<n2;b++)for(var c2=0;c2<n2;c2++){
         if(onTrail(sx+a*V,sz+b*V)) continue;
-        addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickFrom(BIOMES[dom].rock,R),0.8+R()*0.3,BIOMES[dom].mat.rock);
+        addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickPal(BIOMES[dom].rock,R),0.8+R()*0.3,BIOMES[dom].mat.rock);
       }
     }
   }
   function bush(px,pz,dom,R){
     var s=surfAt(px,pz); if(s.f) return;
     var r=0.35+R()*0.35;
-    var cols=(dom===4)?[0x6f8390,0x8aa3ad]:(dom===3?[0x3b332e,0x4a403a]:(dom===1?[0x6f7f42,0x87904a]:[0x3f6b34,0x4e7d3e,0x5d8c46]));
+    var cols=(dom===4)?PAL.BUSH_COLD:(dom===3?PAL.BUSH_BURNT:(dom===1?PAL.BUSH_DRY:PAL.BUSH_GREEN));
     for(var ax=-r;ax<=r;ax+=V)for(var ay=0;ay<=r*1.5;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+((ay-r*0.65)*(ay-r*0.65))/(r*r*0.65)>1-R()*0.3) continue;
       if(onTrail(px+ax,pz+az)) continue;
-      addVox(px+ax,s.y+ay+V/2,pz+az,pickFrom(cols,R),0.85+R()*0.3,MAT.LEAF);
+      addVox(px+ax,s.y+ay+V/2,pz+az,pickPal(cols,R),0.85+R()*0.3,MAT.LEAF);
     }
   }
   function stump(px,pz,R){
     var s=surfAt(px,pz); if(s.f) return;
     for(var y2=0;y2<0.55;y2+=V)for(var ax=-V;ax<=V;ax+=V)for(var az=-V;az<=V;az+=V)
       if(Math.abs(ax)+Math.abs(az)<=V)
-        addVox(px+ax,s.y+y2+V/2,pz+az,(y2>0.3&&ax===0&&az===0)?0x8a6a4a:0x5a4130,0.9+R()*0.2,MAT.WOOD);
+        addVox(px+ax,s.y+y2+V/2,pz+az,((y2>0.3&&ax===0&&az===0)?PAL.STUMP_CUT.at:PAL.STUMP_WOOD.at),0.9+R()*0.2,MAT.WOOD);
   }
   function fallenTrunk(px,pz,R){
     var s0=surfAt(px,pz); if(s0.f) return;
@@ -131,27 +139,27 @@ export function makeStamps(w) {
     for(var t2=-L/2;t2<=L/2;t2+=V)for(var ay=0;ay<=0.55;ay+=V)for(var b=-0.3;b<=0.3;b+=V){
       if((ay-0.28)*(ay-0.28)+b*b>0.082) continue;
       if(onTrail(px+dx*t2-dz*b,pz+dz*t2+dx*b)) continue;
-      addVox(px+dx*t2-dz*b,s0.y+ay+V/2,pz+dz*t2+dx*b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25,MAT.WOOD);
+      addVox(px+dx*t2-dz*b,s0.y+ay+V/2,pz+dz*t2+dx*b,(R()<0.2?PAL.FALLEN_MOSS.at:PAL.FALLEN_BARK.at),0.85+R()*0.25,MAT.WOOD);
     }
   }
   function fence(px,pz,ang,len,R){
     var dx=cos(ang),dz=sin(ang);
     for(var t2=0;t2<=len;t2+=1){
       var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f) continue;
-      for(var y2=0;y2<1.0;y2+=V) addVox(xx,s.y+y2+V/2,zz,0x6b5a45,0.9+R()*0.2,MAT.WOOD);
+      for(var y2=0;y2<1.0;y2+=V) addVox(xx,s.y+y2+V/2,zz,PAL.FENCE_POST.at,0.9+R()*0.2,MAT.WOOD);
       if(t2<len) for(var u=0;u<1;u+=V){
         if(onTrail(xx+dx*u,zz+dz*u)) continue;
-        addVox(xx+dx*u,s.y+0.8,zz+dz*u,0x5f5040,0.95,MAT.WOOD);
-        addVox(xx+dx*u,s.y+0.4,zz+dz*u,0x5f5040,0.95,MAT.WOOD);
+        addVox(xx+dx*u,s.y+0.8,zz+dz*u,PAL.FENCE_RAIL.at,0.95,MAT.WOOD);
+        addVox(xx+dx*u,s.y+0.4,zz+dz*u,PAL.FENCE_RAIL.at,0.95,MAT.WOOD);
       }
     }
   }
   function lamp(px,pz,R){
     var s=surfAt(px,pz); if(s.f) return null;
-    for(var y2=0;y2<2.5;y2+=V) addVox(px,s.y+y2+V/2,pz,0x3f4650,0.9+R()*0.15,MAT.METAL);
-    addVox(px+V,s.y+2.5,pz,0x3f4650,0.95,MAT.METAL); addVox(px+2*V,s.y+2.5,pz,0x3f4650,0.95,MAT.METAL);
+    for(var y2=0;y2<2.5;y2+=V) addVox(px,s.y+y2+V/2,pz,PAL.LAMP_POST.at,0.9+R()*0.15,MAT.METAL);
+    addVox(px+V,s.y+2.5,pz,PAL.LAMP_POST.at,0.95,MAT.METAL); addVox(px+2*V,s.y+2.5,pz,PAL.LAMP_POST.at,0.95,MAT.METAL);
     var lx=Math.round((px+2*V)/V)*V, ly=Math.round((s.y+2.25)/V)*V;
-    mpos.push(lx,ly,pz); pushShade(mcol,0xffd08a,1); mmat.push(MAT.LIGHT);
+    addEm(lx,ly,pz,PAL.EM_LAMP.at,1,MAT.LIGHT);
     return [lx,ly,pz];
   }
   function wallRun(px,pz,ang,len,h,dom,R){
@@ -162,7 +170,7 @@ export function makeStamps(w) {
       var hh2=h*(0.55+0.45*Math.abs(sin(t2*0.7)));
       for(var y2=0;y2<hh2;y2+=V)for(var b=-0.25;b<=0.25;b+=V){
         if(onTrail(xx-dz*b,zz+dx*b)) continue;
-        addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
+        addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickPal(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
       }
     }
   }
@@ -170,13 +178,13 @@ export function makeStamps(w) {
     var s=surfAt(px,pz); if(s.f) return;
     for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V){
       if(onTrail(px+b1,pz+b2)) continue;
-      addVox(px+b1,s.y+V/2,pz+b2,pickFrom(BIOMES[dom].rock,R),0.95,BIOMES[dom].mat.rock);
+      addVox(px+b1,s.y+V/2,pz+b2,pickPal(BIOMES[dom].rock,R),0.95,BIOMES[dom].mat.rock);
     }
     for(var y2=V;y2<h;y2+=V){
       var rr2=(y2>h-0.6&&R()<0.5)?0.25:0.375;
       for(var a1=-rr2;a1<=rr2;a1+=V)for(var a2=-rr2;a2<=rr2;a2+=V){
         if(onTrail(px+a1,pz+a2)) continue;
-        addVox(px+a1,s.y+y2+V/2,pz+a2,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.22,BIOMES[dom].mat.rock);
+        addVox(px+a1,s.y+y2+V/2,pz+a2,pickPal(BIOMES[dom].rock,R),0.88+R()*0.22,BIOMES[dom].mat.rock);
       }
     }
   }
@@ -188,18 +196,18 @@ export function makeStamps(w) {
       if(a>-0.6&&a<0.6&&b>w/2-V) continue;
       var hh2=h*(R()<0.22?0.45+R()*0.4:1);
       if(onTrail(px+a,pz+b)) continue;
-      for(var y2=0;y2<hh2;y2+=V) addVox(px+a,s.y+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.2,BIOMES[dom].mat.rock);
+      for(var y2=0;y2<hh2;y2+=V) addVox(px+a,s.y+y2+V/2,pz+b,pickPal(BIOMES[dom].rock,R),0.88+R()*0.2,BIOMES[dom].mat.rock);
     }
     for(var a2=-w/2;a2<=w/2;a2+=V)for(var b2=-w/2;b2<=w/2;b2+=V)
-      if(R()<0.3) addVox(px+a2,s.y+h+V/2,pz+b2,0x5a4130,0.9,MAT.WOOD);
+      if(R()<0.3) addVox(px+a2,s.y+h+V/2,pz+b2,PAL.HUT_ROOF.at,0.9,MAT.WOOD);
   }
   function deckBridge(px,pz,di,dj,len,y,R){
     for(var t2=-len/2;t2<=len/2;t2+=V)for(var b=-0.75;b<=0.75;b+=V)
-      addVox(px+di*t2-dj*b,y,pz+dj*t2+di*b,R()<0.25?0x6b5a45:0x5a4a38,0.9+R()*0.2,MAT.WOOD);
+      addVox(px+di*t2-dj*b,y,pz+dj*t2+di*b,(R()<0.25?PAL.DECK_WORN.at:PAL.DECK_PLANK.at),0.9+R()*0.2,MAT.WOOD);
     for(var side=-1;side<=1;side+=2)for(var t3=-len/2;t3<=len/2;t3+=0.5)
-      addVox(px+di*t3-dj*side*0.75,y+0.5,pz+dj*t3+di*side*0.75,0x4c3f30,0.95,MAT.WOOD);
+      addVox(px+di*t3-dj*side*0.75,y+0.5,pz+dj*t3+di*side*0.75,PAL.DECK_RAIL.at,0.95,MAT.WOOD);
   }
-  return { addVox: addVox, surfAt: surfAt, onTrail: onTrail, tree: tree, boulder: boulder, scree: scree,
+  return { addVox: addVox, addEm: addEm, surfAt: surfAt, onTrail: onTrail, tree: tree, boulder: boulder, scree: scree,
            bush: bush, stump: stump, fallenTrunk: fallenTrunk, fence: fence, lamp: lamp,
            wallRun: wallRun, pillarRuin: pillarRuin, hut: hut, deckBridge: deckBridge };
 }
@@ -241,7 +249,7 @@ export function scatterProps(w, kit) {
         var cxp=px+gx*ox2, czp=pz+gz*ox2;
         var thick=0.5+0.5*(1-sin(Math.PI*t3));
         for(var w2=-0.75;w2<=0.75;w2+=V)for(var dy=-thick;dy<=thick*0.4;dy+=V)
-          addVox(cxp-gz*w2,yy+dy,czp+gx*w2,pickFrom(BIOMES[cc.dom].rock,R),0.9+R()*0.2,BIOMES[cc.dom].mat.rock);
+          addVox(cxp-gz*w2,yy+dy,czp+gx*w2,pickPal(BIOMES[cc.dom].rock,R),0.9+R()*0.2,BIOMES[cc.dom].mat.rock);
       }
       arcs++;
       }
@@ -332,50 +340,47 @@ export function placeClutter(w, kit) {
 /** One landmark per region, on the highest flat ground that is not a trail. */
 export function placeLandmark(w, kit) {
   var half = w.half, G = w.G,
-      OX = w.OX, OZ = w.OZ, mpos = w.mpos, mcol = w.mcol, mmat = w.mmat,
-      addVox = kit.addVox, onTrail = kit.onTrail;
+      OX = w.OX, OZ = w.OZ,
+      addVox = kit.addVox, addEm = kit.addEm, onTrail = kit.onTrail;
   var lmPos=null;
   function landmarkStamp(px,pz,kind,dom,base,R){
     var a,b,y2,r2;
     if(kind===0){                                   /* obelisk */
       for(a=-1;a<=1;a+=V)for(b=-1;b<=1;b+=V){ if(onTrail(px+a,pz+b)) continue;
-        addVox(px+a,base+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock); }
+        addVox(px+a,base+V/2,pz+b,pickPal(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock); }
       for(y2=V;y2<11;y2+=V){
         r2=0.5*(1-y2/16);
         for(a=-r2;a<=r2;a+=V)for(b=-r2;b<=r2;b+=V){ if(onTrail(px+a,pz+b)) continue;
-          addVox(px+a,base+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock); }
+          addVox(px+a,base+y2+V/2,pz+b,pickPal(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock); }
       }
-      mpos.push(Math.round(px/V)*V,Math.round((base+11.2)/V)*V,Math.round(pz/V)*V);
-      pushShade(mcol,0x9fe3ff,1); mmat.push(MAT.LIGHT);
+      addEm(px,base+11.2,pz,PAL.EM_OBELISK.at,1,MAT.LIGHT);
     } else if(kind===1){                            /* hive tree */
       for(y2=0;y2<8;y2+=V)for(a=-0.5;a<=0.5;a+=V)for(b=-0.5;b<=0.5;b+=V)
-        if(a*a+b*b<0.3&&!onTrail(px+a,pz+b)) addVox(px+a,base+y2+V/2,pz+b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25,MAT.WOOD);
+        if(a*a+b*b<0.3&&!onTrail(px+a,pz+b)) addVox(px+a,base+y2+V/2,pz+b,(R()<0.2?PAL.HIVE_BARK.at:PAL.HIVE_TRUNK.at),0.85+R()*0.25,MAT.WOOD);
       r2=3.2;
       for(a=-r2;a<=r2;a+=V)for(y2=-2.2;y2<=2.2;y2+=V)for(b=-r2;b<=r2;b+=V){
         if((a*a+b*b)/(r2*r2)+(y2*y2)/5.5>1-R()*0.25) continue;
-        addVox(px+a,base+8.5+y2,pz+b,R()<0.1?0xb7d84f:(R()<0.5?0x3f6630:0x507f3c),0.8+R()*0.35,MAT.LEAF);
+        addVox(px+a,base+8.5+y2,pz+b,(R()<0.1?PAL.HIVE_BLOOM.at:PAL.HIVE_LEAF.at+(R()<0.5?0:1)),0.8+R()*0.35,MAT.LEAF);
       }
       for(var hq=0;hq<7;hq++){
-        mpos.push(Math.round((px+(R()-0.5)*5)/V)*V,Math.round((base+7.5+R()*3)/V)*V,Math.round((pz+(R()-0.5)*5)/V)*V);
-        pushShade(mcol,0xb7f04f,1); mmat.push(MAT.LIGHT);
+        addEm(px+(R()-0.5)*5,base+7.5+R()*3,pz+(R()-0.5)*5,PAL.EM_HIVE.at,1,MAT.LIGHT);
       }
     } else if(kind===2){                            /* wrecked machine */
       for(var sl=0;sl<3;sl++){
         var ax2=cos(sl*2.1), az2=sin(sl*2.1);
         for(var t4=0;t4<6;t4+=V)for(b=-0.9;b<=0.9;b+=V){
           if(onTrail(px+ax2*t4*0.75-az2*b, pz+az2*t4*0.75+ax2*b)) continue;
-          addVox(px+ax2*t4*0.75-az2*b, base+t4*0.8+V/2, pz+az2*t4*0.75+ax2*b, R()<0.3?0x6a6259:0x4a443e,0.85+R()*0.25,MAT.METAL); }
+          addVox(px+ax2*t4*0.75-az2*b, base+t4*0.8+V/2, pz+az2*t4*0.75+ax2*b, (R()<0.3?PAL.WRECK_TRIM.at:PAL.WRECK_HULL.at),0.85+R()*0.25,MAT.METAL); }
       }
       for(var cq3=0;cq3<5;cq3++){
-        mpos.push(Math.round((px+(R()-0.5)*1.5)/V)*V,Math.round((base+1+R()*1.5)/V)*V,Math.round((pz+(R()-0.5)*1.5)/V)*V);
-        pushShade(mcol,0xff9a3c,1); mmat.push(MAT.LIGHT);
+        addEm(px+(R()-0.5)*1.5,base+1+R()*1.5,pz+(R()-0.5)*1.5,PAL.EM_WRECK.at,1,MAT.LIGHT);
       }
     } else {                                        /* standing stones */
       for(var st=0;st<6;st++){
         var sa=st/6*6.283, sx=px+cos(sa)*4, sz2=pz+sin(sa)*4, sh=2.5+R()*1.5;
         for(y2=0;y2<sh;y2+=V)for(a=-0.375;a<=0.375;a+=V)for(b=-0.25;b<=0.25;b+=V){
           if(onTrail(sx+a,sz2+b)) continue;
-          addVox(sx+a,base+y2+V/2,sz2+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock); }
+          addVox(sx+a,base+y2+V/2,sz2+b,pickPal(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock); }
       }
     }
   }

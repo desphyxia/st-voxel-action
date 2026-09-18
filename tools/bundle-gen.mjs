@@ -26,7 +26,7 @@ export const END = '/* QS-BUNDLE-END */';
 
 /** Dependency order, per directory. A module may only use names above it. */
 const MODULES = {
-  'src/gen': ['constants', 'exact', 'materials', 'rng', 'biomes', 'field', 'erosion', 'region', 'ground', 'routes',
+  'src/gen': ['constants', 'exact', 'materials', 'palette', 'rng', 'biomes', 'field', 'erosion', 'region', 'ground', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index'],
   'src/sim': ['collider', 'combat', 'lattice', 'loot', 'actor', 'enemy', 'camera', 'input'],
   'src/net': ['transport', 'session'],
@@ -35,6 +35,9 @@ const MODULES = {
 /** The generator's public surface: what the concept plate draws with. */
 const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERIALS',
                  'carvable', 'makeGen', 'buildWorld',
+                 /* the colour table, so a renderer can resolve a voxel's palette
+                    index and restyle without regenerating — issue #28 */
+                 'PALETTE', 'PAL', 'palR', 'palG', 'palB', 'shadeValue',
                  /* the pinned math, so the smoke test can compare it across engines */
                  'sin', 'cos', 'exp', 'hyp'];
 

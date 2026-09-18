@@ -1326,14 +1326,17 @@ export function regionSuite() {
     const z0 = Math.max(az, bz) - SIZE / 2 + MARGIN, z1 = Math.min(az, bz) + SIZE / 2 - MARGIN;
     const inBox = (x, z) => x >= x0 && x <= x1 && z >= z0 && z <= z1;
 
-    /* A voxel is its place, its colour and its material — the whole record. */
+    /* A voxel is its place, its palette entry, its shade and its material —
+       the whole record. Colour left that record in issue #28; comparing the
+       index and the shade byte is comparing strictly more than the three
+       floats did, because two entries can resolve to the same colour. */
     const voxOf = (w, ox, oz) => {
       const out = [];
       for (let i = 0; i < w.pos.length; i += 3) {
         const x = w.pos[i] + ox, z = w.pos[i + 2] + oz;
         if (!inBox(x, z)) continue;
         out.push([fx(x), fx(w.pos[i + 1]), fx(z),
-                  fx(w.col[i]), fx(w.col[i + 1]), fx(w.col[i + 2]), w.mat[i / 3]].join(','));
+                  w.pal[i / 3], w.shd[i / 3], w.mat[i / 3]].join(','));
       }
       return out.sort();
     };

@@ -81,6 +81,8 @@ import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, netSuite,
          soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
+import { buildWorld } from '../src/gen/index.mjs';
+import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
 
 const argv = process.argv.slice(2);
 const UPDATE = argv.includes('--update');
@@ -124,6 +126,38 @@ check(stale.length === 0, `SYNC: ${TARGETS.length} pages carry the current src`,
   }
   check(missing.length === 0, 'SYNC: both pages draw with every grass attribute',
         missing.length ? missing.join('; ') : `${want.length} attributes on ${TARGETS.length} pages`);
+}
+
+/* Issue #28: the point of moving colour out of the per-voxel record is that a
+   biome can be restyled without regenerating. That is a claim about the data,
+   so it is checkable without a browser: edit the table, resolve the same voxels
+   again, and the ground changes colour while the world does not move. */
+{
+  const w = buildWorld({ seed: 'ALDER-RUN', size: 64, force: 0, ox: 704, oz: 448 });
+  const slot = PAL.MEADOW_SURF;
+  const before = [], after = [];
+  const grab = (out) => {
+    for (let i = 0; i < w.pal.length && out.length < 3000; i++) {
+      if (w.pal[i] >= slot.at && w.pal[i] < slot.at + slot.n) {
+        out.push(palR(w.pal[i], w.shd[i]).toFixed(6));
+      }
+    }
+  };
+  grab(before);
+  const keep = PALETTE[slot.at];
+  PALETTE[slot.at] = 0x123456;                    /* a colour nothing else uses */
+  grab(after);
+  PALETTE[slot.at] = keep;
+  const moved = before.filter((v, i) => v !== after[i]).length;
+
+  check(before.length > 0 && moved > 0,
+        'PALETTE: a biome restyles from the table, with nothing regenerated',
+        `${moved} of ${before.length} meadow surface voxels changed colour`);
+  /* And the record really is four arrays of one length, not three plus colour. */
+  check(w.pal.length === w.pos.length / 3 && w.shd.length === w.pal.length
+        && w.mat.length === w.pal.length && w.col === undefined,
+        'PALETTE: a voxel is place, entry, shade and material — and no colour',
+        `${w.pal.length} voxels, col ${w.col === undefined ? 'gone' : 'STILL THERE'}`);
 }
 
 /* The static half of the MATH check. The dynamic half, below, proves the

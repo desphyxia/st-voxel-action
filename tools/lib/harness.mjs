@@ -132,8 +132,8 @@ export function measureWorld(d, name) {
   const parts = {};
   const part = (nm, fn) => { s = SEED; fn(); parts[nm] = hex(s); };
 
-  part('vox', () => { arr(d.pos); arr(d.col); arr(d.mat); });
-  part('magma', () => { arr(d.mpos); arr(d.mcol); arr(d.mmat); });
+  part('vox', () => { arr(d.pos); arr(d.pal); arr(d.shd); arr(d.mat); });
+  part('magma', () => { arr(d.mpos); arr(d.mpal); arr(d.mshd); arr(d.mmat); });
   part('grass', () => {
     arr(d.grass.p); arr(d.grass.ph); arr(d.grass.ti);
     arr(d.grass.sc); arr(d.grass.yw); arr(d.grass.c); arr(d.grass.dc);

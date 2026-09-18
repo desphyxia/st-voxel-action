@@ -68,8 +68,11 @@ export function buildWorld(cfg) {
   floodReach(w);               /* what the movement budget can actually reach */
   chooseSpawn(w);
   return {
-    pos: w.pos, col: w.col, mat: w.mat,
-    mpos: w.mpos, mcol: w.mcol, mmat: w.mmat,
+    /* One voxel is pos + pal + shd + mat. Colour is resolved at draw time
+       against src/gen/palette.mjs, so a biome restyles without regenerating
+       (issue #28). Same four for the emissive pass. */
+    pos: w.pos, pal: w.pal, shd: w.shd, mat: w.mat,
+    mpos: w.mpos, mpal: w.mpal, mshd: w.mshd, mmat: w.mmat,
     grass: w.grass, water: w.water, lamps: w.lamps,
     ovhPos: w.ovhPos, lmPos: w.lmPos, trail: w.TRAIL, topi: w.TOPI,
     unreach: w.UNREACH, reach: w.REACH, bridges: w.bridges,
