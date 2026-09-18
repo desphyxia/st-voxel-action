@@ -32,6 +32,7 @@
 import { V, CEIL, CHUNK, clamp } from '../gen/constants.mjs';
 import { MAT } from '../gen/materials.mjs';
 import { BIOMES, rouletteBiome } from '../gen/biomes.mjs';
+import { PAL } from '../gen/palette.mjs';
 import { PASS } from '../gen/rng.mjs';
 
 /** Voxel levels in a full-height column. */
@@ -105,7 +106,12 @@ export function openAir(g) {
 }
 
 /**
- * What a solid cell is made of.
+ * What a solid cell is made of, and which palette group it wears.
+ *
+ * Both, because they are different questions: MAT.ROCK is what you carve and
+ * what your boots sound like, and it is meadow rock or mesa rock depending on
+ * where you are standing. Merging on the palette group is therefore finer than
+ * merging on the material, and it is the one that decides what you see.
  *
  * The rules are buildVoxels', reproduced against the same inputs rather than
  * guessed: the biome is drawn from the column's own positional stream, so the
@@ -113,9 +119,9 @@ export function openAir(g) {
  * rolled. That only works because issue #41 made the stream answer for a place
  * — before it, a mesher could not have reproduced this at all.
  */
-export function materialAt(w, gi, gj, y) {
+export function surfaceAt(w, gi, gj, y) {
   var NZ = w.NZ, NX = w.NX, half = w.half, M = w.M;
-  if (gi < 0 || gj < 0 || gi >= NX || gj >= NZ) return MAT.ROCK;
+  if (gi < 0 || gj < 0 || gi >= NX || gj >= NZ) return { mat: MAT.ROCK, pal: PAL.MEADOW_ROCK.at };
   var k = gi * NZ + gj, hh = w.Hs[k], flg = w.FLG[k];
   var x = -half + gi * V + V / 2, z = -half + gj * V + V / 2;
   var c = w.cells[clamp(Math.round(x + half), 0, M - 1) * M + clamp(Math.round(z + half), 0, M - 1)];
@@ -123,14 +129,16 @@ export function materialAt(w, gi, gj, y) {
   var b = BIOMES[rouletteBiome(c.w, R)];
   var top = Math.floor((hh - 0.001) / V);
   if (y >= top) {
-    if (flg & 2) return MAT.ASH;
-    if (flg & 1) return b.mat.bed;
-    if (flg & 4) return MAT.PATH;
+    if (flg & 2) return { mat: MAT.ASH, pal: PAL.MAGMA_CRUST.at };
+    if (flg & 1) return { mat: b.mat.bed, pal: b.bed.at };
+    if (flg & 4) return { mat: MAT.PATH, pal: PAL.TRODDEN.at };
     var n0 = gi > 0 ? w.Hs[k - NZ] : hh - 2, n1 = gi < NX - 1 ? w.Hs[k + NZ] : hh - 2;
     var n2 = gj > 0 ? w.Hs[k - 1] : hh - 2, n3 = gj < NZ - 1 ? w.Hs[k + 1] : hh - 2;
-    return (hh - Math.min(n0, n1, n2, n3)) > 0.9 ? b.mat.rock : b.mat.surf;
+    return (hh - Math.min(n0, n1, n2, n3)) > 0.9
+      ? { mat: b.mat.rock, pal: b.rock.at } : { mat: b.mat.surf, pal: b.surf.at };
   }
-  return (y * V < hh - 1.25) ? b.mat.rock : b.mat.soil;
+  return (y * V < hh - 1.25)
+    ? { mat: b.mat.rock, pal: b.rock.at } : { mat: b.mat.soil, pal: b.soil.at };
 }
 
 /** Vertex AO from the three cells around a corner: the classic 0..3 ramp. */
@@ -147,7 +155,7 @@ function cornerAO(s1, s2, cor) { return (s1 && s2) ? 0 : 3 - (s1 + s2 + cor); }
 export function meshChunk(w, cx, cz) {
   var g = chunkOccupancy(w, cx, cz), open = openAir(g);
   var nx = g.nx, nz = g.nz, ny = g.ny, occ = g.occ, pad = g.pad;
-  var pos = [], nor = [], ao = [], mat = [], idx = [];
+  var pos = [], nor = [], ao = [], mat = [], pal = [], idx = [];
   var quads = 0, faces = 0, vbase = 0;
 
   function solid(a, b, y) {
@@ -177,12 +185,13 @@ export function meshChunk(w, cx, cz) {
         for (j = 0; j < lim[vA]; j++) {
           p[axis] = s + off[axis]; p[uA] = i + off[uA]; p[vA] = j + off[vA];
           var a = p[0], y = p[1], b = p[2];
-          var m = 0, packed = 0;
+          var m = 0, pg = 0, packed = 0;
           if (solid(a, b, y)) {
             var q = [0, 0, 0]; q[axis] = sign;
             var na = a + q[0], nyy = y + q[1], nb = b + q[2];
             if (!solid(na, nb, nyy) && seen(na, nb, nyy)) {
-              m = materialAt(w, g.i0 + a, g.j0 + b, y);
+              var sf = surfaceAt(w, g.i0 + a, g.j0 + b, y);
+              m = sf.mat; pg = sf.pal;
               /* the four corners of the face, in the slice's own axes */
               var e1 = [0, 0, 0], e2 = [0, 0, 0];
               e1[uA] = 1; e2[vA] = 1;
@@ -202,8 +211,10 @@ export function meshChunk(w, cx, cz) {
               faces++;
             } else m = 0;
           }
-          key[i * lim[vA] + j] = m ? (m + 1) : 0;
-          aoq[i * lim[vA] + j] = packed;
+          /* Keyed on the palette group, not the material: two biomes can both
+             be MAT.ROCK and must not merge into one grey face. */
+          key[i * lim[vA] + j] = m ? (pg + 1) : 0;
+          aoq[i * lim[vA] + j] = (packed << 8) | m;
         }
       }
       /* ---- pull rectangles out of it ---- */
@@ -221,7 +232,7 @@ export function meshChunk(w, cx, cz) {
             }
             if (ok) hRun++;
           }
-          emit(axis, sign, s, i, j, hRun, wRun, kk - 1, aa2, uA, vA, off);
+          emit(axis, sign, s, i, j, hRun, wRun, kk - 1, aa2 >> 8, aa2 & 255, uA, vA, off);
           for (var di2 = 0; di2 < hRun; di2++)
             for (var dj2 = 0; dj2 < wRun; dj2++) key[(i + di2) * lim[vA] + j + dj2] = 0;
           j += wRun;
@@ -230,7 +241,7 @@ export function meshChunk(w, cx, cz) {
     }
   }
 
-  function emit(axis, sign, s, i, j, hRun, wRun, m, packed, uA, vA, off) {
+  function emit(axis, sign, s, i, j, hRun, wRun, pg, packed, m, uA, vA, off) {
     /* world-space corner of the quad, in metres */
     var o = [0, 0, 0];
     o[axis] = (s + off[axis] + (sign > 0 ? 1 : 0));
@@ -242,7 +253,7 @@ export function meshChunk(w, cx, cz) {
     function pt(a, y, b) {
       pos.push(-half + (g.i0 + a) * V, y * V, -half + (g.j0 + b) * V);
       nor.push(axis === 0 ? sign : 0, axis === 1 ? sign : 0, axis === 2 ? sign : 0);
-      mat.push(m);
+      mat.push(m); pal.push(pg);
     }
     pt(o[0], o[1], o[2]);
     pt(o[0] + du[0], o[1] + du[1], o[2] + du[2]);
@@ -257,5 +268,5 @@ export function meshChunk(w, cx, cz) {
     vbase += 4; quads++;
   }
 
-  return { pos: pos, nor: nor, ao: ao, mat: mat, idx: idx, quads: quads, faces: faces };
+  return { pos: pos, nor: nor, ao: ao, mat: mat, pal: pal, idx: idx, quads: quads, faces: faces };
 }

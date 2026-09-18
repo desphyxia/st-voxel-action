@@ -689,6 +689,31 @@ if (BROWSER_HALF) {
       check(tells.dead && tells.hp === 0, 'BUILD: and it can be killed',
             tells.dead ? 'down' : `still up on ${tells.hp} hp`);
 
+      /* ---------- BUILD: the two terrain renderers (#12) ----------
+         Both are in the page at once so the side-by-side the issue asks for is
+         two shots of one camera rather than two runs that might differ. What
+         the gate can hold is that the swap actually swaps, that props survive
+         it — they stay instanced by decision, and hiding them with the terrain
+         was the first bug the comparison caught — and that nothing errors. */
+      const swap = await bp.evaluate(() => {
+        const P = window.QSPLAY;
+        const out = { boxes: P.boxCount, quads: P.meshQuads, started: P.mesh };
+        P.setMesh(true); P.draw();
+        out.onMesh = P.mesh;
+        P.setMesh(false); P.draw();
+        out.offMesh = P.mesh;
+        return out;
+      });
+      check(swap.quads > 0 && swap.boxes * 6 / swap.quads > 5,
+            'BUILD: the mesh draws a fraction of what the boxes do',
+            `${swap.boxes * 6} box faces, ${swap.quads} quads `
+            + `— ${(swap.boxes * 6 / swap.quads).toFixed(1)}x fewer`);
+      check(swap.started === false && swap.onMesh === true && swap.offMesh === false,
+            'BUILD: and the renderer swaps both ways, boxes by default',
+            `default ${swap.started ? 'mesh' : 'boxes'}, toggles to mesh and back`);
+      check(bErrors.length === 0, 'BUILD: and neither renderer errors',
+            bErrors.slice(0, 3).join(' | '));
+
       /* ---------- BUILD: fullscreen ----------
          Two paths, because a published artifact runs in an iframe and only gets
          native fullscreen if the host granted allow="fullscreen". Both have to
