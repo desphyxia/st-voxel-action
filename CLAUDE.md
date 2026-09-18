@@ -60,8 +60,35 @@ against `docs/concept/index.html` ignoring the generated bundle: if the only dif
 artifact service's own `<!doctype …><head>` wrapper and closing tags, nothing was edited from
 inside the page and there is nothing to lose. Force is the user's call, not yours.
 
-Neither is published automatically. When a change lands that alters what either page *shows*,
-republish it, or the live copy quietly drifts from the repo.
+Neither is published automatically, and a stale artifact is worse than no artifact: it is a
+live link, already in circulation, quietly serving a build that no longer exists.
+
+### Republishing is part of finishing an issue
+
+An issue is not finished when CI goes green. It is finished when the live pages match the repo.
+
+**The trigger is mechanical, not a judgement call.** If the commits that close an issue touch
+`docs/play/index.html` or `docs/concept/index.html` — *including when only the generated bundle
+moved* — that page's artifact is stale and is republished before the issue is closed.
+`git diff --name-only <last-published-sha>..HEAD -- docs/` answers it. Nobody has to decide
+whether the change "alters what the page shows"; touching the file is the test. That distinction
+is not pedantic — #41 read as a *generator* change and still moved both bundles and both grass
+shaders, which is exactly the reasoning that leaves a page behind.
+
+**Republish only after CI is green on the pushed commit.** A page that boots in node and hangs in
+a browser is what the browser half exists to catch, and #41's first push was one. Publishing
+before CI reports puts a broken build behind a link people already have.
+
+**One publish per page, not per commit.** If several issues land together, one republish covers
+them all.
+
+**Force is still the user's call.** Attempt the publish. If it is refused because the saved copy
+cannot be read whole, stop and show the diff against the repo file ignoring the bundle — never
+force unprompted. See the note above.
+
+**Record where it went.** The closing comment on the issue names the artifact URL and the version
+the publish returned, so *which build is live* is answerable from the issue rather than from
+someone's memory.
 
 ## Working on the generator
 
@@ -76,10 +103,18 @@ node tools/bundle-gen.mjs --check   # fail if either page is out of date
 
 Two pages carry a bundle: the plate gets `src/gen`, the playable build gets `src/gen`,
 `src/sim` **and** `src/net`. `MODULES` in `tools/bundle-gen.mjs` is the dependency order, and
-it is also the concatenation order — a module may only use names defined above it. Two traps the bundler now fails on rather than letting through,
-because it concatenates everything into one scope: a module missing from `MODULES`, and an
-import that **renames** anything (`import { advance as advanceCombat }` bundles to a scope that
-only ever defined `advance`). Rename the export instead.
+it is also the concatenation order — a module may only use names defined above it. Three traps
+the bundler now fails on rather than letting through, all of them consequences of concatenating
+everything into one scope:
+
+- a module missing from `MODULES`;
+- an import that **renames** anything (`import { advance as advanceCombat }` bundles to a scope
+  that only ever defined `advance`) — rename the export instead;
+- **two modules declaring the same top-level name.** They do not shadow: the later declaration
+  wins *everywhere*, including inside the earlier module's own code. A `groundAt` in `src/gen`
+  silently captured every call meant for the one `src/sim/camera.mjs` has always exported. The
+  plate stayed green because it bundles `src/gen` alone; only the build carrying both
+  directories broke, and only past where the node half can see.
 
 Edit the modules, run the bundler, commit both. The smoke test fails if they have drifted, and
 also fails if the plate's worlds stop matching the ones node generates from `src/gen`.
