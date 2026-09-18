@@ -701,19 +701,19 @@ if (BROWSER_HALF) {
       const swap = await bp.evaluate(() => {
         const P = window.QSPLAY;
         const out = { boxes: P.boxCount, quads: P.meshQuads, started: P.mesh };
-        P.setMesh(true); P.draw();
-        out.onMesh = P.mesh;
         P.setMesh(false); P.draw();
         out.offMesh = P.mesh;
+        P.setMesh(true); P.draw();
+        out.onMesh = P.mesh;
         return out;
       });
       check(swap.quads > 0 && swap.boxes * 6 / swap.quads > 5,
             'BUILD: the mesh draws a fraction of what the boxes do',
             `${swap.boxes * 6} box faces, ${swap.quads} quads `
             + `— ${(swap.boxes * 6 / swap.quads).toFixed(1)}x fewer`);
-      check(swap.started === false && swap.onMesh === true && swap.offMesh === false,
-            'BUILD: and the renderer swaps both ways, boxes by default',
-            `default ${swap.started ? 'mesh' : 'boxes'}, toggles to mesh and back`);
+      check(swap.started === true && swap.offMesh === false && swap.onMesh === true,
+            'BUILD: and the renderer swaps both ways, the mesh by default',
+            `default ${swap.started ? 'mesh' : 'boxes'}, toggles to boxes and back`);
       check(bErrors.length === 0, 'BUILD: and neither renderer errors',
             bErrors.slice(0, 3).join(' | '));
 

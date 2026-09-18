@@ -196,7 +196,7 @@
       <button class="ctl" id="regen" type="button">Generate</button>
       <button class="ctl" id="respawn" type="button">Respawn</button>
       <button class="ctl" id="hostbtn" type="button">Host a game</button>
-      <button class="ctl" id="meshbtn" type="button" title="Swap the terrain renderer: instanced boxes, or a greedy mesh with baked occlusion">Mesh</button>
+      <button class="ctl" id="meshbtn" type="button" title="Swap the terrain renderer: a greedy mesh with baked occlusion, or instanced boxes">Boxes</button>
       <button class="ctl" id="fullbtn" type="button">Fullscreen</button>
     </div>
     <p class="netstat" id="netstat">Playing alone. <b>Host a game</b> opens a second window on
@@ -5328,12 +5328,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   /* ---------- the greedy mesh (issue #12) ----------
      Two renderers live here at once, on purpose. #12's bar is "parity or
      better with the plate's look, confirmed side by side", and side by side is
-     not something you can do with one renderer in the page. The flag is how
-     the comparison gets made, and it is what #29 will point a camera at.
+     not something you can do with one renderer in the page. The mesh is what
+     the build draws now; the boxes stay because a comparison needs both, and
+     because #29 will want to point a camera at the pair rather than at a
+     memory of one.
 
      Boxes draw six faces per voxel whether or not anything can see them. The
      mesh draws the volume's exposed surface, merged where material, palette
-     group and occlusion all agree — 11.4x fewer quads on the hero window. */
+     group and occlusion all agree — 10.8x fewer faces on the hero window. */
   var AO_STEP=[0.55,0.72,0.87,1.0];
   /* ---------- putting the grain back ----------
      The first side-by-side said the mesh was at parity structurally and
@@ -5719,10 +5721,21 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   var solo=null, session=null, wire=null, role='solo', warped=false;
   var targets=null, encounter=null, postMeshes=[], postHits=[], postFlash=[];
   var vp={w:1,h:1}, tm=0, deaths=0, fps=60, wind=new THREE.Vector2(0.72,0.69);
-  /* Issue #12's flag. Off by default until the side-by-side says the mesh is
-     at parity or better — the issue's own bar, and not one a screenshot of a
-     single renderer can answer. */
-  var useMesh=false;
+  /* Issue #12's flag, and the mesh is now what the build draws.
+
+     The bar was "parity or better with the plate's look, confirmed side by
+     side", and the side-by-side was looked at: four places at 3x, one camera,
+     one frame. It is a trade rather than a clean win. The mesh gains
+     everything with structure — a pillar meets the ground on a dark contact
+     line, a cut bank creases, the ruin reads as one mass — and it loses where
+     per-voxel dither was selling a material, which is most visible on the
+     wall's coping, where stacked stones become a grey band. Called for the
+     mesh: 10.8x fewer faces, and the losses are recoverable in the shader
+     without putting per-voxel colour back into the record.
+
+     Boxes are still one click away, and the comparison harness still drives
+     both — tools/compare-renderers.mjs and tools/compare-plates.mjs. */
+  var useMesh=true;
   function setMesh(on){
     useMesh=!!on;
     if(built&&built.mesh){ built.mesh.visible=useMesh; if(built.vox) built.vox.visible=!useMesh; }
