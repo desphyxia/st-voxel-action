@@ -161,6 +161,85 @@ export function measureWorld(d, name) {
     }
   });
 
+  /* Props standing in the routed trail (issue #43).
+     Terrain and props sit on interleaved lattices — buildVoxels emits column
+     centres at -half + i*V + V/2, addVox rounds to multiples of V — so a voxel
+     on the whole-V grid is a stamp and one on the half-offset is terrain. The
+     collider already relies on that offset; here it is what tells the two
+     apart without threading a marker through every array.
+
+     Foliage is exempt: a tree beside a road has branches over the road, and
+     whether those branches should *collide* is a separate question. That means
+     MAT.SNOW as well as MAT.LEAF — a frost conifer's canopy is snow-capped per
+     voxel, so half of it is filed under snow. Ground accumulation is also snow
+     but lands on the terrain lattice, so it never reaches this test.
+
+     A crossing is exempt because a deck belongs on the trail — that is what it
+     is for. */
+  let trailProps = 0;
+  {
+    /* Inlined rather than imported: this function is stringified into the page
+       (measureWorld.toString()), where a module import is not in scope. */
+    const VV = 0.25;
+    const half = d.half, M = d.M, NZ = d.NZ;
+    const ci = (v) => Math.min(M - 1, Math.max(0, Math.round(v + half)));
+    const onDeck = (x, z) => {
+      for (let q = 0; q < d.bridges.length; q++) {
+        const b = d.bridges[q];
+        const along = (x - b[0]) * b[2] + (z - b[1]) * b[3];
+        const across = (x - b[0]) * b[3] - (z - b[1]) * b[2];
+        if (Math.abs(along) <= b[4] / 2 + 1 && Math.abs(across) <= 1.25) return true;
+      }
+      return false;
+    };
+    for (let q = 0; q < d.pos.length; q += 3) {
+      const x = d.pos[q], y = d.pos[q + 1], z = d.pos[q + 2];
+      /* half-offset means terrain, so only whole-V positions are stamps */
+      if (Math.abs(x / VV - Math.round(x / VV)) > 0.25) continue;
+      if (Math.abs(z / VV - Math.round(z / VV)) > 0.25) continue;
+      if (!d.trail[ci(x) * M + ci(z)]) continue;
+      const mt = d.mat[q / 3];
+      if (mt === 10 || mt === 5) continue;                     /* LEAF, SNOW — canopy */
+      const k = Math.min(NZ - 1, Math.max(0, Math.round((x + half) / VV - 0.5))) * NZ
+              + Math.min(NZ - 1, Math.max(0, Math.round((z + half) / VV - 0.5)));
+      const surf = d.Hs[k];
+      if (y < surf - 0.3 || y > surf + 1.8) continue;          /* the walkable band */
+      if (onDeck(x, z)) continue;
+      trailProps++;
+    }
+  }
+
+  /* Water bodies counted two ways. A river narrow enough to be one cell wide,
+     stepping diagonally, joins only at its corners: 4-connected sees a string
+     of puddles where 8-connected sees one river, and the gap between the two
+     counts is exactly the defect (issue #44). */
+  let waterBodies = 0, waterBodies8 = 0;
+  {
+    const M = d.M;
+    const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    const N8 = N4.concat([[1, 1], [1, -1], [-1, 1], [-1, -1]]);
+    const count = (nbr) => {
+      const seen = new Uint8Array(M * M);
+      let n = 0;
+      for (let st = 0; st < M * M; st++) {
+        if (!d.cells[st].water || seen[st]) continue;
+        n++;
+        const q = [st]; seen[st] = 1;
+        while (q.length) {
+          const c = q.pop(), cx = (c / M) | 0, cz = c % M;
+          for (let e = 0; e < nbr.length; e++) {
+            const a2 = cx + nbr[e][0], b2 = cz + nbr[e][1];
+            if (a2 < 0 || b2 < 0 || a2 >= M || b2 >= M) continue;
+            const k2 = a2 * M + b2;
+            if (d.cells[k2].water && !seen[k2]) { seen[k2] = 1; q.push(k2); }
+          }
+        }
+      }
+      return n;
+    };
+    waterBodies = count(N4); waterBodies8 = count(N8);
+  }
+
   let water = 0, trail = 0, unreach = 0, wetTrail = 0;
   for (let i = 0; i < d.M * d.M; i++) {
     if (d.cells[i].water) water++;
@@ -172,6 +251,7 @@ export function measureWorld(d, name) {
   for (let i = 0; i < d.unreach.length; i++) unreach += d.unreach[i];
   return {
     seed: name,
+    trailProps, waterBodies, waterBodies8,
     voxels: d.pos.length / 3,
     /* mats must equal voxels: pos, col and mat are one record split three ways,
        and a stamp that forgets its material shows up here as a mismatch. */

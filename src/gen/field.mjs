@@ -55,6 +55,34 @@ export function makeGen(seedStr,force){
     var w=1+Math.floor(N.r.n2(x*0.03+13,z*0.03+13)*4); if(w>4)w=4;
     return {d:d,w:w};
   }
+  /**
+   * A river narrow enough to be a single cell, stepping diagonally, rasterises
+   * to cells that meet only at their corners: 4-connected flood fill sees a
+   * dotted line of one-cell puddles rather than a stream (issue #44). Nothing
+   * downstream copes with that — flowField and buildWaterGeometry read
+   * 4-neighbours for depth, foam and flow, wading is per-cell, and markPath
+   * only asks for a crossing where the route meets a *run* of water.
+   *
+   * So fill the corner. Only a genuine corner-only contact: if the cell
+   * diagonally opposite is also river then the two neighbours are already
+   * joined and this is the inside of a bend, which must be left alone — filling
+   * those too widens every river by up to half again and costs a crossing.
+   *
+   * The neighbour's width is taken from the calling cell's climate rather than
+   * its own. Climate is fbm at 0.0068, so it does not measurably change across
+   * one metre, and this keeps the test to four cheap noise lookups instead of
+   * four more climate evaluations per cell.
+   */
+  function isRiver(x,z,rw){ return riverAt(x,z).d < rw/2; }
+  function riverCorner(x,z,rw){
+    for(var q=0;q<4;q++){
+      var dx=(q<2?1:-1), dz=(q%2?1:-1);
+      if(!isRiver(x+dx,z,rw)||!isRiver(x,z+dz,rw)) continue;
+      if(isRiver(x+dx,z+dz,rw)) continue;
+      return true;
+    }
+    return false;
+  }
   function canyonAt(x,z){
     var v=N.c.fbm(x*0.0082+5,z*0.0082+5,3), d=Math.abs(v-0.5)*120;
     var w=3+Math.floor(N.c.n2(x*0.02+31,z*0.02+7)*3); if(w>5)w=5;
@@ -85,6 +113,7 @@ export function makeGen(seedStr,force){
     H+=pillarAt(x,z,colw);
     var r=riverAt(x,z), rw=r.w+Math.round(w[2]*3), water=false, pond=false, wl=0;
     if(r.d<rw/2){ H-=1; water=true; }
+    else if(riverCorner(x,z,rw)){ H-=1; water=true; }
     if(!water&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }

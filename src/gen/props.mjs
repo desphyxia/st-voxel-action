@@ -29,12 +29,28 @@ export function makeStamps(w) {
     pushShade(col,hex,k2); mat.push(m);
   }
   function surfAt(px,pz){var i2=clamp(Math.round((px+half)/V),0,NX-1),j2=clamp(Math.round((pz+half)/V),0,NZ-1);var k2=i2*NZ+j2;return {y:Hs[k2],f:FLG[k2]};}
+  /**
+   * Is this spot on the routed trail? (issue #43)
+   *
+   * FLG packs water 1, magma 2, trail 4. Stamps that guarded with `if (s.f)`
+   * excluded trails by accident of testing every bit; the ones that guarded
+   * with `if (s.f & 1)` tested water alone and let boulders, walls, scree and
+   * fences stand in a path the router spent an A* keeping clear.
+   *
+   * Per voxel, not per stamp: scree scatters 2.4 m from its anchor and a ruin's
+   * pillars sit on a ring around a site, so an anchor off the trail says
+   * nothing about where the voxels land.
+   *
+   * Overhang is deliberately still allowed — a tree beside a road has branches
+   * over the road. This is only used by things that are solid at body height.
+   */
+  function onTrail(px,pz){ return (surfAt(px,pz).f & 4) !== 0; }
   function tree(px,pz,b,t,R){
     var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
     var th, r, ax, ay, az;
     if(t==='conifer'){
       th=3+R()*2;
-      for(y=0;y<th;y+=V) addVox(px,y0+y,pz,b.k==='frost'?0x4a4038:0x4a3a2c,0.9+R()*0.2,MAT.WOOD);
+      if(!onTrail(px,pz)) for(y=0;y<th;y+=V) addVox(px,y0+y,pz,b.k==='frost'?0x4a4038:0x4a3a2c,0.9+R()*0.2,MAT.WOOD);
       for(var lv=0;lv<5;lv++){
         var ly=y0+th*0.35+lv*(th*0.15), lr=(1.5-lv*0.24);
         for(ax=-lr;ax<=lr;ax+=V)for(az=-lr;az<=lr;az+=V){
@@ -48,7 +64,7 @@ export function makeStamps(w) {
       }
     } else if(t==='scrub'){
       th=1+R()*1.2;
-      for(y=0;y<th;y+=V) addVox(px,y0+y,pz,0x6b5233,0.9+R()*0.2,MAT.WOOD);
+      if(!onTrail(px,pz)) for(y=0;y<th;y+=V) addVox(px,y0+y,pz,0x6b5233,0.9+R()*0.2,MAT.WOOD);
       r=0.7+R()*0.4;
       for(ax=-r;ax<=r;ax+=V)for(ay=-r*0.5;ay<=r*0.6;ay+=V)for(az=-r;az<=r;az+=V){
         if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.5)>1-R()*0.3) continue;
@@ -56,13 +72,18 @@ export function makeStamps(w) {
       }
     } else if(t==='snag'){
       th=2.5+R()*1.8;
-      for(y=0;y<th;y+=V) addVox(px+(y>th*0.6?V:0),y0+y,pz,R()<0.5?0x2e2825:0x3a322e,0.85+R()*0.25,MAT.WOOD);
+      for(y=0;y<th;y+=V){ var sx2=px+(y>th*0.6?V:0);
+        if(onTrail(sx2,pz)) continue;
+        addVox(sx2,y0+y,pz,R()<0.5?0x2e2825:0x3a322e,0.85+R()*0.25,MAT.WOOD); }
       for(var br=0;br<3;br++){var bl=0.5+R()*0.7,dirx=R()<0.5?1:-1,by=y0+th*(0.55+br*0.15);
-        for(var t2=0;t2<bl;t2+=V) addVox(px+dirx*t2,by+t2*0.4,pz+(R()-0.5)*0.3,0x332b27,0.9,MAT.WOOD);}
+        for(var t2=0;t2<bl;t2+=V){ var bz2=pz+(R()-0.5)*0.3;
+          if(onTrail(px+dirx*t2,bz2)) continue;
+          addVox(px+dirx*t2,by+t2*0.4,bz2,0x332b27,0.9,MAT.WOOD); } }
     } else {
       th=2.5+R()*1.5;
       for(y=0;y<th;y+=V)for(ax=-V;ax<=V;ax+=V)for(az=-V;az<=V;az+=V)
-        if(Math.abs(ax)+Math.abs(az)<=V) addVox(px+ax,y0+y,pz+az,0x5a4130,0.85+R()*0.3,MAT.WOOD);
+        if(Math.abs(ax)+Math.abs(az)<=V&&!onTrail(px+ax,pz+az))
+          addVox(px+ax,y0+y,pz+az,0x5a4130,0.85+R()*0.3,MAT.WOOD);
       r=1.1+R()*0.55;
       for(ax=-r;ax<=r;ax+=V)for(ay=-r*0.8;ay<=r*0.8;ay+=V)for(az=-r;az<=r;az+=V){
         if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.68)>1-R()*0.28) continue;
@@ -71,18 +92,21 @@ export function makeStamps(w) {
     }
   }
   function boulder(px,pz,r,b,R){
-    var s=surfAt(px,pz); if(s.f&1) return; var y0=s.y;
+    var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
     for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
+      if(onTrail(px+ax,pz+az)) continue;
       addVox(px+ax,y0+r*0.45+ay,pz+az,pickFrom(b.rock,R),0.85+R()*0.3,b.mat.rock);
     }
   }
   function scree(px,pz,dom,n,R){
     for(var q=0;q<n;q++){
-      var sx=px+(R()-0.5)*2.4, sz=pz+(R()-0.5)*2.4, s=surfAt(sx,sz); if(s.f&1) continue;
+      var sx=px+(R()-0.5)*2.4, sz=pz+(R()-0.5)*2.4, s=surfAt(sx,sz); if(s.f) continue;
       var n2=(R()<0.3)?2:1;
-      for(var a=0;a<n2;a++)for(var b=0;b<n2;b++)for(var c2=0;c2<n2;c2++)
+      for(var a=0;a<n2;a++)for(var b=0;b<n2;b++)for(var c2=0;c2<n2;c2++){
+        if(onTrail(sx+a*V,sz+b*V)) continue;
         addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickFrom(BIOMES[dom].rock,R),0.8+R()*0.3,BIOMES[dom].mat.rock);
+      }
     }
   }
   function bush(px,pz,dom,R){
@@ -91,6 +115,7 @@ export function makeStamps(w) {
     var cols=(dom===4)?[0x6f8390,0x8aa3ad]:(dom===3?[0x3b332e,0x4a403a]:(dom===1?[0x6f7f42,0x87904a]:[0x3f6b34,0x4e7d3e,0x5d8c46]));
     for(var ax=-r;ax<=r;ax+=V)for(var ay=0;ay<=r*1.5;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+((ay-r*0.65)*(ay-r*0.65))/(r*r*0.65)>1-R()*0.3) continue;
+      if(onTrail(px+ax,pz+az)) continue;
       addVox(px+ax,s.y+ay+V/2,pz+az,pickFrom(cols,R),0.85+R()*0.3,MAT.LEAF);
     }
   }
@@ -105,15 +130,17 @@ export function makeStamps(w) {
     var ang=R()*Math.PI, dx=cos(ang), dz=sin(ang), L=2+R()*2.2;
     for(var t2=-L/2;t2<=L/2;t2+=V)for(var ay=0;ay<=0.55;ay+=V)for(var b=-0.3;b<=0.3;b+=V){
       if((ay-0.28)*(ay-0.28)+b*b>0.082) continue;
+      if(onTrail(px+dx*t2-dz*b,pz+dz*t2+dx*b)) continue;
       addVox(px+dx*t2-dz*b,s0.y+ay+V/2,pz+dz*t2+dx*b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25,MAT.WOOD);
     }
   }
   function fence(px,pz,ang,len,R){
     var dx=cos(ang),dz=sin(ang);
     for(var t2=0;t2<=len;t2+=1){
-      var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
+      var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f) continue;
       for(var y2=0;y2<1.0;y2+=V) addVox(xx,s.y+y2+V/2,zz,0x6b5a45,0.9+R()*0.2,MAT.WOOD);
       if(t2<len) for(var u=0;u<1;u+=V){
+        if(onTrail(xx+dx*u,zz+dz*u)) continue;
         addVox(xx+dx*u,s.y+0.8,zz+dz*u,0x5f5040,0.95,MAT.WOOD);
         addVox(xx+dx*u,s.y+0.4,zz+dz*u,0x5f5040,0.95,MAT.WOOD);
       }
@@ -131,20 +158,26 @@ export function makeStamps(w) {
     var dx=cos(ang),dz=sin(ang);
     for(var t2=0;t2<=len;t2+=V){
       if(R()<0.05){ t2+=0.75; continue; }
-      var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
+      var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f) continue;
       var hh2=h*(0.55+0.45*Math.abs(sin(t2*0.7)));
-      for(var y2=0;y2<hh2;y2+=V)for(var b=-0.25;b<=0.25;b+=V)
+      for(var y2=0;y2<hh2;y2+=V)for(var b=-0.25;b<=0.25;b+=V){
+        if(onTrail(xx-dz*b,zz+dx*b)) continue;
         addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
+      }
     }
   }
   function pillarRuin(px,pz,h,dom,R){
     var s=surfAt(px,pz); if(s.f) return;
-    for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V)
+    for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V){
+      if(onTrail(px+b1,pz+b2)) continue;
       addVox(px+b1,s.y+V/2,pz+b2,pickFrom(BIOMES[dom].rock,R),0.95,BIOMES[dom].mat.rock);
+    }
     for(var y2=V;y2<h;y2+=V){
       var rr2=(y2>h-0.6&&R()<0.5)?0.25:0.375;
-      for(var a1=-rr2;a1<=rr2;a1+=V)for(var a2=-rr2;a2<=rr2;a2+=V)
+      for(var a1=-rr2;a1<=rr2;a1+=V)for(var a2=-rr2;a2<=rr2;a2+=V){
+        if(onTrail(px+a1,pz+a2)) continue;
         addVox(px+a1,s.y+y2+V/2,pz+a2,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.22,BIOMES[dom].mat.rock);
+      }
     }
   }
   function hut(px,pz,dom,R){
@@ -154,6 +187,7 @@ export function makeStamps(w) {
       if(Math.abs(a)<w/2-V&&Math.abs(b)<w/2-V) continue;
       if(a>-0.6&&a<0.6&&b>w/2-V) continue;
       var hh2=h*(R()<0.22?0.45+R()*0.4:1);
+      if(onTrail(px+a,pz+b)) continue;
       for(var y2=0;y2<hh2;y2+=V) addVox(px+a,s.y+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.2,BIOMES[dom].mat.rock);
     }
     for(var a2=-w/2;a2<=w/2;a2+=V)for(var b2=-w/2;b2<=w/2;b2+=V)
@@ -165,7 +199,7 @@ export function makeStamps(w) {
     for(var side=-1;side<=1;side+=2)for(var t3=-len/2;t3<=len/2;t3+=0.5)
       addVox(px+di*t3-dj*side*0.75,y+0.5,pz+dj*t3+di*side*0.75,0x4c3f30,0.95,MAT.WOOD);
   }
-  return { addVox: addVox, surfAt: surfAt, tree: tree, boulder: boulder, scree: scree,
+  return { addVox: addVox, surfAt: surfAt, onTrail: onTrail, tree: tree, boulder: boulder, scree: scree,
            bush: bush, stump: stump, fallenTrunk: fallenTrunk, fence: fence, lamp: lamp,
            wallRun: wallRun, pillarRuin: pillarRuin, hut: hut, deckBridge: deckBridge };
 }
@@ -299,22 +333,23 @@ export function placeClutter(w, kit) {
 export function placeLandmark(w, kit) {
   var half = w.half, G = w.G,
       OX = w.OX, OZ = w.OZ, mpos = w.mpos, mcol = w.mcol, mmat = w.mmat,
-      addVox = kit.addVox;
+      addVox = kit.addVox, onTrail = kit.onTrail;
   var lmPos=null;
   function landmarkStamp(px,pz,kind,dom,base,R){
     var a,b,y2,r2;
     if(kind===0){                                   /* obelisk */
-      for(a=-1;a<=1;a+=V)for(b=-1;b<=1;b+=V) addVox(px+a,base+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
+      for(a=-1;a<=1;a+=V)for(b=-1;b<=1;b+=V){ if(onTrail(px+a,pz+b)) continue;
+        addVox(px+a,base+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock); }
       for(y2=V;y2<11;y2+=V){
         r2=0.5*(1-y2/16);
-        for(a=-r2;a<=r2;a+=V)for(b=-r2;b<=r2;b+=V)
-          addVox(px+a,base+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock);
+        for(a=-r2;a<=r2;a+=V)for(b=-r2;b<=r2;b+=V){ if(onTrail(px+a,pz+b)) continue;
+          addVox(px+a,base+y2+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock); }
       }
       mpos.push(Math.round(px/V)*V,Math.round((base+11.2)/V)*V,Math.round(pz/V)*V);
       pushShade(mcol,0x9fe3ff,1); mmat.push(MAT.LIGHT);
     } else if(kind===1){                            /* hive tree */
       for(y2=0;y2<8;y2+=V)for(a=-0.5;a<=0.5;a+=V)for(b=-0.5;b<=0.5;b+=V)
-        if(a*a+b*b<0.3) addVox(px+a,base+y2+V/2,pz+b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25,MAT.WOOD);
+        if(a*a+b*b<0.3&&!onTrail(px+a,pz+b)) addVox(px+a,base+y2+V/2,pz+b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25,MAT.WOOD);
       r2=3.2;
       for(a=-r2;a<=r2;a+=V)for(y2=-2.2;y2<=2.2;y2+=V)for(b=-r2;b<=r2;b+=V){
         if((a*a+b*b)/(r2*r2)+(y2*y2)/5.5>1-R()*0.25) continue;
@@ -327,8 +362,9 @@ export function placeLandmark(w, kit) {
     } else if(kind===2){                            /* wrecked machine */
       for(var sl=0;sl<3;sl++){
         var ax2=cos(sl*2.1), az2=sin(sl*2.1);
-        for(var t4=0;t4<6;t4+=V)for(b=-0.9;b<=0.9;b+=V)
-          addVox(px+ax2*t4*0.75-az2*b, base+t4*0.8+V/2, pz+az2*t4*0.75+ax2*b, R()<0.3?0x6a6259:0x4a443e,0.85+R()*0.25,MAT.METAL);
+        for(var t4=0;t4<6;t4+=V)for(b=-0.9;b<=0.9;b+=V){
+          if(onTrail(px+ax2*t4*0.75-az2*b, pz+az2*t4*0.75+ax2*b)) continue;
+          addVox(px+ax2*t4*0.75-az2*b, base+t4*0.8+V/2, pz+az2*t4*0.75+ax2*b, R()<0.3?0x6a6259:0x4a443e,0.85+R()*0.25,MAT.METAL); }
       }
       for(var cq3=0;cq3<5;cq3++){
         mpos.push(Math.round((px+(R()-0.5)*1.5)/V)*V,Math.round((base+1+R()*1.5)/V)*V,Math.round((pz+(R()-0.5)*1.5)/V)*V);
@@ -337,8 +373,9 @@ export function placeLandmark(w, kit) {
     } else {                                        /* standing stones */
       for(var st=0;st<6;st++){
         var sa=st/6*6.283, sx=px+cos(sa)*4, sz2=pz+sin(sa)*4, sh=2.5+R()*1.5;
-        for(y2=0;y2<sh;y2+=V)for(a=-0.375;a<=0.375;a+=V)for(b=-0.25;b<=0.25;b+=V)
-          addVox(sx+a,base+y2+V/2,sz2+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock);
+        for(y2=0;y2<sh;y2+=V)for(a=-0.375;a<=0.375;a+=V)for(b=-0.25;b<=0.25;b+=V){
+          if(onTrail(sx+a,sz2+b)) continue;
+          addVox(sx+a,base+y2+V/2,sz2+b,pickFrom(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock); }
       }
     }
   }

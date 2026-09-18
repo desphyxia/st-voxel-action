@@ -252,6 +252,19 @@ if (NODE_HALF) {
               `SANITY: ${m.seed} a trail over water has a crossing`,
               `${m.wetTrail} trail cells in water, ${m.bridges} crossings, `
               + `${m.waterCells} water cells in all`);
+        /* Issue #43: the router spends an A* keeping the trail walkable, and
+           props were stamped on top of it afterwards — a boulder could stand
+           in the path. Foliage and a crossing deck are allowed; nothing else
+           solid may be in the walkable band over a trail cell. */
+        check(m.trailProps === 0, `TRAIL: ${m.seed} nothing stands in the routed trail`,
+              m.trailProps ? `${m.trailProps} prop voxels in the walkable band` : 'clear');
+        /* Issue #44: a river one cell wide stepping diagonally rasterised to
+           cells meeting only at their corners — a dotted line of puddles that
+           flow, foam, wading and the crossing logic all fail to see as a river.
+           The gap between a 4-connected and an 8-connected count is the defect. */
+        check(m.waterBodies === m.waterBodies8,
+              `WATER: ${m.seed} every water body is properly joined`,
+              `${m.waterBodies} bodies, ${m.waterBodies8} counting diagonals`);
       }
     }
   }
