@@ -70,13 +70,21 @@ been edited from inside a page, its live copy would differ from the repo file **
 the last publish**:
 
 ```
-git show <last-published-sha>:docs/play/index.html > /tmp/was.html
-diff <(grep -v '^<!doctype html><html><head>' saved.html | grep -v '^</body></html>$') \
-     <(grep -v '^$' /tmp/was.html)
+strip() { grep -v '^<!doctype html><html><head>' "$1" | grep -v '^</body></html>$' | grep -v '^$'; }
+git show <last-published-sha>:docs/play/index.html | grep -v '^$' > /tmp/was.html
+diff <(strip saved.html) /tmp/was.html
 ```
 
+**Blank lines must come off both sides.** The saved copy keeps them and an earlier version of
+this recipe stripped them only from the repo file, which reported 454 differing lines on a page
+nobody had touched — every one of them an empty line. That looks exactly like someone having
+typed into the page, which is the one thing the check exists to rule out.
+
+If no commit matches, loop over the last twenty: `git log --format=%H -20 -- docs/play/index.html`
+and diff each. The last-published sha is rarely the one you remember.
+
 Identical means nobody has typed into the page and forcing loses nothing. On 2026-09-18 both
-pages came back identical to `8b37d0b`. **Force is still the user's call, not yours** — show
+pages came back identical to `487222d`. **Force is still the user's call, not yours** — show
 them that result and ask.
 
 Neither is published automatically, and a stale artifact is worse than no artifact: it is a
