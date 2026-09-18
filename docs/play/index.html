@@ -1,4 +1,5 @@
 <title>Quarterstone Prototype</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Archivo:wght@400;500;600&display=swap">
 <style>
@@ -91,6 +92,35 @@
   .bind button:hover{color:var(--text)}
   .bind.arming{outline:1px solid var(--magic);outline-offset:-1px}
   .bind.arming .keys{color:var(--magic)}
+  /* ---------- touch controls ----------
+     Shown only on a coarse pointer. The pad itself never takes a touch — it is
+     a drawing surface over the stage — so the stick can start anywhere in its
+     half; only the buttons opt back in. */
+  .pad{position:absolute;inset:0;display:none;pointer-events:none;touch-action:none;z-index:3}
+  .stage.touch .pad{display:block}
+  .stick{position:absolute;width:132px;height:132px;margin:-66px 0 0 -66px;border-radius:50%;
+         border:1px solid var(--line2);background:rgba(10,13,17,.32);opacity:0;
+         transition:opacity .1s;pointer-events:none}
+  .stick.on{opacity:1}
+  .stick i{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;
+           border-radius:50%;background:rgba(217,162,94,.45);border:1px solid var(--sand)}
+  .tbtn{position:absolute;pointer-events:auto;display:grid;place-items:center;border-radius:50%;
+        font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
+        color:var(--text);background:rgba(10,13,17,.5);border:1px solid var(--line2);padding:0;
+        user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;
+        touch-action:none;cursor:pointer}
+  .tbtn.on{background:rgba(217,162,94,.42);border-color:var(--sand)}
+  #tAtk{right:24px;bottom:24px;width:88px;height:88px;font-size:12px}
+  #tDod{right:122px;bottom:32px;width:62px;height:62px}
+  #tJmp{right:44px;bottom:122px;width:62px;height:62px}
+  #tRl{left:14px;top:12px;width:42px;height:42px;font-size:15px}
+  #tRr{left:64px;top:12px;width:42px;height:42px;font-size:15px}
+  /* Landscape only, by decision: an isometric view framed so a 5 m canyon and
+     its far rim both fit is unreadable in a portrait column. */
+  .rotate{position:absolute;inset:0;display:none;place-items:center;text-align:center;padding:24px;
+          background:rgba(10,13,17,.92);z-index:6;font-family:var(--mono);font-size:12px;
+          line-height:1.8;color:var(--muted)}
+  @media (orientation:portrait){ .stage.touch .rotate{display:grid} }
   .toast{position:absolute;right:12px;bottom:12px;max-width:60%;font-family:var(--mono);font-size:11.5px;
          line-height:1.6;color:var(--text);background:rgba(10,13,17,.78);border:1px solid var(--line2);
          border-left:2px solid var(--sand);padding:7px 10px;opacity:0;transition:opacity .25s;
@@ -144,12 +174,23 @@
       <div class="toast" id="toast"></div>
       <div class="fallback" id="fallback">This browser could not start WebGL, so there is nothing to play here.</div>
       <button class="exitfs" id="exitfs" type="button">Exit fullscreen · Esc</button>
+      <div class="pad" id="pad">
+        <div class="stick" id="tstick"><i id="tnub"></i></div>
+        <button class="tbtn" id="tRl" type="button" aria-label="turn view left">&#8249;</button>
+        <button class="tbtn" id="tRr" type="button" aria-label="turn view right">&#8250;</button>
+        <button class="tbtn" id="tJmp" type="button">Jump</button>
+        <button class="tbtn" id="tDod" type="button">Dodge</button>
+        <button class="tbtn" id="tAtk" type="button">Cut</button>
+      </div>
+      <div class="rotate" id="rotate"><span>Turn your phone sideways.<br>Quarterstone is played in landscape.</span></div>
     </div>
     <div class="bar">
       <p class="cap"><b>WASD</b> to move, camera-relative · <b>Space</b> to jump · <b>click</b> or <b>F</b> to
         swing · <b>Shift</b> to dodge · <b>Q</b>/<b>E</b> to turn the view · <b>R</b> to respawn · mouse or
         right stick to aim. Walk over a cache or a fallen machine to take what is in it, and seat it in
         the lattice below. <b>Fullscreen</b> fills the screen; <b>Esc</b> leaves it.
+        <b>On a phone</b>, hold it sideways: your left thumb is a stick wherever you put it, and the
+        buttons on the right cut, dodge and jump.
         Click the view first to give it the keyboard.</p>
       <span class="seedbox"><label for="seedin">Seed</label><input id="seedin" value="QUARTERSTONE" spellcheck="false" autocomplete="off"></span>
       <button class="ctl" id="regen" type="button">Generate</button>
@@ -177,6 +218,11 @@
       <p>Remappable from the first commit, because retrofitting it is the expensive version. Bindings are
         physical key codes, so WASD stays under the same fingers on any layout. A gamepad works too: left
         stick moves, right stick aims, A jumps, the shoulders turn the view.</p>
+      <p>On a touch screen the same table drives on-screen controls: your left thumb is a stick
+        wherever in the left half you put it — push it half way and you walk half speed — and the
+        buttons on the right cut, dodge, jump and turn the view. A tap on open ground deliberately
+        does <em>nothing</em>: the mouse binding for a swing would otherwise fire on every touch.
+        Landscape only, because this camera is framed so a 5 m canyon and its far rim both fit.</p>
     </div>
     <div class="card">
       <h2>The lattice</h2>
@@ -3878,8 +3924,11 @@ function setView(cam, v) { cam.view = clamp(v, 6, 40); return cam; }
  * the same three numbers either way.
  *
  * Codes are `KeyboardEvent.code` — physical keys, so WASD stays under the same
- * fingers on an AZERTY keyboard — plus `Pad<n>` for gamepad buttons and
- * `Mouse<n>` for mouse buttons.
+ * fingers on an AZERTY keyboard — plus `Pad<n>` for gamepad buttons,
+ * `Mouse<n>` for mouse buttons and `Touch<n>` for the on-screen controls a
+ * phone gets. A touch button presses an action through this table like every
+ * other device, rather than pretending to be a keyboard — which is what keeps
+ * it remappable when #11 gets to it.
  */
 
 /** Every action the prototype has. Adding a verb adds a row here. */
@@ -3893,13 +3942,34 @@ const DEFAULT_BINDINGS = {
   moveDown: ['KeyS', 'ArrowDown'],
   moveLeft: ['KeyA', 'ArrowLeft'],
   moveRight: ['KeyD', 'ArrowRight'],
-  jump: ['Space', 'Pad0'],
-  attack: ['Mouse0', 'KeyF', 'Pad2'],
-  dodge: ['ShiftLeft', 'Pad1'],
-  rotateLeft: ['KeyQ', 'Pad4'],
-  rotateRight: ['KeyE', 'Pad5'],
+  jump: ['Space', 'Pad0', 'Touch2'],
+  attack: ['Mouse0', 'KeyF', 'Pad2', 'Touch0'],
+  dodge: ['ShiftLeft', 'Pad1', 'Touch1'],
+  rotateLeft: ['KeyQ', 'Pad4', 'Touch3'],
+  rotateRight: ['KeyE', 'Pad5', 'Touch4'],
   respawn: ['KeyR', 'Pad9'],
 };
+
+/**
+ * A drag, as a stick deflection.
+ *
+ * The clamp is not cosmetic. `axes()` passes magnitude straight through, and
+ * the movement heading **crosses the wire** — a stick reading 1.4 at the corner
+ * of its travel would walk the character 40% faster than RUN, on both machines,
+ * and the host trusts what the guest sends. So the one place a drag becomes a
+ * number is here, where it is a pure function and the gate can hold it to the
+ * unit circle.
+ *
+ * Screen pixels in, stick space out: y is flipped because up the screen is
+ * forward, and the same basis is what a gamepad's left stick reports.
+ */
+function stickFromDrag(dx, dy, radius) {
+  const r = radius > 0 ? radius : 1;
+  let x = dx / r, y = -dy / r;
+  const m = Math.sqrt(x * x + y * y);
+  if (m > 1) { x /= m; y /= m; }
+  return { x, y };
+}
 
 /** A fresh copy, so a caller's edits never reach the defaults. */
 function defaultBindings() {
@@ -3957,6 +4027,13 @@ function makeInput(bindings) {
     aimStick(x, y) { st.ax = x; st.ay = y; },
     /** Pointer position in viewport pixels. */
     pointer(x, y) { st.px = x; st.py = y; st.pointer = true; },
+    /**
+     * Forget the cursor. A device with both a mouse and a touch screen latches
+     * `pointer` the first time the mouse moves and then never lets go, so a
+     * thumb on the stick would walk one way while facing whatever the mouse was
+     * last over. Whoever takes over input says so.
+     */
+    clearPointer() { st.pointer = false; },
     get aim() { return { x: st.ax, y: st.ay }; },
     get cursor() { return { x: st.px, y: st.py, active: st.pointer }; },
 
@@ -4333,7 +4410,7 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,sin:sin,cos:cos,exp:exp,hyp:hyp,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,sin:sin,cos:cos,exp:exp,hyp:hyp,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -4864,15 +4941,87 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   stage.addEventListener('keyup',function(e){ input.release(e.code); });
   stage.addEventListener('blur',function(){ input.releaseAll(); });
   window.addEventListener('blur',function(){ input.releaseAll(); });
+  /* ---------- touch ----------
+     A phone has no keyboard, so every action needs somewhere to press. The
+     controls feed the same input table a gamepad does — a floating stick into
+     `input.stick`, buttons into `Touch<n>` codes — so src/sim learns nothing
+     about the DOM and the netcode sees the identical three numbers either way.
+
+     Two rules make the two devices coexist rather than fight:
+       - a touch never presses Mouse0, or every tap would swing the sword;
+       - a touch never feeds `input.pointer`, so `cursor.active` stays false and
+         facing falls back to the direction of travel. A mouse moves
+         continuously and a finger does not: fed as a cursor, the character
+         would keep facing wherever you last tapped. */
+  var STICK_R=56;                                  /* px of travel at full deflection */
+  var touchMode=(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches)
+                ||navigator.maxTouchPoints>0;
+  var stickEl=document.getElementById('tstick'), nubEl=document.getElementById('tnub');
+  var stickId=null;
+  function setTouchMode(on){ touchMode=!!on; stage.classList.toggle('touch',touchMode); }
+  setTouchMode(touchMode);
+
+  function stickStart(e,r){
+    stickId=e.pointerId;
+    stickEl.style.left=(e.clientX-r.left)+'px';
+    stickEl.style.top=(e.clientY-r.top)+'px';
+    stickEl.classList.add('on');
+    nubEl.style.transform='translate(0px,0px)';
+    input.stick(0,0);
+    try{ stage.setPointerCapture(e.pointerId); }catch(err){ /* not captureable */ }
+  }
+  function stickMove(e,r){
+    var ox=parseFloat(stickEl.style.left)||0, oy=parseFloat(stickEl.style.top)||0;
+    var dx=(e.clientX-r.left)-ox, dy=(e.clientY-r.top)-oy;
+    var v=QS.stickFromDrag(dx,dy,STICK_R);
+    input.stick(v.x,v.y);
+    nubEl.style.transform='translate('+(v.x*STICK_R).toFixed(1)+'px,'+(-v.y*STICK_R).toFixed(1)+'px)';
+  }
+  function stickEnd(){
+    stickId=null; input.stick(0,0);
+    stickEl.classList.remove('on');
+    nubEl.style.transform='translate(0px,0px)';
+  }
+
   stage.addEventListener('pointermove',function(e){
     var r=stage.getBoundingClientRect();
-    input.pointer(e.clientX-r.left,e.clientY-r.top);
+    if(e.pointerId===stickId){ stickMove(e,r); return; }
+    if(e.pointerType==='mouse') input.pointer(e.clientX-r.left,e.clientY-r.top);
   });
   stage.addEventListener('pointerdown',function(e){
     stage.focus();
-    input.press('Mouse'+(e.button||0));
+    if(e.pointerType==='mouse'){ input.press('Mouse'+(e.button||0)); return; }
+    /* The stick lives wherever the thumb lands in the left of the view, rather
+       than in a fixed ring the player has to look down and find. */
+    /* A hybrid device latches the cursor the first time its mouse moves. The
+       thumb is driving now, so facing should follow travel, not the last place
+       a mouse happened to rest. */
+    input.clearPointer();
+    var r=stage.getBoundingClientRect();
+    if(stickId===null&&(e.clientX-r.left)<r.width*0.45){ e.preventDefault(); stickStart(e,r); }
   });
-  stage.addEventListener('pointerup',function(e){ input.release('Mouse'+(e.button||0)); });
+  stage.addEventListener('pointerup',function(e){
+    if(e.pointerId===stickId){ stickEnd(); return; }
+    if(e.pointerType==='mouse') input.release('Mouse'+(e.button||0));
+  });
+  stage.addEventListener('pointercancel',function(e){ if(e.pointerId===stickId) stickEnd(); });
+
+  /* Buttons press an action code, exactly as a pad button does. */
+  [['tAtk','Touch0'],['tDod','Touch1'],['tJmp','Touch2'],
+   ['tRl','Touch3'],['tRr','Touch4']].forEach(function(pair){
+    var el=document.getElementById(pair[0]), code=pair[1];
+    function down(e){ e.preventDefault(); e.stopPropagation(); el.classList.add('on');
+                      if(e.pointerType!=='mouse') input.clearPointer();
+                      input.press(code); stage.focus(); }
+    function up(e){ e.stopPropagation(); el.classList.remove('on'); input.release(code); }
+    el.addEventListener('pointerdown',down);
+    el.addEventListener('pointerup',up);
+    el.addEventListener('pointercancel',up);
+    el.addEventListener('pointerleave',up);
+    /* A press that never sees its pointerup — the finger left the element and
+       the capture went with it — would leave the action held for ever. */
+    el.addEventListener('lostpointercapture',up);
+  });
   stage.addEventListener('contextmenu',function(e){ e.preventDefault(); });
 
   function pollPad(){
@@ -5282,6 +5431,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        a single tick of a swing still and look at it; without this the three
        windows are over before a screenshot lands. */
     pause:function(on){ paused=on!==false; },
+    /* Touch mode is detected from the pointer, which a desktop browser driving
+       the gate does not have. The assertions turn it on deliberately. */
+    setTouch:setTouchMode,
+    get touch(){ return touchMode; },
     draw:draw,
     host:startHost,
     screen:function(){ var a=player(); return QS.project(cam,{x:a.x,y:a.y,z:a.z},vp); },

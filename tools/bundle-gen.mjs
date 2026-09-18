@@ -58,7 +58,7 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld',
                  'makeCamera', 'snap', 'warpTo', 'follow', 'eye', 'basis', 'moveFrom',
                  'project', 'groundAt', 'heading', 'aimFromPointer', 'aimFromStick',
                  'setView', 'VIEW', 'QUARTER', 'START_YAW',
-                 'ACTIONS', 'DEFAULT_BINDINGS', 'defaultBindings', 'makeInput',
+                 'ACTIONS', 'DEFAULT_BINDINGS', 'defaultBindings', 'makeInput', 'stickFromDrag',
                  'snapshot', 'restore', 'makeLoopback', 'makeHost', 'makeGuest', 'spawnNear', 'ACT'];
 
 /**

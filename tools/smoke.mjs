@@ -650,6 +650,83 @@ if (BROWSER_HALF) {
             'BUILD: and leaving it puts the stage back',
             `${fsOff.w}x${fsOff.h}, canvas ${fsOff.cw}x${fsOff.ch}`);
 
+      /* ---------- BUILD: a phone can move the character ----------
+         There is no keyboard on a phone, so every verb needs somewhere to
+         press. The controls feed the same input table a gamepad does, which is
+         why none of this needed a change in src/sim — but "the same table" is
+         a claim, and this is what holds it to it.
+
+         Synthetic pointers with pointerType 'touch' go through the page's real
+         handlers; nothing here is a shortcut past them. */
+      const touch = await bp.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS;
+        P.setTouch(true); P.pause(true);
+        const stage = document.querySelector('#stage');
+        const r = stage.getBoundingClientRect();
+        const ev = (el, type, x, y, id) => el.dispatchEvent(new PointerEvent(type, {
+          bubbles: true, cancelable: true, composed: true,
+          pointerId: id, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y,
+          buttons: type === 'pointerup' ? 0 : 1,
+        }));
+        const out = {};
+        out.shown = getComputedStyle(document.querySelector('#pad')).display !== 'none';
+
+        /* The stick lands where the thumb does, anywhere in the left of the view. */
+        const ox = r.left + r.width * 0.2, oy = r.top + r.height * 0.6;
+        ev(stage, 'pointerdown', ox, oy, 7);
+        out.rest = P.input.axes().ix;
+        ev(stage, 'pointermove', ox + 56, oy, 7);
+        out.full = P.input.axes().ix;
+        /* Past the edge of its travel it must still be a unit vector: the
+           heading crosses the wire, and the host trusts what it is sent. */
+        ev(stage, 'pointermove', ox + 400, oy, 7);
+        const far = P.input.axes();
+        out.clamped = Math.sqrt(far.ix * far.ix + far.iy * far.iy);
+
+        const a = P.actor;
+        a.dead = null; a.vx = 0; a.vz = 0;
+        const x0 = a.x, z0 = a.z;
+        P.run(60);
+        out.walked = Math.sqrt((P.actor.x - x0) ** 2 + (P.actor.z - z0) ** 2);
+        ev(stage, 'pointerup', ox + 400, oy, 7);
+        out.released = P.input.axes().ix;
+
+        /* The conflict this had to solve: Mouse0 is bound to attack, so before
+           this every tap anywhere swung the sword. */
+        const b = P.actor;
+        b.swing = null; b.stamina = QS.STAMINA_MAX; b.staminaHold = 0; b.dead = null;
+        ev(stage, 'pointerdown', r.left + r.width * 0.78, r.top + r.height * 0.45, 9);
+        P.run(2);
+        out.tapSwung = !!P.actor.swing;
+        ev(stage, 'pointerup', r.left + r.width * 0.78, r.top + r.height * 0.45, 9);
+
+        const atk = document.querySelector('#tAtk'), ar = atk.getBoundingClientRect();
+        P.actor.swing = null; P.actor.stamina = QS.STAMINA_MAX; P.actor.staminaHold = 0;
+        ev(atk, 'pointerdown', ar.left + ar.width / 2, ar.top + ar.height / 2, 11);
+        P.run(2);
+        out.buttonSwung = !!P.actor.swing;
+        ev(atk, 'pointerup', ar.left + ar.width / 2, ar.top + ar.height / 2, 11);
+
+        /* A finger is not a cursor: fed as one, facing would lock to the last tap. */
+        out.cursorActive = P.input.cursor.active;
+        out.run = QS.RUN;
+        P.pause(false); P.setTouch(false);
+        return out;
+      });
+      check(touch.shown && touch.rest === 0 && touch.full > 0.98
+            && Math.abs(touch.clamped - 1) < 1e-6 && touch.released === 0,
+            'BUILD: a thumb in the left of the view is a stick',
+            `rest ${touch.rest}, full ${touch.full.toFixed(3)}, `
+            + `clamped ${touch.clamped.toFixed(6)} past its travel, ${touch.released} on release`);
+      check(touch.walked > 3.5 && touch.walked < 4.5,
+            'BUILD: and it walks the character at the speed it asks for',
+            `${touch.walked.toFixed(2)} m in 60 ticks, RUN is ${touch.run}`);
+      check(touch.tapSwung === false && touch.buttonSwung === true && touch.cursorActive === false,
+            'BUILD: a tap on open ground does not swing, the button does',
+            `${touch.tapSwung ? 'TAP SWUNG' : 'tap quiet'}, `
+            + `${touch.buttonSwung ? 'button swung' : 'BUTTON DEAD'}, `
+            + `${touch.cursorActive ? 'CURSOR LATCHED' : 'facing follows travel'}`);
+
       /* ---------- NET in a browser ----------
          The loopback suite proves the protocol; this proves the page is wired
          to a real one. Two windows, postMessage between them, and the guest's

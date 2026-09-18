@@ -126,7 +126,24 @@ target, so the angle has one owner.
 `input.mjs` is a binding table, not a switch statement. Remapping is there from
 the first commit because retrofitting it is the expensive version (#11), and it
 costs a map and a lookup. Codes are `KeyboardEvent.code` — physical keys, so
-WASD stays under the same fingers on any layout — plus `Pad<n>` for a gamepad.
+WASD stays under the same fingers on any layout — plus `Pad<n>` for a gamepad,
+`Mouse<n>` for mouse buttons and `Touch<n>` for the on-screen controls a phone
+gets. A touch button presses an action through the table like any other device
+rather than pretending to be a keyboard, which is what keeps it remappable.
+
+`stickFromDrag(dx, dy, radius)` turns a thumb drag into a stick deflection, and
+the clamp in it is not cosmetic. `axes()` passes magnitude straight through and
+the movement heading **crosses the wire**, so a stick reading 1.4 at the corner
+of its travel would walk the character 40% faster than `RUN` on both machines —
+the host trusts what the guest sends. The one place a drag becomes a number is a
+pure function, so the gate can hold it to the unit circle.
+
+The page is where touch *events* live, and it keeps two rules so a phone and a
+mouse do not fight: a touch never presses `Mouse0` (which is bound to attack, so
+before this every tap swung the sword), and a touch never feeds `input.pointer`
+(a mouse moves continuously and a finger does not — fed as a cursor, facing
+would lock to wherever you last tapped; left alone, it falls back to the
+direction of travel).
 
 `actor.mjs` is the controller. Only run speed is chosen; gravity, jump speed and
 airtime are **solved** from `MOVE` so that a jump clears exactly `MOVE.jump`,

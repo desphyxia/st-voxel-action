@@ -8,8 +8,11 @@
  * the same three numbers either way.
  *
  * Codes are `KeyboardEvent.code` — physical keys, so WASD stays under the same
- * fingers on an AZERTY keyboard — plus `Pad<n>` for gamepad buttons and
- * `Mouse<n>` for mouse buttons.
+ * fingers on an AZERTY keyboard — plus `Pad<n>` for gamepad buttons,
+ * `Mouse<n>` for mouse buttons and `Touch<n>` for the on-screen controls a
+ * phone gets. A touch button presses an action through this table like every
+ * other device, rather than pretending to be a keyboard — which is what keeps
+ * it remappable when #11 gets to it.
  */
 
 /** Every action the prototype has. Adding a verb adds a row here. */
@@ -23,13 +26,34 @@ export const DEFAULT_BINDINGS = {
   moveDown: ['KeyS', 'ArrowDown'],
   moveLeft: ['KeyA', 'ArrowLeft'],
   moveRight: ['KeyD', 'ArrowRight'],
-  jump: ['Space', 'Pad0'],
-  attack: ['Mouse0', 'KeyF', 'Pad2'],
-  dodge: ['ShiftLeft', 'Pad1'],
-  rotateLeft: ['KeyQ', 'Pad4'],
-  rotateRight: ['KeyE', 'Pad5'],
+  jump: ['Space', 'Pad0', 'Touch2'],
+  attack: ['Mouse0', 'KeyF', 'Pad2', 'Touch0'],
+  dodge: ['ShiftLeft', 'Pad1', 'Touch1'],
+  rotateLeft: ['KeyQ', 'Pad4', 'Touch3'],
+  rotateRight: ['KeyE', 'Pad5', 'Touch4'],
   respawn: ['KeyR', 'Pad9'],
 };
+
+/**
+ * A drag, as a stick deflection.
+ *
+ * The clamp is not cosmetic. `axes()` passes magnitude straight through, and
+ * the movement heading **crosses the wire** — a stick reading 1.4 at the corner
+ * of its travel would walk the character 40% faster than RUN, on both machines,
+ * and the host trusts what the guest sends. So the one place a drag becomes a
+ * number is here, where it is a pure function and the gate can hold it to the
+ * unit circle.
+ *
+ * Screen pixels in, stick space out: y is flipped because up the screen is
+ * forward, and the same basis is what a gamepad's left stick reports.
+ */
+export function stickFromDrag(dx, dy, radius) {
+  const r = radius > 0 ? radius : 1;
+  let x = dx / r, y = -dy / r;
+  const m = Math.sqrt(x * x + y * y);
+  if (m > 1) { x /= m; y /= m; }
+  return { x, y };
+}
 
 /** A fresh copy, so a caller's edits never reach the defaults. */
 export function defaultBindings() {
@@ -87,6 +111,13 @@ export function makeInput(bindings) {
     aimStick(x, y) { st.ax = x; st.ay = y; },
     /** Pointer position in viewport pixels. */
     pointer(x, y) { st.px = x; st.py = y; st.pointer = true; },
+    /**
+     * Forget the cursor. A device with both a mouse and a touch screen latches
+     * `pointer` the first time the mouse moves and then never lets go, so a
+     * thumb on the stick would walk one way while facing whatever the mouse was
+     * last over. Whoever takes over input says so.
+     */
+    clearPointer() { st.pointer = false; },
     get aim() { return { x: st.ax, y: st.ay }; },
     get cursor() { return { x: st.px, y: st.py, active: st.pointer }; },
 
