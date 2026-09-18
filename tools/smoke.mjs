@@ -78,8 +78,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, netSuite,
-         soak, SOAK_TICKS } from './lib/playtest.mjs';
+import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, meshSuite,
+         netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
@@ -222,6 +222,9 @@ if (NODE_HALF) for (const r of gearSuite()) check(r.ok, `GEAR: ${r.label}`, r.de
    Issue #16's bar, and the reason the generator can now be asked for more than
    one window. Nothing here needs a browser: it is two worlds and a comparison. */
 if (NODE_HALF) for (const r of regionSuite()) check(r.ok, `REGION: ${r.label}`, r.detail);
+
+/* ---------- MESH: the greedy mesher, issue #12 ---------- */
+if (NODE_HALF) for (const r of meshSuite()) check(r.ok, `MESH: ${r.label}`, r.detail);
 
 /* ---------- NET: two players, one world, one authority ----------
    A host and a guest over a loopback wire with latency and loss dialled in. The

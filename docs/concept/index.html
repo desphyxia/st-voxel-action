@@ -2445,6 +2445,10 @@ function buildWorld(cfg) {
     sites: w.sites,
     Hs: w.Hs, FLG: w.FLG, NX: w.NX, NZ: w.NZ, half: w.half,
     cells: w.cells, M: w.M, spawn: w.spawn, size: w.size,
+    /* Where this window sits and what grew it. The mesher (src/mesh) needs both
+       to rebuild a column's own positional stream — which is only reproducible
+       at all because of issue #41 — and chunk streaming will want them too. */
+    G: w.G, OX: w.OX, OZ: w.OZ,
   };
 }
 globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp};

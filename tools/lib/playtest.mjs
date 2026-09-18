@@ -28,6 +28,7 @@ import { makeLoopback } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache } from '../../src/gen/region.mjs';
+import { meshChunk } from '../../src/mesh/greedy.mjs';
 import { GOLDEN_SEEDS } from './harness.mjs';
 
 /** Five minutes, the bar in docs/PROTOTYPE.md. */
@@ -1389,6 +1390,69 @@ export function regionSuite() {
         shape(r1) === shape(r2) && r1 !== r2,
         `${r1.trail.size} trail cells, ${r1.grade.size} graded, ${r1.bridges.length} crossings`);
   }
+
+  return out;
+}
+
+/* ------------------------------------------------------------------ mesh ----
+ * Issue #12. The box renderer draws six faces per emitted voxel whether or not
+ * anything can see them; the mesher draws the volume's exposed surface, merged.
+ * The claims worth pinning are the ratio, that a seam does not double-draw or
+ * tear, and that the same world meshes the same way twice.
+ * ------------------------------------------------------------------------- */
+
+export function meshSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const w = buildWorld({ seed: 'QUARTERSTONE', size: 64, force: null, ox: 0, oz: 0 });
+
+  const chunks = [];
+  let quads = 0, faces = 0, aoBad = 0, shapeBad = 0;
+  for (let cx = 0; cx < 2; cx++) {
+    for (let cz = 0; cz < 2; cz++) {
+      const m = meshChunk(w, cx, cz);
+      chunks.push(m); quads += m.quads; faces += m.faces;
+      if (m.pos.length !== m.quads * 12 || m.nor.length !== m.quads * 12
+          || m.mat.length !== m.quads * 4 || m.ao.length !== m.quads * 4
+          || m.idx.length !== m.quads * 6) shapeBad++;
+      for (let i = 0; i < m.ao.length; i++) if (!(m.ao[i] >= 0 && m.ao[i] <= 3)) aoBad++;
+    }
+  }
+
+  const boxes = (w.pos.length / 3) * 6;
+  say('a meshed chunk draws far less than a box per voxel',
+      quads > 0 && boxes / quads > 5,
+      `${boxes} box faces, ${faces} exposed, ${quads} quads after merging `
+      + `— ${(boxes / quads).toFixed(1)}x fewer, ${(faces / quads).toFixed(2)}x from the merge alone`);
+
+  say('every quad is four vertices, four corners of occlusion and six indices',
+      shapeBad === 0 && aoBad === 0,
+      shapeBad ? `${shapeBad} chunks with mismatched arrays` : `${quads} quads, occlusion within 0..3`);
+
+  /* A face is a place and a direction. Two chunks emitting the same one would
+     draw it twice; the pad ring exists so the boundary is culled against the
+     neighbour rather than against nothing. */
+  const seen = new Set();
+  let dup = 0;
+  for (const m of chunks) {
+    for (let q = 0; q < m.quads; q++) {
+      const v = q * 12;
+      const k = [m.pos[v], m.pos[v + 1], m.pos[v + 2],
+                 m.nor[v], m.nor[v + 1], m.nor[v + 2]].join(',');
+      if (seen.has(k)) dup++; else seen.add(k);
+    }
+  }
+  say('and no face is drawn by two chunks at once',
+      dup === 0, dup ? `${dup} duplicated at a seam` : `${seen.size} distinct faces across four chunks`);
+
+  const again = meshChunk(w, 0, 0);
+  const first = chunks[0];
+  const same = again.quads === first.quads
+    && again.pos.every((v, i) => v === first.pos[i])
+    && again.mat.every((v, i) => v === first.mat[i])
+    && again.ao.every((v, i) => v === first.ao[i]);
+  say('and meshing the same chunk twice gives the same mesh',
+      same, `${again.quads} quads`);
 
   return out;
 }

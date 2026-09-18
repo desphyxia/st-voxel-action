@@ -82,5 +82,9 @@ export function buildWorld(cfg) {
     sites: w.sites,
     Hs: w.Hs, FLG: w.FLG, NX: w.NX, NZ: w.NZ, half: w.half,
     cells: w.cells, M: w.M, spawn: w.spawn, size: w.size,
+    /* Where this window sits and what grew it. The mesher (src/mesh) needs both
+       to rebuild a column's own positional stream — which is only reproducible
+       at all because of issue #41 — and chunk streaming will want them too. */
+    G: w.G, OX: w.OX, OZ: w.OZ,
   };
 }
