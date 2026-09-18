@@ -10,10 +10,12 @@
  * one consumer, not the owner.
  *
  * The pass order below is the generator: each pass reads what the ones before
- * it left on the world object, and the random stream is consumed in exactly
- * this order — which is why a seed reproduces a world, and why reordering a
- * pass is a change to every world, not a refactor. tools/smoke.mjs pins six
- * seeds against tools/baseline.json to keep that honest.
+ * it left on the world object. It is no longer also the order a random stream
+ * is consumed in — as of issue #41 every draw is positional, keyed on the
+ * place it belongs to, so a pass can be reordered without rewriting every
+ * world and two windows onto the same ground agree voxel for voxel.
+ * tools/smoke.mjs pins six seeds against tools/baseline.json to keep that
+ * honest, and compares overlapping windows to keep the agreement honest.
  */
 import { clamp } from './constants.mjs';
 import { makeGen } from './field.mjs';
@@ -40,7 +42,7 @@ function seedCells(cfg) {
     mx = -half + i;
     for (j = 0; j < M; j++) { mz = -half + j; cells[i * M + j] = G.cell(mx + OX, mz + OZ); }
   }
-  var w = { cfg: cfg, size: S, G: G, R: G.rnd, half: half, OX: OX, OZ: OZ, M: M, cells: cells };
+  var w = { cfg: cfg, size: S, G: G, half: half, OX: OX, OZ: OZ, M: M, cells: cells };
   w.cellAt = function (mx2, mz2) {
     var a = clamp(Math.round(mx2 + half), 0, M - 1), b = clamp(Math.round(mz2 + half), 0, M - 1);
     return cells[a * M + b];

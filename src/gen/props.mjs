@@ -12,10 +12,15 @@ import { V, DIRS4, clamp } from './constants.mjs';
 import { sin, cos, hyp } from './exact.mjs';
 import { MAT } from './materials.mjs';
 import { BIOMES, pickFrom, pushShade } from './biomes.mjs';
+import { PASS } from './rng.mjs';
+import { groundAt } from './ground.mjs';
+
+/** Metres of trail between lamps, measured along the region's own route. */
+const LAMP_SPACING = 40;
 
 /** The stamp kit for one world: pure geometry, pushed into w's voxel arrays. */
 export function makeStamps(w) {
-  var R = w.R, pos = w.pos, col = w.col, mat = w.mat,
+  var pos = w.pos, col = w.col, mat = w.mat,
       mpos = w.mpos, mcol = w.mcol, mmat = w.mmat,
       half = w.half, NX = w.NX, NZ = w.NZ, Hs = w.Hs, FLG = w.FLG, y;
   /** Every stamp lands through here, so every stamped voxel has a material. */
@@ -24,7 +29,7 @@ export function makeStamps(w) {
     pushShade(col,hex,k2); mat.push(m);
   }
   function surfAt(px,pz){var i2=clamp(Math.round((px+half)/V),0,NX-1),j2=clamp(Math.round((pz+half)/V),0,NZ-1);var k2=i2*NZ+j2;return {y:Hs[k2],f:FLG[k2]};}
-  function tree(px,pz,b,t){
+  function tree(px,pz,b,t,R){
     var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
     var th, r, ax, ay, az;
     if(t==='conifer'){
@@ -65,14 +70,14 @@ export function makeStamps(w) {
       }
     }
   }
-  function boulder(px,pz,r,b){
+  function boulder(px,pz,r,b,R){
     var s=surfAt(px,pz); if(s.f&1) return; var y0=s.y;
     for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
       addVox(px+ax,y0+r*0.45+ay,pz+az,pickFrom(b.rock,R),0.85+R()*0.3,b.mat.rock);
     }
   }
-  function scree(px,pz,dom,n){
+  function scree(px,pz,dom,n,R){
     for(var q=0;q<n;q++){
       var sx=px+(R()-0.5)*2.4, sz=pz+(R()-0.5)*2.4, s=surfAt(sx,sz); if(s.f&1) continue;
       var n2=(R()<0.3)?2:1;
@@ -80,7 +85,7 @@ export function makeStamps(w) {
         addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickFrom(BIOMES[dom].rock,R),0.8+R()*0.3,BIOMES[dom].mat.rock);
     }
   }
-  function bush(px,pz,dom){
+  function bush(px,pz,dom,R){
     var s=surfAt(px,pz); if(s.f) return;
     var r=0.35+R()*0.35;
     var cols=(dom===4)?[0x6f8390,0x8aa3ad]:(dom===3?[0x3b332e,0x4a403a]:(dom===1?[0x6f7f42,0x87904a]:[0x3f6b34,0x4e7d3e,0x5d8c46]));
@@ -89,13 +94,13 @@ export function makeStamps(w) {
       addVox(px+ax,s.y+ay+V/2,pz+az,pickFrom(cols,R),0.85+R()*0.3,MAT.LEAF);
     }
   }
-  function stump(px,pz){
+  function stump(px,pz,R){
     var s=surfAt(px,pz); if(s.f) return;
     for(var y2=0;y2<0.55;y2+=V)for(var ax=-V;ax<=V;ax+=V)for(var az=-V;az<=V;az+=V)
       if(Math.abs(ax)+Math.abs(az)<=V)
         addVox(px+ax,s.y+y2+V/2,pz+az,(y2>0.3&&ax===0&&az===0)?0x8a6a4a:0x5a4130,0.9+R()*0.2,MAT.WOOD);
   }
-  function fallenTrunk(px,pz){
+  function fallenTrunk(px,pz,R){
     var s0=surfAt(px,pz); if(s0.f) return;
     var ang=R()*Math.PI, dx=cos(ang), dz=sin(ang), L=2+R()*2.2;
     for(var t2=-L/2;t2<=L/2;t2+=V)for(var ay=0;ay<=0.55;ay+=V)for(var b=-0.3;b<=0.3;b+=V){
@@ -103,7 +108,7 @@ export function makeStamps(w) {
       addVox(px+dx*t2-dz*b,s0.y+ay+V/2,pz+dz*t2+dx*b,R()<0.2?0x6b5a45:0x4c3728,0.85+R()*0.25,MAT.WOOD);
     }
   }
-  function fence(px,pz,ang,len){
+  function fence(px,pz,ang,len,R){
     var dx=cos(ang),dz=sin(ang);
     for(var t2=0;t2<=len;t2+=1){
       var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f&1) continue;
@@ -114,7 +119,7 @@ export function makeStamps(w) {
       }
     }
   }
-  function lamp(px,pz){
+  function lamp(px,pz,R){
     var s=surfAt(px,pz); if(s.f) return null;
     for(var y2=0;y2<2.5;y2+=V) addVox(px,s.y+y2+V/2,pz,0x3f4650,0.9+R()*0.15,MAT.METAL);
     addVox(px+V,s.y+2.5,pz,0x3f4650,0.95,MAT.METAL); addVox(px+2*V,s.y+2.5,pz,0x3f4650,0.95,MAT.METAL);
@@ -122,7 +127,7 @@ export function makeStamps(w) {
     mpos.push(lx,ly,pz); pushShade(mcol,0xffd08a,1); mmat.push(MAT.LIGHT);
     return [lx,ly,pz];
   }
-  function wallRun(px,pz,ang,len,h,dom){
+  function wallRun(px,pz,ang,len,h,dom,R){
     var dx=cos(ang),dz=sin(ang);
     for(var t2=0;t2<=len;t2+=V){
       if(R()<0.05){ t2+=0.75; continue; }
@@ -132,7 +137,7 @@ export function makeStamps(w) {
         addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
     }
   }
-  function pillarRuin(px,pz,h,dom){
+  function pillarRuin(px,pz,h,dom,R){
     var s=surfAt(px,pz); if(s.f) return;
     for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V)
       addVox(px+b1,s.y+V/2,pz+b2,pickFrom(BIOMES[dom].rock,R),0.95,BIOMES[dom].mat.rock);
@@ -142,7 +147,7 @@ export function makeStamps(w) {
         addVox(px+a1,s.y+y2+V/2,pz+a2,pickFrom(BIOMES[dom].rock,R),0.88+R()*0.22,BIOMES[dom].mat.rock);
     }
   }
-  function hut(px,pz,dom){
+  function hut(px,pz,dom,R){
     var s=surfAt(px,pz); if(s.f) return;
     var w=3.0,h=2.25;
     for(var a=-w/2;a<=w/2;a+=V)for(var b=-w/2;b<=w/2;b+=V){
@@ -154,7 +159,7 @@ export function makeStamps(w) {
     for(var a2=-w/2;a2<=w/2;a2+=V)for(var b2=-w/2;b2<=w/2;b2+=V)
       if(R()<0.3) addVox(px+a2,s.y+h+V/2,pz+b2,0x5a4130,0.9,MAT.WOOD);
   }
-  function deckBridge(px,pz,di,dj,len,y){
+  function deckBridge(px,pz,di,dj,len,y,R){
     for(var t2=-len/2;t2<=len/2;t2+=V)for(var b=-0.75;b<=0.75;b+=V)
       addVox(px+di*t2-dj*b,y,pz+dj*t2+di*b,R()<0.25?0x6b5a45:0x5a4a38,0.9+R()*0.2,MAT.WOOD);
     for(var side=-1;side<=1;side+=2)for(var t3=-len/2;t3<=len/2;t3+=0.5)
@@ -167,17 +172,32 @@ export function makeStamps(w) {
 
 /** Trees, boulders and the arcs that span a canyon. */
 export function scatterProps(w, kit) {
-  var M = w.M, cells = w.cells, half = w.half, R = w.R, G = w.G, OX = w.OX, OZ = w.OZ,
+  var M = w.M, cells = w.cells, half = w.half, G = w.G, OX = w.OX, OZ = w.OZ,
       addVox = kit.addVox, tree = kit.tree, boulder = kit.boulder, i, j;
-  var treeN=0, arcs=0;
+  var treeN=0, arcs=0, capped=0;
   for(i=0;i<M;i+=2)for(j=0;j<M;j+=2){
-    var cc=cells[i*M+j], px=-half+i+ (R()-0.5)*1.2, pz=-half+j+(R()-0.5)*1.2;
-    var bb=BIOMES[cc.dom], dens=G.wsum(cc.w,'tree')||0;
+    var cc=cells[i*M+j], wx=-half+i+OX, wz=-half+j+OZ;
+    /* One stream per cell: where the prop is jittered to, whether there is one
+       at all, and every shade it wears, all belong to this square metre. */
+    var R=G.pstream(PASS.TREE,wx,wz);
+    var px=-half+i+ (R()-0.5)*1.2, pz=-half+j+(R()-0.5)*1.2;
+    var bb=BIOMES[cc.dom];
     var td=0; for(var q=0;q<cc.w.length;q++) td+=cc.w[q]*BIOMES[q].tree.d;
-    if(!cc.water&&!cc.magma&&R()<td*0.095&&treeN<260){ tree(px,pz,bb,bb.tree.t); treeN++; }
-    else if(!cc.water&&R()<0.028) boulder(px,pz,0.5+R()*0.8,bb);
+    /* The two caps below are per-window budgets, which is the wrong shape —
+       whether a tree exists should not depend on how much world you are
+       looking at. They are inert at every size the generator is run at (the
+       fullest seed wants 94 trees against a cap of 260), so rather than
+       redesign a budget nothing has ever hit, w.capped counts the props a cap
+       suppressed and the smoke test asserts it stays zero. The day that fails
+       is the day the budget has to move to the region pass. */
+    if(!cc.water&&!cc.magma&&R()<td*0.095){
+      if(treeN<260){ tree(px,pz,bb,bb.tree.t,R); treeN++; } else capped++;
+    }
+    else if(!cc.water&&R()<0.028) boulder(px,pz,0.5+R()*0.8,bb,R);
     /* arcs where a canyon crosses rock-heavy ground */
-    if(arcs<3&&cc.canyon&&cc.canyon.d<0.6&&cc.cw>0.5&&R()<0.09){
+    if(cc.canyon&&cc.canyon.d<0.6&&cc.cw>0.5&&R()<0.09){
+      if(arcs>=3){ capped++; }
+      else {
       var span=cc.canyon.w+2+Math.floor(R()*2), rise=3+Math.floor(R()*3);
       var e=0.75, gx=G.canyonAt(px+OX+e,pz+OZ).d-G.canyonAt(px+OX-e,pz+OZ).d, gz=G.canyonAt(px+OX,pz+OZ+e).d-G.canyonAt(px+OX,pz+OZ-e).d;
       var L=hyp(gx,gz)||1; gx/=L; gz/=L;
@@ -190,74 +210,98 @@ export function scatterProps(w, kit) {
           addVox(cxp-gz*w2,yy+dy,czp+gx*w2,pickFrom(BIOMES[cc.dom].rock,R),0.9+R()*0.2,BIOMES[cc.dom].mat.rock);
       }
       arcs++;
+      }
     }
   }
+  w.capped = capped;
 }
 
 /** Scree at every cliff foot, clutter off the trails, the sites, lamps, crossings. */
 export function placeClutter(w, kit) {
-  var M = w.M, cells = w.cells, half = w.half, R = w.R, TRAIL = w.TRAIL, sites = w.sites,
+  var M = w.M, cells = w.cells, half = w.half, G = w.G, OX = w.OX, OZ = w.OZ,
+      TRAIL = w.TRAIL, sites = w.sites,
       bridges = w.bridges, scree = kit.scree, bush = kit.bush, stump = kit.stump,
       fallenTrunk = kit.fallenTrunk, fence = kit.fence, lamp = kit.lamp,
       wallRun = kit.wallRun, pillarRuin = kit.pillarRuin, hut = kit.hut,
       deckBridge = kit.deckBridge, i, j;
   var lamps=[];
-  for(i=2;i<M-2;i++)for(j=2;j<M-2;j++){
-    var c0=cells[i*M+j], px0=-half+i, pz0=-half+j;
+  /* Both loops run the full grid rather than an inset one. The old bounds were
+     a border-ring skip of the kind erosion had: a cliff foot two metres inside
+     one window was two metres outside the next, and only one of them laid
+     scree at it. The cliff itself is read through ground.mjs, so a cliff just
+     outside the window still counts. */
+  for(i=0;i<M;i++)for(j=0;j<M;j++){
+    var c0=cells[i*M+j], px0=-half+i, pz0=-half+j, wx0=px0+OX, wz0=pz0+OZ;
+    var RS=G.pstream(PASS.SCREE,wx0,wz0);
     for(var dd=0;dd<4;dd++){
-      var di=DIRS4[dd][0], dj=DIRS4[dd][1], c1=cells[(i+di)*M+(j+dj)];
-      if(!c1||c0.H-c1.H<2) continue;
-      if(R()<0.32) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((R()*4)|0));
+      var di=DIRS4[dd][0], dj=DIRS4[dd][1];
+      var c1=groundAt(w,wx0+di,wz0+dj);
+      if(c0.H-c1.H<2) continue;
+      if(RS()<0.32) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((RS()*4)|0),RS);
       break;
     }
   }
   /* scattered clutter, kept off the trails */
-  for(i=1;i<M-1;i++)for(j=1;j<M-1;j++){
+  for(i=0;i<M;i++)for(j=0;j<M;j++){
     var cc2=cells[i*M+j];
     if(cc2.water||cc2.magma||TRAIL[i*M+j]) continue;
-    var px2=-half+i+(R()-0.5)*0.8, pz2=-half+j+(R()-0.5)*0.8, dm=cc2.dom, rv=R();
-    if(rv<0.032) bush(px2,pz2,dm);
-    else if(rv<0.0365&&(dm===0||dm===2)) stump(px2,pz2);
-    else if(rv<0.0405&&(dm===0||dm===2)) fallenTrunk(px2,pz2);
-    else if(rv<0.050) scree(px2,pz2,dm,2+((R()*3)|0));
+    var R2=G.pstream(PASS.CLUTTER,-half+i+OX,-half+j+OZ);
+    var px2=-half+i+(R2()-0.5)*0.8, pz2=-half+j+(R2()-0.5)*0.8, dm=cc2.dom, rv=R2();
+    if(rv<0.032) bush(px2,pz2,dm,R2);
+    else if(rv<0.0365&&(dm===0||dm===2)) stump(px2,pz2,R2);
+    else if(rv<0.0405&&(dm===0||dm===2)) fallenTrunk(px2,pz2,R2);
+    else if(rv<0.050) scree(px2,pz2,dm,2+((R2()*3)|0),R2);
   }
-  /* a ruin and a holding on the sites the trails were routed to */
+  /* A ruin and a holding on the sites the trails were routed to. Which of the
+     two a site gets is carried on the site (routes.mjs) rather than taken from
+     its index here: a window that can only see the second site would otherwise
+     build a ruin where its neighbour builds a holding. */
   for(var ps=0;ps<sites.length;ps++){
-    var pi=sites[ps][0], pj=sites[ps][1], cp=cells[pi*M+pj];
-    var px3=-half+pi, pz3=-half+pj, ang3=R()*6.28, dm3=cp.dom;
-    if(ps===0){
-      for(var q3=0;q3<4;q3++) pillarRuin(px3+cos(ang3)*(q3*2-3),pz3+sin(ang3)*(q3*2-3),2+R()*2,dm3);
-      wallRun(px3-sin(ang3)*2.5,pz3+cos(ang3)*2.5,ang3,7,1.5,dm3);
-      scree(px3,pz3,dm3,8);
+    var pi=sites[ps][0], pj=sites[ps][1], role=sites[ps][2], cp=cells[pi*M+pj];
+    var px3=-half+pi, pz3=-half+pj;
+    var R3=G.pstream(PASS.SITE,px3+OX,pz3+OZ);
+    var ang3=R3()*6.28, dm3=cp.dom;
+    if(role===0){
+      for(var q3=0;q3<4;q3++) pillarRuin(px3+cos(ang3)*(q3*2-3),pz3+sin(ang3)*(q3*2-3),2+R3()*2,dm3,R3);
+      wallRun(px3-sin(ang3)*2.5,pz3+cos(ang3)*2.5,ang3,7,1.5,dm3,R3);
+      scree(px3,pz3,dm3,8,R3);
     } else {
-      hut(px3,pz3,dm3);
-      fence(px3+2.5,pz3-3,ang3,6);
+      hut(px3,pz3,dm3,R3);
+      fence(px3+2.5,pz3-3,ang3,6,R3);
     }
   }
-  /* lamps stand along the route, not scattered over the field */
-  var trailCells=[];
-  for(i=2;i<M-2;i++)for(j=2;j<M-2;j++)
-    if(TRAIL[i*M+j]&&!cells[i*M+j].water) trailCells.push([i,j]);
-  for(var lq=0;lq<3&&trailCells.length;lq++){
-    var tcq=trailCells[Math.floor((lq+0.5)/3*trailCells.length)];
-    var lp=lamp(-half+tcq[0]+0.6,-half+tcq[1]+0.6);
-    if(lp) lamps.push(lp);
+  /* Lamps stand along the route, spaced along the order the *region* laid it
+     rather than picked out of whatever slice of trail this window happens to
+     hold. Three per window was a window-scale decision about a region-scale
+     thing, and two views of the same trail lit it differently. */
+  var regions=w.regions||[], rq, lk;
+  for(rq=0;rq<regions.length;rq++){
+    var ord=regions[rq].order;
+    for(lk=(LAMP_SPACING>>1);lk<ord.length;lk+=LAMP_SPACING){
+      var lwx=ord[lk][0], lwz=ord[lk][1];
+      var li=lwx-OX+half, lj=lwz-OZ+half;
+      if(li<0||lj<0||li>M-1||lj>M-1) continue;
+      if(cells[li*M+lj].water) continue;
+      var lp=lamp(-half+li+0.6,-half+lj+0.6,G.pstream(PASS.LAMP,lwx,lwz));
+      if(lp) lamps.push(lp);
+    }
   }
   /* crossings, placed where the route meets water */
   for(var bq=0;bq<bridges.length;bq++){
     var bd=bridges[bq];
-    deckBridge(bd[0],bd[1],bd[2],bd[3],bd[4],bd[5]);
+    deckBridge(bd[0],bd[1],bd[2],bd[3],bd[4],bd[5],
+               G.pstream(PASS.CROSS,Math.round(bd[0]+OX),Math.round(bd[1]+OZ)));
   }
   w.lamps = lamps;
 }
 
 /** One landmark per region, on the highest flat ground that is not a trail. */
 export function placeLandmark(w, kit) {
-  var half = w.half, R = w.R,
+  var half = w.half, G = w.G,
       OX = w.OX, OZ = w.OZ, mpos = w.mpos, mcol = w.mcol, mmat = w.mmat,
       addVox = kit.addVox;
   var lmPos=null;
-  function landmarkStamp(px,pz,kind,dom,base){
+  function landmarkStamp(px,pz,kind,dom,base,R){
     var a,b,y2,r2;
     if(kind===0){                                   /* obelisk */
       for(a=-1;a<=1;a+=V)for(b=-1;b<=1;b+=V) addVox(px+a,base+V/2,pz+b,pickFrom(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
@@ -318,7 +362,7 @@ export function placeLandmark(w, kit) {
     got.sort(function(a,b){ return b.lm.h-a.lm.h; });
     for(q=0;q<got.length;q++){
       var e=got[q], k=e.lm.kind;
-      landmarkStamp(e.lx,e.lz,k,e.lm.dom,e.lm.h);
+      landmarkStamp(e.lx,e.lz,k,e.lm.dom,e.lm.h,G.pstream(PASS.LANDMARK,e.lm.x,e.lm.z));
       if(!lmPos) lmPos=[e.lx,e.lm.h+(k===0?12:(k===1?11:4)),e.lz];
     }
   })();

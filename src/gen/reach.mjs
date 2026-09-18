@@ -8,6 +8,7 @@
  * Sets w.REACH (per cell), w.UNREACH (per voxel column) and w.spawn.
  */
 import { V, MOVE, DIRS4, clamp } from './constants.mjs';
+import { PASS } from './rng.mjs';
 
 export function floodReach(w) {
   var M = w.M, cells = w.cells, half = w.half, trailPath = w.trailPath, ci = w.ci,
@@ -61,8 +62,14 @@ export function floodReach(w) {
 
 /** Flat dry ground on the route near the middle, or failing that, anywhere flat. */
 export function chooseSpawn(w) {
-  var M = w.M, cells = w.cells, half = w.half, trailPath = w.trailPath, R = w.R,
+  var M = w.M, cells = w.cells, half = w.half, trailPath = w.trailPath, G = w.G,
       NX = w.NX, NZ = w.NZ, Hs = w.Hs, FLG = w.FLG, k;
+  /* The one draw in the generator that is genuinely window-scoped: where a
+     player starts is a property of the session, not of the ground, so this
+     stream is seeded from the window's own origin rather than from a place in
+     the world. It is only reached when the trail gives no dry cell near the
+     middle. */
+  var R = G.pstream(PASS.SPAWN, w.OX, w.OZ);
   var spawn=null;
   for(var tp=0;tp<trailPath.length&&!spawn;tp++){
     var tc2=cells[trailPath[tp]];

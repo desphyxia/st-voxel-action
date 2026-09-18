@@ -161,15 +161,18 @@ the other. Two ordering notes worth knowing before picking something up:
 
 - Material ids (#14) come before the greedy mesher (#12) — they change the per-voxel data
   layout that the mesher, the save deltas and the netcode all read.
-- Region-level determinism (#16) **landed**, which is what unblocked chunk streaming (#13).
-  Sites, trails, crossings and landmarks are decided per 64 m region in `src/gen/region.mjs`
-  and a window only reports what falls inside it. Props, clutter, grass and the span
-  undercuts are still window-scoped and still draw from the ordered stream — streaming will
-  need them moved too.
+- Region-level determinism (#16) and the rest of the ordered stream (#41) both **landed**,
+  which is what unblocked chunk streaming (#13). Sites, trails, crossings and landmarks are
+  decided per 64 m region in `src/gen/region.mjs`; everything else is keyed on the place it
+  belongs to. **There is no ordered stream left in `src/gen`.** Two windows onto the same
+  ground now agree voxel for voxel outside a measured **4 m skirt** — which is the overlap
+  #13 will have to generate and discard. See `src/README.md`.
 
-**Phase 0 comes first.** The path to a playable build is a short, specific sequence in
-`docs/PROTOTYPE.md`, and most of the engine backlog is deliberately deferred behind it. Do not
-start on meshing or streaming while there is still nothing to play.
+**Phase 0 is complete**, and the rule it carried — *do not start on meshing or streaming
+while there is still nothing to play* — has been served: there is a build you can open and
+fight in. The engine backlog is no longer deferred behind it. What still gates the rest is
+ordering, not phase: `docs/PROTOTYPE.md` remains the authority on what "playable" means and
+on the rules that keep every merge playable.
 
 ## What the plate now contradicts
 

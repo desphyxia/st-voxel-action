@@ -3,12 +3,16 @@
  * canyons, columns, caves. One 1 m cell at a time, sized in whole metres.
  *
  * makeGen(seed, force) is pure with respect to world position: cell(x, z)
- * depends only on the seed and the coordinate, which is what will let the same
- * region be generated twice and match (see issue #16). The one exception is
- * `rnd`, the world-build stream, which is ordered rather than positional.
+ * depends only on the seed and the coordinate, which is what lets the same
+ * region be generated twice and match (issue #16).
+ *
+ * There used to be one exception — `rnd`, an ordered world-build stream every
+ * later pass drew from. Issue #41 converted the last of its callers, and it is
+ * gone: `prandIn` and `pstream` are what a pass draws through now, and both
+ * answer for a place rather than for a step in a walk.
  */
 import { BIOMES } from './biomes.mjs';
-import { xmur3, mulberry32, makeNoise, posRand } from './rng.mjs';
+import { xmur3, makeNoise, posRand, placeRand, placeStream } from './rng.mjs';
 import { V, CEIL, clamp } from './constants.mjs';
 import { exp } from './exact.mjs';
 
@@ -16,12 +20,15 @@ export function makeGen(seedStr,force){
   var h=xmur3(String(seedStr));
   var N={h:makeNoise(h()),d:makeNoise(h()),t:makeNoise(h()),m:makeNoise(h()),
          r:makeNoise(h()),p:makeNoise(h()),c:makeNoise(h()),s:makeNoise(h()),v:makeNoise(h())};
-  var wx=(h()%9973)/13, wz=(h()%9967)/17, rr=mulberry32(h());
+  var wx=(h()%9973)/13, wz=(h()%9967)/17;
   /* A seed word for positional randomness, drawn from its own hash of the seed
      rather than from `h` — taking another value out of `h` would shift every
      stream below it and change every world for no reason. See rng.mjs. */
   var sw=xmur3('pos:'+String(seedStr))();
   function prand(x,z,salt){ return posRand(sw,x,z,salt); }
+  /* The pass-scoped forms every window pass draws through — see rng.mjs. */
+  function prandIn(pass,x,z,salt){ return placeRand(sw,pass,x,z,salt); }
+  function pstream(pass,x,z){ return placeStream(sw,pass,x,z); }
   function climate(x,z){
     var t,m,i,w=[],s=0;
     if(force!=null){
@@ -110,7 +117,7 @@ export function makeGen(seedStr,force){
     return sp;
   }
   function detail(x,z){ return (Math.round(N.d.fbm(x*0.62,z*0.62,2)*4)-2)*V; }
-  return {cell:cell,detail:detail,climate:climate,rnd:rr,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,
-          sw:sw,prand:prand};
+  return {cell:cell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,
+          sw:sw,prand:prand,prandIn:prandIn,pstream:pstream};
 }
 

@@ -55,3 +55,36 @@ export function posStream(sw, x, z, salt) {
   var n = 0;
   return function () { return posRand(sw, x, z, (salt | 0) + (n++) * 0x9e37); };
 }
+
+/**
+ * Pass ids, mixed into the *seed word* rather than into the salt.
+ *
+ * `posStream` walks the salt in steps of 0x9e37, so two passes that differ only
+ * by a salt offset can land on each other's numbers once enough draws are made
+ * — and a single tree draws several thousand. Mixing the pass in at the seed
+ * word gives each pass an independent hash family instead, with no arithmetic
+ * relating one to another.
+ *
+ * The values are arbitrary and only have to be distinct. Adding a pass means
+ * adding a row, never reusing one: two passes sharing an id would draw the same
+ * numbers at the same place, which is a correlation nobody would ever see in a
+ * screenshot.
+ */
+export const PASS = {
+  SPAN: 1, VOX: 2, GRASS: 3, TREE: 4, CLUTTER: 5, SCREE: 6,
+  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12,
+};
+
+/** The seed word a pass draws under. */
+export function passWord(sw, pass) { return (sw ^ Math.imul(pass | 0, 0x9e3779b1)) | 0; }
+
+/** One positional draw, in a named pass. */
+export function placeRand(sw, pass, x, z, salt) { return posRand(passWord(sw, pass), x, z, salt); }
+
+/**
+ * A stream of draws belonging to one place, in a named pass — the workhorse.
+ * Everything a pass does at one cell comes out of one of these, so the answer
+ * depends on the cell's world coordinate and on nothing the pass did before it
+ * got there.
+ */
+export function placeStream(sw, pass, x, z) { return posStream(passWord(sw, pass), x, z, 0); }

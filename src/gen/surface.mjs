@@ -13,6 +13,7 @@ import { V, CEIL, clamp } from './constants.mjs';
 import { MAT } from './materials.mjs';
 import { BIOMES, SNOW, ASHFALL, PATH, pickFrom, rouletteBiome, pushShade, shadeR, shadeG, shadeB }
   from './biomes.mjs';
+import { PASS } from './rng.mjs';
 
 export function sampleGrid(w) {
   var S = w.size, M = w.M, half = w.half, cells = w.cells, cellAt = w.cellAt,
@@ -35,7 +36,10 @@ export function sampleGrid(w) {
 
 export function buildVoxels(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, BOT = w.BOT, FLG = w.FLG, half = w.half,
-      cellAt = w.cellAt, R = w.R, i, j, k, x, z, c;
+      cellAt = w.cellAt, G = w.G, i, j, k, x, z, c;
+  /* The window's origin in voxels. A column's world voxel index is i + vx0,
+     which is what two windows onto the same ground agree on — see issue #41. */
+  var vx0 = Math.round(w.OX / V), vz0 = Math.round(w.OZ / V);
   /* voxels */
   var pos=[],col=[],mat=[],mpos=[],mcol=[],mmat=[],y,hh,mn,slope;
   var TOPI=new Int32Array(NX*NZ);
@@ -45,6 +49,9 @@ export function buildVoxels(w) {
           n2=j>0?Hs[k-1]:hh-2, n3=j<NZ-1?Hs[k+1]:hh-2;
       mn=Math.min(n0,n1,n2,n3); slope=hh-mn;
       c=cellAt(x,z);
+      /* Every shade this column wears comes out of one stream, seeded from the
+         column and from nothing the pass did before it got here. */
+      var R=G.pstream(PASS.VOX,i+vx0,j+vz0);
       var b=BIOMES[rouletteBiome(c.w,R)], topc, topm;
       if(FLG[k]&2){ mpos.push(x,hh-V/2,z); pushShade(mcol,R()<0.5?0xff6a1e:0xffa23c,1); mmat.push(MAT.MAGMA);
                     topc=0x2b2422; topm=MAT.ASH; }

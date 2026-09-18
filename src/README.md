@@ -56,23 +56,39 @@ coordinates and is cached; `clearRegionCache()` exists so the smoke test can pro
 the purity rather than test the cache.
 
 This is issue #16, and it is what lets the generator be asked for more than one
-window. It rests on two things being positional rather than ordered:
+window. Issue #41 finished it, one level down. **There is no ordered stream left
+in the generator**: every draw is positional, keyed on the place its answer
+belongs to, and `makeGen` no longer returns `rnd` at all.
 
-- `G.cell(x, z)` always was.
-- **Erosion now is.** It used to draw from the ordered stream and skip the window's
-  border ring, so the same square metre had one height when it was interior to a
-  window and another when it sat on the edge. Routes are chosen over those heights,
-  so nothing above could be deterministic until this was. `erodeAt(G, x, z, c)` is
-  the whole of it: a cell, its four neighbours, and a positional draw.
+The two failure modes it had, both now closed:
 
-`rng.mjs` has both kinds and the distinction matters: `mulberry32` is a stream whose
-nth value depends on n, and `posRand(sw, x, z, salt)` answers for a *place*. Use the
-stream only where the answer genuinely belongs to a moment in a pass.
+- **A draw that depended on the walk.** `mulberry32` is a stream whose nth value
+  depends on n, so a pass that walked a window drew a different number at the same
+  square metre than the same pass walking a window offset by a chunk. Every such
+  draw now goes through `G.pstream(PASS.X, x, z)` — a stream seeded from a place
+  and from a named pass. The pass id is mixed into the *seed word*, not the salt,
+  because a salt offset is arithmetic two long streams can collide across and a
+  single tree draws several thousand times.
+- **A border ring the pass skipped.** Erosion had it; so did the span undercuts and
+  the clutter loops. A cell was treated one way when it was interior to one window
+  and another when it sat on the edge of the next. `ground.mjs` answers for a world
+  coordinate whether or not the window can see it, so an edge cell can look at its
+  neighbour instead of being skipped.
 
-**Still window-scoped, and next:** props, clutter, grass and the span undercuts all
-still draw from the ordered stream, so two windows agree on where the trail goes and
-disagree about which boulder sits beside it. Same bug, same fix, many more call
-sites — and chunk streaming (#13) will need it.
+Two decisions that were window-scoped and had no business being:
+
+- **Which site gets the ruin** travels with the site (`[i, j, role]`), rather than
+  being its index in whatever subset this window can see.
+- **Lamps** are spaced along the *region's* route, not picked three-per-window out
+  of whatever slice of trail the window holds.
+
+A window is still not perfect at its own edge, and cannot be: a stamp is placed from
+an anchor cell and reaches past it, and reads the surface through a lookup that
+clamps at the window edge. Measured across seven seeds and six offsets, **4 m** is
+the skirt — inside it two windows agree voxel for voxel, at 3 m they differ by eight
+voxels out of 2.4 million. That band is exactly the overlap chunk streaming (#13)
+will have to generate and throw away. The REGION checks in `tools/smoke.mjs` assert
+all of this.
 
 ### Three things to know before editing
 
@@ -260,6 +276,8 @@ they are deltas against something both ends already have.
   the material ids. That is deliberate for the plate's dithered blends, but the
   greedy mesher (issue #12) wants the look decided from the material at draw
   time, and the two will have to be reconciled then.
-- One window at a time. The generator is positional in `cell(x, z)` but the
-  world-build stream is ordered, so two overlapping windows do not agree at the
-  seam. Issue #16 is region-level determinism, and it blocks chunk streaming.
+- Per-window prop budgets. `scatterProps` caps trees at 260 and arcs at 3 per
+  window, which makes a prop's existence depend on how much world you are looking
+  at. They are inert at every size the generator is run at — the fullest seed wants
+  94 trees — and the smoke test asserts that no cap ever bit. The day it fails, the
+  budget has to move to the region pass.

@@ -18,7 +18,10 @@
  *   1. SYNC       docs/concept/index.html carries the generator that is in
  *                 src/gen right now. The plate inlines it rather than importing
  *                 it (it has to stay one self-contained file), so drift is
- *                 possible and this is what makes it loud.
+ *                 possible and this is what makes it loud. Carrying the code is
+ *                 not the same as using it, so this also checks that every
+ *                 grass attribute the generator emits reaches a shader on both
+ *                 pages — the drift that hid a missing tint for six issues.
  *   2. NODE       src/gen generates every seed with no browser and no DOM.
  *   3. BOOT       the plate loads and runs with zero page errors.
  *   4. MATH       src/gen reaches for no arithmetic the spec leaves to the
@@ -39,9 +42,11 @@
  *                 world, and what is on the ground is derived on both machines
  *                 rather than sent — one integer of it crosses.
  *   5f. REGION    two windows onto the same ground agree about it — heights,
- *                 trail, sites, crossings and landmarks. Sites and routes are
- *                 decided per 128 m region rather than per window (#16), which
- *                 is what lets the generator be asked for more than one.
+ *                 trail, sites, crossings, landmarks, and every voxel, prop and
+ *                 blade of grass between them outside a measured 4 m skirt.
+ *                 Routes are decided per 64 m region rather than per window
+ *                 (#16) and every other draw is keyed on its place (#41),
+ *                 which is what lets the generator be asked for more than one.
  *   5g. NET       a host and a guest agree exactly after latency and packet
  *                 loss, the host is authoritative, and no terrain crosses.
  *   6. PLAY       a character survives five simulated minutes on every seed
@@ -98,6 +103,28 @@ const check = (ok, label, detail = '') => {
 const stale = staleTargets().map((s) => s.target.name);
 check(stale.length === 0, `SYNC: ${TARGETS.length} pages carry the current src`,
       stale.length ? `${stale.join(', ')} — run: node tools/bundle-gen.mjs` : '');
+
+/* Every grass attribute the generator emits has to reach a shader on *both*
+   pages. This is the narrow, static version of issue #40: SYNC proves the pages
+   carry the same src, and the golden digest proves the array is still produced,
+   but neither notices a page that builds the array and then drops it on the
+   floor. That is not hypothetical — it is exactly what happened to `ti`, which
+   the plate has drawn since it was written and the playable build, written
+   fresh in #21, never uploaded. Six issues passed and nothing said a word. */
+{
+  const want = [['ti', 'aTint'], ['dc', 'aDry'], ['c', 'aCol'], ['ph', 'aPhase']];
+  const missing = [];
+  for (const t of TARGETS) {
+    const src = readFileSync(t.file, 'utf8');
+    for (const [field, attr] of want) {
+      if (!src.includes(`gd.${field}[`) || !src.includes(`'${attr}'`)) {
+        missing.push(`${t.name}: grass.${field} -> ${attr}`);
+      }
+    }
+  }
+  check(missing.length === 0, 'SYNC: both pages draw with every grass attribute',
+        missing.length ? missing.join('; ') : `${want.length} attributes on ${TARGETS.length} pages`);
+}
 
 /* The static half of the MATH check. The dynamic half, below, proves the
    replacements in src/gen/exact.mjs agree across engines; this one proves

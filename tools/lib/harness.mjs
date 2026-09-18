@@ -136,7 +136,7 @@ export function measureWorld(d, name) {
   part('magma', () => { arr(d.mpos); arr(d.mcol); arr(d.mmat); });
   part('grass', () => {
     arr(d.grass.p); arr(d.grass.ph); arr(d.grass.ti);
-    arr(d.grass.sc); arr(d.grass.yw); arr(d.grass.c);
+    arr(d.grass.sc); arr(d.grass.yw); arr(d.grass.c); arr(d.grass.dc);
   });
   part('water', () => {
     arr(d.water.v); arr(d.water.i); arr(d.water.d); arr(d.water.f); arr(d.water.fl);

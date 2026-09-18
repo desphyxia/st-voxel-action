@@ -1301,6 +1301,74 @@ export function regionSuite() {
       featureBad.length === 0,
       featureBad.length ? featureBad.join('; ') : 'every shared feature identical');
 
+  /* ---- the voxels themselves (issue #41) ----------------------------------
+     Agreeing on heights and on where the trail runs is the region pass. This
+     is the rest of it: two windows onto the same ground must emit the same
+     voxels, the same props and the same grass, down to the shade of each box.
+
+     MARGIN is a measured number, not a guess. A stamp is placed from its
+     anchor cell and reaches past it — a canopy, a wall run, the arms of a
+     landmark — and it reads the surface through a lookup that clamps at the
+     window edge, so a band around the rim is wrong in any window and right in
+     its neighbour. Sweeping seven seeds and six offsets, 4 m is clean over 2.4
+     million voxels and 3 m fails by eight. That band is exactly the skirt
+     chunk streaming (#13) will have to generate and discard. */
+  const MARGIN = 4;
+  const voxPairs = [[[0, 0], [16, 0]], [[0, 0], [16, 16]], [[0, 0], [32, 32]]];
+  const fx = (n) => (+n).toFixed(4);
+  let voxBad = 0, voxSeen = 0, grassBad = 0, grassSeen = 0, capped = 0;
+
+  for (const [[ax, az], [bx, bz]] of voxPairs) {
+    const A = buildWorld({ seed: SEED, size: SIZE, force: null, ox: ax, oz: az });
+    const B = buildWorld({ seed: SEED, size: SIZE, force: null, ox: bx, oz: bz });
+    capped += (A.capped || 0) + (B.capped || 0);
+    const x0 = Math.max(ax, bx) - SIZE / 2 + MARGIN, x1 = Math.min(ax, bx) + SIZE / 2 - MARGIN;
+    const z0 = Math.max(az, bz) - SIZE / 2 + MARGIN, z1 = Math.min(az, bz) + SIZE / 2 - MARGIN;
+    const inBox = (x, z) => x >= x0 && x <= x1 && z >= z0 && z <= z1;
+
+    /* A voxel is its place, its colour and its material — the whole record. */
+    const voxOf = (w, ox, oz) => {
+      const out = [];
+      for (let i = 0; i < w.pos.length; i += 3) {
+        const x = w.pos[i] + ox, z = w.pos[i + 2] + oz;
+        if (!inBox(x, z)) continue;
+        out.push([fx(x), fx(w.pos[i + 1]), fx(z),
+                  fx(w.col[i]), fx(w.col[i + 1]), fx(w.col[i + 2]), w.mat[i / 3]].join(','));
+      }
+      return out.sort();
+    };
+    /* A blade is its place and every attribute the renderer instances it with,
+       the per-biome dry colour included (issue #39). */
+    const grassOf = (w, ox, oz) => {
+      const g = w.grass, out = [];
+      for (let i = 0; i < g.ph.length; i++) {
+        const x = g.p[i * 3] + ox, z = g.p[i * 3 + 2] + oz;
+        if (!inBox(x, z)) continue;
+        out.push([fx(x), fx(g.p[i * 3 + 1]), fx(z), fx(g.ph[i]), g.ti[i],
+                  fx(g.sc[i]), fx(g.yw[i]), fx(g.c[i * 3]), fx(g.dc[i * 3])].join(','));
+      }
+      return out.sort();
+    };
+    const diff = (a, b) => {
+      const sa = new Set(a), sb = new Set(b);
+      return a.filter((k) => !sb.has(k)).length + b.filter((k) => !sa.has(k)).length;
+    };
+    const va = voxOf(A, ax, az), vb = voxOf(B, bx, bz);
+    voxSeen += va.length; voxBad += diff(va, vb);
+    const ga = grassOf(A, ax, az), gb = grassOf(B, bx, bz);
+    grassSeen += ga.length; grassBad += diff(ga, gb);
+  }
+
+  say('and on every voxel and prop between them',
+      voxBad === 0, `${voxSeen} voxels compared, ${voxBad} mismatches (${MARGIN} m skirt)`);
+  say('and on every blade of grass, dry ones included',
+      grassBad === 0, `${grassSeen} blades compared, ${grassBad} mismatches`);
+  /* The per-window prop budgets are inert at every size the generator is run
+     at. The day one bites, a prop's existence starts depending on how much
+     world you are looking at, and this is the assertion that says so. */
+  say('no prop was dropped by a per-window budget',
+      capped === 0, capped ? `${capped} props suppressed by a cap` : 'no cap bit');
+
   /* The pass is pure, not merely cached: a second generator built from the same
      seed string is a different object and must still answer the same. */
   {

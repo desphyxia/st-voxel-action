@@ -11,6 +11,9 @@
  * views of the same ground now agree because neither of them chose anything.
  *
  * Sets w.TRAIL, w.sites, w.bridges, w.trailPath.
+ *
+ * A site is [i, j, role]: window cell indices, plus its index within the
+ * region, which is what props.mjs builds a ruin or a holding from.
  */
 import { regionAt, regionsFor } from './region.mjs';
 
@@ -61,7 +64,12 @@ export function layRoutes(w) {
     var rs = regions[q].sites;
     for (k = 0; k < rs.length; k++) {
       if (!inside(rs[k][0], rs[k][1])) continue;
-      sites.push([rs[k][0] - OX + half, rs[k][1] - OZ + half]);
+      /* The third element is the site's role — its index within the region,
+         which is what decides whether a ruin or a holding stands on it. A
+         window that can see only the second site must still know it is the
+         second, so the role travels with the site rather than being read off
+         this list's length (issue #41). */
+      sites.push([rs[k][0] - OX + half, rs[k][1] - OZ + half, k]);
     }
     var rb = regions[q].bridges;
     for (k = 0; k < rb.length; k++) {
