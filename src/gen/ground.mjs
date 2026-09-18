@@ -11,12 +11,18 @@
  * a cell treated one way when it was interior to one window and another way
  * when it was on the edge of the next. Height, water and magma are all a
  * neighbour is ever asked for, so that is all this returns.
+ *
+ * Named `groundCellAt` and not `groundAt` because `src/sim/camera.mjs` already
+ * exports a `groundAt` — where a screen pixel meets the ground plane — and the
+ * playable build concatenates src/gen and src/sim into one scope. The bundler
+ * now fails on a collision like that rather than letting the later declaration
+ * quietly win, which is how this one reached CI.
  */
 import { CEIL, clamp } from './constants.mjs';
 import { erodeAt } from './erosion.mjs';
 import { regionAt, regionOf } from './region.mjs';
 
-export function groundAt(w, x, z) {
+export function groundCellAt(w, x, z) {
   var i = x - w.OX + w.half, j = z - w.OZ + w.half;
   if (i >= 0 && j >= 0 && i < w.M && j < w.M) return w.cells[i * w.M + j];
   var c = w.G.cell(x, z);

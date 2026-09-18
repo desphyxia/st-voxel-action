@@ -123,14 +123,47 @@ function assertComplete(dir) {
   }
 }
 
+/**
+ * Two modules declaring the same top-level name.
+ *
+ * The bundle is a flat concatenation into one scope, so two `function foo`s do
+ * not shadow — the later one simply wins, everywhere, including inside the
+ * earlier module's own code. That is silent, and it is not theoretical: a
+ * `groundAt` added to src/gen/ground.mjs collided with the one src/sim/camera.mjs
+ * has always exported, and every call in the generator started asking the camera
+ * where a screen pixel lands. The plate was fine (it bundles src/gen alone) and
+ * the playable build hung on boot, which cost a CI round trip to find.
+ *
+ * Same class as a module missing from MODULES and an import that renames: the
+ * flat scope makes it possible, so the bundler is where it has to be caught.
+ */
+function assertNoCollisions(target, seen, dir, m, src) {
+  const names = [];
+  const re = /^(?:export\s+)?(?:async\s+)?(?:function\s+([A-Za-z_$][\w$]*)|(?:const|let|var|class)\s+([A-Za-z_$][\w$]*))/gm;
+  let hit;
+  while ((hit = re.exec(src))) names.push(hit[1] || hit[2]);
+  for (const n of names) {
+    const where = `${dir}/${m}.mjs`;
+    if (seen.has(n) && seen.get(n) !== where) {
+      throw new Error(
+        `${target.name}: '${n}' is declared in both ${seen.get(n)} and ${where}.\n` +
+        '  The bundle is one flat scope, so the later declaration wins everywhere\n' +
+        '  and the earlier module silently calls the wrong function. Rename one.');
+    }
+    seen.set(n, where);
+  }
+}
+
 export function renderBundle(target) {
-  const parts = [];
+  const parts = [], seen = new Map();
   for (const dir of target.dirs) {
     assertComplete(dir);
     for (const m of MODULES[dir]) {
       const raw = readFileSync(join(ROOT, `${dir}/${m}.mjs`), 'utf8');
       assertPlainImports(dir, m, raw);
-      parts.push(`/* ---------- ${dir}/${m}.mjs ---------- */\n${strip(raw).trim()}`);
+      const body = strip(raw).trim();
+      assertNoCollisions(target, seen, dir, m, body);
+      parts.push(`/* ---------- ${dir}/${m}.mjs ---------- */\n${body}`);
     }
   }
   return [

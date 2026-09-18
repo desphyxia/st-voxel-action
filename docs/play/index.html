@@ -1234,12 +1234,18 @@ function regionsFor(x0, z0, x1, z1) {
  * a cell treated one way when it was interior to one window and another way
  * when it was on the edge of the next. Height, water and magma are all a
  * neighbour is ever asked for, so that is all this returns.
+ *
+ * Named `groundCellAt` and not `groundAt` because `src/sim/camera.mjs` already
+ * exports a `groundAt` — where a screen pixel meets the ground plane — and the
+ * playable build concatenates src/gen and src/sim into one scope. The bundler
+ * now fails on a collision like that rather than letting the later declaration
+ * quietly win, which is how this one reached CI.
  */
 
 
 
 
-function groundAt(w, x, z) {
+function groundCellAt(w, x, z) {
   var i = x - w.OX + w.half, j = z - w.OZ + w.half;
   if (i >= 0 && j >= 0 && i < w.M && j < w.M) return w.cells[i * w.M + j];
   var c = w.G.cell(x, z);
@@ -1374,7 +1380,7 @@ function cutSpans(w) {
        windows, so the sequence does too. */
     var S=G.pstream(PASS.SPAN,wx,wz);
     for(d0=0;d0<4;d0++){
-      var ch=groundAt(w,wx+DIRS4[d0][0],wz+DIRS4[d0][1]);
+      var ch=groundCellAt(w,wx+DIRS4[d0][0],wz+DIRS4[d0][1]);
       if(ch.H-cl.H<2||ch.water||S()>0.17) continue;
       var out=1+((S()*2)|0), th=(S()<0.5?1:0.75), o;
       for(o=0;o<=out;o++){
@@ -1824,7 +1830,7 @@ function placeClutter(w, kit) {
     var RS=G.pstream(PASS.SCREE,wx0,wz0);
     for(var dd=0;dd<4;dd++){
       var di=DIRS4[dd][0], dj=DIRS4[dd][1];
-      var c1=groundAt(w,wx0+di,wz0+dj);
+      var c1=groundCellAt(w,wx0+di,wz0+dj);
       if(c0.H-c1.H<2) continue;
       if(RS()<0.32) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((RS()*4)|0),RS);
       break;

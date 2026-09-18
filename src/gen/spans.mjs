@@ -17,7 +17,7 @@
  * points its annotation at. The out-of-window neighbour lookup is ground.mjs.
  */
 import { DIRS4 } from './constants.mjs';
-import { groundAt } from './ground.mjs';
+import { groundCellAt } from './ground.mjs';
 import { PASS } from './rng.mjs';
 
 export function cutSpans(w) {
@@ -34,7 +34,7 @@ export function cutSpans(w) {
        windows, so the sequence does too. */
     var S=G.pstream(PASS.SPAN,wx,wz);
     for(d0=0;d0<4;d0++){
-      var ch=groundAt(w,wx+DIRS4[d0][0],wz+DIRS4[d0][1]);
+      var ch=groundCellAt(w,wx+DIRS4[d0][0],wz+DIRS4[d0][1]);
       if(ch.H-cl.H<2||ch.water||S()>0.17) continue;
       var out=1+((S()*2)|0), th=(S()<0.5?1:0.75), o;
       for(o=0;o<=out;o++){
