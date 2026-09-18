@@ -37,7 +37,12 @@ publishing without it silently creates a second artifact instead.
 | Page | Artifact |
 | --- | --- |
 | `docs/play/index.html` — the playable build | https://claude.ai/artifact/H3kZLpjDurCiH2DMEFfr8k |
-| `docs/concept/index.html` — the concept plate | https://claude.ai/code/artifact/10034b02-a25d-4f5b-ab04-cea2076ceee8 |
+| `docs/concept/index.html` — the concept plate | https://claude.ai/artifact/2ygm73vB9KdneTeDAQEwWf |
+
+**Use the URLs above, not a `/code/artifact/<uuid>` form.** Both artifacts answer to two
+address forms — a UUID and a short id — and the short id is what `action: "list"` reports and
+what the publish result hands back. They reach the same artifact, but the UUID form is what the
+two publishing failures below were tangled up in, so prefer the short one.
 
 **The playable build moved to a new artifact**, and the old one is abandoned rather than
 retired on purpose. From 2026-09-18 the artifact service returns HTTP 503 for *content reads*
@@ -46,6 +51,14 @@ of `f9c19fb9-115e-4055-8990-b0ae823c4f5c` — through both of its address forms 
 cannot first read, so that artifact can no longer be updated from here. It is still live and
 still serves the build as it stood before the fullscreen option, which makes it actively
 misleading: prefer the URL above. If the read ever recovers, the two can be reconciled.
+
+**The plate needed `force: true` once**, on 2026-09-18, and may again. A publish will not
+overwrite a version it has not "viewed", and viewing means reading the saved copy *whole* — but
+that copy is ~2,500 lines and about 60k tokens, over the Read tool's 25k single-call cap, and
+four contiguous chunked reads did not satisfy the check. Before forcing, diff the saved copy
+against `docs/concept/index.html` ignoring the generated bundle: if the only differences are the
+artifact service's own `<!doctype …><head>` wrapper and closing tags, nothing was edited from
+inside the page and there is nothing to lose. Force is the user's call, not yours.
 
 Neither is published automatically. When a change lands that alters what either page *shows*,
 republish it, or the live copy quietly drifts from the repo.
