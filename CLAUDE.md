@@ -52,13 +52,26 @@ cannot first read, so that artifact can no longer be updated from here. It is st
 still serves the build as it stood before the fullscreen option, which makes it actively
 misleading: prefer the URL above. If the read ever recovers, the two can be reconciled.
 
-**The plate needed `force: true` once**, on 2026-09-18, and may again. A publish will not
-overwrite a version it has not "viewed", and viewing means reading the saved copy *whole* — but
-that copy is ~2,500 lines and about 60k tokens, over the Read tool's 25k single-call cap, and
-four contiguous chunked reads did not satisfy the check. Before forcing, diff the saved copy
-against `docs/concept/index.html` ignoring the generated bundle: if the only differences are the
-artifact service's own `<!doctype …><head>` wrapper and closing tags, nothing was edited from
-inside the page and there is nothing to lose. Force is the user's call, not yours.
+**Both artifacts need `force: true` to republish, every time.** Not a plate quirk — measured on
+both pages on 2026-09-18. A publish will not overwrite a version it has not "viewed", viewing
+means reading the saved copy *whole*, and **chunked reads do not satisfy the check**: the play
+build was read completely, all 5,447 lines in six contiguous chunks, and the publish was refused
+anyway. The files are 239 KB and 151 KB against the Read tool's 25k-token single-call cap, so
+there is no way to clear it by reading harder. Do not spend the context finding that out again.
+
+The safe check takes one command, and it is stronger than eyeballing a diff. If anything had
+been edited from inside a page, its live copy would differ from the repo file **as it stood at
+the last publish**:
+
+```
+git show <last-published-sha>:docs/play/index.html > /tmp/was.html
+diff <(grep -v '^<!doctype html><html><head>' saved.html | grep -v '^</body></html>$') \
+     <(grep -v '^$' /tmp/was.html)
+```
+
+Identical means nobody has typed into the page and forcing loses nothing. On 2026-09-18 both
+pages came back identical to `8b37d0b`. **Force is still the user's call, not yours** — show
+them that result and ask.
 
 Neither is published automatically, and a stale artifact is worse than no artifact: it is a
 live link, already in circulation, quietly serving a build that no longer exists.
