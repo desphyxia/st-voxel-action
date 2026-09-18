@@ -54,7 +54,9 @@
  *                 of, and strikes what is in front of it once; a machine
  *                 notices, closes, telegraphs visibly, and can be killed; and
  *                 there is loot in the world to walk to, which seats in the
- *                 lattice and widens the arc the player is reading.
+ *                 lattice and widens the arc the player is reading; and the
+ *                 stage can fill the screen with the canvas following it, by
+ *                 either of the two routes a page in an iframe may get.
  *
  * As the prototype gains verbs, each one adds an assertion here — that is the
  * ratchet. See docs/PROTOTYPE.md.
@@ -594,6 +596,44 @@ if (BROWSER_HALF) {
             `${tells.orange} px turn orange, ${Number.isFinite(tells.off) ? tells.off.toFixed(0) : '-'} px from the character`);
       check(tells.dead && tells.hp === 0, 'BUILD: and it can be killed',
             tells.dead ? 'down' : `still up on ${tells.hp} hp`);
+
+      /* ---------- BUILD: fullscreen ----------
+         Two paths, because a published artifact runs in an iframe and only gets
+         native fullscreen if the host granted allow="fullscreen". Both have to
+         end with the drawing buffer matching the box it is drawn into — a stage
+         that grew while the canvas did not is a stretched, wrongly-framed game.
+
+         `settled` polls rather than sleeps: fullscreenchange fires before the
+         new box is laid out, and under software rendering a frame is most of a
+         second, so any fixed wait here measures the renderer instead. */
+      const stageFits = () => bp.waitForFunction(() => {
+        const st = document.querySelector('#stage'), c = document.querySelector('#cv');
+        const r = st.getBoundingClientRect();
+        return c.width === Math.max(1, r.width | 0) && c.height === Math.max(1, r.height | 0);
+      }, null, { timeout: PATIENCE });
+      const stageState = () => bp.evaluate(() => {
+        const st = document.querySelector('#stage'), c = document.querySelector('#cv');
+        const r = st.getBoundingClientRect();
+        return { w: Math.round(r.width), h: Math.round(r.height), cw: c.width, ch: c.height,
+                 filling: document.fullscreenElement === st || st.classList.contains('maxed'),
+                 exit: getComputedStyle(document.querySelector('#exitfs')).display };
+      });
+      await stageFits();
+      const fsBefore = await stageState();
+      await bp.click('#fullbtn');
+      await stageFits();
+      const fsOn = await stageState();
+      await bp.click('#exitfs');
+      await stageFits();
+      const fsOff = await stageState();
+      check(fsOn.filling && fsOn.h > fsBefore.h && fsOn.cw === fsOn.w && fsOn.ch === fsOn.h,
+            'BUILD: fullscreen fills the screen and the canvas follows',
+            `${fsBefore.w}x${fsBefore.h} to ${fsOn.w}x${fsOn.h}, canvas ${fsOn.cw}x${fsOn.ch}`);
+      check(fsOn.exit !== 'none', 'BUILD: and there is a way out from inside it',
+            fsOn.exit !== 'none' ? 'exit control shown' : 'NO EXIT — the stage covers the button');
+      check(!fsOff.filling && fsOff.h === fsBefore.h && fsOff.cw === fsOff.w,
+            'BUILD: and leaving it puts the stage back',
+            `${fsOff.w}x${fsOff.h}, canvas ${fsOff.cw}x${fsOff.ch}`);
 
       /* ---------- NET in a browser ----------
          The loopback suite proves the protocol; this proves the page is wired

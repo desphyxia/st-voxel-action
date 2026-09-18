@@ -21,6 +21,24 @@
          border:1px solid var(--line);border-radius:3px;overflow:hidden;background:#0b0f14;
          cursor:crosshair;touch-action:none}
   .stage canvas{display:block;width:100%;height:100%}
+  /* Two ways to fill the screen. Native fullscreen is the good one; `.maxed`
+     is the fallback for when this page is inside an iframe that was not given
+     `allow="fullscreen"`, which is the case for a published artifact unless the
+     host grants it. Both end in the same place: the stage owns the viewport and
+     resize() recomputes the orthographic frustum for the new aspect. */
+  .stage:fullscreen, .stage.maxed{
+    max-height:none;aspect-ratio:auto;border-radius:0;border-color:transparent}
+  .stage:fullscreen{width:100vw;height:100vh}
+  .stage.maxed{position:fixed;inset:0;width:100vw;height:100vh;z-index:60}
+  /* While the stage fills the screen it covers the button that put it there, so
+     the way out has to live inside the stage. Hidden otherwise. */
+  .exitfs{position:absolute;right:10px;top:10px;display:none;font-family:var(--mono);
+          font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+          background:rgba(10,13,17,.72);border:1px solid var(--line2);border-radius:2px;
+          padding:6px 10px;cursor:pointer;z-index:2}
+  .exitfs:hover{color:var(--text)}
+  .exitfs:focus-visible{outline:2px solid var(--magic);outline-offset:2px}
+  .stage:fullscreen .exitfs, .stage.maxed .exitfs{display:block}
   .fallback{position:absolute;inset:0;display:none;place-items:center;text-align:center;padding:24px;
             color:var(--muted);font-size:14px}
   .hud{position:absolute;left:10px;top:10px;font-family:var(--mono);font-size:11.5px;line-height:1.7;
@@ -125,16 +143,19 @@
       <div class="dead" id="dead"><span id="deadmsg">dead</span></div>
       <div class="toast" id="toast"></div>
       <div class="fallback" id="fallback">This browser could not start WebGL, so there is nothing to play here.</div>
+      <button class="exitfs" id="exitfs" type="button">Exit fullscreen · Esc</button>
     </div>
     <div class="bar">
       <p class="cap"><b>WASD</b> to move, camera-relative · <b>Space</b> to jump · <b>click</b> or <b>F</b> to
         swing · <b>Shift</b> to dodge · <b>Q</b>/<b>E</b> to turn the view · <b>R</b> to respawn · mouse or
         right stick to aim. Walk over a cache or a fallen machine to take what is in it, and seat it in
-        the lattice below. Click the view first to give it the keyboard.</p>
+        the lattice below. <b>Fullscreen</b> fills the screen; <b>Esc</b> leaves it.
+        Click the view first to give it the keyboard.</p>
       <span class="seedbox"><label for="seedin">Seed</label><input id="seedin" value="QUARTERSTONE" spellcheck="false" autocomplete="off"></span>
       <button class="ctl" id="regen" type="button">Generate</button>
       <button class="ctl" id="respawn" type="button">Respawn</button>
       <button class="ctl" id="hostbtn" type="button">Host a game</button>
+      <button class="ctl" id="fullbtn" type="button">Fullscreen</button>
     </div>
     <p class="netstat" id="netstat">Playing alone. <b>Host a game</b> opens a second window on
       this machine and puts another character in the same world — the host decides what happened,
@@ -4445,10 +4466,61 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   if(window.ResizeObserver){ new ResizeObserver(resize).observe(stage); }
   else window.addEventListener('resize',resize);
 
+  /* ---------- fullscreen ----------
+     At the framing #21 chose, a 5 m canyon and its far rim are both on screen
+     and the character is about forty pixels tall — which is exactly the tension
+     #38 is about. Filling the screen does not resolve it, but it buys back every
+     pixel the page furniture was taking, and it is the cheapest thing that helps.
+
+     Native fullscreen first. A published artifact runs in an iframe, and an
+     iframe can only go fullscreen if the host granted it `allow="fullscreen"` —
+     `document.fullscreenEnabled` is false when it did not, and requestFullscreen
+     can still reject even when it is true. Either way we fall back to filling the
+     artifact's own viewport, which is most of the win and always available. */
+  var fullBtn=document.getElementById('fullbtn');
+  function fsElement(){ return document.fullscreenElement||document.webkitFullscreenElement||null; }
+  function maxed(){ return stage.classList.contains('maxed'); }
+  function filling(){ return fsElement()===stage||maxed(); }
+  function syncFullBtn(){
+    fullBtn.textContent=filling()?'Exit fullscreen':'Fullscreen';
+    /* The stage changed size, and the renderer's drawing buffer has to follow. */
+    resize(); stage.focus();
+  }
+  /* fullscreenchange fires *before* the new box is laid out: measured here, both
+     getBoundingClientRect() and fullscreenElement still read the old state, which
+     left the label and the canvas one transition behind. A frame later both are
+     settled, so everything that reacts to a change goes through this. */
+  function syncSoon(){ requestAnimationFrame(syncFullBtn); }
+  function goMaxed(on){ stage.classList.toggle('maxed',on); syncSoon(); }
+  function toggleFull(){
+    if(maxed()){ goMaxed(false); return; }
+    if(fsElement()){
+      var exit=document.exitFullscreen||document.webkitExitFullscreen;
+      if(exit) exit.call(document);
+      return;
+    }
+    var req=stage.requestFullscreen||stage.webkitRequestFullscreen;
+    if(!req||!(document.fullscreenEnabled||document.webkitFullscreenEnabled)){ goMaxed(true); return; }
+    var r;
+    try{ r=req.call(stage); }catch(err){ goMaxed(true); return; }
+    /* Older implementations return undefined rather than a promise. */
+    if(r&&r.catch) r.catch(function(){ goMaxed(true); });
+  }
+  fullBtn.addEventListener('click',function(){ toggleFull(); });
+  var exitFs=document.getElementById('exitfs');
+  /* The stage swallows pointerdown to take the keyboard, so stop it here or the
+     click both leaves fullscreen and swings. */
+  exitFs.addEventListener('pointerdown',function(e){ e.stopPropagation(); });
+  exitFs.addEventListener('click',function(e){ e.stopPropagation(); toggleFull(); });
+  document.addEventListener('fullscreenchange',syncSoon);
+  document.addEventListener('webkitfullscreenchange',syncSoon);
+
   /* ---------- input wiring ---------- */
   var arming=null;
   stage.addEventListener('keydown',function(e){
     if(arming){ arming(e.code); e.preventDefault(); return; }
+    /* Native fullscreen releases itself on Escape; the fallback has to be told. */
+    if(e.code==='Escape'&&maxed()){ goMaxed(false); e.preventDefault(); return; }
     input.press(e.code);
     if(e.code==='Space'||e.code.indexOf('Arrow')===0) e.preventDefault();
   });
