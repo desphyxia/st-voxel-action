@@ -43,9 +43,58 @@ export const LEVELS = Math.round(CEIL / V);
 const DIRS = [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]];
 
 /**
+ * Every 25 cm level the generated world has solid in this column, top-down
+ * order not guaranteed. One definition, because the mesher's occupancy grid and
+ * a carve have to agree on what is there before one of them removes it.
+ */
+export function forSolidY(w, gi, gj, fn) {
+  if (gi < 0 || gj < 0 || gi >= w.NX || gj >= w.NZ) return;
+  var half = w.half, M = w.M;
+  var x = -half + gi * V + V / 2, z = -half + gj * V + V / 2;
+  var ci = clamp(Math.round(x + half), 0, M - 1);
+  var cj = clamp(Math.round(z + half), 0, M - 1);
+  var sp = w.cells[ci * M + cj].sp;
+  /* Every span but the last at its own height; the last one refined to the
+     25 cm height field, exactly as the collider does it. */
+  for (var q = 0; q < sp.length; q++) {
+    var lo = sp[q][0];
+    var hi = q === sp.length - 1 ? Math.min(w.Hs[gi * w.NZ + gj], CEIL) : sp[q][1];
+    for (var y = Math.max(0, Math.floor(lo / V)); y < Math.min(LEVELS, Math.ceil(hi / V)); y++) fn(y);
+  }
+}
+
+/**
+ * Where one carved voxel lives in `w.edits`.
+ *
+ * The edit map is a plain Map hung on the world, keyed by voxel and valued by
+ * the material that was there. It is deliberately the smallest thing that can
+ * answer "is this voxel still here" — the mesher is the only system reading it
+ * today. When collision, the wire and the save format need the same answer it
+ * should move out of src/mesh and grow an authority; see the note in carve.mjs.
+ */
+export function editKey(w, gi, gj, y) { return (gi * w.NZ + gj) * LEVELS + y; }
+
+/** Has this voxel been carved away? */
+export function isCut(w, gi, gj, y) {
+  return !!(w.edits && w.edits.has(editKey(w, gi, gj, y)));
+}
+
+/** Is this voxel solid right now — generated, and not since carved? */
+export function solidVox(w, gi, gj, y) {
+  if (y < 0 || y >= LEVELS || isCut(w, gi, gj, y)) return 0;
+  var hit = 0;
+  forSolidY(w, gi, gj, function (yy) { if (yy === y) hit = 1; });
+  return hit;
+}
+
+/**
  * The solid volume of one chunk at 25 cm, from the spans — not from the voxels
  * the generator emitted. `pad` of 1 gives the AO and the face test a ring of
  * neighbours to read, so a chunk's edge is shaded by the chunk beside it.
+ *
+ * Carved voxels are subtracted afterwards rather than tested per cell: edits
+ * are sparse by nature, so walking the map costs what has been carved instead
+ * of what has not.
  */
 export function chunkOccupancy(w, cx, cz, pad) {
   pad = pad === undefined ? 1 : pad;
@@ -53,26 +102,24 @@ export function chunkOccupancy(w, cx, cz, pad) {
   var nx = side + pad * 2, nz = side + pad * 2, ny = LEVELS;
   var i0 = cx * side - pad, j0 = cz * side - pad;
   var occ = new Uint8Array(nx * nz * ny);
-  var half = w.half, M = w.M, NZ = w.NZ, NX = w.NX;
-  var a, b, y, lo, hi;
+  var NZ = w.NZ, NX = w.NX;
+  var a, b, base = 0;
+  function mark(y) { occ[base + y] = 1; }
   for (a = 0; a < nx; a++) {
     for (b = 0; b < nz; b++) {
       var gi = i0 + a, gj = j0 + b;
       if (gi < 0 || gj < 0 || gi >= NX || gj >= NZ) continue;
-      var x = -half + gi * V + V / 2, z = -half + gj * V + V / 2;
-      var ci = clamp(Math.round(x + half), 0, M - 1);
-      var cj = clamp(Math.round(z + half), 0, M - 1);
-      var sp = w.cells[ci * M + cj].sp, base = (a * nz + b) * ny;
-      /* Every span but the last at its own height; the last one refined to the
-         25 cm height field, exactly as the collider does it. */
-      for (var q = 0; q < sp.length; q++) {
-        lo = sp[q][0];
-        hi = q === sp.length - 1 ? Math.min(w.Hs[gi * NZ + gj], CEIL) : sp[q][1];
-        for (y = Math.max(0, Math.floor(lo / V)); y < Math.min(ny, Math.ceil(hi / V)); y++) {
-          occ[base + y] = 1;
-        }
-      }
+      base = (a * nz + b) * ny;
+      forSolidY(w, gi, gj, mark);
     }
+  }
+  if (w.edits && w.edits.size) {
+    w.edits.forEach(function (_m, k) {
+      var y = k % ny, cell = (k - y) / ny, gj = cell % NZ, gi = (cell - gj) / NZ;
+      var a2 = gi - i0, b2 = gj - j0;
+      if (a2 < 0 || b2 < 0 || a2 >= nx || b2 >= nz) return;
+      occ[(a2 * nz + b2) * ny + y] = 0;
+    });
   }
   return { occ: occ, nx: nx, nz: nz, ny: ny, i0: i0, j0: j0, pad: pad };
 }

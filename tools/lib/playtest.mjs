@@ -28,7 +28,9 @@ import { makeLoopback } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache } from '../../src/gen/region.mjs';
-import { meshChunk } from '../../src/mesh/greedy.mjs';
+import { meshChunk, surfaceAt, isCut } from '../../src/mesh/greedy.mjs';
+import { carve, clearEdits, chunkGrid } from '../../src/mesh/carve.mjs';
+import { MATERIALS } from '../../src/gen/materials.mjs';
 import { GOLDEN_SEEDS } from './harness.mjs';
 
 /** Five minutes, the bar in docs/PROTOTYPE.md. */
@@ -1453,6 +1455,95 @@ export function meshSuite() {
     && again.ao.every((v, i) => v === first.ao[i]);
   say('and meshing the same chunk twice gives the same mesh',
       same, `${again.quads} quads`);
+
+  return out;
+}
+
+/* ----------------------------------------------------------------- carve ---- */
+
+/** Everything a chunk's mesh is, flattened into one comparable string. */
+function meshSig(m) {
+  return m.quads + '|' + m.pos.join(',') + '|' + m.ao.join(',') + '|' + m.pal.join(',');
+}
+
+/** Mesh every chunk of a world and key the signatures by "cx,cz". */
+function meshAll(w) {
+  const g = chunkGrid(w), out = {};
+  for (let cx = 0; cx < g; cx++) for (let cz = 0; cz < g; cz++) out[cx + ',' + cz] = meshSig(meshChunk(w, cx, cz));
+  return out;
+}
+
+/** The column's top voxel index, and the centre of that voxel in metres. */
+function topVoxel(w, gi, gj) {
+  const h = w.Hs[gi * w.NZ + gj], y = Math.floor((h - 0.001) / V);
+  return { y, x: -w.half + gi * V + V / 2, z: -w.half + gj * V + V / 2, cy: y * V + V / 2 };
+}
+
+/**
+ * Issue #12's third clause: the mesh has to follow an edit, and follow it on
+ * exactly the chunks the edit reaches — which is more than the one it is in.
+ */
+export function carveSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const w = buildWorld({ seed: 'QUARTERSTONE', size: 64, force: null, ox: 0, oz: 0 });
+
+  const before = meshAll(w);
+  /* Somewhere in the middle of chunk 0,0, well away from any seam. */
+  const gi = 60, gj = 60, t = topVoxel(w, gi, gj);
+  const bite = carve(w, t.x, t.cy, t.z, {});
+  const after = meshAll(w);
+
+  let stillThere = 0;
+  for (let q = 0; q < bite.removed.length; q += 3) {
+    if (!isCut(w, bite.removed[q], bite.removed[q + 1], bite.removed[q + 2])) stillThere++;
+  }
+  say('a bite out of the ground takes voxels with it, and the chunk remeshes',
+      bite.cut > 0 && stillThere === 0 && after['0,0'] !== before['0,0'],
+      `${bite.cut} voxels removed, chunk 0,0 remeshed`);
+
+  const moved = Object.keys(after).filter((k) => after[k] !== before[k]);
+  const claimed = new Set(bite.chunks.map(([a, b]) => a + ',' + b));
+  say('and nothing outside the chunks it named moved',
+      moved.length > 0 && moved.every((k) => claimed.has(k)),
+      `${moved.length} chunk(s) changed: ${moved.join(' ')}; ${claimed.size} claimed`);
+
+  say('and putting the edits back gives the mesh the generator made',
+      (clearEdits(w) === bite.cut) && meshAll(w)['0,0'] === before['0,0'],
+      `${bite.cut} edits cleared`);
+
+  /* A carve one voxel from a chunk edge changes the *neighbour's* occlusion,
+     because the mesher reads a one-voxel ring past its own boundary to shade
+     the seam. Claiming only the chunk the voxel is in leaves a bright crease
+     along the join, and this is the case that catches it. */
+  const side = Math.round(32 / V), gs = side - 1;
+  const t2 = topVoxel(w, gs, 60);
+  const edge = carve(w, t2.x, t2.cy, t2.z, { radius: 0.1 });
+  const seamAfter = meshAll(w);
+  const seamMoved = Object.keys(seamAfter).filter((k) => seamAfter[k] !== before[k]);
+  const seamClaimed = new Set(edge.chunks.map(([a, b]) => a + ',' + b));
+  say('and a carve on a chunk edge restitches the chunk beside it',
+      edge.cut > 0 && seamMoved.includes('1,0')
+      && seamMoved.every((k) => seamClaimed.has(k)),
+      `${edge.cut} voxel(s) at the seam; ${seamMoved.join(' ')} changed`);
+  clearEdits(w);
+
+  /* What comes away is the material's business, not the swing's. */
+  const wa = buildWorld({ seed: 'CINDERWAKE', size: 64, force: 3, ox: 0, oz: 0 });
+  let bi = -1, bj = -1;
+  for (let a = 8; a < wa.NX - 8 && bi < 0; a++) {
+    for (let b = 8; b < wa.NZ - 8; b++) {
+      const tv = topVoxel(wa, a, b);
+      if (MATERIALS[surfaceAt(wa, a, b, tv.y).mat].hard > 1) { bi = a; bj = b; break; }
+    }
+  }
+  const tb = bi < 0 ? null : topVoxel(wa, bi, bj);
+  const weak = tb && carve(wa, tb.x, tb.cy, tb.z, { radius: 0.1 });
+  const strong = tb && carve(wa, tb.x, tb.cy, tb.z, { radius: 0.1, bite: 1.5 });
+  say('and basalt holds against one bite but not against a harder one',
+      !!tb && weak.cut === 0 && !!weak.held && weak.held.hard > 1 && strong.cut > 0,
+      tb ? `${weak.held ? weak.held.nm : 'nothing'} held at ${bi},${bj}; ${strong.cut} voxel(s) at bite 1.5`
+         : 'no hard surface found in the ashfall seed');
 
   return out;
 }

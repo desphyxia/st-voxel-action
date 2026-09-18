@@ -28,7 +28,7 @@ export const END = '/* QS-BUNDLE-END */';
 const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'palette', 'rng', 'biomes', 'field', 'erosion', 'region', 'ground', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index'],
-  'src/mesh': ['greedy'],
+  'src/mesh': ['greedy', 'carve'],
   'src/sim': ['collider', 'combat', 'lattice', 'loot', 'actor', 'enemy', 'camera', 'input'],
   'src/net': ['transport', 'session'],
 };
@@ -43,7 +43,8 @@ const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERI
                  'sin', 'cos', 'exp', 'hyp'];
 
 /** The greedy mesher, behind the build's renderer flag — issue #12. */
-const MESH_API = ['meshChunk', 'chunkOccupancy', 'openAir', 'surfaceAt', 'LEVELS'];
+const MESH_API = ['meshChunk', 'chunkOccupancy', 'openAir', 'surfaceAt', 'LEVELS',
+  'isCut', 'solidVox', 'carve', 'clearEdits', 'chunkGrid', 'BITE', 'BITE_R'];
 
 /** Everything the playable build needs on top of it: the simulation and the wire. */
 const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld',
