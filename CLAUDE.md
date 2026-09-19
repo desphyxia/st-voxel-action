@@ -216,7 +216,11 @@ moved or a shade that shifted while every total stayed the same.
 
 ## Conventions
 
-- Work on the current branch. It is also the repo's default branch.
+- Work on `main`. It is the repo's default branch. The history before
+  2026-09-19 is on `claude/isometric-voxel-rpg-concept-4kpykc`, which was the
+  default until then and which `main` was branched from — same commits, same
+  shas, nothing rewritten. Nothing needs to be done with that branch; it is
+  kept so links to it keep resolving.
 - Do not open pull requests unless asked — **except** for architectural work (anything behind a
   feature flag, or touching the voxel data layout, meshing, or netcode authority), which goes
   through a PR so CI is a hard gate. See `docs/PROTOTYPE.md`.
