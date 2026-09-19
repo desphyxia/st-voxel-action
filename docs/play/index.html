@@ -6148,7 +6148,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     for(var cx=0;cx<n;cx++)for(var cz=0;cz<n;cz++){
       var g=chunkGeometry(data,cx,cz,org,pre), mesh=new THREE.Mesh(g,mat);
       mesh.castShadow=true; mesh.receiveShadow=true; mesh.frustumCulled=false;
-      mesh.userData.chunk=[cx,cz];
+      mesh.userData.chunk=[cx,cz]; mesh.userData.kind='terrain';
       grp.add(mesh); quads+=g.userData.quads;
     }
     grp.userData={quads:quads,grid:n,mat:mat,org:org,
@@ -6209,7 +6209,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
                   QS.palB(data.pal[k2],data.shd[k2])); im.setColorAt(q2,col); }
       im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
       im.castShadow=true; im.receiveShadow=true; im.frustumCulled=false;
-      im.userData.src=src; g.add(im);
+      im.userData.src=src; im.userData.kind=(lo===0?'boxes':'props'); g.add(im);
       return im;
     }
     var vox=boxesFor(0,pStart), props=boxesFor(pStart,n);
@@ -6230,7 +6230,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
           col.setRGB(QS.palR(data.mpal[mk],data.mshd[mk]),QS.palG(data.mpal[mk],data.mshd[mk]),
                     QS.palB(data.mpal[mk],data.mshd[mk])); em.setColorAt(i,col); }
         em.instanceMatrix.needsUpdate=true; if(em.instanceColor) em.instanceColor.needsUpdate=true;
-        em.frustumCulled=false; g.add(em);
+        em.userData.kind='emissive'; em.frustumCulled=false; g.add(em);
       }
     }
 
@@ -6251,7 +6251,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       geo.setAttribute('aTint',new THREE.InstancedBufferAttribute(ti,1));
       geo.setAttribute('aCol',new THREE.InstancedBufferAttribute(cl,3));
       geo.setAttribute('aDry',new THREE.InstancedBufferAttribute(dl,3));
-      grass.frustumCulled=false; g.add(grass);
+      grass.userData.kind='grass'; grass.frustumCulled=false; g.add(grass);
     }
 
     if(data.water.v.length){
@@ -6272,7 +6272,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         wg.setAttribute('aFoam',new THREE.BufferAttribute(new Float32Array(data.water.f),1));
         wg.setAttribute('aFlow',new THREE.BufferAttribute(new Float32Array(data.water.fl),2));
         wg.setIndex(wid);
-        var wm=new THREE.Mesh(wg,mats.water); wm.frustumCulled=false; g.add(wm);
+        var wm=new THREE.Mesh(wg,mats.water); wm.userData.kind='water';
+        wm.frustumCulled=false; g.add(wm);
       }
     }
     (data.lamps||[]).filter(function(l){ return keep(l[0],l[2]); }).slice(0,3).forEach(function(l){
@@ -7917,6 +7918,47 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* Whatever is answering "what is solid" — one grid over one window, or a
        field of loaded chunks. The gate asks it the same question either way. */
     get collider(){ return col; },
+    /**
+     * What a frame actually submits, and where it comes from.
+     *
+     * Frame *time* in a headless sandbox is software rendering and says
+     * nothing about a real GPU, so it is not here. Draw calls and triangles
+     * are counts, not timings: they are what they are on any machine, and they
+     * are what a distant-chunk LOD would reduce. `rings` splits the terrain by
+     * how far each chunk is from the one the player stands in, which is the
+     * number that decides whether LOD is worth building — geometry nobody is
+     * near is the only geometry it can help with.
+     */
+    get draws(){
+      var info=renderer.info.render, out={calls:info.calls,triangles:info.triangles,
+        geometries:renderer.info.memory.geometries,rings:[],perChunk:[],kinds:{}};
+      /* Triangles by what they are. The ring split says *where* geometry is;
+         this says *what* it is, and the two answer different questions. A
+         terrain LOD can only help with terrain, so knowing terrain's share is
+         what decides whether one is worth building. */
+      function tally(root){
+        root.traverse(function(o){
+          if(!(o.isMesh||o.isInstancedMesh)||!o.visible) return;
+          var gg=o.geometry; if(!gg) return;
+          var per=(gg.index?gg.index.count:(gg.attributes.position?gg.attributes.position.count:0))/3;
+          var n=o.isInstancedMesh?o.count:1;
+          var kind=o.userData.kind||'other';
+          out.kinds[kind]=(out.kinds[kind]||0)+per*n;
+        });
+      }
+      if(built&&built.scene) tally(built.scene);
+      if(!nodes||!streaming) return out;
+      var a=player(), c=a?QS.chunkAt(a.x,a.z):{cx:0,cz:0};
+      for(var k in nodes){
+        var nd=nodes[k], d=Math.max(Math.abs(nd.cx-c.cx),Math.abs(nd.cz-c.cz));
+        var vis=0; nd.g.traverse(function(o){ if((o.isMesh||o.isInstancedMesh)&&o.visible) vis++; });
+        var q=nd.mesh?nd.mesh.userData.quads:0;
+        out.perChunk.push({d:d,quads:q,meshes:vis});
+        while(out.rings.length<=d) out.rings.push({ring:out.rings.length,chunks:0,quads:0,meshes:0});
+        out.rings[d].chunks++; out.rings[d].quads+=q; out.rings[d].meshes+=vis;
+      }
+      return out;
+    },
     get streaming(){ return streaming; },
     setStream:setStreaming,
     get chunks(){ return streaming?{loaded:field.loaded,built:field.built,dropped:field.dropped,
