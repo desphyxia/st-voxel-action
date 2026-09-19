@@ -54,15 +54,22 @@ const key = (cx, cz) => cx + ',' + cz;
  * One chunk's collider, in coordinates local to that chunk's centre, holding
  * only the ground the chunk owns.
  */
-function colliderForChunk(w) {
-  const c = makeCollider(CHUNK / 2, V, false);
+function colliderForChunk(w, cx, cz) {
+  /* In world coordinates, not the chunk's own. A field used to convert a world
+     coordinate to the owning chunk's local one before asking, and the round
+     trip does not come back where it started: `(32 + -10.6) - 32` is
+     `-10.600000000000001`, which floors into the column next door and, at a
+     cliff, moved the ground under a body by 3.125 m. Nothing is converted now.
+     See the note on `cell` in collider.mjs. */
+  const c0 = centreOf(cx, cz);
+  const c = makeCollider(CHUNK / 2, V, false, c0);
   const pad = Math.round(SKIRT / V);
   const NZ = w.NZ, M = w.M, half = w.half;
   const cell = (p) => Math.min(M - 1, Math.max(0, Math.round(p + half)));
   for (let i = pad; i < w.NX - pad; i++) {
-    const wx = -half + i * V + V / 2, lx = wx;
+    const wx = -half + i * V + V / 2, lx = wx + c0.x;
     for (let j = pad; j < NZ - pad; j++) {
-      const wz = -half + j * V + V / 2, lz = wz, k = i * NZ + j;
+      const wz = -half + j * V + V / 2, lz = wz + c0.z, k = i * NZ + j;
       const cl = w.cells[cell(wx) * M + cell(wz)], sp = cl.sp;
       for (let q = 0; q < sp.length - 1; q++) c.addSpan(lx, lz, sp[q][0], sp[q][1]);
       c.addSpan(lx, lz, sp[sp.length - 1][0], Math.min(w.Hs[k], CEIL));
@@ -79,7 +86,7 @@ function colliderForChunk(w) {
     const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
     if (x < -lim || x >= lim || z < -lim || z >= lim) continue;
     if (softProp(w.mat[q], q, ps)) continue;
-    c.addVoxel(x, y, z);
+    c.addVoxel(x + c0.x, y, z + c0.z);
   }
   return c.finish();
 }
@@ -96,7 +103,7 @@ export function makeChunkField(seed, force) {
       arrives: whoever built it — this thread, a worker, a cache — hands it
       here and the field starts answering from it on the next query. */
   function adopt(cx, cz, w) {
-    const e = { cx, cz, w, col: colliderForChunk(w) };
+    const e = { cx, cz, w, col: colliderForChunk(w, cx, cz) };
     live.set(key(cx, cz), e); built++;
     return e;
   }
@@ -120,7 +127,6 @@ export function makeChunkField(seed, force) {
     return out;
   }
   const got = (cx, cz) => live.get(key(cx, cz));
-  const local = (e, x, z) => { const c = centreOf(e.cx, e.cz); return [x - c.x, z - c.z]; };
 
   return {
     /** Chunks within `radius` of any centre are loaded; the rest are let go. */
@@ -158,8 +164,7 @@ export function makeChunkField(seed, force) {
       for (const [cx, cz] of span(x, z, r)) {
         const e = got(cx, cz);
         if (!e) continue;
-        const [lx, lz] = local(e, x, z);
-        const g = e.col.supportUnder(lx, lz, r, ceilY);
+        const g = e.col.supportUnder(x, z, r, ceilY);
         if (g > best) best = g;
       }
       return best;
@@ -172,8 +177,7 @@ export function makeChunkField(seed, force) {
       for (const [cx, cz] of span(x, z, r)) {
         const e = got(cx, cz);
         if (!e) return true;
-        const [lx, lz] = local(e, x, z);
-        if (e.col.overlaps(lx, lz, r, lo, hi)) return true;
+        if (e.col.overlaps(x, z, r, lo, hi)) return true;
       }
       return false;
     },
@@ -183,8 +187,7 @@ export function makeChunkField(seed, force) {
       for (const [cx, cz] of span(x, z, r)) {
         const e = got(cx, cz);
         if (!e) continue;
-        const [lx, lz] = local(e, x, z);
-        const c = e.col.ceilingOver(lx, lz, r, y);
+        const c = e.col.ceilingOver(x, z, r, y);
         if (c < best) best = c;
       }
       return best;
@@ -193,8 +196,7 @@ export function makeChunkField(seed, force) {
     liquidAt(x, z) {
       const c = chunkAt(x, z), e = got(c.cx, c.cz);
       if (!e) return { kind: LIQUID.NONE, level: 0 };
-      const [lx, lz] = local(e, x, z);
-      return e.col.liquidAt(lx, lz);
+      return e.col.liquidAt(x, z);
     },
   };
 }

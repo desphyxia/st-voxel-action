@@ -2003,6 +2003,57 @@ export function fieldSuite() {
       `${seen.size} chunks visited in five minutes, ${inside} ticks inside the ground, `
       + `lowest y ${minY.toFixed(2)}, ${wf.built} chunks built and ${wf.dropped} let go`);
 
+  /* ---- the sample grid that found nothing, and the one that did ----
+
+     The check above walks a chunk on two-metre steps and reports 2,700 points
+     identical, and it was identical, and it was not enough. A box's footprint
+     is decided by which columns `x - r` and `x + r` fall in, and on that grid
+     those edges never land *on* a column boundary — so the one case where two
+     colliders can disagree was never generated.
+
+     They can disagree because the column index was `floor((p + half) / v)`,
+     which depends on `half`: a chunk collider's 16 and a window collider's 20
+     round `p + half` to different doubles, and when `p` sits exactly on a
+     boundary the two land on opposite sides of it. One column of footprint,
+     and it cost a body the support under its foot.
+
+     So this samples the positions that produce it on purpose: `m * V - r`,
+     where the near edge of the box lands exactly on a column line. */
+  {
+    let n2 = 0, bad2 = 0, worst2 = 0, at = null;
+    for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+      const g2 = makeChunkField(s.seed, s.force);
+      g2.keep([{ x: 0, z: 0 }], 1);
+      for (const [cx, cz] of [[0, 0], [1, -1]]) {
+        const w = chunkWorld(s.seed, cx, cz, s.force);
+        /* Placed in the world, so both sides are asked about the *same world
+           coordinate*. Reconstructing a local one from it is a different real
+           number once doubles are involved, and a check that does the
+           conversion measures its own arithmetic as much as the code's. */
+        const at0 = { x: cx * CHUNK_M, z: cz * CHUNK_M };
+        const one = colliderForWorld(w, at0);
+        for (let m = -56; m <= 56; m += 3) {
+          for (const dx of [-R, R]) {
+            for (const dz of [-R, R]) {
+              const a = m * V - dx, b = (m % 37) * V - dz;
+              if (Math.abs(a) > 15 || Math.abs(b) > 15) continue;
+              const x = at0.x + a, z = at0.z + b;
+              n2++;
+              const d = Math.abs(g2.supportUnder(x, z, R, Infinity)
+                              - one.supportUnder(x, z, R, Infinity));
+              if (d > 1e-9) { bad2++; if (d > worst2) { worst2 = d; at = [a, b]; } }
+            }
+          }
+        }
+      }
+    }
+    say('and it still answers it where the box edge lands exactly on a column line',
+        bad2 === 0,
+        bad2 ? `${bad2} of ${n2} differ, worst ${worst2.toFixed(3)} m at `
+               + `${at[0].toFixed(3)}, ${at[1].toFixed(3)}`
+             : `${n2} points whose footprint edge falls on a column boundary, identical`);
+  }
+
   /* And a chunk let go and loaded again is the same chunk. */
   const before = g.supportUnder(0, 0, R, Infinity);
   g.keep([{ x: 40 * CHUNK_M, z: 0 }], 1);
