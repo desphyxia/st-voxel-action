@@ -3638,6 +3638,18 @@ function makeStream(field, opts) {
     want, next, deliver, fail,
 
     /**
+     * Change how far the world reaches. Spawning settles a small radius
+     * synchronously — a loading screen's worth — and then widens, because
+     * settling the playing radius before the first frame is several seconds of
+     * nothing. The wider ring fills in a window at a time while you play.
+     */
+    radius(loadR, keepR) {
+      o.loadR = loadR;
+      if (keepR !== undefined) o.keepR = keepR;
+      want(null);
+    },
+
+    /**
      * Build on this thread until `budgetMs` is spent, and report the overrun.
      *
      * A chunk cannot be abandoned half-built, so the last one always finishes:
@@ -5852,7 +5864,7 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -6021,8 +6033,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return t;
   })();
 
-  function chunkGeometry(data,cx,cz){
-    var m=QS.meshChunk(data,cx,cz), n=m.pos.length/3;
+  function chunkGeometry(data,cx,cz,org){
+    var m=QS.meshChunk(data,cx,cz,org), n=m.pos.length/3;
     /* The vertex colour is now the baked occlusion and nothing else. The hue
        is chosen per 25 cm cell in the shader, from the group this quad carries
        — see meshMaterial. */
@@ -6044,39 +6056,57 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
 
   /* The terrain mesh is a chunk per child, not one buffer, because a carve has
      to be able to rebuild what it touched and nothing else. That is #12's
-     third clause, and it is the same shape #13 will stream into. */
-  function buildMesh(data){
-    var n=QS.chunkGrid(data), mat=meshMaterial(), grp=new THREE.Group(), quads=0;
+     third clause, and it is the shape #13 streams into.
+
+     `org` switches which chunks a window holds. Without it the window is laid
+     out on its own grid, which is right for a world that is a whole number of
+     chunks across. With it the window is a *streamed* one — one chunk plus a
+     skirt — and holds exactly one child, covering the middle CHUNK metres.
+     The skirt is not drawn: it is the neighbour's ground, and drawing it would
+     put every seam's geometry in twice. */
+  function buildMesh(data,mat,org){
+    var n=org?1:QS.chunkGrid(data), grp=new THREE.Group(), quads=0;
     for(var cx=0;cx<n;cx++)for(var cz=0;cz<n;cz++){
-      var g=chunkGeometry(data,cx,cz), mesh=new THREE.Mesh(g,mat);
+      var g=chunkGeometry(data,cx,cz,org), mesh=new THREE.Mesh(g,mat);
       mesh.castShadow=true; mesh.receiveShadow=true; mesh.frustumCulled=false;
       mesh.userData.chunk=[cx,cz];
       grp.add(mesh); quads+=g.userData.quads;
     }
-    grp.userData={quads:quads,grid:n,mat:mat,
+    grp.userData={quads:quads,grid:n,mat:mat,org:org,
       /* Swap one chunk's geometry for a freshly meshed one and drop the old. */
       remesh:function(data2,cx,cz){
-        var child=grp.children[cx*n+cz]; if(!child) return 0;
+        var child=grp.children[org?0:cx*n+cz]; if(!child) return 0;
         var before=child.geometry.userData.quads;
         child.geometry.dispose();
-        child.geometry=chunkGeometry(data2,cx,cz);
+        child.geometry=chunkGeometry(data2,org?0:cx,org?0:cz,org);
         grp.userData.quads+=child.geometry.userData.quads-before;
         return child.geometry.userData.quads;
       }};
     return grp;
   }
 
-  function buildScene(data){
-    var scene=new THREE.Scene();
-    scene.add(new THREE.HemisphereLight(0x9fc3e8,0x4a3a2c,0.62));
-    var sun=new THREE.DirectionalLight(0xfff0d2,1.05);
-    sun.position.set(-16,26,12); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
-    var sc=sun.shadow.camera, e=data.half+4;
-    sc.left=-e;sc.right=e;sc.top=e;sc.bottom=-e;sc.near=1;sc.far=200;
-    sun.shadow.bias=-0.0006; sun.shadow.normalBias=0.04;
-    scene.add(sun); scene.add(sun.target);
+  /* ---------- one world node ----------
+     Everything that comes out of one generated window, in one Group: both
+     terrain renderers, the props, the emissive record, the grass, the water
+     and up to three lamps. The lights and the sky are not in here, because a
+     streamed world has many of these and one of those.
 
-    var m4=new THREE.Matrix4(), col=new THREE.Color(), i;
+     `org` again means a streamed window, and here it also means **clip**: only
+     what stands on the chunk this window owns belongs to it. A prop rooted in
+     the skirt is the neighbour's and is drawn there. Without the clip every
+     boundary would carry two copies of four metres of world, z-fighting with
+     itself.
+
+     The materials are passed in rather than made here: a streamed world has
+     one grass material and one water material across every chunk, because the
+     frame loop advances their clock once and the wind has to agree from one
+     chunk to the next. */
+  function worldNode(data,mats,org){
+    var g=new THREE.Group(), m4=new THREE.Matrix4(), col=new THREE.Color(), i;
+    var H=QS.CHUNK/2;
+    var keep=org?function(x,z){ return x>=-H&&x<H&&z>=-H&&z<H; }
+                :function(){ return true; };
+
     var n=data.pos.length/3;
     /* Terrain first, then the stamps. The greedy mesh replaces only the first
        part, so they are drawn as two instanced meshes rather than one — props
@@ -6087,74 +6117,125 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          colour. Resolving it here is what makes a restyle possible — change
          PALETTE and redraw, with nothing regenerated. */
     function boxesFor(lo,hi){
-      var cnt=hi-lo;
-      if(cnt<=0) return null;
-      var im=new THREE.InstancedMesh(boxGeo,new THREE.MeshLambertMaterial({vertexColors:true}),cnt);
-      for(var q2=0;q2<cnt;q2++){ var k2=lo+q2;
+      /* `src` is which voxel of the window each instance came from, because
+         the clip makes the two no longer the same number. Carving reads it to
+         find the instance to hide. */
+      var src=[];
+      for(var q=lo;q<hi;q++) if(keep(data.pos[q*3],data.pos[q*3+2])) src.push(q);
+      if(!src.length) return null;
+      var im=new THREE.InstancedMesh(boxGeo,new THREE.MeshLambertMaterial({vertexColors:true}),src.length);
+      for(var q2=0;q2<src.length;q2++){ var k2=src[q2];
         m4.makeTranslation(data.pos[k2*3],data.pos[k2*3+1],data.pos[k2*3+2]); im.setMatrixAt(q2,m4);
         col.setRGB(QS.palR(data.pal[k2],data.shd[k2]),QS.palG(data.pal[k2],data.shd[k2]),
                   QS.palB(data.pal[k2],data.shd[k2])); im.setColorAt(q2,col); }
       im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
-      im.castShadow=true; im.receiveShadow=true; im.frustumCulled=false; scene.add(im);
+      im.castShadow=true; im.receiveShadow=true; im.frustumCulled=false;
+      im.userData.src=src; g.add(im);
       return im;
     }
     var vox=boxesFor(0,pStart), props=boxesFor(pStart,n);
 
     /* Both terrain renderers are built; only one is visible. Props, water and
        grass are untouched by either — a felled tree must not remesh a chunk. */
-    var terrainMesh=buildMesh(data);
-    scene.add(terrainMesh);
+    var terrainMesh=buildMesh(data,mats.mesh,org);
+    g.add(terrainMesh);
     terrainMesh.visible=useMesh; if(vox) vox.visible=!useMesh;
 
     if(data.mpos.length){
-      var mn=data.mpos.length/3;
-      var em=new THREE.InstancedMesh(boxGeo,new THREE.MeshBasicMaterial({vertexColors:true}),mn);
-      for(i=0;i<mn;i++){ m4.makeTranslation(data.mpos[i*3],data.mpos[i*3+1]+0.02,data.mpos[i*3+2]); em.setMatrixAt(i,m4);
-        col.setRGB(QS.palR(data.mpal[i],data.mshd[i]),QS.palG(data.mpal[i],data.mshd[i]),
-                  QS.palB(data.mpal[i],data.mshd[i])); em.setColorAt(i,col); }
-      em.instanceMatrix.needsUpdate=true; if(em.instanceColor) em.instanceColor.needsUpdate=true;
-      em.frustumCulled=false; scene.add(em);
+      var msrc=[];
+      for(i=0;i<data.mpos.length/3;i++) if(keep(data.mpos[i*3],data.mpos[i*3+2])) msrc.push(i);
+      if(msrc.length){
+        var em=new THREE.InstancedMesh(boxGeo,new THREE.MeshBasicMaterial({vertexColors:true}),msrc.length);
+        for(i=0;i<msrc.length;i++){ var mk=msrc[i];
+          m4.makeTranslation(data.mpos[mk*3],data.mpos[mk*3+1]+0.02,data.mpos[mk*3+2]); em.setMatrixAt(i,m4);
+          col.setRGB(QS.palR(data.mpal[mk],data.mshd[mk]),QS.palG(data.mpal[mk],data.mshd[mk]),
+                    QS.palB(data.mpal[mk],data.mshd[mk])); em.setColorAt(i,col); }
+        em.instanceMatrix.needsUpdate=true; if(em.instanceColor) em.instanceColor.needsUpdate=true;
+        em.frustumCulled=false; g.add(em);
+      }
     }
 
-    var gd=data.grass, gn=gd.ph.length, gmat=null;
-    if(gn){
-      var geo=bladeGeo.clone();
-      gmat=new THREE.ShaderMaterial({side:THREE.DoubleSide,
-        uniforms:{uTime:{value:0},uP0:{value:new THREE.Vector3(1e5,0,1e5)},
-                  uWind:{value:new THREE.Vector2(0.72,0.69)}},
-        vertexShader:GRASS_VS,fragmentShader:GRASS_FS});
-      var grass=new THREE.InstancedMesh(geo,gmat,gn);
+    var gd=data.grass, gsrc=[];
+    for(i=0;i<gd.ph.length;i++) if(keep(gd.p[i*3],gd.p[i*3+2])) gsrc.push(i);
+    if(gsrc.length){
+      var gn=gsrc.length, geo=bladeGeo.clone();
+      var grass=new THREE.InstancedMesh(geo,mats.grass,gn);
       var qq=new THREE.Quaternion(),eu=new THREE.Euler(),sv=new THREE.Vector3(),tv=new THREE.Vector3();
       var ph=new Float32Array(gn),ti=new Float32Array(gn),cl=new Float32Array(gn*3),dl=new Float32Array(gn*3);
-      for(i=0;i<gn;i++){ tv.set(gd.p[i*3],gd.p[i*3+1],gd.p[i*3+2]); eu.set(0,gd.yw[i],0); qq.setFromEuler(eu);
-        sv.set(1,gd.sc[i],1); m4.compose(tv,qq,sv); grass.setMatrixAt(i,m4);
-        ph[i]=gd.ph[i]; ti[i]=gd.ti[i]; cl[i*3]=gd.c[i*3]; cl[i*3+1]=gd.c[i*3+1]; cl[i*3+2]=gd.c[i*3+2];
-        dl[i*3]=gd.dc[i*3]; dl[i*3+1]=gd.dc[i*3+1]; dl[i*3+2]=gd.dc[i*3+2]; }
+      for(i=0;i<gn;i++){ var gk=gsrc[i];
+        tv.set(gd.p[gk*3],gd.p[gk*3+1],gd.p[gk*3+2]); eu.set(0,gd.yw[gk],0); qq.setFromEuler(eu);
+        sv.set(1,gd.sc[gk],1); m4.compose(tv,qq,sv); grass.setMatrixAt(i,m4);
+        ph[i]=gd.ph[gk]; ti[i]=gd.ti[gk]; cl[i*3]=gd.c[gk*3]; cl[i*3+1]=gd.c[gk*3+1]; cl[i*3+2]=gd.c[gk*3+2];
+        dl[i*3]=gd.dc[gk*3]; dl[i*3+1]=gd.dc[gk*3+1]; dl[i*3+2]=gd.dc[gk*3+2]; }
       grass.instanceMatrix.needsUpdate=true;
       geo.setAttribute('aPhase',new THREE.InstancedBufferAttribute(ph,1));
       geo.setAttribute('aTint',new THREE.InstancedBufferAttribute(ti,1));
       geo.setAttribute('aCol',new THREE.InstancedBufferAttribute(cl,3));
       geo.setAttribute('aDry',new THREE.InstancedBufferAttribute(dl,3));
-      grass.frustumCulled=false; scene.add(grass);
+      grass.frustumCulled=false; g.add(grass);
     }
 
-    var wmat=null;
     if(data.water.v.length){
-      var wg=new THREE.BufferGeometry();
-      wg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(data.water.v),3));
-      wg.setAttribute('aDepth',new THREE.BufferAttribute(new Float32Array(data.water.d),1));
-      wg.setAttribute('aFoam',new THREE.BufferAttribute(new Float32Array(data.water.f),1));
-      wg.setAttribute('aFlow',new THREE.BufferAttribute(new Float32Array(data.water.fl),2));
-      wg.setIndex(data.water.i);
-      wmat=new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,
-        uniforms:{uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)}},
-        vertexShader:WATER_VS,fragmentShader:WATER_FS});
-      var wm=new THREE.Mesh(wg,wmat); wm.frustumCulled=false; scene.add(wm);
+      /* Water is indexed, so the clip is per triangle and by its centroid — a
+         triangle that straddles the boundary belongs to whichever side holds
+         most of it, which keeps the surface closed across a seam rather than
+         leaving a slot of missing water down every chunk edge. */
+      var wv=data.water.v, wi=data.water.i, wid=[];
+      for(i=0;i<wi.length;i+=3){
+        var ax=wv[wi[i]*3],az=wv[wi[i]*3+2],bx=wv[wi[i+1]*3],bz=wv[wi[i+1]*3+2],
+            cx2=wv[wi[i+2]*3],cz2=wv[wi[i+2]*3+2];
+        if(keep((ax+bx+cx2)/3,(az+bz+cz2)/3)){ wid.push(wi[i],wi[i+1],wi[i+2]); }
+      }
+      if(wid.length){
+        var wg=new THREE.BufferGeometry();
+        wg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(wv),3));
+        wg.setAttribute('aDepth',new THREE.BufferAttribute(new Float32Array(data.water.d),1));
+        wg.setAttribute('aFoam',new THREE.BufferAttribute(new Float32Array(data.water.f),1));
+        wg.setAttribute('aFlow',new THREE.BufferAttribute(new Float32Array(data.water.fl),2));
+        wg.setIndex(wid);
+        var wm=new THREE.Mesh(wg,mats.water); wm.frustumCulled=false; g.add(wm);
+      }
     }
-    (data.lamps||[]).slice(0,3).forEach(function(l){
-      var pl=new THREE.PointLight(0xffb066,0.9,9,2); pl.position.set(l[0],l[1]+0.1,l[2]); scene.add(pl);
+    (data.lamps||[]).filter(function(l){ return keep(l[0],l[2]); }).slice(0,3).forEach(function(l){
+      var pl=new THREE.PointLight(0xffb066,0.9,9,2); pl.position.set(l[0],l[1]+0.1,l[2]); g.add(pl);
     });
-    return {scene:scene,gmat:gmat,wmat:wmat,vox:vox,props:props,mesh:terrainMesh};
+    return {g:g,vox:vox,props:props,mesh:terrainMesh,data:data,org:org};
+  }
+
+  /** The grass and water materials, shared across every chunk of one world. */
+  function worldMaterials(){
+    return {
+      mesh:meshMaterial(),
+      grass:new THREE.ShaderMaterial({side:THREE.DoubleSide,
+        uniforms:{uTime:{value:0},uP0:{value:new THREE.Vector3(1e5,0,1e5)},
+                  uWind:{value:new THREE.Vector2(0.72,0.69)}},
+        vertexShader:GRASS_VS,fragmentShader:GRASS_FS}),
+      water:new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,
+        uniforms:{uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)}},
+        vertexShader:WATER_VS,fragmentShader:WATER_FS}),
+    };
+  }
+
+  /** The sky, the lights and nothing that came out of a generator. */
+  function sceneShell(reach){
+    var scene=new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0x9fc3e8,0x4a3a2c,0.62));
+    var sun=new THREE.DirectionalLight(0xfff0d2,1.05);
+    sun.position.set(-16,26,12); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+    var sc=sun.shadow.camera, e=reach;
+    sc.left=-e;sc.right=e;sc.top=e;sc.bottom=-e;sc.near=1;sc.far=200;
+    sun.shadow.bias=-0.0006; sun.shadow.normalBias=0.04;
+    scene.add(sun); scene.add(sun.target);
+    return {scene:scene,sun:sun};
+  }
+
+  function buildScene(data){
+    var shell=sceneShell(data.half+4), mats=worldMaterials();
+    var node=worldNode(data,mats,null);
+    shell.scene.add(node.g);
+    return {scene:shell.scene,sun:shell.sun,mats:mats,
+            gmat:mats.grass,wmat:mats.water,
+            vox:node.vox,props:node.props,mesh:node.mesh,node:node};
   }
 
   /* ---------- the character ---------- */
@@ -6382,10 +6463,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
 
      Boxes are still one click away, and the comparison harness still drives
      both — tools/compare-renderers.mjs and tools/compare-plates.mjs. */
-  var useMesh=true;
+  var useMesh=true, streaming=false;
   function setMesh(on){
     useMesh=!!on;
     if(built&&built.mesh){ built.mesh.visible=useMesh; if(built.vox) built.vox.visible=!useMesh; }
+    /* A streamed world has one of each per chunk, and chunks that arrive later
+       read `useMesh` when they are made. */
+    if(nodes) for(var k in nodes){ var nd=nodes[k];
+      if(nd.mesh) nd.mesh.visible=useMesh; if(nd.vox) nd.vox.visible=!useMesh; }
     /* Two buttons, one state: the one on the page and the one in the view. Each
        is labelled with what it switches *to*, so they read the same either way
        and neither can be left saying the opposite of the other. */
@@ -6422,19 +6507,69 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return voxIndex;
   }
   var zeroM=new THREE.Matrix4().makeScale(0,0,0), hidM=new THREE.Matrix4(), hidden=[];
+  /**
+   * A bite, in whichever window owns the ground it lands in.
+   *
+   * Unstreamed that is the only window there is. Streamed it is one chunk of
+   * twenty-five, addressed in its own local coordinates — a chunk's arrays are
+   * all relative to its centre, which is also why its node is *positioned*
+   * rather than generated in world space.
+   *
+   * A bite within a voxel of a chunk boundary leaves the neighbour's AO ring
+   * stale, and this does not chase it. `src/mesh/carve.mjs` reports the chunks
+   * an edit dirties inside one window and has no way to name one in another;
+   * making it able to is the same problem as meshing across a seam and belongs
+   * with it, not here. What you see is a correctly shaded bite with a
+   * neighbouring face that keeps the shading it had.
+   */
   function carveAt(x,y,z,opts){
     if(!built) return null;
-    var r=QS.carve(built.data,x,y,z,opts||{});
-    for(var q=0;q<r.chunks.length;q++) built.mesh.userData.remesh(built.data,r.chunks[q][0],r.chunks[q][1]);
-    if(r.cut&&built.vox){
-      var ix=voxelIndexOf(built.data), hid=0;
+    /* Which window owns this ground, which index finds a voxel in it, and
+       which list remembers what has been hidden. Picking the last two off the
+       *world* rather than off `streaming` was the first version, and the
+       unstreamed build carries a node too — so every carve without streaming
+       reached for a list that only a streamed chunk has. */
+    var host=built, lx=x, lz=z, bin=hidden, ix=null;
+    if(streaming){
+      var c=QS.chunkAt(x,z), nd=nodeAt(c.cx,c.cz);
+      if(!nd) return null;
+      host={data:nd.data,mesh:nd.mesh,vox:nd.vox};
+      bin=nd.hidden; ix=indexOfNode(nd);
+      lx=x-c.cx*QS.CHUNK; lz=z-c.cz*QS.CHUNK;
+    }else ix=voxelIndexOf(built.data);
+    var r=QS.carve(host.data,lx,y,lz,opts||{});
+    for(var q=0;q<r.chunks.length;q++) host.mesh.userData.remesh(host.data,r.chunks[q][0],r.chunks[q][1]);
+    if(r.cut&&host.vox){
+      var hid=0;
+      /* `src` is which voxel of the window each instance came from: the clip
+         that keeps a chunk from drawing its skirt makes the two different
+         numbers, and hiding the wrong instance would put a hole somewhere
+         nobody swung. */
+      var back=host.vox.userData.back;
+      if(!back){ back=host.vox.userData.back=new Map();
+        var sr=host.vox.userData.src;
+        for(var t=0;t<sr.length;t++) back.set(sr[t],t); }
       for(var v=0;v<r.removed.length;v+=3){
-        var k=ix.get((r.removed[v]*built.data.NZ+r.removed[v+1])*QS.LEVELS+r.removed[v+2]);
-        if(k!==undefined){ built.vox.setMatrixAt(k,zeroM); hidden.push(k); hid++; }
+        var k=ix.get((r.removed[v]*host.data.NZ+r.removed[v+1])*QS.LEVELS+r.removed[v+2]);
+        var slot=k===undefined?undefined:back.get(k);
+        if(slot!==undefined){ host.vox.setMatrixAt(slot,zeroM); bin.push(slot); hid++; }
       }
-      if(hid) built.vox.instanceMatrix.needsUpdate=true;
+      if(hid) host.vox.instanceMatrix.needsUpdate=true;
     }
-    return {cut:r.cut,held:r.held?r.held.nm:null,chunks:r.chunks.length,quads:built.mesh.userData.quads};
+    return {cut:r.cut,held:r.held?r.held.nm:null,chunks:r.chunks.length,quads:host.mesh.userData.quads};
+  }
+
+  /** The voxel index of one streamed chunk, made once and kept on its node. */
+  function indexOfNode(nd){
+    if(nd.ix) return nd.ix;
+    var d=nd.data, pStart=d.propStart===undefined?d.pos.length/3:d.propStart, V2=QS.V;
+    nd.ix=new Map();
+    for(var q=0;q<pStart;q++){
+      var gi=Math.round((d.pos[q*3]+d.half-V2/2)/V2);
+      var gj=Math.round((d.pos[q*3+2]+d.half-V2/2)/V2);
+      nd.ix.set((gi*d.NZ+gj)*QS.LEVELS+Math.floor(d.pos[q*3+1]/V2),q);
+    }
+    return nd.ix;
   }
   var camT=new THREE.Vector3();
 
@@ -6490,21 +6625,32 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   }
 
   /** Build (or rebuild) the world and its scene. Returns what a session needs. */
-  function buildFor(cfg){
-    var data=QS.buildWorld(cfg);
-    if(built) built.scene.traverse(function(n){
+  /* Throw away everything the last world put in the scene. Shared materials
+     are held on `built.mats` and are not disposed here — a streamed world has
+     one of each across every chunk, and disposing one with a chunk would take
+     the grass off the other twenty-four. */
+  function disposeWorld(){
+    if(!built) return;
+    var keepMats=built.mats||{};
+    built.scene.traverse(function(n){
       if((n.isMesh||n.isInstancedMesh)&&!n.userData.keep){
         if(n.geometry&&n.geometry!==boxGeo) n.geometry.dispose();
-        if(n.material&&n.material.dispose) n.material.dispose();
+        if(n.material&&n.material.dispose
+           &&n.material!==keepMats.mesh&&n.material!==keepMats.grass&&n.material!==keepMats.water)
+          n.material.dispose();
       }
     });
-    built=buildScene(data); built.data=data; built.cfg=cfg; voxIndex=null; hidden.length=0;
-    built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
-    col=QS.colliderForWorld(data);
+    if(keepMats.mesh) keepMats.mesh.dispose();
+    if(keepMats.grass) keepMats.grass.dispose();
+    if(keepMats.water) keepMats.water.dispose();
+  }
 
-    /* Something to swing at that does not swing back — the machines below do.
-       Derived from the world on both machines rather than sent, like the
-       terrain — see src/sim/combat.mjs. */
+  /* The posts, the machines and the loot. Placed from the world on both
+     machines rather than sent — see src/sim/combat.mjs. A streamed world
+     places them from the chunk it spawns in, which is the same call with a
+     smaller window: an encounter spanning more than one chunk is its own
+     problem and not this one. */
+  function populate(data){
     var posts=QS.practicePosts(col,data.spawn);
     postMeshes=posts.map(function(t){
       var m=new THREE.Mesh(new THREE.CylinderGeometry(t.r,t.r*1.15,1.5,8),
@@ -6514,11 +6660,6 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     });
     postHits=posts.map(function(){return 0;});
     postFlash=posts.map(function(){return 0;});
-
-    /* The machines, and what they and the world leave lying around. Both come
-       with the world because both are placed from it — a guest is sent what
-       they look like and one integer of what has been picked up, never what
-       they are or where the caches went. */
     encounter=QS.makeEncounter(col,data,posts);
     targets=encounter.targets;
     foeMeshes.forEach(function(f){ built.scene.remove(f.g); });
@@ -6533,10 +6674,151 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     drawLattice();
     return {col:col,spawn:data.spawn,targets:targets,encounter:encounter};
   }
+
+  function buildFor(cfg){
+    var data=QS.buildWorld(cfg);
+    disposeWorld();
+    field=null; stream=null; nodes=null;
+    built=buildScene(data); built.data=data; built.cfg=cfg; voxIndex=null; hidden.length=0;
+    built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
+    col=QS.colliderForWorld(data);
+    return populate(data);
+  }
+
+  /* ---------- the streamed world (issue #13) ----------
+     The same scene, assembled a chunk at a time and never finished: chunks
+     within a radius of a player exist, chunks past a wider one are let go, and
+     the collider is `makeChunkField` rather than one grid over one window.
+
+     What the build does here is the fallback path `src/sim/stream.mjs`
+     describes and not the one it recommends. Generating a 40 m window costs
+     90-290 ms and a frame is 16.7, so a chunk arriving on the main thread is a
+     freeze a dozen frames long. That is measured, it is why the HUD reports
+     the cost of the last one, and it is what a worker is for. Streaming is
+     behind a switch until then.
+
+     A streamed world is also not the same world as an unstreamed one of the
+     same seed, and that is not a defect to be fixed: the generator is not
+     size-invariant, so a 40 m window and a 64 m window centred on the same
+     point are different ground. See src/gen/chunk.mjs. */
+  var field=null, stream=null, nodes=null;
+  var streamMs=0, streamBuilt=0;
+  var STREAM_LOAD=2, STREAM_KEEP=3;
+
+  function nodeAt(cx,cz){ return nodes?nodes[cx+','+cz]:null; }
+
+  function dropNode(k){
+    var nd=nodes[k];
+    nd.g.traverse(function(o){
+      if((o.isMesh||o.isInstancedMesh)&&o.geometry&&o.geometry!==boxGeo) o.geometry.dispose();
+      if(o.isInstancedMesh&&o.material&&o.material.dispose
+         &&o.material!==built.mats.mesh&&o.material!==built.mats.grass&&o.material!==built.mats.water)
+        o.material.dispose();
+    });
+    built.scene.remove(nd.g);
+    delete nodes[k];
+  }
+
+  /** Make the scene hold exactly the chunks the field holds. */
+  function reconcileNodes(){
+    var live=field.live(), want={}, i;
+    for(i=0;i<live.length;i++){
+      var e=live[i], k=e.cx+','+e.cz; want[k]=1;
+      if(nodes[k]) continue;
+      var nd=worldNode(e.w,built.mats,QS.innerChunk(e.w));
+      nd.g.position.set(e.cx*QS.CHUNK,0,e.cz*QS.CHUNK);
+      nd.cx=e.cx; nd.cz=e.cz; nd.ix=null; nd.hidden=[];
+      built.scene.add(nd.g); nodes[k]=nd;
+    }
+    for(var k2 in nodes) if(!want[k2]) dropNode(k2);
+  }
+
+  function pumpStream(){
+    if(!stream) return;
+    var cs=[], a=player(), b=other();
+    if(a) cs.push({x:a.x,z:a.z});
+    if(b) cs.push({x:b.x,z:b.z});
+    stream.want(cs.length?cs:[{x:0,z:0}]);
+    /* One window per tick, and no pretence that it fits inside a frame.
+
+       Per *tick*, not per frame, because the gate drives the simulation
+       through QSPLAY.run and never reaches the render loop at all. Loading
+       that only happened while frames were being drawn would leave every
+       assertion walking into ground nobody had decided — which is a wall, and
+       would have read as the controller's fault. */
+    var j=stream.next();
+    if(j){
+      var t0=performance.now();
+      stream.deliver(j.cx,j.cz,QS.chunkWorld(field.seed,j.cx,j.cz,field.force));
+      streamMs=performance.now()-t0; streamBuilt++;
+    }
+    /* Every tick, not only when one arrives: `want` lets chunks go as the
+       players move, and a node whose chunk is gone has to go with it. It walks
+       the loaded set, which is twenty-five entries. */
+    reconcileNodes();
+  }
+
+  /* The sun's shadow box is a fixed span around the player rather than the
+     whole world, because a streamed world does not have a whole. */
+  function followSun(){
+    var a=player();
+    if(!a||!built||!built.sun) return;
+    built.sun.position.set(a.x-16,a.y+26,a.z+12);
+    built.sun.target.position.set(a.x,a.y,a.z);
+    built.sun.target.updateMatrixWorld();
+  }
+
+  function buildStreamFor(cfg){
+    disposeWorld();
+    var mats=worldMaterials(), shell=sceneShell(52);
+    field=QS.makeChunkField(cfg.seed,cfg.force===undefined?null:cfg.force);
+    stream=QS.makeStream(field,{loadR:1,keepR:STREAM_KEEP,flight:1});
+    nodes={}; voxIndex=null; hidden.length=0; streamBuilt=0; streamMs=0;
+    built={scene:shell.scene,sun:shell.sun,mats:mats,gmat:mats.grass,wmat:mats.water,
+           vox:null,props:null,mesh:null,cfg:cfg,streamed:true};
+    built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
+    col=field;
+    /* Settle the nine chunks around the origin before the first frame — that
+       is a loading screen's worth of work and it is the only synchronous
+       stretch. The wider radius fills in as you play, a window per frame. */
+    stream.want([{x:0,z:0}]);
+    for(;;){ var j=stream.next(); if(!j) break;
+      stream.deliver(j.cx,j.cz,QS.chunkWorld(cfg.seed,j.cx,j.cz,field.force)); }
+    stream.radius(STREAM_LOAD,STREAM_KEEP);
+    reconcileNodes();
+    built.data=field.chunk(0,0).w;
+    return populate(built.data);
+  }
+
   function regen(seedStr){
     if(session){ says('leave the game first'); return; }
-    buildFor({seed:seedStr,size:64,force:null,ox:0,oz:0});
+    if(streaming) buildStreamFor({seed:seedStr,force:null});
+    else buildFor({seed:seedStr,size:64,force:null,ox:0,oz:0});
     solo=null; spawn();
+  }
+
+  /**
+   * Switch the world between one window and a field of chunks.
+   *
+   * Not a toolbar button. Streaming costs a dozen-frame freeze every time a
+   * chunk arrives, because generation is still on the main thread — that is
+   * measured in src/sim/stream.mjs and shown in the readout — and until a
+   * worker takes it, putting it a click away from someone who came here to
+   * play would be offering them a worse game. It is a flag: `?stream=1`, or
+   * `QSPLAY.setStream(true)` from a console.
+   *
+   * The seed is kept, and the world still changes. A 40 m window and a 64 m
+   * window centred on the same point are different ground — the generator is
+   * not size-invariant, which src/gen/chunk.mjs measures at 87% of shared
+   * cells. Same seed, same rules, a world you have not seen.
+   */
+  function setStreaming(on){
+    on=!!on;
+    if(on===streaming) return streaming;
+    if(session){ says('leave the game first'); return streaming; }
+    streaming=on;
+    regen((built&&built.cfg&&built.cfg.seed)||seedin.value||'QUARTERSTONE');
+    return streaming;
   }
 
   /* ---------- a pose the gate can come back to (issue #29) ----------
@@ -7112,6 +7394,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return null;
   }
   function tick(){
+    /* Before anything moves: a body may not walk into ground that has not been
+       decided, and the load radius is what keeps it from ever meeting that
+       boundary — see src/sim/chunks.mjs. */
+    if(streaming) pumpStream();
     if(input.took('rotateLeft')) QS.snap(cam,-1);
     if(input.took('rotateRight')) QS.snap(cam,1);
     if(input.took('respawn')) spawn();
@@ -7220,6 +7506,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         : '<b>Joined.</b> You are predicting locally and reconciling against the host.',true);
     }
     if(!built) return;
+    if(streaming) followSun();
 
     frames++;
     if(now-fpsAt>500){ fps=frames*1000/(now-fpsAt); frames=0; fpsAt=now; }
@@ -7267,7 +7554,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          snaps sit on START_YAW + n quarters, so dividing the raw angle by a
          quarter never lands on an integer. */
       'view '+((Math.round((cam.yawTo-QS.START_YAW)/QS.QUARTER)%4+4)%4)+'/4   vaults '+a.vaults+
-      '   deaths '+deaths+'\n'+net+'   '+fps.toFixed(0)+' fps';
+      '   deaths '+deaths+'\n'+
+      /* What streaming costs, where you can see it. The last window's
+         generation time is the number that says why this is behind a switch:
+         it is the length of the freeze, in one figure. */
+      (streaming&&field?('chunks '+field.loaded+' loaded, '+field.built+' built, '+field.dropped+
+                  ' let go   last '+streamMs.toFixed(0)+' ms'+
+                  (stream.pending?('   '+stream.pending+' queued'):'')+'\n'):'')+
+      net+'   '+fps.toFixed(0)+' fps';
   }
 
   resize();
@@ -7290,7 +7584,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   hostBtn.addEventListener('click',function(){ startHost(); stage.focus(); });
   /* Opened by a host: do not generate anything, wait to be told which world. */
   if(location.hash.indexOf('join')>=0&&window.opener) startGuest();
-  else regen(seedin.value||'QUARTERSTONE');
+  else {
+    /* Streaming is opt-in per the note on setStreaming. */
+    if(/[?&]stream=1\b/.test(location.search)) streaming=true;
+    regen(seedin.value||'QUARTERSTONE');
+  }
   stage.focus();
   requestAnimationFrame(frame);
   /* A handle for the smoke test, and for anyone poking at this in a console.
@@ -7335,18 +7633,40 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* Issue #29: the fixed pose the look baseline is made of. */
     plate:plate,
     carve:carveAt,
-    clearEdits:function(){ if(!built) return 0; var n=QS.clearEdits(built.data), g=QS.chunkGrid(built.data);
-      for(var a=0;a<g;a++)for(var b=0;b<g;b++) built.mesh.userData.remesh(built.data,a,b);
-      if(hidden.length&&built.vox){
-        for(var q=0;q<hidden.length;q++){ var k=hidden[q];
-          hidM.makeTranslation(built.data.pos[k*3],built.data.pos[k*3+1],built.data.pos[k*3+2]);
-          built.vox.setMatrixAt(k,hidM); }
-        built.vox.instanceMatrix.needsUpdate=true; hidden.length=0;
+    clearEdits:function(){
+      if(!built) return 0;
+      function restore(data,mesh,vox,bin){
+        var n=QS.clearEdits(data), g=mesh.userData.org?1:QS.chunkGrid(data);
+        for(var a=0;a<g;a++)for(var b=0;b<g;b++) mesh.userData.remesh(data,a,b);
+        if(bin.length&&vox){
+          var src=vox.userData.src;
+          for(var q=0;q<bin.length;q++){ var k=src[bin[q]];
+            hidM.makeTranslation(data.pos[k*3],data.pos[k*3+1],data.pos[k*3+2]);
+            vox.setMatrixAt(bin[q],hidM); }
+          vox.instanceMatrix.needsUpdate=true; bin.length=0;
+        }
+        return n;
       }
-      return n; },
+      if(streaming){
+        var t=0;
+        for(var k2 in nodes){ var nd=nodes[k2]; t+=restore(nd.data,nd.mesh,nd.vox,nd.hidden); }
+        return t;
+      }
+      return restore(built.data,built.mesh,built.vox,hidden); },
     get mesh(){ return useMesh; },
-    get meshQuads(){ return built&&built.mesh?built.mesh.userData.quads:0; },
-    get boxCount(){ return built?built.data.pos.length/3:0; },
+    /* Whatever is answering "what is solid" — one grid over one window, or a
+       field of loaded chunks. The gate asks it the same question either way. */
+    get collider(){ return col; },
+    get streaming(){ return streaming; },
+    setStream:setStreaming,
+    get chunks(){ return streaming?{loaded:field.loaded,built:field.built,dropped:field.dropped,
+                                    pending:stream.pending,ms:streamMs,nodes:Object.keys(nodes).length}:null; },
+    get meshQuads(){
+      if(streaming){ var q=0; for(var k in nodes) q+=nodes[k].mesh.userData.quads; return q; }
+      return built&&built.mesh?built.mesh.userData.quads:0; },
+    get boxCount(){
+      if(streaming){ var n=0; for(var k in nodes) n+=nodes[k].data.pos.length/3; return n; }
+      return built?built.data.pos.length/3:0; },
     setTouch:setTouchMode,
     get touch(){ return touchMode; },
     draw:draw,

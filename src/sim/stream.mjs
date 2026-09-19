@@ -171,6 +171,18 @@ export function makeStream(field, opts) {
     want, next, deliver, fail,
 
     /**
+     * Change how far the world reaches. Spawning settles a small radius
+     * synchronously — a loading screen's worth — and then widens, because
+     * settling the playing radius before the first frame is several seconds of
+     * nothing. The wider ring fills in a window at a time while you play.
+     */
+    radius(loadR, keepR) {
+      o.loadR = loadR;
+      if (keepR !== undefined) o.keepR = keepR;
+      want(null);
+    },
+
+    /**
      * Build on this thread until `budgetMs` is spent, and report the overrun.
      *
      * A chunk cannot be abandoned half-built, so the last one always finishes:

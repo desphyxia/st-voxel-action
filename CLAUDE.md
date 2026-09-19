@@ -25,6 +25,7 @@ anything.
 | `src/sim/` | Collision, the character controller, the isometric camera, the input table, combat, the first enemy, the socket lattice and what is lying on the ground — all written against the movement budget and all free of the DOM and three.js, which is why they can be asserted in node. |
 | `src/net/` | The wire: a three-method transport interface, a loopback double with latency and loss, and the host/guest sessions. No DOM either. |
 | `src/mesh/` | Greedy meshing with baked per-face AO, and the edit layer a carve writes into. Reads the generator's spans, not its voxels. No DOM either. |
+| `src/gen/chunk.mjs`, `src/sim/chunks.mjs`, `src/sim/stream.mjs` | Chunk streaming (#13), in three layers: what to generate, what is solid across what is loaded, and which chunk next. Open the build with **`?stream=1`** to play a world with no edge — see below. |
 | `docs/play/index.html` | **The playable build.** Open it in a browser and walk around; *Host a game* opens a second window and puts another character in the same world. Carries an inlined copy of `src/gen`, `src/mesh`, `src/sim` and `src/net`. |
 | `src/sim/lattice.mjs` | The spine of progression. Read it before touching combat numbers: every constant in `combat.mjs` is now a *base*, and `statsOf(a)` is what an actor actually plays with. |
 | `docs/concept/index.html` | The concept plate: the design document, the renderer, and an inlined copy of `src/gen` it draws. |
@@ -145,6 +146,28 @@ everything into one scope:
 
 Edit the modules, run the bundler, commit both. The smoke test fails if they have drifted, and
 also fails if the plate's worlds stop matching the ones node generates from `src/gen`.
+
+## Streaming is behind a flag, and the flag is not a toolbar button
+
+`docs/play/index.html?stream=1` replaces the one 64 m window with a field of
+32 m chunks that load and unload around the players. It is measured — ten node
+assertions across `CHUNK`, `FIELD`, `STREAM` and `SEAM`, plus four in the
+browser half — and it is still not the default, for one reason:
+
+**A chunk does not fit in a frame.** Generating one 40 m window costs 86–290 ms
+cold and a 60 Hz frame is 16.7 ms, so every chunk that arrives on the main
+thread is a freeze a dozen frames long. That is not a tuning problem; the
+smallest indivisible unit of generation is five frames wide at the best case
+measured. Generation has to move to a worker before this can be the way the
+game works, and until then putting it a click away from someone who came here
+to play would be offering them a worse game. The readout shows the last
+window's cost, in milliseconds, so the freeze has a number on it.
+
+**A streamed world is a different world from the same seed.** The generator is
+not size-invariant — a 40 m window and a 64 m window centred on the same point
+disagree on 87% of the cells they share — so `?stream=1` is not a rendering
+option, it is another world. `src/gen/chunk.mjs` measures that and explains why
+every streamed window is therefore one fixed size forever.
 
 One rule across **all of `src/`**: **no `Math.sin`, `cos`, `exp`, `pow` or `hypot`.** The spec
 only approximates them and engines disagree — node 22 and Chromium 141 already return different

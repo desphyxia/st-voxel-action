@@ -1262,6 +1262,77 @@ if (BROWSER_HALF) {
       check(bErrors.length === 0, 'NET: no errors in either window', bErrors.slice(0, 3).join(' | '));
       await peerPage.close();
       await bp.close();
+
+      /* ---------- STREAM: a world with no edge, issue #13 ----------
+         The node half proves the chunks agree, that the field answers what one
+         collider answers, that the scheduler stays ahead of a run, and that a
+         seam is not drawn twice. None of it says the *page* is wired to any of
+         it — the same gap BUILD exists to close for the controller.
+
+         Its own page, because `?stream=1` is the flag a person would use and
+         because a streamed world replaces the world: run on the page above, it
+         would leave every check before it looking at something else.
+
+         Driven through QSPLAY.run rather than wall clock, like everything else
+         here. That is also why the page pumps the stream from its tick and not
+         from its render loop: a gate that never draws a frame would otherwise
+         walk straight into ground nobody had decided, and the wall would have
+         read as the controller's fault. */
+      const sp = await browser.newPage({ viewport: { width: 900, height: 600 } });
+      sp.setDefaultTimeout(PATIENCE);
+      const sErrors = [];
+      sp.on('pageerror', (e) => sErrors.push(e.message));
+      sp.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) sErrors.push(m.text()); });
+      await sp.goto(`file://${bfile}?stream=1`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      await sp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      const streamed = await sp.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS;
+        const a0 = P.actor;
+        const boot = { on: P.streaming, chunks: P.chunks, grounded: a0.grounded,
+                       y: a0.y, quads: P.meshQuads };
+        const seen = new Set();
+        let lowest = Infinity, inside = 0, peak = 0;
+        const go = (key, ticks) => {
+          P.input.press(key);
+          for (let i = 0; i < ticks; i++) {
+            P.run(1);
+            const a = P.actor, c = QS.chunkAt(a.x, a.z);
+            seen.add(c.cx + ',' + c.cz);
+            if (a.y < lowest) lowest = a.y;
+            if (QS.embedded(P.collider, a)) inside++;
+            if (P.chunks.loaded > peak) peak = P.chunks.loaded;
+          }
+          P.input.release(key);
+        };
+        go('KeyD', 900);
+        go('KeyS', 900);
+        const a1 = P.actor;
+        return { boot, seen: seen.size, lowest, inside, peak,
+                 end: { x: a1.x, z: a1.z, y: a1.y, grounded: a1.grounded },
+                 chunks: P.chunks, quads: P.meshQuads,
+                 nodesMatch: P.chunks.nodes === P.chunks.loaded };
+      });
+      check(streamed.boot.on && streamed.boot.grounded && streamed.boot.quads > 0,
+            'STREAM: the build opens on a world with no edge',
+            `${streamed.boot.chunks.loaded} chunks loaded, ${streamed.boot.quads} quads, `
+            + `character standing at y ${streamed.boot.y.toFixed(2)}`);
+      check(streamed.seen >= 3 && streamed.inside === 0 && streamed.lowest > -2
+            && streamed.end.grounded,
+            'STREAM: and walking across chunk after chunk neither falls through nor sticks',
+            `${streamed.seen} chunks walked in 30 s, ${streamed.inside} ticks inside the ground, `
+            + `lowest y ${streamed.lowest.toFixed(2)}, ended at `
+            + `(${streamed.end.x.toFixed(0)}, ${streamed.end.z.toFixed(0)}) `
+            + `${streamed.end.grounded ? 'standing' : 'in the air'}`);
+      check(streamed.chunks.dropped > 0 && streamed.chunks.built > streamed.chunks.loaded
+            && streamed.nodesMatch,
+            'STREAM: and the world behind is let go rather than kept',
+            `${streamed.chunks.built} built, ${streamed.chunks.dropped} let go, `
+            + `${streamed.chunks.loaded} held (peak ${streamed.peak}), and the scene holds `
+            + `${streamed.chunks.nodes} of them`);
+      check(sErrors.length === 0, 'STREAM: and no errors while it streams',
+            sErrors.slice(0, 3).join(' | '));
+      await sp.screenshot({ path: join(OUT, 'play-streamed.png') });
+      await sp.close();
     }
 
     /* ---------- LOOK: does the world still look like itself? (#29) ----------

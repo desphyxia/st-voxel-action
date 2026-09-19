@@ -40,14 +40,17 @@ const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERI
                     index and restyle without regenerating — issue #28 */
                  'PALETTE', 'PAL', 'palR', 'palG', 'palB', 'shadeValue',
                  /* the pinned math, so the smoke test can compare it across engines */
-                 'sin', 'cos', 'exp', 'hyp'];
+                 'sin', 'cos', 'exp', 'hyp',
+                 /* the chunked world, for the build's streamed renderer — issue #13 */
+                 'chunkWorld', 'chunkCentre', 'SKIRT', 'WINDOW'];
 
 /** The greedy mesher, behind the build's renderer flag — issue #12. */
 const MESH_API = ['meshChunk', 'chunkOccupancy', 'innerChunk', 'openAir', 'surfaceAt', 'LEVELS',
   'isCut', 'solidVox', 'carve', 'clearEdits', 'chunkGrid', 'BITE', 'BITE_R'];
 
 /** Everything the playable build needs on top of it: the simulation and the wire. */
-const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld',
+const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'softProp',
+                 'chunkAt', 'makeChunkField', 'makeStream', 'STREAM',
                  'ACTOR', 'TICK', 'RUN', 'GRAVITY', 'JUMP_V', 'JUMP_APEX',
                  'makeActor', 'placeOnGround', 'embedded', 'step', 'display', 'applyDisplay',
                  'PHASE', 'phase', 'swingProgress', 'dodging', 'invulnerable',
