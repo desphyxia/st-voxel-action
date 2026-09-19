@@ -32,10 +32,21 @@ SOFT[MAT.LEAF] = 1;
 SOFT[MAT.SNOW] = 1;
 
 /**
+ * Is this voxel one a body walks through? One definition, exported, because
+ * the chunked field in chunks.mjs builds colliders too and a second copy of
+ * this rule went wrong immediately: it was written as an empty table, every
+ * leaf stayed solid, and a chunk disagreed with the same ground through the
+ * ordinary collider by the height of a conifer.
+ */
+export function softProp(mat, index, propStart) {
+  return index >= propStart && !!SOFT[mat];
+}
+
+/**
  * An empty column grid covering [-half, half] on both axes, `v` metres a side.
  * Fill it with addSpan/addVoxel/setLiquid, then call finish() once.
  */
-export function makeCollider(half, v) {
+export function makeCollider(half, v, bounded) {
   const n = Math.max(1, Math.round((2 * half) / v));
   const cols = new Array(n * n);
   const liq = new Uint8Array(n * n);
@@ -49,9 +60,18 @@ export function makeCollider(half, v) {
   };
   /** Same, clamped — for queries that only need the nearest column. */
   const axc = (p) => clamp(Math.floor((p + half) / v), 0, n - 1);
-  /** Does this footprint reach past the edge of the window? */
+  /**
+   * Does this footprint reach past the edge of the window?
+   *
+   * For a single bounded window the answer is a wall, and that is right: the
+   * world ends there and without it a player walks off the map and falls
+   * forever. For one chunk of a streamed world it is exactly wrong — the ground
+   * continues, in the chunk next door. A chunked field passes `bounded: false`
+   * and imposes the world's real boundary itself, because only it knows where
+   * that is. Default stays walled, so nothing that exists today changes. */
+  const walled = bounded !== false;
   const outside = (x, z, r) =>
-    x - r < -half || x + r > half || z - r < -half || z + r > half;
+    walled && (x - r < -half || x + r > half || z - r < -half || z + r > half);
 
   function push(i, j, lo, hi) {
     if (i < 0 || j < 0 || hi - lo <= EPS) return;
@@ -238,7 +258,7 @@ export function colliderForWorld(world) {
      height is usually capped. */
   const propStart = world.propStart === undefined ? world.pos.length / 3 : world.propStart;
   for (let q = 0; q < world.pos.length / 3; q++) {
-    if (q >= propStart && SOFT[world.mat[q]]) continue;
+    if (softProp(world.mat[q], q, propStart)) continue;
     c.addVoxel(world.pos[q * 3], world.pos[q * 3 + 1], world.pos[q * 3 + 2]);
   }
 

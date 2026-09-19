@@ -14,6 +14,7 @@
  */
 import { V, MOVE, CEIL, CHUNK as CHUNK_M } from '../../src/gen/constants.mjs';
 import { chunkWorld, WINDOW, SKIRT } from '../../src/gen/chunk.mjs';
+import { makeChunkField, chunkAt } from '../../src/sim/chunks.mjs';
 import { sin, cos, hyp } from '../../src/gen/exact.mjs';
 import { mulberry32, xmur3 } from '../../src/gen/rng.mjs';
 import { makeCollider, colliderForWorld, LIQUID, EPS } from '../../src/sim/collider.mjs';
@@ -1880,5 +1881,133 @@ export function chunkSuite() {
       side * (2 * w.half / w.NX) === CHUNK_M,
       `${w.NX} cells of window, ${pad} of skirt a side, ${side} of chunk `
       + `= ${(side * (2 * w.half / w.NX)).toFixed(0)} m against CHUNK ${CHUNK_M}`);
+  return out;
+}
+
+/**
+ * Issue #13: the loaded chunks answer as one world.
+ *
+ * `colliderForWorld` builds one bounded grid whose edge is a wall. A chunk's
+ * edge is where the ground continues, so each chunk keeps its own unwalled
+ * collider and `makeChunkField` routes a query to every chunk its footprint
+ * touches. These hold that the stitching is faithful and that the seams are not
+ * visible from inside the simulation.
+ */
+export function fieldSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const R = ACTOR.radius;
+
+  /* Faithfulness: well inside a chunk, the field must answer exactly what the
+     ordinary collider on that chunk's own window answers. Sampled a metre in
+     from the chunk edge so neither that collider's wall nor the skirt is in
+     the way — the seam itself is the next check's business. */
+  let n = 0, bad = 0, worst = 0;
+  for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+    const f = makeChunkField(s.seed, s.force);
+    f.keep([{ x: 0, z: 0 }], 1);
+    for (const [cx, cz] of [[0, 0], [1, 0], [0, 1], [-1, -1]]) {
+      const w = chunkWorld(s.seed, cx, cz, s.force);
+      const one = colliderForWorld(w);
+      const c0x = cx * CHUNK_M, c0z = cz * CHUNK_M;
+      for (let a = -14; a <= 14; a += 2) {
+        for (let b = -14; b <= 14; b += 2) {
+          const x = c0x + a, z = c0z + b;
+          n++;
+          const gf = f.supportUnder(x, z, R, Infinity);
+          const g1 = one.supportUnder(a, b, R, Infinity);
+          if (Math.abs(gf - g1) > 1e-9) { bad++; worst = Math.max(worst, Math.abs(gf - g1)); }
+        }
+      }
+    }
+  }
+  say('the field answers what the ordinary collider answers, inside a chunk',
+      bad === 0 && n > 500,
+      bad ? `${bad} of ${n} sample points differ, worst ${worst.toFixed(3)} m`
+          : `${n} points over four chunks and three seeds, identical`);
+
+  /* The seam. The first version of this forbade any step over MOVE.step across
+     a boundary, which is not a property of a seam at all — a 3.63 m cliff that
+     happens to lie on a chunk edge is a cliff, and the check called it a break.
+     What has to hold is that the field says the same thing across the seam as a
+     single window does over the same ground, cliffs included. Sampled every
+     12.5 cm through each boundary of the centre chunk; the window's own wall is
+     4 m further out and never in reach of a 0.35 m footprint. */
+  const f = makeChunkField('QUARTERSTONE', null);
+  f.keep([{ x: 0, z: 0 }], 1);
+  const one = colliderForWorld(chunkWorld('QUARTERSTONE', 0, 0, null));
+  let holes = 0, differ = 0, crossed = 0, worstSeam = 0;
+  for (const along of [-12, -6, 0, 6, 12]) {
+    for (const edge of [CHUNK_M / 2, -CHUNK_M / 2]) {
+      for (const axis of [0, 1]) {
+        for (let d = -1; d <= 1.0001; d += 0.125) {
+          const x = axis ? along : edge + d, z = axis ? edge + d : along;
+          const gf = f.supportUnder(x, z, R, Infinity);
+          const g1 = one.supportUnder(x, z, R, Infinity);
+          crossed++;
+          if (!Number.isFinite(gf)) { holes++; continue; }
+          if (Math.abs(gf - g1) > 1e-9) { differ++; worstSeam = Math.max(worstSeam, Math.abs(gf - g1)); }
+        }
+      }
+    }
+  }
+  say('and a chunk boundary is not visible from inside the simulation',
+      holes === 0 && differ === 0,
+      holes || differ
+        ? `${holes} holes and ${differ} disagreements of ${crossed} samples, worst ${worstSeam.toFixed(2)} m`
+        : `${crossed} samples through every boundary of a chunk, identical to one window over the same ground`);
+
+  /* Unloaded ground is a wall, not a hole. A body may not walk into ground
+     nothing has decided yet; the load radius is what stops it ever meeting
+     this, and meeting it should read as a wall rather than a fall. */
+  const far = { x: 40 * CHUNK_M, z: 0 };
+  say('and ground that is not loaded is a wall rather than a hole',
+      f.overlaps(far.x, far.z, R, 0, 2) === true
+      && f.supportUnder(far.x, far.z, R, Infinity) === -Infinity,
+      'a footprint in an unloaded chunk is solid, and offers no support to stand on');
+
+  /* Streaming proper: what is loaded follows the centres, and two players far
+     apart cost two radii rather than the ground between them. */
+  const g = makeChunkField('QUARTERSTONE', null);
+  const oneCentre = g.keep([{ x: 0, z: 0 }], 1);
+  const moved = g.keep([{ x: 8 * CHUNK_M, z: 0 }], 1);
+  const twoApart = g.keep([{ x: 0, z: 0 }, { x: 8 * CHUNK_M, z: 0 }], 1);
+  say('and what is loaded follows the players, and two of them cost two radii',
+      oneCentre === 9 && moved === 9 && twoApart === 18 && g.dropped >= 9,
+      `one centre ${oneCentre} chunks, moved eight chunks away ${moved} (not ${oneCentre + 9}), `
+      + `two centres ${twoApart}, ${g.dropped} let go`);
+
+  /* The issue's own bar: walk across several chunks. The wanderer from the soak
+     drives it, over the field rather than one window, with the load radius
+     following it — which is the whole arrangement working at once. */
+  const wf = makeChunkField('QUARTERSTONE', null);
+  wf.keep([{ x: 0, z: 0 }], 1);
+  const wa = placeOnGround(wf, 0, 0);
+  const rnd = mulberry32(xmur3('chunkwalk')());
+  let hx = 1, hz = 0, hold = 0, inside = 0, minY = wa.y, seen = new Set(), fell = false;
+  for (let t = 0; t < SOAK_TICKS; t++) {
+    if (--hold <= 0) { const ang = rnd() * 6.283185307179586; hx = cos(ang); hz = sin(ang); hold = 60 + ((rnd() * 120) | 0); }
+    else if (wa.blocked) { const ang = 2.094 + rnd() * 2.094; const c2 = cos(ang), s2 = sin(ang);
+      const nx = hx * c2 - hz * s2; hz = hx * s2 + hz * c2; hx = nx; hold = 40; }
+    step(wf, wa, { mx: hx, mz: hz, jump: false });
+    wf.keep([{ x: wa.x, z: wa.z }], 1);
+    const c = chunkAt(wa.x, wa.z);
+    seen.add(c.cx + ',' + c.cz);
+    if (embedded(wf, wa)) inside++;
+    if (wa.y < minY) minY = wa.y;
+    if (wa.y < -2) fell = true;
+  }
+  say('and a body walks across several chunks without falling through or sticking',
+      seen.size >= 3 && !fell && inside === 0,
+      `${seen.size} chunks visited in five minutes, ${inside} ticks inside the ground, `
+      + `lowest y ${minY.toFixed(2)}, ${wf.built} chunks built and ${wf.dropped} let go`);
+
+  /* And a chunk let go and loaded again is the same chunk. */
+  const before = g.supportUnder(0, 0, R, Infinity);
+  g.keep([{ x: 40 * CHUNK_M, z: 0 }], 1);
+  g.keep([{ x: 0, z: 0 }], 1);
+  say('and a chunk dropped and loaded again is the same ground',
+      g.supportUnder(0, 0, R, Infinity) === before,
+      `support at the origin ${before.toFixed(2)} m before, ${g.supportUnder(0, 0, R, Infinity).toFixed(2)} m after`);
   return out;
 }
