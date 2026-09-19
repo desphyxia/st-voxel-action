@@ -344,7 +344,7 @@
 
 <!-- The generator and the simulation, bundled from src/. Generated — do not edit
      here: edit src/gen/*.mjs and src/sim/*.mjs, then run tools/bundle-gen.mjs. -->
-<script>
+<script id="qsbundle">
 /* QS-BUNDLE-BEGIN — generated from src/gen by tools/bundle-gen.mjs */
 (function(){
 "use strict";
@@ -6733,24 +6733,124 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     for(var k2 in nodes) if(!want[k2]) dropNode(k2);
   }
 
+  /* ---------- generation off the main thread (issue #13) ----------
+     A 40 m window costs 86-290 ms to generate and a frame is 16.7 ms, so a
+     chunk arriving on the main thread is a freeze a dozen frames long. That is
+     measured in src/sim/stream.mjs and it is the whole reason streaming is
+     behind a flag. This is the answer to it.
+
+     The worker is built from the page's own inlined bundle — the same text the
+     page runs, read back out of its script tag and handed to a Blob. There is
+     no second copy to drift, and no second file to host, which matters because
+     this page is published as a single self-contained artifact.
+
+     **Whether that is allowed is not something to assume.** A page's CSP may
+     refuse a blob: worker, and a refusal does not arrive as an exception from
+     `new Worker` — it arrives later, as an error event, or not at all. So the
+     pool is *probed*: it is sent a ping and given a moment to answer, and
+     until it does the stream is pumped on the main thread exactly as before.
+     Nothing waits on the worker and nothing breaks if it never comes. */
+  var pool=null;
+  var POOL_N=2, POOL_PROBE_MS=4000;
+
+  function makePool(n){
+    var tag=document.getElementById('qsbundle');
+    if(!tag||typeof Worker!=='function'||typeof Blob!=='function') return null;
+    var body=tag.textContent+'\n'
+      +'var _now=function(){return (self.performance||Date).now();};\n'
+      +'self.onmessage=function(e){\n'
+      +'  var d=e.data;\n'
+      +'  if(d.ping){ self.postMessage({pong:1}); return; }\n'
+      +'  var t0=_now(), w=QS.chunkWorld(d.seed,d.cx,d.cz,d.force);\n'
+      +'  self.postMessage({cx:d.cx,cz:d.cz,w:w,gen:_now()-t0});\n'
+      +'};\n';
+    var url,ws=[];
+    try{
+      url=URL.createObjectURL(new Blob([body],{type:'text/javascript'}));
+      for(var i=0;i<n;i++) ws.push(new Worker(url));
+    }catch(err){
+      ws.forEach(function(w){ try{w.terminate();}catch(e2){} });
+      return null;
+    }
+    var P={ws:ws,url:url,ready:false,busy:ws.map(function(){return null;}),
+            sentAt:ws.map(function(){return 0;}),
+            gen:0,deliver:0,take:0,done:0,failed:false};
+    ws.forEach(function(w,k){
+      w.onerror=function(){ P.failed=true; P.ready=false; };
+      w.onmessage=function(ev){
+        var d=ev.data;
+        if(d.pong){ P.ready=true; return; }
+        /* Three numbers, and they are not the same number.
+ 
+           `gen` is the worker's own generation time. It is a *duration*, which
+           is the only thing about a worker's clock that means anything here: a
+           worker has its own `performance` time origin, so subtracting one of
+           its timestamps from one of ours is nonsense. That is what the first
+           version of this did.
+ 
+           `deliver` is the round trip this side measured, less that duration —
+           so everything that is not generating: posting, structured-cloning
+           the window out, and cloning it back in. The clone comes back *in* on
+           this thread, before this handler runs, so it is the part a worker
+           does not remove.
+ 
+           `take` is this handler: building the chunk's collider, meshing it and
+           putting it in the scene. That was always on this thread and still is. */
+        var rt=performance.now()-P.sentAt[k];
+        P.gen=d.gen; P.deliver=Math.max(0,rt-d.gen); P.done++;
+        P.busy[k]=null;
+        if(streaming&&stream){
+          var t1=performance.now();
+          stream.deliver(d.cx,d.cz,d.w);
+          reconcileNodes();
+          P.take=performance.now()-t1;
+          streamMs=P.deliver+P.take; streamBuilt++;
+        }
+      };
+      w.postMessage({ping:1});
+    });
+    setTimeout(function(){ if(!P.ready) P.failed=true; },POOL_PROBE_MS);
+    return P;
+  }
+
+  /** Hand the pool as much as it will take. True if it took anything. */
+  function feedPool(){
+    if(!pool||!pool.ready||pool.failed) return false;
+    var any=false;
+    for(var k=0;k<pool.ws.length;k++){
+      if(pool.busy[k]) continue;
+      var j=stream.next();
+      if(!j) break;
+      pool.busy[k]=j;
+      pool.sentAt[k]=performance.now();
+      pool.ws[k].postMessage({seed:field.seed,force:field.force,cx:j.cx,cz:j.cz});
+      any=true;
+    }
+    return any;
+  }
+
   function pumpStream(){
     if(!stream) return;
     var cs=[], a=player(), b=other();
     if(a) cs.push({x:a.x,z:a.z});
     if(b) cs.push({x:b.x,z:b.z});
     stream.want(cs.length?cs:[{x:0,z:0}]);
-    /* One window per tick, and no pretence that it fits inside a frame.
+    /* A worker if one answered, and this thread if none did — one window per
+       tick either way, and no pretence that it fits inside a frame.
 
        Per *tick*, not per frame, because the gate drives the simulation
        through QSPLAY.run and never reaches the render loop at all. Loading
        that only happened while frames were being drawn would leave every
        assertion walking into ground nobody had decided — which is a wall, and
        would have read as the controller's fault. */
-    var j=stream.next();
-    if(j){
-      var t0=performance.now();
-      stream.deliver(j.cx,j.cz,QS.chunkWorld(field.seed,j.cx,j.cz,field.force));
-      streamMs=performance.now()-t0; streamBuilt++;
+    if(pool&&pool.ready&&!pool.failed) feedPool();
+    else{
+      var j=stream.next();
+      if(j){
+        var t0=performance.now();
+        stream.deliver(j.cx,j.cz,QS.chunkWorld(field.seed,j.cx,j.cz,field.force));
+        streamMs=performance.now()-t0; streamBuilt++;
+      }
     }
     /* Every tick, not only when one arrives: `want` lets chunks go as the
        players move, and a node whose chunk is gone has to go with it. It walks
@@ -6772,7 +6872,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     disposeWorld();
     var mats=worldMaterials(), shell=sceneShell(52);
     field=QS.makeChunkField(cfg.seed,cfg.force===undefined?null:cfg.force);
-    stream=QS.makeStream(field,{loadR:1,keepR:STREAM_KEEP,flight:1});
+    stream=QS.makeStream(field,{loadR:1,keepR:STREAM_KEEP,flight:POOL_N});
     nodes={}; voxIndex=null; hidden.length=0; streamBuilt=0; streamMs=0;
     built={scene:shell.scene,sun:shell.sun,mats:mats,gmat:mats.grass,wmat:mats.water,
            vox:null,props:null,mesh:null,cfg:cfg,streamed:true};
@@ -6785,6 +6885,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     for(;;){ var j=stream.next(); if(!j) break;
       stream.deliver(j.cx,j.cz,QS.chunkWorld(cfg.seed,j.cx,j.cz,field.force)); }
     stream.radius(STREAM_LOAD,STREAM_KEEP);
+    /* Ask for workers once, after there is ground to stand on. If they never
+       answer, the pump stays on this thread and nothing else changes. */
+    if(!pool) pool=makePool(POOL_N);
     reconcileNodes();
     built.data=field.chunk(0,0).w;
     return populate(built.data);
@@ -7559,7 +7662,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          generation time is the number that says why this is behind a switch:
          it is the length of the freeze, in one figure. */
       (streaming&&field?('chunks '+field.loaded+' loaded, '+field.built+' built, '+field.dropped+
-                  ' let go   last '+streamMs.toFixed(0)+' ms'+
+                  ' let go   last '+streamMs.toFixed(0)+' ms '+
+                  (pool&&pool.ready&&!pool.failed?
+                    '('+pool.ws.length+' workers: '+pool.gen.toFixed(0)+' ms generating off '+
+                    'this thread, '+pool.deliver.toFixed(0)+' ms delivering, '+
+                    pool.take.toFixed(0)+' ms adopting)':'generated on this thread')+
                   (stream.pending?('   '+stream.pending+' queued'):'')+'\n'):'')+
       net+'   '+fps.toFixed(0)+' fps';
   }
@@ -7660,7 +7767,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     get streaming(){ return streaming; },
     setStream:setStreaming,
     get chunks(){ return streaming?{loaded:field.loaded,built:field.built,dropped:field.dropped,
-                                    pending:stream.pending,ms:streamMs,nodes:Object.keys(nodes).length}:null; },
+                                    pending:stream.pending,ms:streamMs,nodes:Object.keys(nodes).length,
+                                    workers:pool&&pool.ready&&!pool.failed?pool.ws.length:0,
+                                    offThread:pool?pool.done:0,poolFailed:!!(pool&&pool.failed),
+                                    gen:pool?pool.gen:0,deliver:pool?pool.deliver:0,
+                                    take:pool?pool.take:0}:null; },
     get meshQuads(){
       if(streaming){ var q=0; for(var k in nodes) q+=nodes[k].mesh.userData.quads; return q; }
       return built&&built.mesh?built.mesh.userData.quads:0; },
