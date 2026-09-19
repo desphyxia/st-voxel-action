@@ -92,14 +92,24 @@ export function makeChunkField(seed, force) {
   const live = new Map();
   let built = 0, dropped = 0;
 
-  function ensure(cx, cz) {
-    const k = key(cx, cz);
-    let e = live.get(k);
-    if (e) return e;
-    const w = chunkWorld(seed, cx, cz, force);
-    e = { cx, cz, w, col: colliderForChunk(w) };
-    live.set(k, e); built++;
+  /** Take a generated window as this chunk's ground. Where a streamed chunk
+      arrives: whoever built it — this thread, a worker, a cache — hands it
+      here and the field starts answering from it on the next query. */
+  function adopt(cx, cz, w) {
+    const e = { cx, cz, w, col: colliderForChunk(w) };
+    live.set(key(cx, cz), e); built++;
     return e;
+  }
+
+  function drop(cx, cz) {
+    if (!live.delete(key(cx, cz))) return false;
+    dropped++;
+    return true;
+  }
+
+  function ensure(cx, cz) {
+    const e = live.get(key(cx, cz));
+    return e || adopt(cx, cz, chunkWorld(seed, cx, cz, force));
   }
 
   /** Every chunk a footprint touches, loaded or not. */
@@ -122,16 +132,23 @@ export function makeChunkField(seed, force) {
           for (let dz = -radius; dz <= radius; dz++) want.add(key(c.cx + dx, c.cz + dz));
         }
       }
-      for (const k of [...live.keys()]) if (!want.has(k)) { live.delete(k); dropped++; }
+      for (const k of [...live.keys()]) if (!want.has(k)) { const [cx, cz] = k.split(',').map(Number); drop(cx, cz); }
       for (const k of want) { const [cx, cz] = k.split(',').map(Number); ensure(cx, cz); }
       return live.size;
     },
+
+    /** The seed this field is of, so a scheduler can generate for it. */
+    seed, force,
+    adopt, drop,
 
     get loaded() { return live.size; },
     get built() { return built; },
     get dropped() { return dropped; },
     has(cx, cz) { return live.has(key(cx, cz)); },
     chunk(cx, cz) { return got(cx, cz); },
+    /** Every loaded chunk, for a scheduler deciding what to let go. A copy,
+        because the caller drops from it while walking it. */
+    live() { return [...live.values()]; },
 
     /* ---- the four the controller asks ---- */
 

@@ -15,6 +15,7 @@
 import { V, MOVE, CEIL, CHUNK as CHUNK_M } from '../../src/gen/constants.mjs';
 import { chunkWorld, WINDOW, SKIRT } from '../../src/gen/chunk.mjs';
 import { makeChunkField, chunkAt } from '../../src/sim/chunks.mjs';
+import { makeStream } from '../../src/sim/stream.mjs';
 import { sin, cos, hyp } from '../../src/gen/exact.mjs';
 import { mulberry32, xmur3 } from '../../src/gen/rng.mjs';
 import { makeCollider, colliderForWorld, LIQUID, EPS } from '../../src/sim/collider.mjs';
@@ -2010,4 +2011,201 @@ export function fieldSuite() {
       g.supportUnder(0, 0, R, Infinity) === before,
       `support at the origin ${before.toFixed(2)} m before, ${g.supportUnder(0, 0, R, Infinity).toFixed(2)} m after`);
   return out;
+}
+
+/**
+ * The scheduler — issue #13, step three.
+ *
+ * ## The measurement this exists to make, and why it is not a timing assertion
+ *
+ * The question #13 poses is "a frame budget that holds while chunks arrive".
+ * The answer turns out to be settled before any scheduling: **one chunk does
+ * not fit in a frame**, by a factor of three at the best case measured and
+ * twenty-five at the worst. So the first check here times real generation and
+ * asserts the *inequality*, with a margin big enough that it is a statement
+ * about the generator rather than about how busy the machine is. A bar of
+ * "faster than X ms" would be a flake; "a 40 m window costs more than a 16.7 ms
+ * frame" has never been close.
+ *
+ * ## Why the soak uses a stub field
+ *
+ * Whether the loader keeps up with a running body is a question about geometry
+ * and arrival times, not about terrain: the answer does not depend on what is
+ * in the chunk, only on when it shows up. Generating two hundred real windows
+ * to ask it would add a minute to the node half and measure nothing extra. So
+ * the soak drives a stub of the four methods the stream uses, on a timeline
+ * where **every chunk is charged the slowest one measured** — not the median,
+ * so the result is a worst case rather than an average.
+ *
+ * That the stream drives a *real* field to the right state is a separate check
+ * below, against `keep`, which is the path the FIELD suite already pins.
+ */
+export function streamSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const FRAME = 1000 / 60;
+
+  /* ---- what a chunk costs ---- */
+  const costs = [];
+  for (let i = 0; i < 4; i++) chunkWorld('warm', i, 0);            /* warm the jit */
+  for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+    for (const [cx, cz] of [[0, 0], [1, 0], [0, 1]]) {
+      const t0 = performance.now();
+      chunkWorld(s.seed, cx, cz, s.force);
+      costs.push(performance.now() - t0);
+    }
+  }
+  costs.sort((a, b) => a - b);
+  const median = costs[costs.length >> 1], slowest = costs[costs.length - 1];
+  say('one chunk does not fit in a frame, which is why generation leaves the main thread',
+      costs[0] > FRAME * 2,
+      `9 windows: fastest ${costs[0].toFixed(0)} ms, median ${median.toFixed(0)} ms, `
+      + `slowest ${slowest.toFixed(0)} ms, against a ${FRAME.toFixed(1)} ms frame`);
+
+  /* And the shape of that: a pump given a frame's budget cannot spend less than
+     a chunk, so it reports the overrun rather than pretending to have obeyed. */
+  {
+    const f = makeChunkField('hero');
+    const st = makeStream(f, { loadR: 1, keepR: 2, flight: 2 });
+    st.want([{ x: 0, z: 0 }]);
+    const r = st.pump((cx, cz) => chunkWorld('hero', cx, cz), FRAME);
+    say('and a pump asked for a frame builds one chunk and says how far over it went',
+        r.built === 1 && r.over > 0,
+        `built ${r.built} in ${r.ms.toFixed(0)} ms, ${r.over.toFixed(0)} ms over a frame `
+        + `— ${(r.ms / FRAME).toFixed(1)} frames for one chunk`);
+  }
+
+  /* ---- ordering: the ground under your feet before the ground at the rim ---- */
+  {
+    const seen = [];
+    const stub = stubField(seen);
+    const st = makeStream(stub, { loadR: 3, keepR: 4, flight: 64 });
+    st.want([{ x: 0, z: 0 }]);
+    const order = [];
+    for (;;) { const j = st.next(); if (!j) break; order.push(j); stub.adopt(j.cx, j.cz, 1); }
+    let sorted = true, prev = -1;
+    for (const j of order) {
+      const d2 = j.cx * j.cx + j.cz * j.cz;
+      if (d2 < prev) sorted = false;
+      prev = Math.max(prev, d2);
+    }
+    say('and the nearest missing chunk is always the next one built',
+        sorted && order.length === 49 && order[0].cx === 0 && order[0].cz === 0,
+        `${order.length} chunks handed out at radius 3, nearest first, starting at the centre`);
+  }
+
+  /* ---- the cap on work in flight ---- */
+  {
+    const stub = stubField([]);
+    const st = makeStream(stub, { loadR: 3, keepR: 4, flight: 2 });
+    st.want([{ x: 0, z: 0 }]);
+    let handed = 0;
+    for (let i = 0; i < 10; i++) if (st.next()) handed++;
+    say('and no more work is in flight than the pool can take',
+        handed === 2 && st.inFlight === 2,
+        `asked ten times with a pool of two, handed out ${handed}`);
+  }
+
+  /* ---- hysteresis, with the control that makes it mean something ---- */
+  {
+    /* A body pacing across one chunk boundary: twenty steps back and forth over
+       the seam at x = 16. With one radius this drops and rebuilds a column every
+       crossing; with two it does nothing after the first. */
+    const pace = (loadR, keepR) => {
+      const stub = stubField([]);
+      const st = makeStream(stub, { loadR, keepR, flight: 64 });
+      let built = 0;
+      for (let i = 0; i < 20; i++) {
+        st.want([{ x: i % 2 ? 17 : 15, z: 0 }]);
+        for (;;) { const j = st.next(); if (!j) break; stub.adopt(j.cx, j.cz, 1); built++; }
+      }
+      return built;
+    };
+    const tight = pace(1, 1), loose = pace(1, 2);
+    say('and a body pacing over a chunk boundary does not rebuild the world each step',
+        loose < tight / 3 && tight > 20,
+        `20 crossings: ${loose} chunks built with a keep radius one wider, ${tight} without`);
+  }
+
+  /* ---- the stream settles on exactly what keep() holds ---- */
+  {
+    const a = makeChunkField('fen'), b = makeChunkField('fen');
+    const st = makeStream(a, { loadR: 1, keepR: 2, flight: 2 });
+    st.want([{ x: 5, z: -40 }]);
+    let guard = 0;
+    while (!st.settled && guard++ < 200) st.pump((cx, cz) => chunkWorld('fen', cx, cz), FRAME);
+    b.keep([{ x: 5, z: -40 }], 1);
+    const la = a.live().map((e) => e.cx + ',' + e.cz).sort().join(' ');
+    const lb = b.live().map((e) => e.cx + ',' + e.cz).sort().join(' ');
+    const same = la === lb && a.supportUnder(5, -40, ACTOR.radius, Infinity)
+                           === b.supportUnder(5, -40, ACTOR.radius, Infinity);
+    say('and what the scheduler settles on is what the synchronous path holds',
+        same && a.loaded === 9,
+        `${a.loaded} chunks either way, same ids, same ground underfoot`);
+  }
+
+  /* ---- does a running body outrun the loader? ---- */
+  {
+    const run = (workers, factor) => {
+      const stub = stubField([]);
+      const st = makeStream(stub, { loadR: 1, keepR: 2, flight: workers });
+      const cost = slowest * factor;
+      const busy = new Array(workers).fill(null);       /* {cx, cz, due} */
+      let t = 0, x = 0, margin = Infinity, blocked = 0;
+      /* Spawn with the world already there. A game shows a loading screen for
+         this; counting it as outrunning the loader would mean every run failed
+         on its first tick for having nothing loaded yet, which is not the
+         question. The question starts once the body is standing somewhere. */
+      st.want([{ x: 0, z: 0 }]);
+      for (;;) { const j = st.next(); if (!j) break; st.deliver(j.cx, j.cz, 1); }
+      for (let k = 0; k < SOAK_TICKS; k++) {
+        t += TICK * 1000;
+        x += RUN * TICK;
+        st.want([{ x, z: 0 }]);
+        for (let i = 0; i < workers; i++) {
+          const w = busy[i];
+          if (w && t >= w.due) { st.deliver(w.cx, w.cz, 1); busy[i] = null; }
+        }
+        for (let i = 0; i < workers; i++) {
+          if (busy[i]) continue;
+          const j = st.next();
+          if (!j) break;
+          busy[i] = { cx: j.cx, cz: j.cz, due: t + cost };
+        }
+        /* How far ahead the decided ground reaches: the near edge of the first
+           chunk in front that is not loaded. */
+        const here = chunkAt(x, 0).cx;
+        let cx = here;
+        while (stub.has(cx, 0) && cx < here + 8) cx++;
+        const front = (cx - 0.5) * CHUNK_M - x;
+        if (front < margin) margin = front;
+        if (front <= 0) blocked++;
+      }
+      return { margin, blocked, x };
+    };
+    const good = run(2, 1);
+    const starved = run(1, 20);
+    say('and a body at a full run never reaches ground that has not been decided',
+        good.blocked === 0 && good.margin > CHUNK_M / 2,
+        `five minutes and ${good.x.toFixed(0)} m at ${RUN} m/s, every chunk charged the `
+        + `slowest measured ${slowest.toFixed(0)} ms on two workers: decided ground stayed `
+        + `${good.margin.toFixed(1)} m ahead at the closest`);
+    say('and the same check fails when the loader cannot keep up, which is how it is known to ask anything',
+        starved.blocked > 0,
+        `one worker at twenty times the cost: blocked on ${starved.blocked} of ${SOAK_TICKS} ticks, `
+        + `front ${starved.margin.toFixed(1)} m`);
+  }
+
+  return out;
+}
+
+/** The four methods `makeStream` asks of a field, over a bare set of ids. */
+function stubField(log) {
+  const held = new Set();
+  return {
+    has: (cx, cz) => held.has(cx + ',' + cz),
+    adopt(cx, cz) { held.add(cx + ',' + cz); log.push([cx, cz]); },
+    drop(cx, cz) { return held.delete(cx + ',' + cz); },
+    live() { return [...held].map((k) => { const [cx, cz] = k.split(',').map(Number); return { cx, cz }; }); },
+  };
 }
