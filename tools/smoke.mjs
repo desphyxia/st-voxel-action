@@ -839,8 +839,20 @@ if (BROWSER_HALF) {
          Both are driven here through the real buttons rather than through the
          functions behind them, because a control that exists and does not
          respond to a click is the failure worth catching. */
+      /* Start from a blade at rest. The checks above leave a swing in flight and
+         the sweep fades on the animation loop in wall-clock, not in ticks — so
+         whether it is still visible here depends on how fast the machine is.
+         It was on CI and not locally, and "pressing one does not also swing"
+         read the leftover as the press's doing. */
+      await bp.evaluate(() => {
+        const a = window.QSPLAY.actor;
+        if (a) { a.swing = null; a.dodge = null; }
+      });
+      await bp.waitForFunction(() => !window.QSPLAY.sweeping, null, { timeout: PATIENCE });
+
       const tools = await bp.evaluate(async () => {
         const P = window.QSPLAY, out = {};
+        out.quietFirst = !P.sweeping;
         /* A real mouse press, because that is the one the stage acts on: its
            pointerdown handler presses Mouse0 for pointerType 'mouse' and takes
            the touch path otherwise. A synthetic event without a pointerType
@@ -907,8 +919,10 @@ if (BROWSER_HALF) {
             'BUILD: and they stop at each end rather than running past it',
             `nearest ${tools.viewMin} m (in ${tools.inDisabled ? 'disabled' : 'still live'}), `
             + `furthest ${tools.viewMax} m (out ${tools.outDisabled ? 'disabled' : 'still live'})`);
-      check(tools.swung === false, 'BUILD: and pressing one does not also swing',
-            tools.swung ? 'the blade came out' : 'quiet');
+      check(tools.quietFirst === true && tools.swung === false,
+            'BUILD: and pressing one does not also swing',
+            !tools.quietFirst ? 'the blade was already out before the presses — check is not isolated'
+                              : (tools.swung ? 'the blade came out' : 'quiet, before and after'));
 
       /* ---------- BUILD: a new world, and the renderer, from the view ----------
          Both of these already existed on the page below the stage, which is no
