@@ -1304,8 +1304,20 @@ if (BROWSER_HALF) {
           }
           P.input.release(key);
         };
-        go('KeyD', 900);
-        go('KeyS', 900);
+        /* Far enough to matter. The first version walked 15 s each way, which
+           is two chunks of ground on a good line and fewer on a bad one — it
+           crossed two and let nothing go, because nothing had fallen more than
+           a keep radius behind. Chunks are 32 m and the keep radius is 3, so
+           anything under 128 m of travel cannot drop a chunk however correct
+           the code is. Movement is screen-relative, so a key walks a diagonal
+           and the distance covered is less than the time suggests. */
+        go('KeyD', 2400);
+        go('KeyS', 2400);
+        /* Settle before reading. The bar is that the body is not inside the
+           ground and has not fallen out of the world; whether it happens to be
+           mid-step off a ledge on one particular tick is not a property of
+           streaming, and asserting it made the check flake on a kerb. */
+        for (let i = 0; i < 90; i++) P.run(1);
         const a1 = P.actor;
         return { boot, seen: seen.size, lowest, inside, peak,
                  end: { x: a1.x, z: a1.z, y: a1.y, grounded: a1.grounded },
@@ -1319,7 +1331,7 @@ if (BROWSER_HALF) {
       check(streamed.seen >= 3 && streamed.inside === 0 && streamed.lowest > -2
             && streamed.end.grounded,
             'STREAM: and walking across chunk after chunk neither falls through nor sticks',
-            `${streamed.seen} chunks walked in 30 s, ${streamed.inside} ticks inside the ground, `
+            `${streamed.seen} chunks walked in 80 s, ${streamed.inside} ticks inside the ground, `
             + `lowest y ${streamed.lowest.toFixed(2)}, ended at `
             + `(${streamed.end.x.toFixed(0)}, ${streamed.end.z.toFixed(0)}) `
             + `${streamed.end.grounded ? 'standing' : 'in the air'}`);
@@ -1331,6 +1343,28 @@ if (BROWSER_HALF) {
             + `${streamed.chunks.nodes} of them`);
       check(sErrors.length === 0, 'STREAM: and no errors while it streams',
             sErrors.slice(0, 3).join(' | '));
+
+      /* ---------- WORKER: generation off the main thread, issue #13 ----------
+         The hitch #13 asks to be rid of is a 86-290 ms freeze every time a
+         chunk arrives, so the only thing worth asserting is *what the main
+         thread still pays* once a worker is generating. Reported either way,
+         because a page's CSP may refuse a blob: worker and a refusal does not
+         arrive as an exception — the build falls back and keeps playing, and
+         the gate should say which of the two it measured rather than fail on
+         an environment question. */
+      const worker = streamed.chunks;
+      if (worker.workers > 0 && worker.offThread > 0) {
+        check(worker.gen > worker.deliver + worker.take,
+              'WORKER: generating a chunk costs the main thread less than doing it',
+              `${worker.offThread} windows off this thread: ${worker.gen.toFixed(0)} ms to `
+              + `generate, ${worker.deliver.toFixed(0)} ms to deliver and `
+              + `${worker.take.toFixed(0)} ms to adopt — ${(worker.deliver + worker.take).toFixed(0)} ms `
+              + `on this thread against ${worker.gen.toFixed(0)} doing it here`);
+      } else {
+        check(true, 'WORKER: no worker here, and the build streams without one',
+              worker.poolFailed ? 'the pool was refused or never answered — main-thread fallback'
+                                : 'no worker started; the stream ran on the main thread');
+      }
       await sp.screenshot({ path: join(OUT, 'play-streamed.png') });
       await sp.close();
     }
