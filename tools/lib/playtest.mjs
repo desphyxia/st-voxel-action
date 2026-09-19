@@ -139,6 +139,7 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
   const x0 = a.x, z0 = a.z;
 
   let hx = 1, hz = 0, hold = 0, jumps = 0, insideTicks = 0, turns = 0, sinceTurn = 99;
+  let insideGrounded = 0, insideDepth = 0;
   let minY = a.y, maxY = a.y;
 
   const face = (c, s2) => {
@@ -211,7 +212,21 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
     if (onTick) onTick(a, t, col);
     if (a.y < minY) minY = a.y;
     if (a.y > maxY) maxY = a.y;
-    if (embedded(col, a)) insideTicks++;
+    if (embedded(col, a)) {
+      insideTicks++;
+      if (a.grounded) insideGrounded++;
+      /* How far in, by bisection on the feet. "Inside the ground" is two very
+         different things: a body resting in a hill, and a body a few
+         millimetres into the surface it is landing on for one tick. Counting
+         ticks cannot tell them apart; this can. */
+      let lo = 0, hi = ACTOR.height;
+      for (let b = 0; b < 30; b++) {
+        const mid = (lo + hi) / 2;
+        if (!col.overlaps(a.x, a.z, ACTOR.radius, a.y + mid + EPS, a.y + ACTOR.height - EPS)) hi = mid;
+        else lo = mid;
+      }
+      if (hi > insideDepth) insideDepth = hi;
+    }
     if (a.dead) break;
   }
 
@@ -224,7 +239,7 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
     travelled: +a.travelled.toFixed(1),
     displaced: +Math.sqrt(dx * dx + dz * dz).toFixed(1),
     vaults: a.vaults, jumps, turns,
-    insideTicks,
+    insideTicks, insideGrounded, insideDepth: +insideDepth.toFixed(4),
     minY: +minY.toFixed(2), maxY: +maxY.toFixed(2),
   };
 }
@@ -1556,45 +1571,77 @@ export function carveSuite() {
  * The material table has said so since #14 — `leaf` has the lowest hardness of
  * anything that exists — and until now nothing read it for collision, so the
  * one place the distinction was written down was the one place it did not
- * apply. These hold the rule in both directions, because "soft" that also
- * swallows the ground is worse than the bug.
+ * apply.
+ *
+ * **Asking "is this voxel's space solid" does not work**, and the first version
+ * of this suite did exactly that and reported 12,259 of 121,159 foliage voxels
+ * still solid. A canopy voxel sharing a 25 cm column with the trunk it grows
+ * out of answers yes however soft the leaf is. The space is solid; the leaf is
+ * not what makes it solid, and the probe cannot tell those apart.
+ *
+ * The claim is about what the collider is *built from*, so that is what is
+ * compared: a collider for the world against a collider for the same world
+ * with every soft prop voxel deleted. Identical means foliage contributes
+ * nothing. Nothing weaker is the actual statement.
  */
 export function foliageSuite() {
   const out = [];
   const say = (label, ok, detail) => out.push({ label, ok, detail });
 
-  let leafSolid = 0, leafSeen = 0, snowGround = 0, snowGroundSolid = 0, propSnow = 0, propSnowSolid = 0;
-  let woodSeen = 0, woodSolid = 0;
+  /** The same world with the soft prop voxels taken out of its voxel arrays. */
+  function withoutSoft(w) {
+    const ps = w.propStart === undefined ? w.pos.length / 3 : w.propStart;
+    const pos = [], mat = [];
+    let cut = 0;
+    for (let q = 0; q < w.pos.length / 3; q++) {
+      if (q >= ps && (w.mat[q] === MAT.LEAF || w.mat[q] === MAT.SNOW)) { cut++; continue; }
+      pos.push(w.pos[q * 3], w.pos[q * 3 + 1], w.pos[q * 3 + 2]);
+      mat.push(w.mat[q]);
+    }
+    return { world: Object.assign({}, w, { pos, mat, propStart: pos.length / 3 }), cut };
+  }
+
+  /** Every column's spans, as one comparable string. */
+  function spanSig(col) {
+    const rows = [];
+    for (let i = 0; i < col.n; i++) {
+      for (let j = 0; j < col.n; j++) {
+        const x = -col.half + (i + 0.5) * col.v, z = -col.half + (j + 0.5) * col.v;
+        const sp = col.spansAt(x, z);
+        if (sp && sp.length) rows.push(i + ':' + j + ':' + sp.map((r) => r[0] + '-' + r[1]).join(','));
+      }
+    }
+    return rows.join('|');
+  }
+
+  let same = 0, cutAll = 0, seeds = 0;
+  let groundSnowLost = 0, woodLost = 0;
   for (const s of GOLDEN_SEEDS) {
     const w = buildWorld({ seed: s.seed, size: s.size, force: s.force, ox: s.ox, oz: s.oz });
+    const stripped = withoutSoft(w);
+    cutAll += stripped.cut; seeds++;
+    if (spanSig(colliderForWorld(w)) === spanSig(colliderForWorld(stripped.world))) same++;
+
+    /* The other direction, which is the one that matters more: "soft" must not
+       have eaten anything the world is made of. Probed per voxel, which is
+       sound here because a *missing* span cannot be supplied by a neighbour. */
     const col = colliderForWorld(w);
     const ps = w.propStart === undefined ? w.pos.length / 3 : w.propStart;
-    /* Is this exact voxel solid to the controller? A thin probe at its centre,
-       so a neighbour's span cannot answer for it. */
-    const at = (q) => {
-      const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
-      return col.overlaps(x, z, V / 4, y - V / 4, y + V / 4);
-    };
     for (let q = 0; q < w.pos.length / 3; q++) {
-      const m = w.mat[q], prop = q >= ps;
-      if (prop && m === MAT.LEAF) { leafSeen++; if (at(q)) leafSolid++; }
-      else if (prop && m === MAT.SNOW) { propSnow++; if (at(q)) propSnowSolid++; }
-      else if (!prop && m === MAT.SNOW) { snowGround++; if (at(q)) snowGroundSolid++; }
-      else if (prop && m === MAT.WOOD) { woodSeen++; if (at(q)) woodSolid++; }
+      const prop = q >= ps, m = w.mat[q];
+      if (!((!prop && m === MAT.SNOW) || (prop && m === MAT.WOOD))) continue;
+      const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+      if (col.overlaps(x, z, V / 4, y - V / 4, y + V / 4)) continue;
+      if (prop) woodLost++; else groundSnowLost++;
     }
   }
-  say('foliage is not solid: a body walks through a branch',
-      leafSeen > 1000 && leafSolid === 0,
-      `${leafSeen} foliage voxels across six seeds, ${leafSolid} of them solid`);
-  say('and snow on a prop is foliage wearing a hat',
-      propSnow > 0 && propSnowSolid === 0,
-      `${propSnow} capped canopy voxels, ${propSnowSolid} solid`);
-  /* The half that stops "soft" from eating the world. */
-  say('but snow on the ground is still ground',
-      snowGround > 0 && snowGroundSolid === snowGround,
-      `${snowGround} settled snow voxels, all ${snowGroundSolid} solid`);
-  say('and a trunk is still a trunk',
-      woodSeen > 100 && woodSolid === woodSeen,
-      `${woodSeen} prop wood voxels, all ${woodSolid} solid`);
+  say('foliage contributes nothing to collision, on every seed',
+      same === seeds && cutAll > 1000,
+      `${same}/${seeds} seeds identical to a collider built without them, `
+      + `${cutAll} soft prop voxels skipped`);
+  say('and settled snow is still ground', groundSnowLost === 0,
+      groundSnowLost ? `${groundSnowLost} ground snow voxels went missing` : 'none lost');
+  say('and a trunk is still a trunk', woodLost === 0,
+      woodLost ? `${woodLost} prop wood voxels went missing` : 'none lost');
   return out;
 }
