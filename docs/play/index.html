@@ -6805,11 +6805,23 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      **Whether that is allowed is not something to assume.** A page's CSP may
      refuse a blob: worker, and a refusal does not arrive as an exception from
      `new Worker` — it arrives later, as an error event, or not at all. So the
-     pool is *probed*: it is sent a ping and given a moment to answer, and
-     until it does the stream is pumped on the main thread exactly as before.
-     Nothing waits on the worker and nothing breaks if it never comes. */
+     pool is *probed*: it is sent a ping, and it counts as live the moment it
+     answers. Until then the stream is pumped on this thread exactly as before,
+     so nothing waits on the worker and nothing breaks if it never comes.
+
+     **The probe does not have a deadline, and that is the point.** It used to
+     give the pool four seconds of wall clock and mark it dead otherwise, which
+     is the one thing that cannot work here: a `postMessage` reply is delivered
+     on the main thread, and the main thread is — by construction, this being
+     the problem the worker exists to solve — blocked for seconds at a time
+     generating chunks. A healthy worker answered and the answer sat in a queue
+     behind the very work it was meant to take over, and the pool was declared
+     refused every single run. Readiness is an event now, never a timer. */
   var pool=null;
-  var POOL_N=2, POOL_PROBE_MS=4000;
+  var POOL_N=2;
+  /* How many ticks of pending work with nothing arriving before this thread
+     stops waiting and builds one itself. See `pumpStream`. */
+  var POOL_PATIENCE=20;
 
   function makePool(n){
     var tag=document.getElementById('qsbundle');
@@ -6820,7 +6832,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       +'  var d=e.data;\n'
       +'  if(d.ping){ self.postMessage({pong:1}); return; }\n'
       +'  var t0=_now(), w=QS.chunkWorld(d.seed,d.cx,d.cz,d.force);\n'
-      +'  self.postMessage({cx:d.cx,cz:d.cz,w:w,gen:_now()-t0});\n'
+      /* A world carries its generator on `w.G`, and a generator is nine
+         closures. structuredClone refuses the whole object over them — "function
+         cell(x,z){...} could not be cloned" — so the worker could never post
+         anything back, whatever the CSP allowed. Everything else on a world is
+         plain data and clones in about 22 ms. The generator is not sent; the
+         main thread makes its own from the same seed, which is what `makeGen`
+         is for and costs nothing but closures. */
+      +'  var out={}; for(var k in w){ if(k!=="G") out[k]=w[k]; }\n'
+      +'  self.postMessage({cx:d.cx,cz:d.cz,w:out,gen:_now()-t0});\n'
       +'};\n';
     var url,ws=[];
     try{
@@ -6832,9 +6852,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     }
     var P={ws:ws,url:url,ready:false,busy:ws.map(function(){return null;}),
             sentAt:ws.map(function(){return 0;}),
-            gen:0,deliver:0,take:0,done:0,failed:false};
+            gen:0,deliver:0,take:0,done:0,failed:false,waited:0,err:null};
     ws.forEach(function(w,k){
-      w.onerror=function(){ P.failed=true; P.ready=false; };
+      w.onerror=function(e){ P.failed=true; P.ready=false;
+        P.err=(e&&e.message)||'refused'; };
       w.onmessage=function(ev){
         var d=ev.data;
         if(d.pong){ P.ready=true; return; }
@@ -6856,9 +6877,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
            putting it in the scene. That was always on this thread and still is. */
         var rt=performance.now()-P.sentAt[k];
         P.gen=d.gen; P.deliver=Math.max(0,rt-d.gen); P.done++;
-        P.busy[k]=null;
+        P.busy[k]=null; P.waited=0;
         if(streaming&&stream){
           var t1=performance.now();
+          /* Put a generator back on it: the mesher reads `w.G.pstream` to pick
+             a voxel's shade, and the worker could not send one. Same seed, same
+             closures, same answers. */
+          d.w.G=QS.makeGen(field.seed,field.force===undefined?null:field.force);
           stream.deliver(d.cx,d.cz,d.w);
           reconcileNodes();
           P.take=performance.now()-t1;
@@ -6867,7 +6892,6 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       };
       w.postMessage({ping:1});
     });
-    setTimeout(function(){ if(!P.ready) P.failed=true; },POOL_PROBE_MS);
     return P;
   }
 
@@ -6901,13 +6925,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        that only happened while frames were being drawn would leave every
        assertion walking into ground nobody had decided — which is a wall, and
        would have read as the controller's fault. */
-    if(pool&&pool.ready&&!pool.failed) feedPool();
-    else{
+    var live=pool&&pool.ready&&!pool.failed;
+    if(live) feedPool();
+    /* Build here when there is no pool, or when there is one and it is not
+       keeping the ground ahead decided. The second half is not belt and
+       braces: a worker's answer arrives as a message, and a caller that never
+       returns to the event loop — the gate drives whole minutes of simulation
+       inside one call — will not receive one however healthy the worker is.
+       Waiting on it there would walk a body into ground nobody had decided. */
+    if(live&&stream.pending>0) pool.waited++; else if(live) pool.waited=0;
+    if(!live||pool.waited>POOL_PATIENCE){
       var j=stream.next();
       if(j){
         var t0=performance.now();
         stream.deliver(j.cx,j.cz,QS.chunkWorld(field.seed,j.cx,j.cz,field.force));
         streamMs=performance.now()-t0; streamBuilt++;
+        if(live) pool.waited=0;
       }
     }
     /* Every tick, not only when one arrives: `want` lets chunks go as the

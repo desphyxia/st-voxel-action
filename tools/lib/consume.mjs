@@ -119,6 +119,12 @@ export function audit(extra) {
  * for six issues.
  */
 export const ONE_SIDED = [
+  'G->play',          /* the generator itself. A worker cannot send one — nine
+                         closures, and structuredClone refuses the whole world
+                         over them — so the build makes its own with makeGen and
+                         puts it back on each streamed chunk, because the mesher
+                         reads G.pstream to shade a voxel (#13). The plate
+                         generates in place and never needs to reattach one. */
   'Hs->plate',        /* the plate shades from the height field; the build's collider owns it */
   'M->plate',
   'NX->plate',
