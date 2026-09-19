@@ -401,6 +401,46 @@ if (BROWSER_HALF) {
       await bp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
       check(bErrors.length === 0, 'BUILD: boots with no page errors', bErrors.slice(0, 3).join(' | '));
 
+      /* ---------- BUILD: it opens in the view ----------
+         The page is a design document with a game in the middle of it, and the
+         stage takes the viewport on load so the game is what you land in. This
+         is the CSS fill and not native fullscreen, which cannot be entered
+         without a user gesture — so what is asserted is that it filled, and
+         that the way back out is reachable from inside it.
+
+         Everything after this runs on the page as it was, so the fill is
+         dropped here: the stage is fixed over the page furniture while it is
+         up, and a covered button is not clickable. */
+      const opened = await bp.evaluate(() => {
+        const st = document.querySelector('#stage'), c = document.querySelector('#cv');
+        const r = st.getBoundingClientRect(), vv = window.visualViewport;
+        return { maxed: st.classList.contains('maxed'),
+                 w: Math.round(r.width), h: Math.round(r.height),
+                 top: Math.round(r.top), bottom: Math.round(r.bottom),
+                 vw: Math.round(vv ? vv.width : window.innerWidth),
+                 vh: Math.round(vv ? vv.height : window.innerHeight),
+                 cw: c.width, ch: c.height,
+                 exit: getComputedStyle(document.querySelector('#exitfs')).display };
+      });
+      check(opened.maxed && opened.top <= 1 && opened.bottom >= opened.vh - 1
+            && opened.w >= opened.vw - 1 && opened.cw === opened.w && opened.ch === opened.h,
+            'BUILD: opens filling the view, with the canvas following',
+            `${opened.w}x${opened.h} over a ${opened.vw}x${opened.vh} viewport, canvas ${opened.cw}x${opened.ch}`);
+      check(opened.exit !== 'none', 'BUILD: and the way back to the page is reachable from inside it',
+            opened.exit !== 'none' ? 'exit control shown' : 'NO EXIT — the lattice is unreachable');
+      await bp.click('#exitfs');
+      /* Wait for the *drawing buffer* to settle, not just for the class to come
+         off. Leaving the fill resizes on a later frame, and `vp` is what
+         QS.project maps a world point through — running the next check against
+         a stale one aims every pointer at the wrong place on screen, which is
+         exactly how this first came back: nothing was struck and nothing died. */
+      await bp.waitForFunction(() => {
+        const st = document.querySelector('#stage'), c = document.querySelector('#cv');
+        const r = st.getBoundingClientRect();
+        return !st.classList.contains('maxed')
+          && c.width === Math.max(1, r.width | 0) && c.height === Math.max(1, r.height | 0);
+      }, null, { timeout: PATIENCE });
+
       const spawned = await bp.evaluate(() => {
         const a = window.QSPLAY.actor;
         return { y: a.y, grounded: a.grounded, embedded: window.QSPLAY.actor.dead };
@@ -477,6 +517,13 @@ if (BROWSER_HALF) {
         const t = P.targets[0], a = P.actor;
         a.x = t.x - 1.15; a.z = t.z - 0.25; a.y = t.y;
         a.faceX = 1; a.faceZ = 0; a.vx = 0; a.vz = 0;
+        /* Facing is set here, so nothing else may set it. A mouse that has been
+           over the stage leaves an aim behind, and the swing follows the aim
+           rather than the facing — which reads on screen as a perfectly good
+           arc pointing somewhere else, and comes back as a post that was never
+           struck. This check used to hold only because no earlier check had
+           moved a pointer across the view. */
+        P.input.clearPointer();
         a.stamina = QS.STAMINA_MAX; a.staminaHold = 0; a.swing = null; a.dodge = null;
         QS.warpTo(P.cam, a.x, a.y, a.z);
         const before = pale(), struckBefore = P.struck;
@@ -617,6 +664,9 @@ if (BROWSER_HALF) {
          every pixel counted is the telegraph. */
       const tells = await bp.evaluate(() => {
         const P = window.QSPLAY, QS = window.QS;
+        /* Same reason as the swing check: this drives facing by hand every tick,
+           and a pointer left over the view would out-vote it. */
+        P.input.clearPointer();
         const grab = () => {
           P.draw();
           const c = document.querySelector('#cv');

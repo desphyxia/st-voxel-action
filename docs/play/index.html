@@ -216,7 +216,8 @@
         swing · <b>Shift</b> to dodge · <b>Q</b>/<b>E</b> to turn the view · <b>R</b> to respawn · mouse or
         right stick to aim. <b>&minus;</b> and <b>+</b> at the top of the view zoom; <b>Info</b> shows the
         readout. Walk over a cache or a fallen machine to take what is in it, and seat it in
-        the lattice below. <b>Fullscreen</b> fills the screen; <b>Esc</b> leaves it.
+        the lattice below. It opens filling the window; <b>Esc</b> or <b>Exit</b> drops back to
+        the page and the lattice, and <b>Fullscreen</b> goes to the real thing.
         <b>On a phone</b>, hold it sideways: your left thumb is a stick wherever you put it, and the
         buttons on the right cut, dodge and jump.
         Click the view first to give it the keyboard.</p>
@@ -6038,8 +6039,30 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   function fsElement(){ return document.fullscreenElement||document.webkitFullscreenElement||null; }
   function maxed(){ return stage.classList.contains('maxed'); }
   function filling(){ return fsElement()===stage||maxed(); }
+  /* ---------- landscape ----------
+     Quarterstone is played sideways, and the orientation lock is how a browser
+     is asked to keep it that way. Three things bound what it can do, and the
+     rotate overlay stays as the fallback for all of them:
+
+       - it only works from inside *native* fullscreen, so the CSS fill cannot
+         have it;
+       - Safari on iOS does not implement it at all, which is most phones;
+       - it rejects rather than throws on some engines and throws on others,
+         so both have to be swallowed.
+
+     A lock that cannot be taken is not an error — it is the normal case. */
+  function lockLandscape(){
+    var o=screen.orientation;
+    if(!o||!o.lock) return;
+    try{ var r=o.lock('landscape'); if(r&&r.catch) r.catch(function(){}); }catch(e){}
+  }
+  function unlockOrientation(){
+    var o=screen.orientation;
+    if(o&&o.unlock){ try{ o.unlock(); }catch(e){} }
+  }
   function syncFullBtn(){
     fullBtn.textContent=filling()?'Exit fullscreen':'Fullscreen';
+    if(fsElement()===stage) lockLandscape(); else unlockOrientation();
     /* The stage changed size, and the renderer's drawing buffer has to follow. */
     resize(); stage.focus();
   }
@@ -6631,6 +6654,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   }
 
   resize();
+  /* ---------- open in the view, not on the page ----------
+     The page around the stage is a design document with a game in the middle
+     of it, and what people come here to do is play. So the stage fills the
+     viewport on load.
+
+     This is the CSS fill, not native fullscreen, and it has to be: entering
+     real fullscreen needs a user gesture and a call on load is rejected by
+     every browser. The Fullscreen button is still the way to the real thing,
+     and it is the only way the orientation lock can be taken. What this does
+     get is everything that needs no permission — the whole viewport, on every
+     browser, with nothing to press first.
+
+     The way back out is the Exit control inside the stage, which is also how
+     you reach the lattice: it lives in a card below the stage, and seating a
+     module is one of the three things this build is for. */
+  goMaxed(true);
   hostBtn.addEventListener('click',function(){ startHost(); stage.focus(); });
   /* Opened by a host: do not generate anything, wait to be told which world. */
   if(location.hash.indexOf('join')>=0&&window.opener) startGuest();
