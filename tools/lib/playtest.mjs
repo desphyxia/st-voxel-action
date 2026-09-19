@@ -192,7 +192,16 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
            being re-rolled every tick; applying it here let a fresh heading
            picked beside a magma pool walk straight into it before the turn
            was allowed. */
-        if (near.liq === LIQUID.MAGMA) veer();
+        /* Ahead is not the only way in. `step` slides a blocked body along a
+           wall, so a heading that never points at the pool still walks the
+           shoulder into it, and a probe on the heading alone never sees that.
+           Checked at the body's own edge and to both sides as well — ash/c
+           died at tick 13,373 to exactly this, and it had been invisible
+           because the gate only ever ran one walk per seed. */
+        const flank = (sx, sz) => col.liquidAt(a.x + sx, a.z + sz).kind === LIQUID.MAGMA;
+        const r = ACTOR.radius;
+        if (near.liq === LIQUID.MAGMA || probe(r).liq === LIQUID.MAGMA
+            || flank(-hz * r, hx * r) || flank(hz * r, -hx * r)) veer();
         else if (nothingThere) {
           const far = probe(MOVE.jump - 0.4);
           const jumpable = far.g !== -Infinity && far.liq !== LIQUID.MAGMA
