@@ -873,6 +873,86 @@ if (BROWSER_HALF) {
       check(tools.swung === false, 'BUILD: and pressing one does not also swing',
             tools.swung ? 'the blade came out' : 'quiet');
 
+      /* ---------- BUILD: a new world, and the renderer, from the view ----------
+         Both of these already existed on the page below the stage, which is no
+         use once the stage is filling the window. The overlay twins are what
+         this covers, and the thing worth asserting about a second control for
+         one piece of state is that the two never disagree.
+
+         The world is put back afterwards: the checks below this walk a measured
+         distance from spawn, and a random world is a random place to start. */
+      const world = await bp.evaluate(async () => {
+        const P = window.QSPLAY, out = {};
+        const press = (id) => {
+          const b = document.getElementById(id);
+          b.dispatchEvent(new PointerEvent('pointerdown', {
+            bubbles: true, cancelable: true, composed: true,
+            pointerType: 'mouse', button: 0, buttons: 1, isPrimary: true,
+          }));
+          b.click();
+          return b;
+        };
+        const box = document.getElementById('seedin');
+        /* Voxel count, not spawn position, as the evidence that the terrain is
+           genuinely different. Spawn looked like the obvious tell and is a bad
+           one: two seeds can put you in the same place, and it only appeared to
+           work here because earlier checks had walked the character away from
+           it. The voxel count is a property of the world itself. */
+        out.seed0 = P.seed; out.box0 = box.value; out.vox0 = P.boxCount;
+
+        press('newworld');
+        out.seed1 = P.seed; out.box1 = box.value; out.vox1 = P.boxCount;
+        out.alive1 = !!P.actor && !!P.ready;
+        press('newworld');
+        out.seed2 = P.seed;
+
+        /* One state, two buttons: the overlay twin and the one on the page. */
+        const lbl = () => [document.getElementById('meshtog').textContent,
+                           document.getElementById('meshbtn').textContent].join('/');
+        out.meshAt0 = P.mesh; out.lblAt0 = lbl();
+        press('meshtog'); out.meshAt1 = P.mesh; out.lblAt1 = lbl();
+        press('meshtog'); out.meshAt2 = P.mesh; out.lblAt2 = lbl();
+
+        box.value = 'QUARTERSTONE';
+        press('regen');
+        out.restored = P.seed;
+        return out;
+      });
+      check(world.seed1 !== world.seed0 && world.seed2 !== world.seed1
+            && world.box1 === world.seed1 && world.alive1 && world.vox1 !== world.vox0,
+            'BUILD: New grows a different world and writes the seed down',
+            `${world.seed0} -> ${world.seed1} -> ${world.seed2}, `
+            + `seed box ${world.box1 === world.seed1 ? 'agrees' : 'DISAGREES'}, `
+            + `${world.vox0} voxels -> ${world.vox1}`);
+      check(world.meshAt1 !== world.meshAt0 && world.meshAt2 === world.meshAt0
+            && world.lblAt0 === 'Boxes/Boxes' && world.lblAt1 === 'Mesh/Mesh'
+            && world.lblAt2 === 'Boxes/Boxes',
+            'BUILD: the renderer toggle in the view agrees with the one on the page',
+            `${world.lblAt0} -> ${world.lblAt1} -> ${world.lblAt2}, `
+            + `mesh ${world.meshAt0} -> ${world.meshAt1} -> ${world.meshAt2}`);
+      check(world.restored === 'QUARTERSTONE', 'BUILD: and the world the rest of the gate needs is back',
+            `seed ${world.restored}`);
+
+      /* The toolbar spans the view so its middle button can be centred by the
+         layout. That makes it a full-width strip across the top, and a strip
+         that takes pointer events is a strip that eats clicks meant for the
+         ground beneath it. Only the buttons may be solid. */
+      const strip = await bp.evaluate(() => {
+        const t = document.querySelector('#tools').getBoundingClientRect();
+        const b = document.getElementById('hudbtn').getBoundingClientRect();
+        /* A point inside the strip, level with the buttons, in the gap between
+           the left group and the centre one. */
+        const x = (b.left + t.left) / 2, y = b.top + b.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        return { onStrip: x > t.left && x < b.left,
+                 lands: hit ? (hit.id || hit.tagName.toLowerCase()) : 'nothing',
+                 width: Math.round(t.width),
+                 stageWidth: Math.round(document.querySelector('#stage').getBoundingClientRect().width) };
+      });
+      check(strip.onStrip && strip.lands !== 'tools',
+            'BUILD: and the toolbar strip does not swallow clicks meant for the ground',
+            `a press in the gap lands on <${strip.lands}>, strip ${strip.width} of ${strip.stageWidth} px wide`);
+
       /* ---------- BUILD: fullscreen ----------
          Two paths, because a published artifact runs in an iframe and only gets
          native fullscreen if the host granted allow="fullscreen". Both have to

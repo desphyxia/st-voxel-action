@@ -60,8 +60,21 @@
   /* Everything that belongs to the view rather than to the page: the readout
      toggle and the zoom. Centred at the top so it clears the readout under it,
      the vitals at bottom-left and the touch pad at bottom-right. */
-  .tools{position:absolute;left:50%;top:10px;transform:translateX(-50%);display:flex;gap:4px;z-index:3}
-  .tools button{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+  /* A three-column grid across the whole width, so the middle button is centred
+     by the layout rather than by the two sides happening to be the same width.
+     `New` and `Boxes` are not, and centring the row instead pushed the readout
+     toggle off the middle of the view.
+
+     The strip spans the stage, so it must not swallow a click meant for the
+     ground: nothing in it takes pointer events except the buttons themselves. */
+  .tools{position:absolute;left:0;right:0;top:10px;display:grid;
+         grid-template-columns:1fr auto 1fr;align-items:start;gap:4px;z-index:3;
+         pointer-events:none;padding:0 10px}
+  .tools>*{pointer-events:auto}
+  .tgrp{display:flex;gap:4px;pointer-events:none}
+  .tgrp.l{justify-self:end}
+  .tgrp.r{justify-self:start}
+  .tools button{pointer-events:auto;font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
                 color:var(--muted);background:rgba(10,13,17,.72);border:1px solid var(--line2);
                 border-radius:2px;padding:5px 9px;cursor:pointer;min-width:30px;line-height:1.3}
   .tools button:hover{color:var(--text)}
@@ -189,9 +202,15 @@
       <canvas id="cv"></canvas>
       <div class="hud" id="hud"></div>
       <div class="tools" id="tools">
-        <button id="zoomout" type="button" title="Zoom out" aria-label="zoom out">&minus;</button>
+        <span class="tgrp l">
+          <button id="newworld" type="button" title="Grow a new world from a random seed">New</button>
+          <button id="zoomout" type="button" title="Zoom out" aria-label="zoom out">&minus;</button>
+        </span>
         <button id="hudbtn" type="button" aria-pressed="false" title="Show the readout: position, stamina, machines, frame rate">Info</button>
-        <button id="zoomin" type="button" title="Zoom in" aria-label="zoom in">+</button>
+        <span class="tgrp r">
+          <button id="zoomin" type="button" title="Zoom in" aria-label="zoom in">+</button>
+          <button id="meshtog" type="button" title="Swap the terrain renderer: a greedy mesh with baked occlusion, or instanced boxes">Boxes</button>
+        </span>
       </div>
       <div class="vitals" id="vitals">
         <div class="bar hp"><i id="hpfill"></i></div>
@@ -217,7 +236,9 @@
         right stick to aim. <b>&minus;</b> and <b>+</b> at the top of the view zoom; <b>Info</b> shows the
         readout. Walk over a cache or a fallen machine to take what is in it, and seat it in
         the lattice below. It opens filling the window; <b>Esc</b> or <b>Exit</b> drops back to
-        the page and the lattice, and <b>Fullscreen</b> goes to the real thing.
+        the page and the lattice, and <b>Fullscreen</b> goes to the real thing. <b>New</b> at the top of
+        the view grows a fresh world from a random seed, and <b>Boxes</b>/<b>Mesh</b> swaps the terrain
+        renderer.
         <b>On a phone</b>, hold it sideways: your left thumb is a stick wherever you put it, and the
         buttons on the right cut, dodge and jump.
         Click the view first to give it the keyboard.</p>
@@ -5804,8 +5825,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   function setMesh(on){
     useMesh=!!on;
     if(built&&built.mesh){ built.mesh.visible=useMesh; if(built.vox) built.vox.visible=!useMesh; }
-    var b2=document.getElementById('meshbtn');
-    if(b2) b2.textContent=useMesh?'Boxes':'Mesh';
+    /* Two buttons, one state: the one on the page and the one in the view. Each
+       is labelled with what it switches *to*, so they read the same either way
+       and neither can be left saying the opposite of the other. */
+    var lbl=useMesh?'Boxes':'Mesh';
+    var b2=document.getElementById('meshbtn'); if(b2) b2.textContent=lbl;
+    var b3=document.getElementById('meshtog'); if(b3) b3.textContent=lbl;
   }
 
   /* ---------- taking a bite out of it ----------
@@ -6158,9 +6183,40 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     resize();
     syncZoom();
   }
+  /* ---------- a new world, from the view ----------
+     Seeds are words because a seed you can read is a seed you can tell someone
+     else, and two windows growing the same world from the same word is the
+     whole trick the netcode rests on. Math.random picks it — that is a choice
+     about which world to visit, not a step in building one, so it is nowhere
+     near the arithmetic src/gen has to keep pinned.
+
+     Whatever it picks goes into the seed box as well, so the world on screen
+     always has its name written next to it and can be typed back in. */
+  var SEED_A=['ALDER','BLACK','DRY','HOAR','CINDER','QUARTER','LONG','GREY','FEN','IRON',
+              'RED','SALT','THORN','WIND','STILL','OLD','GLASS','BRIAR'];
+  var SEED_B=['RUN','KETTLE','REED','FROST','WAKE','STONE','FALL','MOOR','HOLLOW','REACH',
+              'BARROW','DRIFT','MERE','SPAN','ROOK','CAIRN','VALE','WEIR'];
+  function randomSeed(){
+    var a=SEED_A[(Math.random()*SEED_A.length)|0], b=SEED_B[(Math.random()*SEED_B.length)|0];
+    return a+'-'+b+'-'+(1+(Math.random()*98)|0);
+  }
+  var newBtn=document.getElementById('newworld'), meshTog=document.getElementById('meshtog');
+  function newWorld(){
+    /* The host owns which world everyone is in. A guest growing its own would
+       be a different world with the same characters walking around in it. */
+    if(session){ says2('leave the game first'); return null; }
+    var sd=randomSeed();
+    seedin.value=sd;
+    regen(sd);
+    says2('new world  '+sd);
+    return sd;
+  }
+
   [[hudBtn,function(){ setHud(!hudOn); }],
    [zoomInBtn,function(){ zoomBy(-1); }],
-   [zoomOutBtn,function(){ zoomBy(1); }]].forEach(function(pair){
+   [zoomOutBtn,function(){ zoomBy(1); }],
+   [newBtn,function(){ newWorld(); }],
+   [meshTog,function(){ setMesh(!useMesh); }]].forEach(function(pair){
     pair[0].addEventListener('pointerdown',function(e){ e.stopPropagation(); });
     pair[0].addEventListener('click',function(e){ e.stopPropagation(); pair[1](); stage.focus(); });
   });
@@ -6714,6 +6770,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* The view's own controls, driven through the real buttons by the gate. */
     get hudShown(){ return hudOn; },
     get view(){ return cam.view; },
+    get seed(){ return built?built.cfg.seed:null; },
     /* Issue #29: the fixed pose the look baseline is made of. */
     plate:plate,
     carve:carveAt,
