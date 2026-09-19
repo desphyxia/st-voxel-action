@@ -79,7 +79,7 @@ import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, meshSuite,
-         carveSuite, foliageSuite, trailSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+         carveSuite, foliageSuite, trailSuite, chunkSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
@@ -283,6 +283,9 @@ if (NODE_HALF) {
             + '— update ONE_SIDED in tools/lib/consume.mjs if that is intended'
           : `${seen.oneSided.length} fields read by one page and not the other, as recorded`);
 }
+
+/* ---------- CHUNK: a chunk alone is the ground its neighbour sees, issue #13 ---------- */
+if (NODE_HALF) for (const r of chunkSuite()) check(r.ok, `CHUNK: ${r.label}`, r.detail);
 
 /* ---------- WALK: the routed trail fits a body, issue #45 ---------- */
 if (NODE_HALF) for (const r of trailSuite()) check(r.ok, `WALK: ${r.label}`, r.detail);

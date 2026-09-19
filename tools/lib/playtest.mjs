@@ -12,7 +12,8 @@
  * and the controller hold together, not whether an idiot can kill itself. The
  * ways to die are pinned by the budget suite instead, where they can be exact.
  */
-import { V, MOVE, CEIL } from '../../src/gen/constants.mjs';
+import { V, MOVE, CEIL, CHUNK as CHUNK_M } from '../../src/gen/constants.mjs';
+import { chunkWorld, WINDOW, SKIRT } from '../../src/gen/chunk.mjs';
 import { sin, cos, hyp } from '../../src/gen/exact.mjs';
 import { mulberry32, xmur3 } from '../../src/gen/rng.mjs';
 import { makeCollider, colliderForWorld, LIQUID, EPS } from '../../src/sim/collider.mjs';
@@ -1758,5 +1759,126 @@ export function trailSuite() {
       walled.where.length === 1 && walled.where[0] === ci + ',' + cj,
       walled.where.length ? `slab over ${ci},${cj} found at ${walled.where.join(' ')}`
                           : `SLAB OVER ${ci},${cj} NOT SEEN — the check is blind`);
+  return out;
+}
+
+/* ----------------------------------------------------------------- chunk ---- */
+
+/**
+ * Issue #13: a chunk generated alone is the same ground its neighbour thinks
+ * is there.
+ *
+ * Streaming needs every chunk generated at any time, in any order, on any
+ * thread, and the seams to disappear. Two facts decide whether that is
+ * possible, and the second one was not recorded anywhere before this:
+ *
+ *   - same-size windows at different offsets agree (the #41 skirt result);
+ *   - **windows of different sizes do not.** 32 m against 64 m on the same
+ *     centre disagree on 87% of what they share, 15.75 m deep.
+ *
+ * So these assert the rule rather than the hope: every window is `WINDOW`
+ * metres, chunks differ by offset alone, and neighbours are identical on every
+ * cell they share.
+ */
+export function chunkSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  /* Absolute voxel index -> value, for the arrays a seam would show up in. */
+  function sheet(w) {
+    const m = new Map(), vx0 = Math.round(w.OX / V), vz0 = Math.round(w.OZ / V);
+    for (let i = 0; i < w.NX; i++) {
+      for (let j = 0; j < w.NZ; j++) {
+        const k = i * w.NZ + j;
+        m.set((i + vx0) + ':' + (j + vz0), w.Hs[k] + '|' + w.FLG[k]);
+      }
+    }
+    return m;
+  }
+
+  /* How far a neighbour's window must reach into this chunk. The mesher shades
+     a seam by reading one voxel past its own edge (src/mesh/greedy.mjs, pad 1),
+     so anything less than that and a chunk cannot be meshed without its
+     neighbour being loaded too. SKIRT is 4 m, which is margin over this by a
+     factor of sixteen — the margin is deliberate and is not derived from
+     anything, which is why the requirement is written down separately from it. */
+  const NEED = V;
+  let minReach = Infinity;
+  let shared = 0, differ = 0, worstRim = -1, pairs = 0;
+  for (const s of GOLDEN_SEEDS) {
+    const a = chunkWorld(s.seed, 0, 0, s.force);
+    const A = sheet(a), avx = Math.round(a.OX / V), avz = Math.round(a.OZ / V);
+    for (const [cx, cz] of [[1, 0], [0, 1], [1, 1], [-1, 0], [-1, -1]]) {
+      const b = chunkWorld(s.seed, cx, cz, s.force);
+      const B = sheet(b), bvx = Math.round(b.OX / V), bvz = Math.round(b.OZ / V);
+      pairs++;
+      /* How far B's window reaches into A's chunk proper, in metres. */
+      const pad = Math.round(SKIRT / V);
+      let reach = 0;
+      for (let i = pad; i < a.NX - pad; i++) {
+        for (let j = pad; j < a.NZ - pad; j++) {
+          if (!B.has((i + avx) + ':' + (j + avz))) continue;
+          const into = Math.min(i - pad, a.NX - pad - 1 - i, j - pad, a.NZ - pad - 1 - j);
+          if ((into + 1) * V > reach) reach = (into + 1) * V;
+        }
+      }
+      if (reach < minReach) minReach = reach;
+
+      for (const [k, v] of A) {
+        if (!B.has(k)) continue;
+        shared++;
+        if (B.get(k) === v) continue;
+        differ++;
+        const [i, j] = k.split(':').map(Number);
+        const rim = Math.min(
+          Math.min(i - avx, a.NX - 1 - (i - avx), j - avz, a.NZ - 1 - (j - avz)),
+          Math.min(i - bvx, b.NX - 1 - (i - bvx), j - bvz, b.NZ - 1 - (j - bvz))) * V;
+        if (rim > worstRim) worstRim = rim;
+      }
+    }
+  }
+  /* `shared > 0` is not a formality. With SKIRT at 0 the windows touch without
+     overlapping, nothing is compared, and both this and the reach check below
+     would pass on an empty set — the same vacuity that cost four attempts at
+     the trail measurement. */
+  say('a chunk and its neighbour agree on every cell they share',
+      differ === 0 && shared > 0,
+      differ ? `${differ} of ${shared} cells differ over ${pairs} pairs, deepest ${worstRim.toFixed(2)} m from a rim`
+             : (shared ? `${shared} shared cells over ${pairs} neighbour pairs, six seeds, identical`
+                       : 'NOTHING WAS COMPARED — the windows do not overlap'));
+
+  /* Agreement alone does not say the skirt is wide enough: a thinner skirt
+     shares less ground and agrees just as well on the little it shares. Cutting
+     SKIRT from 4 m to 1 m leaves the check above perfectly green, which is why
+     this one exists — what must hold is that a neighbour reaches far enough
+     into this chunk to shade its seam. */
+  const reached = Number.isFinite(minReach) ? minReach : 0;
+  say('and a neighbour reaches far enough in to shade the seam',
+      reached >= NEED,
+      `a neighbour's window reaches ${reached.toFixed(2)} m into this chunk, `
+      + `the mesher needs ${NEED.toFixed(2)} m`);
+
+  /* The rule that makes the above true, asserted rather than assumed. If the
+     generator ever becomes size-invariant this check is the one that should be
+     deleted on purpose — until then, a chunk cut from a differently sized
+     window is a different world and nothing else here holds. */
+  const w40 = buildWorld({ seed: 'QUARTERSTONE', size: WINDOW, force: null, ox: 0, oz: 0 });
+  const w64 = buildWorld({ seed: 'QUARTERSTONE', size: 64, force: null, ox: 0, oz: 0 });
+  const S40 = sheet(w40), S64 = sheet(w64);
+  let n = 0, d = 0;
+  for (const [k, v] of S40) { if (!S64.has(k)) continue; n++; if (S64.get(k) !== v) d++; }
+  say('and the generator is size-dependent, which is why every window is one size',
+      d > n * 0.5,
+      `${WINDOW} m against 64 m on one centre: ${d} of ${n} shared cells differ `
+      + `(${(100 * d / n).toFixed(0)}%) — chunks may differ by offset and nothing else`);
+
+  /* The skirt has to be wide enough that the chunk proper is never in it. */
+  const w = chunkWorld('QUARTERSTONE', 0, 0, null);
+  const pad = Math.round(SKIRT / (2 * w.half / w.NX));
+  const side = w.NX - 2 * pad;
+  say('and the chunk inside the skirt is exactly one chunk across',
+      side * (2 * w.half / w.NX) === CHUNK_M,
+      `${w.NX} cells of window, ${pad} of skirt a side, ${side} of chunk `
+      + `= ${(side * (2 * w.half / w.NX)).toFixed(0)} m against CHUNK ${CHUNK_M}`);
   return out;
 }
