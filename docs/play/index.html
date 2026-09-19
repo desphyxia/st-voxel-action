@@ -6093,10 +6093,33 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     hud.classList.toggle('on',hudOn);
     hudBtn.setAttribute('aria-pressed',String(hudOn));
   }
-  /* Two stops either side of the default, in even steps. `QS.setView` clamps to
-     6..40; this is the useful part of that range — 8 is close enough to read a
-     face, 32 shows most of the window. */
-  var ZOOMS=[8,10,13,17,22,28,32], zoomAt=1;
+  /* The whole of the range `QS.setView` allows, in roughly even steps — each
+     stop is about a quarter wider than the one before it, which is a change you
+     can see without losing your place.
+
+     6 and 40 are the clamp's own ends, so there is nothing past them to add.
+
+     **Zooming out runs off the edge of the world, and it does so well before
+     the far end.** The window is 64 m and that is all there is until chunk
+     streaming (#13), so past a point the frame is the diorama and the rest is
+     background. Measured, as the share of the frame that is empty at the world
+     centre on the hero seed:
+
+       view   17    22    26    28    30    32    34    36    40
+       empty  15%   38%   52%   58%   63%   67%   70%   74%   79%
+
+     So this is not something the far stop introduces — three of the stops that
+     were already here are 38% to 67% empty. 40 goes to 79%, and it is the one
+     that shows you the whole world at once, which is worth having while the
+     world is one window wide. When #13 lands, these numbers become whatever
+     the load radius makes them and this table is worth re-measuring.
+
+     Both new ends are past the framing #21 chose and #38 is the issue about
+     that tension; both earn their place anyway — one to see what you are
+     fighting, one to see where you are going.
+
+     Default is 10, which is `QS.VIEW`, so `zoomAt` has to point at it. */
+  var ZOOMS=[6,8,10,13,17,22,28,32,40], zoomAt=2;
   var zoomInBtn=document.getElementById('zoomin'), zoomOutBtn=document.getElementById('zoomout');
   function syncZoom(){
     zoomInBtn.disabled=zoomAt<=0;
