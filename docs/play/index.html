@@ -2915,10 +2915,16 @@ function clearEdits(w) {
  */
 
 
+
 /** Nothing counts as touching unless it overlaps by more than this. */
 const EPS = 1e-6;
 
 const LIQUID = { NONE: 0, WATER: 1, MAGMA: 2 };
+
+/** Prop materials a body walks through rather than into. Indexed by MAT. */
+const SOFT = [];
+SOFT[MAT.LEAF] = 1;
+SOFT[MAT.SNOW] = 1;
 
 /**
  * An empty column grid covering [-half, half] on both axes, `v` metres a side.
@@ -3108,9 +3114,27 @@ function colliderForWorld(world) {
   }
 
   /* Props: trunks, boulders, walls, bridges, arcs. Terrain voxels come along
-     for the ride and land inside spans they are already part of. */
-  for (let q = 0; q < world.pos.length; q += 3) {
-    c.addVoxel(world.pos[q], world.pos[q + 1], world.pos[q + 2]);
+     for the ride and land inside spans they are already part of.
+
+     **Foliage is not solid.** A conifer beside a path puts its lower branches
+     over the path at chest height, and they were a wall — every prop voxel went
+     in, whatever it was made of. `MAT.LEAF` has the lowest hardness of anything
+     that exists (0.10, against rock's 0.80), and until now nothing read that
+     table for collision: the one place the distinction was already written down
+     was the one place it did not apply.
+
+     **Snow on a prop is foliage wearing a hat.** It is the ambiguous case the
+     issue warns about — the same material id is canopy caps and ground
+     accumulation — and propStart separates the two exactly: below it is terrain
+     the world is made of, above it is something stamped on top. Ground snow
+     stays solid, so a drift is still a drift; a snow-capped conifer branch is
+     as soft as the branch under it. Measured: skipping leaf alone left most of
+     the blocked trail still blocked, because on frost the branch at chest
+     height is usually capped. */
+  const propStart = world.propStart === undefined ? world.pos.length / 3 : world.propStart;
+  for (let q = 0; q < world.pos.length / 3; q++) {
+    if (q >= propStart && SOFT[world.mat[q]]) continue;
+    c.addVoxel(world.pos[q * 3], world.pos[q * 3 + 1], world.pos[q * 3 + 2]);
   }
 
   return c.finish();

@@ -30,7 +30,7 @@ import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache } from '../../src/gen/region.mjs';
 import { meshChunk, surfaceAt, isCut } from '../../src/mesh/greedy.mjs';
 import { carve, clearEdits, chunkGrid } from '../../src/mesh/carve.mjs';
-import { MATERIALS } from '../../src/gen/materials.mjs';
+import { MATERIALS, MAT } from '../../src/gen/materials.mjs';
 import { GOLDEN_SEEDS } from './harness.mjs';
 
 /** Five minutes, the bar in docs/PROTOTYPE.md. */
@@ -1545,5 +1545,56 @@ export function carveSuite() {
       tb ? `${weak.held ? weak.held.nm : 'nothing'} held at ${bi},${bj}; ${strong.cut} voxel(s) at bite 1.5`
          : 'no hard surface found in the ashfall seed');
 
+  return out;
+}
+
+/* --------------------------------------------------------------- foliage ---- */
+
+/**
+ * Issue #46: a leaf is not a wall.
+ *
+ * The material table has said so since #14 — `leaf` has the lowest hardness of
+ * anything that exists — and until now nothing read it for collision, so the
+ * one place the distinction was written down was the one place it did not
+ * apply. These hold the rule in both directions, because "soft" that also
+ * swallows the ground is worse than the bug.
+ */
+export function foliageSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  let leafSolid = 0, leafSeen = 0, snowGround = 0, snowGroundSolid = 0, propSnow = 0, propSnowSolid = 0;
+  let woodSeen = 0, woodSolid = 0;
+  for (const s of GOLDEN_SEEDS) {
+    const w = buildWorld({ seed: s.seed, size: s.size, force: s.force, ox: s.ox, oz: s.oz });
+    const col = colliderForWorld(w);
+    const ps = w.propStart === undefined ? w.pos.length / 3 : w.propStart;
+    /* Is this exact voxel solid to the controller? A thin probe at its centre,
+       so a neighbour's span cannot answer for it. */
+    const at = (q) => {
+      const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+      return col.overlaps(x, z, V / 4, y - V / 4, y + V / 4);
+    };
+    for (let q = 0; q < w.pos.length / 3; q++) {
+      const m = w.mat[q], prop = q >= ps;
+      if (prop && m === MAT.LEAF) { leafSeen++; if (at(q)) leafSolid++; }
+      else if (prop && m === MAT.SNOW) { propSnow++; if (at(q)) propSnowSolid++; }
+      else if (!prop && m === MAT.SNOW) { snowGround++; if (at(q)) snowGroundSolid++; }
+      else if (prop && m === MAT.WOOD) { woodSeen++; if (at(q)) woodSolid++; }
+    }
+  }
+  say('foliage is not solid: a body walks through a branch',
+      leafSeen > 1000 && leafSolid === 0,
+      `${leafSeen} foliage voxels across six seeds, ${leafSolid} of them solid`);
+  say('and snow on a prop is foliage wearing a hat',
+      propSnow > 0 && propSnowSolid === 0,
+      `${propSnow} capped canopy voxels, ${propSnowSolid} solid`);
+  /* The half that stops "soft" from eating the world. */
+  say('but snow on the ground is still ground',
+      snowGround > 0 && snowGroundSolid === snowGround,
+      `${snowGround} settled snow voxels, all ${snowGroundSolid} solid`);
+  say('and a trunk is still a trunk',
+      woodSeen > 100 && woodSolid === woodSeen,
+      `${woodSeen} prop wood voxels, all ${woodSolid} solid`);
   return out;
 }
