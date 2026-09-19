@@ -29,8 +29,14 @@
      resize() recomputes the orthographic frustum for the new aspect. */
   .stage:fullscreen, .stage.maxed{
     max-height:none;aspect-ratio:auto;border-radius:0;border-color:transparent}
-  .stage:fullscreen{width:100vw;height:100vh}
-  .stage.maxed{position:fixed;inset:0;width:100vw;height:100vh;z-index:60}
+  /* Sized by `inset`, not by `vw`/`vh`. Viewport units inside an iframe resolve
+     against the *iframe's* box rather than the screen, so a fullscreened stage
+     in an artifact frame came out the height of the frame and was cut off at
+     the bottom. `inset:0` resolves against whatever the containing block
+     actually is — the screen when native fullscreen granted it, the frame when
+     the fallback is doing the work — which is right in both cases. */
+  .stage:fullscreen{position:fixed;inset:0;width:auto;height:auto}
+  .stage.maxed{position:fixed;inset:0;width:auto;height:auto;z-index:60}
   /* While the stage fills the screen it covers the button that put it there, so
      the way out has to live inside the stage. Hidden otherwise. */
   .exitfs{position:absolute;right:10px;top:10px;display:none;font-family:var(--mono);
@@ -42,11 +48,27 @@
   .stage:fullscreen .exitfs, .stage.maxed .exitfs{display:block}
   .fallback{position:absolute;inset:0;display:none;place-items:center;text-align:center;padding:24px;
             color:var(--muted);font-size:14px}
-  .hud{position:absolute;left:10px;top:10px;font-family:var(--mono);font-size:11.5px;line-height:1.7;
+  /* The readout is for reading the simulation, not for playing the game, and it
+     was covering the top-left eighth of the view to do it. Off unless asked. */
+  .hud{position:absolute;left:10px;top:44px;font-family:var(--mono);font-size:11.5px;line-height:1.7;
        color:var(--muted);background:rgba(10,13,17,.62);border:1px solid var(--line);
-       padding:8px 11px;pointer-events:none;white-space:pre;max-width:calc(100% - 20px);overflow:hidden}
+       padding:8px 11px;pointer-events:none;white-space:pre;max-width:calc(100% - 20px);overflow:hidden;
+       display:none}
+  .hud.on{display:block}
   .hud b{color:var(--text);font-weight:500}
   .hud .warn{color:var(--sand)}
+  /* Everything that belongs to the view rather than to the page: the readout
+     toggle and the zoom. Centred at the top so it clears the readout under it,
+     the vitals at bottom-left and the touch pad at bottom-right. */
+  .tools{position:absolute;left:50%;top:10px;transform:translateX(-50%);display:flex;gap:4px;z-index:3}
+  .tools button{font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+                color:var(--muted);background:rgba(10,13,17,.72);border:1px solid var(--line2);
+                border-radius:2px;padding:5px 9px;cursor:pointer;min-width:30px;line-height:1.3}
+  .tools button:hover{color:var(--text)}
+  .tools button:focus-visible{outline:2px solid var(--magic);outline-offset:2px}
+  .tools button[aria-pressed="true"]{color:var(--sand);border-color:var(--sand)}
+  .tools button:disabled{opacity:.35;cursor:default}
+  .tools button:disabled:hover{color:var(--muted)}
   .vitals{position:absolute;left:12px;bottom:12px;width:190px;display:none}
   .vitals .bar{height:8px;border:1px solid var(--line2);background:rgba(10,13,17,.6);
                margin-bottom:3px}
@@ -166,6 +188,11 @@
     <div class="stage" id="stage" tabindex="0">
       <canvas id="cv"></canvas>
       <div class="hud" id="hud"></div>
+      <div class="tools" id="tools">
+        <button id="zoomout" type="button" title="Zoom out" aria-label="zoom out">&minus;</button>
+        <button id="hudbtn" type="button" aria-pressed="false" title="Show the readout: position, stamina, machines, frame rate">Info</button>
+        <button id="zoomin" type="button" title="Zoom in" aria-label="zoom in">+</button>
+      </div>
       <div class="vitals" id="vitals">
         <div class="bar hp"><i id="hpfill"></i></div>
         <div class="bar st"><i id="staminafill"></i></div>
@@ -187,7 +214,8 @@
     <div class="bar">
       <p class="cap"><b>WASD</b> to move, camera-relative · <b>Space</b> to jump · <b>click</b> or <b>F</b> to
         swing · <b>Shift</b> to dodge · <b>Q</b>/<b>E</b> to turn the view · <b>R</b> to respawn · mouse or
-        right stick to aim. Walk over a cache or a fallen machine to take what is in it, and seat it in
+        right stick to aim. <b>&minus;</b> and <b>+</b> at the top of the view zoom; <b>Info</b> shows the
+        readout. Walk over a cache or a fallen machine to take what is in it, and seat it in
         the lattice below. <b>Fullscreen</b> fills the screen; <b>Esc</b> leaves it.
         <b>On a phone</b>, hold it sideways: your left thumb is a stick wherever you put it, and the
         buttons on the right cut, dodge and jump.
@@ -5986,6 +6014,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   }
   if(window.ResizeObserver){ new ResizeObserver(resize).observe(stage); }
   else window.addEventListener('resize',resize);
+  /* The visual viewport is the part actually on screen, and it is not the same
+     as the layout viewport while a phone's address bar is sliding away or a
+     keyboard is up. A stage sized to the layout viewport is taller than what
+     can be seen, which is the other way to lose the bottom of the view. */
+  if(window.visualViewport){
+    window.visualViewport.addEventListener('resize',resize);
+    window.visualViewport.addEventListener('scroll',resize);
+  }
 
   /* ---------- fullscreen ----------
      At the framing #21 chose, a 5 m canyon and its far rim are both on screen
@@ -6011,8 +6047,19 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      getBoundingClientRect() and fullscreenElement still read the old state, which
      left the label and the canvas one transition behind. A frame later both are
      settled, so everything that reacts to a change goes through this. */
-  function syncSoon(){ requestAnimationFrame(syncFullBtn); }
-  function goMaxed(on){ stage.classList.toggle('maxed',on); syncSoon(); }
+  /* Twice, a frame apart. Taking the stage out of flow reflows the page under
+     it, and in a frame that sizes itself to its content that reflow changes the
+     frame's height *after* the first measurement — which left the drawing
+     buffer one layout behind and the bottom of the view cut off. */
+  function syncSoon(){ requestAnimationFrame(syncFullBtn); requestAnimationFrame(function(){ requestAnimationFrame(resize); }); }
+  function goMaxed(on){
+    stage.classList.toggle('maxed',on);
+    /* A fixed stage that the page can still scroll under is a stage you can
+       scroll half off the screen. */
+    document.documentElement.style.overflow=on?'hidden':'';
+    document.body.style.overflow=on?'hidden':'';
+    syncSoon();
+  }
   function toggleFull(){
     if(maxed()){ goMaxed(false); return; }
     if(fsElement()){
@@ -6031,6 +6078,47 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     setMesh(!useMesh); stage.focus();
   });
   fullBtn.addEventListener('click',function(){ toggleFull(); });
+
+  /* ---------- the view's own controls ----------
+     A toggle for the readout and two for the zoom, inside the stage because
+     that is where they are wanted when the stage is filling the screen and the
+     page furniture is not reachable.
+
+     Each one stops its own pointerdown: the stage swallows pointerdown to take
+     the keyboard and to swing, so without this every click here would also cut
+     the air in front of the character. */
+  var hudOn=false, hudBtn=document.getElementById('hudbtn');
+  function setHud(on){
+    hudOn=!!on;
+    hud.classList.toggle('on',hudOn);
+    hudBtn.setAttribute('aria-pressed',String(hudOn));
+  }
+  /* Two stops either side of the default, in even steps. `QS.setView` clamps to
+     6..40; this is the useful part of that range — 8 is close enough to read a
+     face, 32 shows most of the window. */
+  var ZOOMS=[8,10,13,17,22,28,32], zoomAt=1;
+  var zoomInBtn=document.getElementById('zoomin'), zoomOutBtn=document.getElementById('zoomout');
+  function syncZoom(){
+    zoomInBtn.disabled=zoomAt<=0;
+    zoomOutBtn.disabled=zoomAt>=ZOOMS.length-1;
+  }
+  /* Lower view is nearer, so "in" walks down the table. */
+  function zoomBy(step){
+    zoomAt=Math.max(0,Math.min(ZOOMS.length-1,zoomAt+step));
+    QS.setView(cam,ZOOMS[zoomAt]);
+    /* The frustum is rebuilt from cam.view every draw, but resize() also holds
+       a copy, and a zoom with no draw between it and a resize would otherwise
+       show the old one for a frame. */
+    resize();
+    syncZoom();
+  }
+  [[hudBtn,function(){ setHud(!hudOn); }],
+   [zoomInBtn,function(){ zoomBy(-1); }],
+   [zoomOutBtn,function(){ zoomBy(1); }]].forEach(function(pair){
+    pair[0].addEventListener('pointerdown',function(e){ e.stopPropagation(); });
+    pair[0].addEventListener('click',function(e){ e.stopPropagation(); pair[1](); stage.focus(); });
+  });
+  setHud(false); syncZoom();
   var exitFs=document.getElementById('exitfs');
   /* The stage swallows pointerdown to take the keyboard, so stop it here or the
      click both leaves fullscreen and swings. */
@@ -6561,6 +6649,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* Issue #12: the gate drives the swap so the side-by-side is two
        screenshots of one camera, not two runs that might differ. */
     setMesh:setMesh,
+    /* The view's own controls, driven through the real buttons by the gate. */
+    get hudShown(){ return hudOn; },
+    get view(){ return cam.view; },
     /* Issue #29: the fixed pose the look baseline is made of. */
     plate:plate,
     carve:carveAt,

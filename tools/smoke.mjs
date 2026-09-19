@@ -746,6 +746,83 @@ if (BROWSER_HALF) {
       check(bErrors.length === 0, 'BUILD: and carving errors nothing',
             bErrors.slice(0, 3).join(' | '));
 
+      /* ---------- BUILD: the view's own controls ----------
+         The readout used to cover the top-left of the view and could not be
+         put away; the zoom could not be reached at all without the keyboard.
+         Both are driven here through the real buttons rather than through the
+         functions behind them, because a control that exists and does not
+         respond to a click is the failure worth catching. */
+      const tools = await bp.evaluate(async () => {
+        const P = window.QSPLAY, out = {};
+        /* A real mouse press, because that is the one the stage acts on: its
+           pointerdown handler presses Mouse0 for pointerType 'mouse' and takes
+           the touch path otherwise. A synthetic event without a pointerType
+           would sail past the guard this is here to hold. */
+        const click = (id) => {
+          const b = document.getElementById(id);
+          b.dispatchEvent(new PointerEvent('pointerdown', {
+            bubbles: true, cancelable: true, composed: true,
+            pointerType: 'mouse', button: 0, buttons: 1, isPrimary: true,
+          }));
+          b.click();
+          return b;
+        };
+        const hud = document.getElementById('hud');
+        const shown = () => getComputedStyle(hud).display !== 'none';
+        out.hudAtBoot = shown();
+        out.pressedAtBoot = document.getElementById('hudbtn').getAttribute('aria-pressed');
+        click('hudbtn'); out.hudOn = shown(); out.readout = hud.textContent.length;
+        click('hudbtn'); out.hudOff = shown();
+
+        /* The toggle sits at the top of the view and is centred on it. */
+        const sr = document.querySelector('#stage').getBoundingClientRect();
+        const br = document.getElementById('hudbtn').getBoundingClientRect();
+        out.offCentre = Math.abs((br.left + br.width / 2) - (sr.left + sr.width / 2));
+        out.fromTop = br.top - sr.top;
+
+        /* Zoom, and whether the frustum actually followed it. */
+        const frustum = () => { P.draw(); return P.view; };
+        out.view0 = frustum();
+        click('zoomin'); out.viewIn = frustum();
+        click('zoomout'); click('zoomout'); out.viewOut = frustum();
+        /* Walk to the near end and check it stops rather than running past. */
+        for (let i = 0; i < 12; i++) click('zoomin');
+        out.viewMin = frustum();
+        out.inDisabled = document.getElementById('zoomin').disabled;
+        for (let i = 0; i < 20; i++) click('zoomout');
+        out.viewMax = frustum();
+        out.outDisabled = document.getElementById('zoomout').disabled;
+        /* And that clicking a control did not also swing the blade. The swing
+           starts on the next tick, not on the press, so the clock has to move
+           before this means anything. */
+        P.run(4); P.draw();
+        out.swung = P.sweeping || QSPHASE();
+        function QSPHASE() { const a = P.actor; return !!(a && a.swing); }
+        return out;
+      });
+      check(tools.hudAtBoot === false && tools.pressedAtBoot === 'false'
+            && tools.hudOn === true && tools.hudOff === false && tools.readout > 20,
+            'BUILD: the readout is off until asked for, and the button asks',
+            `boot ${tools.hudAtBoot ? 'shown' : 'hidden'}, on ${tools.hudOn}, off again ${tools.hudOff}, `
+            + `${tools.readout} chars of readout`);
+      check(tools.offCentre < 2 && tools.fromTop >= 0 && tools.fromTop < 24,
+            'BUILD: and its button is at the top middle of the view',
+            `${tools.offCentre.toFixed(1)} px off centre, ${tools.fromTop.toFixed(0)} px down`);
+      check(tools.viewIn < tools.view0 && tools.viewOut > tools.viewIn,
+            'BUILD: the zoom buttons move the camera in and out',
+            `${tools.view0} m -> in ${tools.viewIn} -> out ${tools.viewOut}`);
+      /* Both halves matter. The disabled state is what a player runs into; the
+         finite-and-in-range test is what catches the zoom having walked off the
+         end of its own table and handed the camera a NaN. */
+      const zoomSane = [tools.viewMin, tools.viewMax].every((v) => Number.isFinite(v) && v >= 6 && v <= 40);
+      check(tools.viewMin < tools.view0 && tools.inDisabled
+            && tools.viewMax > tools.view0 && tools.outDisabled && zoomSane,
+            'BUILD: and they stop at each end rather than running past it',
+            `nearest ${tools.viewMin} m (in ${tools.inDisabled ? 'disabled' : 'still live'}), `
+            + `furthest ${tools.viewMax} m (out ${tools.outDisabled ? 'disabled' : 'still live'})`);
+      check(tools.swung === false, 'BUILD: and pressing one does not also swing',
+            tools.swung ? 'the blade came out' : 'quiet');
+
       /* ---------- BUILD: fullscreen ----------
          Two paths, because a published artifact runs in an iframe and only gets
          native fullscreen if the host granted allow="fullscreen". Both have to
@@ -763,7 +840,10 @@ if (BROWSER_HALF) {
       const stageState = () => bp.evaluate(() => {
         const st = document.querySelector('#stage'), c = document.querySelector('#cv');
         const r = st.getBoundingClientRect();
+        const vv = window.visualViewport;
         return { w: Math.round(r.width), h: Math.round(r.height), cw: c.width, ch: c.height,
+                 top: Math.round(r.top), bottom: Math.round(r.bottom),
+                 vh: Math.round(vv ? vv.height : window.innerHeight),
                  filling: document.fullscreenElement === st || st.classList.contains('maxed'),
                  exit: getComputedStyle(document.querySelector('#exitfs')).display };
       });
@@ -778,6 +858,15 @@ if (BROWSER_HALF) {
       check(fsOn.filling && fsOn.h > fsBefore.h && fsOn.cw === fsOn.w && fsOn.ch === fsOn.h,
             'BUILD: fullscreen fills the screen and the canvas follows',
             `${fsBefore.w}x${fsBefore.h} to ${fsOn.w}x${fsOn.h}, canvas ${fsOn.cw}x${fsOn.ch}`);
+      /* A canvas that matches the stage is not enough: a stage taller than what
+         is actually on screen matches its canvas perfectly and still loses its
+         bottom edge behind the fold. That is the shape of the bug this pins —
+         the stage has to fit inside the visible viewport, not merely agree
+         with itself. */
+      check(fsOn.top >= -1 && fsOn.bottom <= fsOn.vh + 1,
+            'BUILD: and all of it is on screen, not cut off at the bottom',
+            `stage ${fsOn.top}..${fsOn.bottom} within a ${fsOn.vh} px viewport`
+            + (fsOn.bottom > fsOn.vh + 1 ? ` — ${fsOn.bottom - fsOn.vh} px below the fold` : ''));
       check(fsOn.exit !== 'none', 'BUILD: and there is a way out from inside it',
             fsOn.exit !== 'none' ? 'exit control shown' : 'NO EXIT — the stage covers the button');
       check(!fsOff.filling && fsOff.h === fsBefore.h && fsOff.cw === fsOff.w,
