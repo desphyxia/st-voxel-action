@@ -84,6 +84,7 @@ import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
 import { captureLook, compare, breaches, describe } from './lib/look.mjs';
+import { audit, worldFields, EXEMPT, ONE_SIDED } from './lib/consume.mjs';
 
 const argv = process.argv.slice(2);
 const UPDATE = argv.includes('--update');
@@ -237,6 +238,51 @@ if (NODE_HALF) for (const r of carveSuite()) check(r.ok, `CARVE: ${r.label}`, r.
 
 /* ---------- FOLIAGE: a leaf is not a wall, issue #46 ---------- */
 if (NODE_HALF) for (const r of foliageSuite()) check(r.ok, `FOLIAGE: ${r.label}`, r.detail);
+
+/* ---------- CONSUME: is anything reading what the generator emits? (#40) ----------
+   PARITY hashes what comes out of the generator, so an array produced
+   perfectly and then dropped on the floor hashes the same as one that is
+   drawn. This is the other half: every field the world hands out is read by a
+   page or by src/sim, src/mesh or src/net — or is exempt on the record. */
+if (NODE_HALF) {
+  const seen = audit();
+  const loose = seen.orphans.filter((f) => !EXEMPT[f]);
+  check(loose.length === 0, 'CONSUME: everything the generator emits has a consumer',
+        loose.length ? `nothing reads ${loose.join(', ')} — draw it, delete it, or exempt it in tools/lib/consume.mjs`
+                     : `${worldFields().length} fields, ${Object.keys(EXEMPT).length} exempt `
+                       + `(${Object.keys(EXEMPT).join(', ')})`);
+
+  /* And the audit has to be able to find one, in both the ways it could fail.
+     Two canaries, because the first one alone proves less than it looks like it
+     does — a name present nowhere is reported as an orphan even by a matcher
+     far too loose to be any use, which is exactly what happened when this was
+     first written with one:
+
+       qsFieldNothingReads  appears in no file at all. Catches an audit that has
+                            stopped matching anything, so everything looks read.
+       userData             appears everywhere, always as a property of some
+                            object that is not a world. Catches an audit that
+                            has stopped caring *whose* property it is — which is
+                            the way this one would actually go wrong, and the
+                            way the first canary cannot see. */
+  const canary = audit(['qsFieldNothingReads', 'userData']);
+  const blind = ['qsFieldNothingReads', 'userData'].filter((f) => !canary.orphans.includes(f));
+  check(blind.length === 0, 'CONSUME: and the audit can tell when nothing reads a field',
+        blind.length ? `${blind.join(' and ')} came back consumed — the audit matches too loosely`
+                     : 'a field nobody reads is reported, and a field only other objects have is not');
+
+  /* Drift between the pages, pinned rather than forbidden: they are legitimately
+     different now, so what is asserted is that the difference has not changed
+     without someone saying so. */
+  const drifted = seen.oneSided.filter((f) => !ONE_SIDED.includes(f));
+  const healed = ONE_SIDED.filter((f) => !seen.oneSided.includes(f));
+  check(drifted.length === 0 && healed.length === 0,
+        'CONSUME: and the two pages read the fields they are recorded as reading',
+        drifted.length || healed.length
+          ? `new: ${drifted.join(', ') || 'none'}; gone: ${healed.join(', ') || 'none'} `
+            + '— update ONE_SIDED in tools/lib/consume.mjs if that is intended'
+          : `${seen.oneSided.length} fields read by one page and not the other, as recorded`);
+}
 
 /* ---------- WALK: the routed trail fits a body, issue #45 ---------- */
 if (NODE_HALF) for (const r of trailSuite()) check(r.ok, `WALK: ${r.label}`, r.detail);
