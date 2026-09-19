@@ -30,7 +30,7 @@ import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache } from '../../src/gen/region.mjs';
 import { meshChunk, surfaceAt, isCut } from '../../src/mesh/greedy.mjs';
 import { carve, clearEdits, chunkGrid } from '../../src/mesh/carve.mjs';
-import { MATERIALS } from '../../src/gen/materials.mjs';
+import { MATERIALS, MAT } from '../../src/gen/materials.mjs';
 import { GOLDEN_SEEDS } from './harness.mjs';
 
 /** Five minutes, the bar in docs/PROTOTYPE.md. */
@@ -139,6 +139,7 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
   const x0 = a.x, z0 = a.z;
 
   let hx = 1, hz = 0, hold = 0, jumps = 0, insideTicks = 0, turns = 0, sinceTurn = 99;
+  let insideGrounded = 0, insideDepth = 0;
   let minY = a.y, maxY = a.y;
 
   const face = (c, s2) => {
@@ -191,7 +192,16 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
            being re-rolled every tick; applying it here let a fresh heading
            picked beside a magma pool walk straight into it before the turn
            was allowed. */
-        if (near.liq === LIQUID.MAGMA) veer();
+        /* Ahead is not the only way in. `step` slides a blocked body along a
+           wall, so a heading that never points at the pool still walks the
+           shoulder into it, and a probe on the heading alone never sees that.
+           Checked at the body's own edge and to both sides as well — ash/c
+           died at tick 13,373 to exactly this, and it had been invisible
+           because the gate only ever ran one walk per seed. */
+        const flank = (sx, sz) => col.liquidAt(a.x + sx, a.z + sz).kind === LIQUID.MAGMA;
+        const r = ACTOR.radius;
+        if (near.liq === LIQUID.MAGMA || probe(r).liq === LIQUID.MAGMA
+            || flank(-hz * r, hx * r) || flank(hz * r, -hx * r)) veer();
         else if (nothingThere) {
           const far = probe(MOVE.jump - 0.4);
           const jumpable = far.g !== -Infinity && far.liq !== LIQUID.MAGMA
@@ -211,7 +221,21 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
     if (onTick) onTick(a, t, col);
     if (a.y < minY) minY = a.y;
     if (a.y > maxY) maxY = a.y;
-    if (embedded(col, a)) insideTicks++;
+    if (embedded(col, a)) {
+      insideTicks++;
+      if (a.grounded) insideGrounded++;
+      /* How far in, by bisection on the feet. "Inside the ground" is two very
+         different things: a body resting in a hill, and a body a few
+         millimetres into the surface it is landing on for one tick. Counting
+         ticks cannot tell them apart; this can. */
+      let lo = 0, hi = ACTOR.height;
+      for (let b = 0; b < 30; b++) {
+        const mid = (lo + hi) / 2;
+        if (!col.overlaps(a.x, a.z, ACTOR.radius, a.y + mid + EPS, a.y + ACTOR.height - EPS)) hi = mid;
+        else lo = mid;
+      }
+      if (hi > insideDepth) insideDepth = hi;
+    }
     if (a.dead) break;
   }
 
@@ -224,7 +248,7 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
     travelled: +a.travelled.toFixed(1),
     displaced: +Math.sqrt(dx * dx + dz * dz).toFixed(1),
     vaults: a.vaults, jumps, turns,
-    insideTicks,
+    insideTicks, insideGrounded, insideDepth: +insideDepth.toFixed(4),
     minY: +minY.toFixed(2), maxY: +maxY.toFixed(2),
   };
 }
@@ -1545,5 +1569,88 @@ export function carveSuite() {
       tb ? `${weak.held ? weak.held.nm : 'nothing'} held at ${bi},${bj}; ${strong.cut} voxel(s) at bite 1.5`
          : 'no hard surface found in the ashfall seed');
 
+  return out;
+}
+
+/* --------------------------------------------------------------- foliage ---- */
+
+/**
+ * Issue #46: a leaf is not a wall.
+ *
+ * The material table has said so since #14 — `leaf` has the lowest hardness of
+ * anything that exists — and until now nothing read it for collision, so the
+ * one place the distinction was written down was the one place it did not
+ * apply.
+ *
+ * **Asking "is this voxel's space solid" does not work**, and the first version
+ * of this suite did exactly that and reported 12,259 of 121,159 foliage voxels
+ * still solid. A canopy voxel sharing a 25 cm column with the trunk it grows
+ * out of answers yes however soft the leaf is. The space is solid; the leaf is
+ * not what makes it solid, and the probe cannot tell those apart.
+ *
+ * The claim is about what the collider is *built from*, so that is what is
+ * compared: a collider for the world against a collider for the same world
+ * with every soft prop voxel deleted. Identical means foliage contributes
+ * nothing. Nothing weaker is the actual statement.
+ */
+export function foliageSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  /** The same world with the soft prop voxels taken out of its voxel arrays. */
+  function withoutSoft(w) {
+    const ps = w.propStart === undefined ? w.pos.length / 3 : w.propStart;
+    const pos = [], mat = [];
+    let cut = 0;
+    for (let q = 0; q < w.pos.length / 3; q++) {
+      if (q >= ps && (w.mat[q] === MAT.LEAF || w.mat[q] === MAT.SNOW)) { cut++; continue; }
+      pos.push(w.pos[q * 3], w.pos[q * 3 + 1], w.pos[q * 3 + 2]);
+      mat.push(w.mat[q]);
+    }
+    return { world: Object.assign({}, w, { pos, mat, propStart: pos.length / 3 }), cut };
+  }
+
+  /** Every column's spans, as one comparable string. */
+  function spanSig(col) {
+    const rows = [];
+    for (let i = 0; i < col.n; i++) {
+      for (let j = 0; j < col.n; j++) {
+        const x = -col.half + (i + 0.5) * col.v, z = -col.half + (j + 0.5) * col.v;
+        const sp = col.spansAt(x, z);
+        if (sp && sp.length) rows.push(i + ':' + j + ':' + sp.map((r) => r[0] + '-' + r[1]).join(','));
+      }
+    }
+    return rows.join('|');
+  }
+
+  let same = 0, cutAll = 0, seeds = 0;
+  let groundSnowLost = 0, woodLost = 0;
+  for (const s of GOLDEN_SEEDS) {
+    const w = buildWorld({ seed: s.seed, size: s.size, force: s.force, ox: s.ox, oz: s.oz });
+    const stripped = withoutSoft(w);
+    cutAll += stripped.cut; seeds++;
+    if (spanSig(colliderForWorld(w)) === spanSig(colliderForWorld(stripped.world))) same++;
+
+    /* The other direction, which is the one that matters more: "soft" must not
+       have eaten anything the world is made of. Probed per voxel, which is
+       sound here because a *missing* span cannot be supplied by a neighbour. */
+    const col = colliderForWorld(w);
+    const ps = w.propStart === undefined ? w.pos.length / 3 : w.propStart;
+    for (let q = 0; q < w.pos.length / 3; q++) {
+      const prop = q >= ps, m = w.mat[q];
+      if (!((!prop && m === MAT.SNOW) || (prop && m === MAT.WOOD))) continue;
+      const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+      if (col.overlaps(x, z, V / 4, y - V / 4, y + V / 4)) continue;
+      if (prop) woodLost++; else groundSnowLost++;
+    }
+  }
+  say('foliage contributes nothing to collision, on every seed',
+      same === seeds && cutAll > 1000,
+      `${same}/${seeds} seeds identical to a collider built without them, `
+      + `${cutAll} soft prop voxels skipped`);
+  say('and settled snow is still ground', groundSnowLost === 0,
+      groundSnowLost ? `${groundSnowLost} ground snow voxels went missing` : 'none lost');
+  say('and a trunk is still a trunk', woodLost === 0,
+      woodLost ? `${woodLost} prop wood voxels went missing` : 'none lost');
   return out;
 }
