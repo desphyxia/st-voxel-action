@@ -82,7 +82,10 @@ nobody had touched — every one of them an empty line. That looks exactly like 
 typed into the page, which is the one thing the check exists to rule out.
 
 If no commit matches, loop over the last twenty: `git log --format=%H -20 -- docs/play/index.html`
-and diff each. The last-published sha is rarely the one you remember.
+and diff each. The last-published sha is rarely the one you remember — this note said
+`487222d` and the live pages were actually at **`5113762`** (play) and **`77d6278`** (concept)
+when the loop was run on 2026-09-19. Both pages are now published from **`378ec0f`**:
+play **version 10**, concept **version 13**, both checked clean before forcing.
 
 Identical means nobody has typed into the page and forcing loses nothing. On 2026-09-18 both
 pages came back identical to `487222d`. **Force is still the user's call, not yours** — show
@@ -155,13 +158,25 @@ assertions across `CHUNK`, `FIELD`, `STREAM` and `SEAM`, plus four in the
 browser half — and it is still not the default, for one reason:
 
 **A chunk does not fit in a frame.** Generating one 40 m window costs 86–290 ms
-cold and a 60 Hz frame is 16.7 ms, so every chunk that arrives on the main
-thread is a freeze a dozen frames long. That is not a tuning problem; the
-smallest indivisible unit of generation is five frames wide at the best case
-measured. Generation has to move to a worker before this can be the way the
-game works, and until then putting it a click away from someone who came here
-to play would be offering them a worse game. The readout shows the last
-window's cost, in milliseconds, so the freeze has a number on it.
+cold and a 60 Hz frame is 16.7 ms, so a chunk arriving on the main thread is a
+freeze a dozen frames long. Generation now goes to a worker built from the
+page's own inlined bundle — measured off-thread over HTTP, since a `blob:`
+worker is refused from a `file:` origin and the local gate can only ever report
+that refusal. **The hitch is reduced and not removed, and the reason has moved.**
+What this thread still pays is taking the clone back in (38 ms under a realistic
+`worker-src blob:` policy) and then *adopting* the chunk — its collider, its
+mesh, its place in the scene — which is about **220 ms, thirteen frames**.
+Meshing is the half of #13's "generation and meshing on workers" that is still
+here, and it is now the whole freeze. The readout shows all three figures, so
+it has numbers on it rather than an opinion.
+
+Two things the worker cost a session to learn, both worth not relearning:
+**a world cannot be structured-cloned** — it carries its generator on `w.G`,
+nine closures, and `postMessage` refuses the whole object over them, so the
+worker is sent no generator and the main thread reattaches one with `makeGen`;
+and **readiness cannot be a wall-clock timeout**, because the reply is
+delivered on a main thread that is blocked by construction, so a healthy pool
+reads as a refused one.
 
 **A streamed world is a different world from the same seed.** The generator is
 not size-invariant — a 40 m window and a 64 m window centred on the same point
