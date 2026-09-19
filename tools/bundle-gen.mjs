@@ -43,7 +43,7 @@ const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERI
                  'sin', 'cos', 'exp', 'hyp'];
 
 /** The greedy mesher, behind the build's renderer flag — issue #12. */
-const MESH_API = ['meshChunk', 'chunkOccupancy', 'openAir', 'surfaceAt', 'LEVELS',
+const MESH_API = ['meshChunk', 'chunkOccupancy', 'innerChunk', 'openAir', 'surfaceAt', 'LEVELS',
   'isCut', 'solidVox', 'carve', 'clearEdits', 'chunkGrid', 'BITE', 'BITE_R'];
 
 /** Everything the playable build needs on top of it: the simulation and the wire. */

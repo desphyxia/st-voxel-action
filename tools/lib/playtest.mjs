@@ -31,7 +31,7 @@ import { makeLoopback } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache } from '../../src/gen/region.mjs';
-import { meshChunk, surfaceAt, isCut } from '../../src/mesh/greedy.mjs';
+import { meshChunk, surfaceAt, isCut, innerChunk } from '../../src/mesh/greedy.mjs';
 import { carve, clearEdits, chunkGrid } from '../../src/mesh/carve.mjs';
 import { MATERIALS, MAT } from '../../src/gen/materials.mjs';
 import { GOLDEN_SEEDS } from './harness.mjs';
@@ -2045,21 +2045,31 @@ export function streamSuite() {
   const say = (label, ok, detail) => out.push({ label, ok, detail });
   const FRAME = 1000 / 60;
 
-  /* ---- what a chunk costs ---- */
+  /* ---- what a chunk costs ----
+     Cold, and deliberately. `regionAt` caches per 64 m region, so a chunk
+     generated next to one the gate has already made is several times cheaper
+     than one arriving in ground nobody has been to — and the first version of
+     this check timed whatever the suites above happened to leave warm. It
+     passed alone and failed inside the gate, which is the only kind of timing
+     assertion worth having and the only kind worth being embarrassed by.
+
+     Streaming's cost is the cold one: a chunk arrives because someone walked
+     somewhere new. So the cache is cleared before each, and the chunks are far
+     enough apart to be in different regions anyway. */
   const costs = [];
-  for (let i = 0; i < 4; i++) chunkWorld('warm', i, 0);            /* warm the jit */
-  for (const s of GOLDEN_SEEDS.slice(0, 3)) {
-    for (const [cx, cz] of [[0, 0], [1, 0], [0, 1]]) {
-      const t0 = performance.now();
-      chunkWorld(s.seed, cx, cz, s.force);
-      costs.push(performance.now() - t0);
-    }
+  for (let i = 0; i < 4; i++) chunkWorld('warm', i * 4, 0);        /* warm the jit */
+  for (let i = 0; i < 8; i++) {
+    clearRegionCache();
+    const t0 = performance.now();
+    chunkWorld('stream-cost-probe', i * 4, i * 4);
+    costs.push(performance.now() - t0);
   }
+  clearRegionCache();
   costs.sort((a, b) => a - b);
   const median = costs[costs.length >> 1], slowest = costs[costs.length - 1];
   say('one chunk does not fit in a frame, which is why generation leaves the main thread',
       costs[0] > FRAME * 2,
-      `9 windows: fastest ${costs[0].toFixed(0)} ms, median ${median.toFixed(0)} ms, `
+      `${costs.length} cold windows: fastest ${costs[0].toFixed(0)} ms, median ${median.toFixed(0)} ms, `
       + `slowest ${slowest.toFixed(0)} ms, against a ${FRAME.toFixed(1)} ms frame`);
 
   /* And the shape of that: a pump given a frame's budget cannot spend less than
@@ -2068,6 +2078,7 @@ export function streamSuite() {
     const f = makeChunkField('hero');
     const st = makeStream(f, { loadR: 1, keepR: 2, flight: 2 });
     st.want([{ x: 0, z: 0 }]);
+    clearRegionCache();
     const r = st.pump((cx, cz) => chunkWorld('hero', cx, cz), FRAME);
     say('and a pump asked for a frame builds one chunk and says how far over it went',
         r.built === 1 && r.over > 0,
@@ -2146,10 +2157,9 @@ export function streamSuite() {
 
   /* ---- does a running body outrun the loader? ---- */
   {
-    const run = (workers, factor) => {
+    const run = (workers, cost) => {
       const stub = stubField([]);
       const st = makeStream(stub, { loadR: 1, keepR: 2, flight: workers });
-      const cost = slowest * factor;
       const busy = new Array(workers).fill(null);       /* {cx, cz, due} */
       let t = 0, x = 0, margin = Infinity, blocked = 0;
       /* Spawn with the world already there. A game shows a loading screen for
@@ -2183,16 +2193,23 @@ export function streamSuite() {
       }
       return { margin, blocked, x };
     };
-    const good = run(2, 1);
-    const starved = run(1, 20);
+    /* Charge the slower of what was measured and 300 ms. Taking the larger only
+       makes the case harder, and it keeps the positive check from getting
+       easier on a fast machine — which is the direction a timing-derived bar
+       fails silently in. The control's cost is fixed outright: its job is to
+       show the check can fail, and that should not depend on the machine at
+       all. */
+    const charge = Math.max(slowest, 300);
+    const good = run(2, charge);
+    const starved = run(1, 3000);
     say('and a body at a full run never reaches ground that has not been decided',
         good.blocked === 0 && good.margin > CHUNK_M / 2,
-        `five minutes and ${good.x.toFixed(0)} m at ${RUN} m/s, every chunk charged the `
-        + `slowest measured ${slowest.toFixed(0)} ms on two workers: decided ground stayed `
+        `five minutes and ${good.x.toFixed(0)} m at ${RUN} m/s, every chunk charged `
+        + `${charge.toFixed(0)} ms on two workers: decided ground stayed `
         + `${good.margin.toFixed(1)} m ahead at the closest`);
     say('and the same check fails when the loader cannot keep up, which is how it is known to ask anything',
         starved.blocked > 0,
-        `one worker at twenty times the cost: blocked on ${starved.blocked} of ${SOAK_TICKS} ticks, `
+        `one worker at 3 s a chunk: blocked on ${starved.blocked} of ${SOAK_TICKS} ticks, `
         + `front ${starved.margin.toFixed(1)} m`);
   }
 
@@ -2208,4 +2225,111 @@ function stubField(log) {
     drop(cx, cz) { return held.delete(cx + ',' + cz); },
     live() { return [...held].map((k) => { const [cx, cz] = k.split(',').map(Number); return { cx, cz }; }); },
   };
+}
+
+/**
+ * Drawing a streamed world without a visible join — issue #13, step four.
+ *
+ * A chunk's window is 40 m and the chunk it owns is the middle 32 m. Two things
+ * have to be true for that to be drawable, and neither is obvious:
+ *
+ * **The mesh must cover the chunk and not the window**, or every seam's
+ * geometry goes in twice and the overlap z-fights.
+ *
+ * **Neither side may wall off the seam.** A greedy mesher emits a face wherever
+ * solid meets air, and at the edge of what it can see everything is air — so a
+ * chunk meshed in isolation is a 32 m cube with walls. The skirt is what stops
+ * that: the mesher's AO ring reads one cell past the chunk, into ground the
+ * window generated and does not keep, and since the neighbour's window agrees
+ * with it voxel for voxel (the CHUNK checks) both sides make the same decision
+ * about the same face.
+ *
+ * The second check is the one that matters, and it is stated as a contrast
+ * rather than a threshold: the same mesher, on the same window, at a boundary
+ * with a skirt behind it and at one with nothing behind it.
+ */
+export function seamSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  /** Every 25 cm cell a mesh walls off on plane `p` of axis `ax`, facing `nx`. */
+  function walled(m, ax, p, nx) {
+    const cells = new Set();
+    for (let q = 0; q < m.nor.length / 3; q += 4) {
+      if (Math.abs(m.nor[q * 3 + ax] - nx) > 1e-6) continue;
+      let c = 0;
+      for (let k = 0; k < 4; k++) c += m.pos[(q + k) * 3 + ax];
+      if (Math.abs(c / 4 - p) > 1e-6) continue;
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let k = 0; k < 4; k++) {
+        for (let d = 0; d < 3; d++) {
+          const v = m.pos[(q + k) * 3 + d];
+          if (v < lo[d]) lo[d] = v;
+          if (v > hi[d]) hi[d] = v;
+        }
+      }
+      const u = ax === 0 ? 1 : 0, v2 = ax === 2 ? 1 : 2;
+      for (let a = lo[u]; a < hi[u] - 1e-9; a += V) {
+        for (let b = lo[v2]; b < hi[v2] - 1e-9; b += V) cells.add(a.toFixed(2) + ',' + b.toFixed(2));
+      }
+    }
+    return cells;
+  }
+
+  const H = CHUNK_M / 2;
+  const meshOwn = (w) => meshChunk(w, 0, 0, innerChunk(w));
+
+  /* The mesh covers the chunk, not the window. */
+  {
+    const w = chunkWorld('hero', 0, 0);
+    const m = meshOwn(w);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < m.pos.length; i += 3) {
+      if (m.pos[i] < lo) lo = m.pos[i];
+      if (m.pos[i] > hi) hi = m.pos[i];
+    }
+    say('a chunk draws the chunk it owns, not the window it was generated in',
+        lo === -H && hi === H,
+        `mesh spans ${lo.toFixed(2)} to ${hi.toFixed(2)} m of a ${w.size} m window — `
+        + `the middle ${CHUNK_M} m`);
+  }
+
+  /* Neither side of a seam walls it off, and neither draws the other's faces. */
+  {
+    let pairs = 0, both = 0, emitted = 0;
+    for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+      const mid = meshOwn(chunkWorld(s.seed, 0, 0, s.force));
+      for (const [ax, dx, dz] of [[0, 1, 0], [0, -1, 0], [2, 0, 1], [2, 0, -1]]) {
+        const nb = meshOwn(chunkWorld(s.seed, dx, dz, s.force));
+        const sign = dx || dz;
+        const mine = walled(mid, ax, sign * H, sign);
+        const theirs = walled(nb, ax, -sign * H, -sign);
+        pairs++;
+        emitted += mine.size + theirs.size;
+        for (const k of mine) if (theirs.has(k)) both++;
+      }
+    }
+    say('and neither side of a seam draws a face the other also draws',
+        both === 0,
+        `${pairs} seams over three seeds, ${emitted} faces on them in all, ${both} drawn twice`);
+  }
+
+  /* The contrast that says what the skirt is for. */
+  {
+    let withSkirt = 0, without = 0;
+    for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+      const w = chunkWorld(s.seed, 0, 0, s.force);
+      withSkirt += walled(meshOwn(w), 0, -H, -1).size;
+      /* The same mesher on the same window, addressed from the window's own
+         corner instead: past that edge there is nothing to read, so everything
+         beyond it is air and the chunk is meshed as a box. */
+      without += walled(meshChunk(w, 0, 0), 0, -w.half, -1).size;
+    }
+    say('and the skirt is what keeps a chunk from being meshed as a closed box',
+        without > withSkirt * 50 && withSkirt < 200,
+        `-x boundary over three seeds: ${withSkirt} cells walled with a skirt behind it, `
+        + `${without} with nothing behind it`);
+  }
+
+  return out;
 }

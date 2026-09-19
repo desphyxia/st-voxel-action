@@ -79,7 +79,7 @@ import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, meshSuite,
-         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
@@ -289,6 +289,9 @@ if (NODE_HALF) for (const r of chunkSuite()) check(r.ok, `CHUNK: ${r.label}`, r.
 
 /* ---------- FIELD: loaded chunks answer as one world, issue #13 ---------- */
 if (NODE_HALF) for (const r of fieldSuite()) check(r.ok, `FIELD: ${r.label}`, r.detail);
+
+/* ---------- SEAM: a streamed world draws without a visible join, issue #13 ---------- */
+if (NODE_HALF) for (const r of seamSuite()) check(r.ok, `SEAM: ${r.label}`, r.detail);
 
 /* ---------- STREAM: which chunk to build next, and when, issue #13 ---------- */
 if (NODE_HALF) for (const r of streamSuite()) check(r.ok, `STREAM: ${r.label}`, r.detail);
