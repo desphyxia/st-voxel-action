@@ -6091,24 +6091,45 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return t;
   })();
 
-  function chunkGeometry(data,cx,cz,org){
-    var m=QS.meshChunk(data,cx,cz,org), n=m.pos.length/3;
-    /* The vertex colour is now the baked occlusion and nothing else. The hue
-       is chosen per 25 cm cell in the shader, from the group this quad carries
-       — see meshMaterial. */
-    var col=new Float32Array(n*3), grp=new Float32Array(n*2);
-    for(var v=0;v<n;v++){
-      var k=AO_STEP[m.ao[v]];
-      col[v*3]=k; col[v*3+1]=k; col[v*3+2]=k;
-      grp[v*2]=m.pal[v]; grp[v*2+1]=PAL_N[m.pal[v]]||1;
+  /**
+   * One chunk's geometry, meshed here or handed over ready-made.
+   *
+   * `pre` is a mesh a worker already built and *transferred* — the same
+   * arrays, in the same layout, arriving as typed arrays this thread did not
+   * have to fill. Meshing is 209 ms of the ~220 ms adopting a chunk used to
+   * cost, so this is where the hitch actually goes; everything below it is an
+   * upload. There is no second implementation: the worker calls the same
+   * `meshChunk` through the same bundle, and this function does the same
+   * conversion when nothing was handed to it.
+   */
+  function chunkGeometry(data,cx,cz,org,pre){
+    var pos,nor,col,grp,idx,quads;
+    if(pre){
+      pos=pre.pos; nor=pre.nor; col=pre.col; grp=pre.grp; idx=pre.idx; quads=pre.quads;
+    }else{
+      var m=QS.meshChunk(data,cx,cz,org), n=m.pos.length/3;
+      /* The vertex colour is the baked occlusion and nothing else. The hue is
+         chosen per 25 cm cell in the shader, from the group this quad carries
+         — see meshMaterial. */
+      col=new Float32Array(n*3); grp=new Float32Array(n*2);
+      for(var v=0;v<n;v++){
+        var k=AO_STEP[m.ao[v]];
+        col[v*3]=k; col[v*3+1]=k; col[v*3+2]=k;
+        grp[v*2]=m.pal[v]; grp[v*2+1]=PAL_N[m.pal[v]]||1;
+      }
+      pos=new Float32Array(m.pos); nor=new Float32Array(m.nor);
+      idx=m.idx; quads=m.quads;
     }
     var g=new THREE.BufferGeometry();
-    g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(m.pos),3));
-    g.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(m.nor),3));
+    g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    g.setAttribute('normal',new THREE.BufferAttribute(nor,3));
     g.setAttribute('color',new THREE.BufferAttribute(col,3));
     g.setAttribute('aGroup',new THREE.BufferAttribute(grp,2));
-    g.setIndex(m.idx);
-    g.userData={quads:m.quads};
+    /* A transferred index arrives as a Uint32Array and is handed to three.js
+       as one. Copying it back into a plain Array would undo the transfer that
+       was the point of sending it. */
+    g.setIndex(ArrayBuffer.isView(idx)?new THREE.BufferAttribute(idx,1):idx);
+    g.userData={quads:quads};
     return g;
   }
 
@@ -6122,10 +6143,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      skirt — and holds exactly one child, covering the middle CHUNK metres.
      The skirt is not drawn: it is the neighbour's ground, and drawing it would
      put every seam's geometry in twice. */
-  function buildMesh(data,mat,org){
+  function buildMesh(data,mat,org,pre){
     var n=org?1:QS.chunkGrid(data), grp=new THREE.Group(), quads=0;
     for(var cx=0;cx<n;cx++)for(var cz=0;cz<n;cz++){
-      var g=chunkGeometry(data,cx,cz,org), mesh=new THREE.Mesh(g,mat);
+      var g=chunkGeometry(data,cx,cz,org,pre), mesh=new THREE.Mesh(g,mat);
       mesh.castShadow=true; mesh.receiveShadow=true; mesh.frustumCulled=false;
       mesh.userData.chunk=[cx,cz];
       grp.add(mesh); quads+=g.userData.quads;
@@ -6159,7 +6180,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      one grass material and one water material across every chunk, because the
      frame loop advances their clock once and the wind has to agree from one
      chunk to the next. */
-  function worldNode(data,mats,org){
+  function worldNode(data,mats,org,pre){
     var g=new THREE.Group(), m4=new THREE.Matrix4(), col=new THREE.Color(), i;
     var H=QS.CHUNK/2;
     var keep=org?function(x,z){ return x>=-H&&x<H&&z>=-H&&z<H; }
@@ -6195,7 +6216,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
 
     /* Both terrain renderers are built; only one is visible. Props, water and
        grass are untouched by either — a felled tree must not remesh a chunk. */
-    var terrainMesh=buildMesh(data,mats.mesh,org);
+    var terrainMesh=buildMesh(data,mats.mesh,org,pre);
     g.add(terrainMesh);
     terrainMesh.visible=useMesh; if(vox) vox.visible=!useMesh;
 
@@ -6783,12 +6804,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     for(i=0;i<live.length;i++){
       var e=live[i], k=e.cx+','+e.cz; want[k]=1;
       if(nodes[k]) continue;
-      var nd=worldNode(e.w,built.mats,QS.innerChunk(e.w));
+      var k3=e.cx+','+e.cz, pre=premesh[k3];
+      if(pre) delete premesh[k3];
+      var nd=worldNode(e.w,built.mats,QS.innerChunk(e.w),pre);
       nd.g.position.set(e.cx*QS.CHUNK,0,e.cz*QS.CHUNK);
       nd.cx=e.cx; nd.cz=e.cz; nd.ix=null; nd.hidden=[];
       built.scene.add(nd.g); nodes[k]=nd;
     }
     for(var k2 in nodes) if(!want[k2]) dropNode(k2);
+    /* A mesh whose chunk never became a node, because the players moved on
+       while it was being built, is not kept against a return. */
+    for(var k4 in premesh) if(!want[k4]) delete premesh[k4];
   }
 
   /* ---------- generation off the main thread (issue #13) ----------
@@ -6818,6 +6844,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      behind the very work it was meant to take over, and the pool was declared
      refused every single run. Readiness is an event now, never a timer. */
   var pool=null;
+  /* Meshes that arrived from a worker, waiting for the node that will draw
+     them. Keyed by chunk and emptied by reconcileNodes; a chunk let go before
+     its node is made drops its mesh with it. */
+  var premesh={};
   var POOL_N=2;
   /* How many ticks of pending work with nothing arriving before this thread
      stops waiting and builds one itself. See `pumpStream`. */
@@ -6831,6 +6861,19 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       +'self.onmessage=function(e){\n'
       +'  var d=e.data;\n'
       +'  if(d.ping){ self.postMessage({pong:1}); return; }\n'
+      /* Anything that throws in here is posted back by name. A worker that
+         fails quietly is indistinguishable from one a CSP refused, and this
+         build already has a fallback that hides both: the main thread simply
+         carries on generating and the readout says nothing is wrong. That cost
+         a whole cycle to find once. */
+      +'  try{\n'
+      /* The AO ramp and the palette-group widths, so the worker can turn a mesh
+         into the exact attribute buffers the material wants. Both are tables,
+         not state: the ramp is four numbers and the widths come straight off
+         QS.PALETTE, which the worker has too. */
+      +'var AO_STEP=['+AO_STEP.join(',')+'];\n'
+      +'var PAL_N=(function(){var t=new Uint8Array(QS.PALETTE.length);\n'
+      +'  for(var k in QS.PAL) t[QS.PAL[k].at]=QS.PAL[k].n; return t;})();\n'
       +'  var t0=_now(), w=QS.chunkWorld(d.seed,d.cx,d.cz,d.force);\n'
       /* A world carries its generator on `w.G`, and a generator is nine
          closures. structuredClone refuses the whole object over them — "function
@@ -6840,7 +6883,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          main thread makes its own from the same seed, which is what `makeGen`
          is for and costs nothing but closures. */
       +'  var out={}; for(var k in w){ if(k!=="G") out[k]=w[k]; }\n'
-      +'  self.postMessage({cx:d.cx,cz:d.cz,w:out,gen:_now()-t0});\n'
+      /* And mesh it here. This is the reason the worker exists at all: the
+         greedy pass is 209 ms of the ~220 ms the main thread used to spend
+         adopting a chunk, and everything else in that figure is rounding.
+         The buffers go back as typed arrays in the transfer list, so they are
+         handed over rather than copied — a mesh is the one part of a chunk
+         big enough for that to matter. */
+      +'  var t1=_now(), m=QS.meshChunk(w,0,0,QS.innerChunk(w)), n=m.pos.length/3;\n'
+      +'  var col=new Float32Array(n*3), grp=new Float32Array(n*2);\n'
+      +'  for(var v=0;v<n;v++){ var kk=AO_STEP[m.ao[v]];\n'
+      +'    col[v*3]=kk; col[v*3+1]=kk; col[v*3+2]=kk;\n'
+      +'    grp[v*2]=m.pal[v]; grp[v*2+1]=PAL_N[m.pal[v]]||1; }\n'
+      +'  var mesh={pos:new Float32Array(m.pos),nor:new Float32Array(m.nor),\n'
+      +'            col:col,grp:grp,idx:new Uint32Array(m.idx),quads:m.quads};\n'
+      +'  self.postMessage({cx:d.cx,cz:d.cz,w:out,mesh:mesh,gen:_now()-t0,mesh_ms:_now()-t1},\n'
+      +'    [mesh.pos.buffer,mesh.nor.buffer,mesh.col.buffer,mesh.grp.buffer,mesh.idx.buffer]);\n'
+      +'  }catch(err){ self.postMessage({cx:d.cx,cz:d.cz,err:String((err&&err.message)||err)}); }\n'
       +'};\n';
     var url,ws=[];
     try{
@@ -6852,13 +6910,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     }
     var P={ws:ws,url:url,ready:false,busy:ws.map(function(){return null;}),
             sentAt:ws.map(function(){return 0;}),
-            gen:0,deliver:0,take:0,done:0,failed:false,waited:0,err:null};
+            gen:0,mesh_ms:0,deliver:0,take:0,done:0,sent:0,failed:false,waited:0,err:null};
     ws.forEach(function(w,k){
       w.onerror=function(e){ P.failed=true; P.ready=false;
         P.err=(e&&e.message)||'refused'; };
       w.onmessage=function(ev){
         var d=ev.data;
         if(d.pong){ P.ready=true; return; }
+        if(d.err){ P.failed=true; P.err=d.err; P.busy[k]=null; return; }
         /* Three numbers, and they are not the same number.
  
            `gen` is the worker's own generation time. It is a *duration*, which
@@ -6884,6 +6943,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
              a voxel's shade, and the worker could not send one. Same seed, same
              closures, same answers. */
           d.w.G=QS.makeGen(field.seed,field.force===undefined?null:field.force);
+          if(d.mesh) premesh[d.cx+','+d.cz]=d.mesh;
+          P.mesh_ms=d.mesh_ms||0;
           stream.deliver(d.cx,d.cz,d.w);
           reconcileNodes();
           P.take=performance.now()-t1;
@@ -6904,7 +6965,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       var j=stream.next();
       if(!j) break;
       pool.busy[k]=j;
-      pool.sentAt[k]=performance.now();
+      pool.sentAt[k]=performance.now(); pool.sent++;
       pool.ws[k].postMessage({seed:field.seed,force:field.force,cx:j.cx,cz:j.cz});
       any=true;
     }
@@ -7755,8 +7816,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       (streaming&&field?('chunks '+field.loaded+' loaded, '+field.built+' built, '+field.dropped+
                   ' let go   last '+streamMs.toFixed(0)+' ms '+
                   (pool&&pool.ready&&!pool.failed?
-                    '('+pool.ws.length+' workers: '+pool.gen.toFixed(0)+' ms generating off '+
-                    'this thread, '+pool.deliver.toFixed(0)+' ms delivering, '+
+                    '('+pool.ws.length+' workers: '+pool.gen.toFixed(0)+'+'+
+                    pool.mesh_ms.toFixed(0)+' ms generating and meshing off this thread, '+
+                    pool.deliver.toFixed(0)+' ms delivering, '+
                     pool.take.toFixed(0)+' ms adopting)':'generated on this thread')+
                   (stream.pending?('   '+stream.pending+' queued'):'')+'\n'):'')+
       net+'   '+fps.toFixed(0)+' fps';
@@ -7861,7 +7923,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
                                     pending:stream.pending,ms:streamMs,nodes:Object.keys(nodes).length,
                                     workers:pool&&pool.ready&&!pool.failed?pool.ws.length:0,
                                     offThread:pool?pool.done:0,poolFailed:!!(pool&&pool.failed),
-                                    gen:pool?pool.gen:0,deliver:pool?pool.deliver:0,
+                                    err:pool?pool.err:null,sent:pool?pool.sent:0,
+                                    gen:pool?pool.gen:0,mesh:pool?pool.mesh_ms:0,
+                                    deliver:pool?pool.deliver:0,
                                     take:pool?pool.take:0}:null; },
     get meshQuads(){
       if(streaming){ var q=0; for(var k in nodes) q+=nodes[k].mesh.userData.quads; return q; }
