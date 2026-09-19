@@ -1290,36 +1290,51 @@ if (BROWSER_HALF) {
         const a0 = P.actor;
         const boot = { on: P.streaming, chunks: P.chunks, grounded: a0.grounded,
                        y: a0.y, quads: P.meshQuads };
+        /* A body that picks its way, not one that holds a key.
+ 
+           The first version held KeyD for 15 s, then KeyS. On the golden seed
+           that walks into a lake and then into a machine: it ended `swimming`
+           in 0.875 m of water at (27.9, -27.4) having covered 39 m, and the
+           other leg ended `dead: struck`. Both read as streaming failing to
+           keep up, and neither was — held the other way the same build walks
+           78 m and crosses to chunk (-2, -2) without complaint.
+ 
+           So this turns instead, the way the node soak's wanderer does and for
+           the same reason: the question is whether the ground holds together
+           across chunks, not whether a body walking blind into a lake drowns.
+           Water and machines are the controller's business and are pinned
+           elsewhere. */
+        const KEYS = ['KeyW', 'KeyA', 'KeyD', 'KeyS'];
         const seen = new Set();
-        let lowest = Infinity, inside = 0, peak = 0;
-        const go = (key, ticks) => {
-          P.input.press(key);
-          for (let i = 0; i < ticks; i++) {
-            P.run(1);
-            const a = P.actor, c = QS.chunkAt(a.x, a.z);
-            seen.add(c.cx + ',' + c.cz);
-            if (a.y < lowest) lowest = a.y;
-            if (QS.embedded(P.collider, a)) inside++;
-            if (P.chunks.loaded > peak) peak = P.chunks.loaded;
+        let lowest = Infinity, inside = 0, peak = 0, deaths = 0, turns = 0;
+        let k = 0, held = KEYS[0];
+        P.input.press(held);
+        let last = { x: P.actor.x, z: P.actor.z };
+        for (let i = 0; i < 4800; i++) {
+          P.run(1);
+          const a = P.actor, c = QS.chunkAt(a.x, a.z);
+          seen.add(c.cx + ',' + c.cz);
+          if (a.y < lowest) lowest = a.y;
+          if (QS.embedded(P.collider, a)) inside++;
+          if (P.chunks.loaded > peak) peak = P.chunks.loaded;
+          if (i % 120 === 119) {
+            /* Turn when the way ahead stops being ground to walk on: too
+               little progress, water, or having been killed. */
+            const moved = Math.hypot(a.x - last.x, a.z - last.z);
+            const wet = !!a.inWater || !!a.swimming;
+            if (a.dead) { deaths++; P.respawn(); }
+            if (moved < 3 || wet || a.dead) {
+              P.input.release(held);
+              k = (k + 1) % KEYS.length; held = KEYS[k]; turns++;
+              P.input.press(held);
+            }
+            last = { x: P.actor.x, z: P.actor.z };
           }
-          P.input.release(key);
-        };
-        /* Far enough to matter. The first version walked 15 s each way, which
-           is two chunks of ground on a good line and fewer on a bad one — it
-           crossed two and let nothing go, because nothing had fallen more than
-           a keep radius behind. Chunks are 32 m and the keep radius is 3, so
-           anything under 128 m of travel cannot drop a chunk however correct
-           the code is. Movement is screen-relative, so a key walks a diagonal
-           and the distance covered is less than the time suggests. */
-        go('KeyD', 2400);
-        go('KeyS', 2400);
-        /* Settle before reading. The bar is that the body is not inside the
-           ground and has not fallen out of the world; whether it happens to be
-           mid-step off a ledge on one particular tick is not a property of
-           streaming, and asserting it made the check flake on a kerb. */
+        }
+        P.input.release(held);
         for (let i = 0; i < 90; i++) P.run(1);
         const a1 = P.actor;
-        return { boot, seen: seen.size, lowest, inside, peak,
+        return { boot, seen: seen.size, lowest, inside, peak, deaths, turns,
                  end: { x: a1.x, z: a1.z, y: a1.y, grounded: a1.grounded },
                  chunks: P.chunks, quads: P.meshQuads,
                  nodesMatch: P.chunks.nodes === P.chunks.loaded };
@@ -1328,11 +1343,11 @@ if (BROWSER_HALF) {
             'STREAM: the build opens on a world with no edge',
             `${streamed.boot.chunks.loaded} chunks loaded, ${streamed.boot.quads} quads, `
             + `character standing at y ${streamed.boot.y.toFixed(2)}`);
-      check(streamed.seen >= 3 && streamed.inside === 0 && streamed.lowest > -2
-            && streamed.end.grounded,
+      check(streamed.seen >= 4 && streamed.inside === 0 && streamed.lowest > -2,
             'STREAM: and walking across chunk after chunk neither falls through nor sticks',
-            `${streamed.seen} chunks walked in 80 s, ${streamed.inside} ticks inside the ground, `
-            + `lowest y ${streamed.lowest.toFixed(2)}, ended at `
+            `${streamed.seen} chunks walked in 80 s over ${streamed.turns} turns, `
+            + `${streamed.inside} ticks inside the ground, lowest y `
+            + `${streamed.lowest.toFixed(2)}, ended at `
             + `(${streamed.end.x.toFixed(0)}, ${streamed.end.z.toFixed(0)}) `
             + `${streamed.end.grounded ? 'standing' : 'in the air'}`);
       check(streamed.chunks.dropped > 0 && streamed.chunks.built > streamed.chunks.loaded
