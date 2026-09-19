@@ -79,7 +79,7 @@ import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, meshSuite,
-         carveSuite, foliageSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+         carveSuite, foliageSuite, trailSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
@@ -237,6 +237,9 @@ if (NODE_HALF) for (const r of carveSuite()) check(r.ok, `CARVE: ${r.label}`, r.
 
 /* ---------- FOLIAGE: a leaf is not a wall, issue #46 ---------- */
 if (NODE_HALF) for (const r of foliageSuite()) check(r.ok, `FOLIAGE: ${r.label}`, r.detail);
+
+/* ---------- WALK: the routed trail fits a body, issue #45 ---------- */
+if (NODE_HALF) for (const r of trailSuite()) check(r.ok, `WALK: ${r.label}`, r.detail);
 
 /* ---------- NET: two players, one world, one authority ----------
    A host and a guest over a loopback wire with latency and loss dialled in. The

@@ -12,7 +12,7 @@
  * and the controller hold together, not whether an idiot can kill itself. The
  * ways to die are pinned by the budget suite instead, where they can be exact.
  */
-import { V, MOVE } from '../../src/gen/constants.mjs';
+import { V, MOVE, CEIL } from '../../src/gen/constants.mjs';
 import { sin, cos, hyp } from '../../src/gen/exact.mjs';
 import { mulberry32, xmur3 } from '../../src/gen/rng.mjs';
 import { makeCollider, colliderForWorld, LIQUID, EPS } from '../../src/sim/collider.mjs';
@@ -1652,5 +1652,111 @@ export function foliageSuite() {
       groundSnowLost ? `${groundSnowLost} ground snow voxels went missing` : 'none lost');
   say('and a trunk is still a trunk', woodLost === 0,
       woodLost ? `${woodLost} prop wood voxels went missing` : 'none lost');
+  return out;
+}
+
+/* ----------------------------------------------------------------- trail ---- */
+
+/**
+ * Issue #45: every metre of routed trail has room for a body.
+ *
+ * Stating this correctly took five attempts, and four of them passed while
+ * establishing nothing. They are worth listing, because each failed in a way
+ * the next one could not see:
+ *
+ *   1. `placeOnGround` + `embedded` — zero everywhere. supportUnder takes the
+ *      highest thing within the body's radius, so a shoulder beside the path
+ *      quietly becomes the floor and nothing is ever embedded.
+ *   2. A body box at `Hs` — 44% blocked, mostly by the trail's own surface. A
+ *      25 cm lip is a step the controller climbs, not a wall.
+ *   3. The same with the support ceiling capped — zero again, and vacuous: the
+ *      trail's own surface is always support, so the answer is always yes.
+ *   4. Clearance above any span top — saw a bridge as a wall, because it
+ *      measured from the ground *under* the deck the trail runs over.
+ *
+ * What it is now: somewhere in the metre-cell, a body fits standing on some
+ * level it could get onto — the ground the trail runs over, or a deck carried
+ * over it — with a step's tolerance for the lip in the next column.
+ *
+ * And because four versions of this were blind, the suite proves it is not:
+ * it plants a slab across one metre of trail and requires the check to find it.
+ * A measurement that cannot fail is not evidence, and this one has to show its
+ * teeth on every run.
+ */
+export function trailSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  /** Can a body stand anywhere in this column, on a level reachable from `surf`? */
+  function fits(col, x, z, surf) {
+    const sp = col.spansAt(x, z);
+    if (!sp) return false;
+    for (let q = 0; q < sp.length; q++) {
+      const top = sp[q][1];
+      /* A cave floor six metres down has headroom and is not this trail; the
+         top of a wall across the trail has headroom and standing on it is not
+         walking down the path. MOVE.vault is the highest the controller
+         climbs, and a deck bridge sits inside it — fen's is 1.38 m up. */
+      if (top > CEIL || top < surf - 0.5 || top > surf + MOVE.vault) continue;
+      if (!col.overlaps(x, z, ACTOR.radius, top + MOVE.step, top + ACTOR.height - EPS)) return true;
+    }
+    return false;
+  }
+
+  function blocked(w, col) {
+    const NZ = w.NZ, side = Math.round(1 / V), seen = new Set(), where = [];
+    let cells = 0;
+    for (let gi = 0; gi < w.NX; gi++) for (let gj = 0; gj < NZ; gj++) {
+      if (!(w.FLG[gi * NZ + gj] & 4)) continue;
+      const ci = (gi / side) | 0, cj = (gj / side) | 0, k = ci * 4096 + cj;
+      if (seen.has(k)) continue;
+      seen.add(k); cells++;
+      let ok = false;
+      for (let a = 0; a < side && !ok; a++) for (let b = 0; b < side && !ok; b++) {
+        const ii = ci * side + a, jj = cj * side + b;
+        if (ii >= w.NX || jj >= NZ || !(w.FLG[ii * NZ + jj] & 4)) continue;
+        if (fits(col, -w.half + ii * V + V / 2, -w.half + jj * V + V / 2, w.Hs[ii * NZ + jj])) ok = true;
+      }
+      if (!ok) where.push(ci + ',' + cj);
+    }
+    return { cells, where };
+  }
+
+  let total = 0, bad = [];
+  let first = null;
+  for (const s of GOLDEN_SEEDS) {
+    const w = buildWorld({ seed: s.seed, size: s.size, force: s.force, ox: s.ox, oz: s.oz });
+    const r = blocked(w, colliderForWorld(w));
+    total += r.cells;
+    for (const p of r.where) bad.push(s.nm + ' ' + p);
+    if (!first) first = w;
+  }
+  say('a body can walk every metre of routed trail',
+      bad.length === 0,
+      bad.length ? `${bad.length} of ${total} metre-cells blocked: ${bad.slice(0, 5).join(', ')}`
+                 : `${total} metre-cells across six seeds, all passable`);
+
+  /* The self-test. Four earlier versions of the measurement above reported zero
+     because they could not see anything, and zero is what a working one reports
+     too. Plant a wall; if the check still says the trail is clear, the check is
+     the thing that is broken. */
+  const NZ = first.NZ, side = Math.round(1 / V);
+  let ci = -1, cj = -1;
+  outer: for (let gi = 0; gi < first.NX; gi++) for (let gj = 0; gj < NZ; gj++) {
+    if (first.FLG[gi * NZ + gj] & 4) { ci = (gi / side) | 0; cj = (gj / side) | 0; break outer; }
+  }
+  for (let a = 0; a < side; a++) for (let b = 0; b < side; b++) {
+    const ii = ci * side + a, jj = cj * side + b;
+    const x = -first.half + ii * V + V / 2, z = -first.half + jj * V + V / 2;
+    const h = first.Hs[ii * NZ + jj];
+    for (let y = h + 0.5; y < h + 2.5; y += V) {
+      first.pos.push(x, y, z); first.mat.push(MAT.WOOD); first.pal.push(0); first.shd.push(128);
+    }
+  }
+  const walled = blocked(first, colliderForWorld(first));
+  say('and the check can see a wall when there is one',
+      walled.where.length === 1 && walled.where[0] === ci + ',' + cj,
+      walled.where.length ? `slab over ${ci},${cj} found at ${walled.where.join(' ')}`
+                          : `SLAB OVER ${ci},${cj} NOT SEEN — the check is blind`);
   return out;
 }
