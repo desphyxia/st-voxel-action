@@ -1281,6 +1281,49 @@ if (BROWSER_HALF) {
          from its render loop: a gate that never draws a frame would otherwise
          walk straight into ground nobody had decided, and the wall would have
          read as the controller's fault. */
+      /* ---------- STREAM: the control that turns it on, issue #13/#51 ----------
+         `?stream=1` is not reachable in the published artifact — the page runs
+         in an iframe whose own URL carries no query — so the button below the
+         view is the only way a player gets to a world with no edge, and it is
+         what has to be asserted. Off at boot, on when pressed, and the world
+         it grows is a different one from the same seed. */
+      const cp = await browser.newPage({ viewport: { width: 1100, height: 700 } });
+      cp.setDefaultTimeout(PATIENCE);
+      const cErrors = [];
+      cp.on('pageerror', (e) => cErrors.push(e.message));
+      await cp.goto(`file://${bfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      await cp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      const toggled = await cp.evaluate(async () => {
+        const P = window.QSPLAY;
+        const b = document.getElementById('streambtn');
+        const before = { on: P.streaming, label: b.textContent, pressed: b.getAttribute('aria-pressed'),
+                         boxes: P.boxCount, seed: P.seed };
+        b.click();
+        await new Promise((r) => setTimeout(r, 50));
+        const after = { on: P.streaming, label: b.textContent, pressed: b.getAttribute('aria-pressed'),
+                        chunks: P.chunks, grounded: P.actor.grounded, seed: P.seed };
+        b.click();
+        await new Promise((r) => setTimeout(r, 50));
+        return { before, after, back: { on: P.streaming, label: b.textContent, seed: P.seed } };
+      });
+      check(toggled.before.on === false && /off/.test(toggled.before.label)
+            && toggled.before.pressed === 'false',
+            'STREAM: the build opens on one window, with streaming offered and off',
+            `button reads "${toggled.before.label}"`);
+      check(toggled.after.on === true && /on/.test(toggled.after.label)
+            && toggled.after.pressed === 'true' && toggled.after.chunks
+            && toggled.after.chunks.loaded > 1 && toggled.after.grounded,
+            'STREAM: and pressing it grows a world with no edge, standing',
+            `"${toggled.after.label}", ${toggled.after.chunks ? toggled.after.chunks.loaded : 0} chunks `
+            + `loaded, same seed ${toggled.after.seed}`);
+      check(toggled.back.on === false && /off/.test(toggled.back.label)
+            && toggled.back.seed === toggled.before.seed,
+            'STREAM: and pressing it again comes back to the one window it started in',
+            `"${toggled.back.label}", seed ${toggled.back.seed}`);
+      check(cErrors.length === 0, 'STREAM: and the swap errors nothing',
+            cErrors.slice(0, 3).join(' | '));
+      await cp.close();
+
       const sp = await browser.newPage({ viewport: { width: 900, height: 600 } });
       sp.setDefaultTimeout(PATIENCE);
       const sErrors = [];
