@@ -2395,6 +2395,124 @@ export function seamSuite() {
  * So the checks are about what is *kept*, not about how much is dropped —
  * dropping is easy and dropping too much is the failure mode.
  */
+/**
+ * GROUND: is the terrain undulated rather than noisy, and is a trail flatter
+ * than the ground beside it? Issue #52.
+ *
+ * Three numbers, all read off the voxel height field every seed produces.
+ *
+ *   **lone columns** — a column strictly higher or strictly lower than all
+ *   four of its neighbours. This is the single protruding voxel the issue is
+ *   named for. Every one of them came from `detail`: 0.13% of columns with the
+ *   old field, 0.00% with the macro field alone.
+ *
+ *   **direction reversals** — how often the ground changes from rising to
+ *   falling along a line, per metre. This is what separates undulation from
+ *   chatter, and it is the number that moved most: 0.45 before, which is a
+ *   reversal every 2.2 m, against 0.02-0.07 for the macro field on its own.
+ *
+ *   **trail against its surroundings** — measured *locally*, against the
+ *   non-trail ground within 2 m, not against the window. A trail climbing a
+ *   canyon wall is rightly rougher than a flat mesa top a hundred metres away,
+ *   so a window-wide comparison asks the wrong question and cannot be
+ *   satisfied on mesa however well the route is graded.
+ */
+export function groundSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const D4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+  /* A reversal every 6.7 m or less is chatter; the macro field manages 14 m and
+     up. Set where it is because the measured spread across biomes is 0.06 to
+     0.11 and mesa, the roughest, has to fit under it. */
+  const FLIP_BAR = 0.15;
+  /* Not zero, and the reason is worth keeping. The old field left 0.13% of
+     columns standing alone — about 85 in a window. What is left is 0 to 3, and
+     they are not attributable to `detail` at all: taking it out entirely
+     *removes* them from mesa and frost and *adds* one to meadow. One column in
+     65,536 is the floor of this measurement rather than a feature of the
+     terrain. The bar is six times under the old value and four times over what
+     is measured now, so it catches a regression that restores even a sixth of
+     the noise without failing on a coin toss. */
+  const LONE_BAR = 0.02;
+
+  const rows = [];
+  for (const s of GOLDEN_SEEDS) {
+    const w = buildWorld({ seed: s.seed, size: s.size, force: s.force, ox: s.ox, oz: s.oz });
+    const { Hs, FLG, NX, NZ } = w;
+    const at = (i, j) => Hs[i * NZ + j];
+    const onTrail = (i, j) => (FLG[i * NZ + j] & 4) !== 0;
+
+    let lone = 0, cols = 0, flips = 0;
+    for (let i = 1; i < NX - 1; i++) {
+      for (let j = 1; j < NZ - 1; j++) {
+        const h = at(i, j), a = at(i - 1, j), b = at(i + 1, j), c = at(i, j - 1), d = at(i, j + 1);
+        cols++;
+        if ((h > a && h > b && h > c && h > d) || (h < a && h < b && h < c && h < d)) lone++;
+      }
+    }
+    for (let j = 0; j < NZ; j++) {
+      let prev = 0;
+      for (let i = 1; i < NX; i++) {
+        const d = Math.sign(at(i, j) - at(i - 1, j));
+        if (d === 0) continue;
+        if (prev !== 0 && d !== prev) flips++;
+        prev = d;
+      }
+    }
+
+    /* Trail roughness against the ground beside it. Neighbours are only counted
+       when they are on the same side of the trail flag, so the step across the
+       trail's own edge is never charged to either. */
+    let ts = 0, tn = 0, bs = 0, bn = 0;
+    const R = 8;
+    for (let i = 1; i < NX - 1; i++) {
+      for (let j = 1; j < NZ - 1; j++) {
+        const mine = onTrail(i, j);
+        if (!mine) {
+          let near = false;
+          for (let a = -R; a <= R && !near; a++) {
+            for (let b = -R; b <= R; b++) {
+              const ni = i + a, nj = j + b;
+              if (ni < 1 || nj < 1 || ni >= NX - 1 || nj >= NZ - 1) continue;
+              if (onTrail(ni, nj)) { near = true; break; }
+            }
+          }
+          if (!near) continue;
+        }
+        for (const [di, dj] of D4) {
+          const ni = i + di, nj = j + dj;
+          if (ni < 0 || nj < 0 || ni >= NX || nj >= NZ) continue;
+          if (onTrail(ni, nj) !== mine) continue;
+          const g = Math.abs(at(i, j) - at(ni, nj));
+          if (mine) { ts += g; tn++; } else { bs += g; bn++; }
+        }
+      }
+    }
+    rows.push({ nm: s.nm, lone: 100 * lone / cols, flips: flips / (NX * NZ * V),
+                trail: tn ? ts / tn : 0, beside: bn ? bs / bn : 0, tn });
+  }
+
+  const speckled = rows.filter((r) => r.lone > LONE_BAR);
+  say('almost no column stands alone, where 0.13% of them used to',
+      speckled.length === 0,
+      rows.map((r) => r.nm + ' ' + r.lone.toFixed(3) + '%').join(', ')
+        + ', bar is ' + LONE_BAR + '%');
+
+  const chattery = rows.filter((r) => r.flips > FLIP_BAR);
+  say('the ground undulates rather than chatters',
+      chattery.length === 0,
+      rows.map((r) => r.nm + ' ' + (1 / r.flips).toFixed(0) + ' m').join(', ')
+        + ' between direction reversals, bar is ' + (1 / FLIP_BAR).toFixed(1) + ' m');
+
+  const notFlat = rows.filter((r) => r.tn > 0 && r.trail >= r.beside);
+  say('and a graded trail is flatter than the ground beside it',
+      notFlat.length === 0 && rows.every((r) => r.tn > 0),
+      rows.map((r) => r.nm + ' ' + (r.beside / r.trail).toFixed(1) + 'x').join(', '));
+
+  return out;
+}
+
 export function propSuite() {
   const out = [];
   const say = (label, ok, detail) => out.push({ label, ok, detail });

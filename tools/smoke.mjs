@@ -79,7 +79,7 @@ import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, meshSuite,
-         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
@@ -292,6 +292,9 @@ if (NODE_HALF) for (const r of fieldSuite()) check(r.ok, `FIELD: ${r.label}`, r.
 
 /* ---------- PROPS: only the faces that can be seen, issue #51 ---------- */
 if (NODE_HALF) for (const r of propSuite()) check(r.ok, `PROPS: ${r.label}`, r.detail);
+
+/* ---------- GROUND: undulated, not noisy, and a trail flatter than it (#52) ---------- */
+if (NODE_HALF) for (const r of groundSuite()) check(r.ok, `GROUND: ${r.label}`, r.detail);
 
 /* ---------- SEAM: a streamed world draws without a visible join, issue #13 ---------- */
 if (NODE_HALF) for (const r of seamSuite()) check(r.ok, `SEAM: ${r.label}`, r.detail);

@@ -18,6 +18,10 @@ import { BIOMES, rouletteBiome } from './biomes.mjs';
 import { PAL, pickPal, shadeByte } from './palette.mjs';
 import { PASS } from './rng.mjs';
 
+/* How much of the sub-metre relief a graded trail keeps. Zero is a crisply
+   constructed path and risks a one-voxel lip along its edge; see issue #52. */
+export const TRAIL_DETAIL = 0;
+
 export function sampleGrid(w) {
   var S = w.size, M = w.M, half = w.half, cells = w.cells, cellAt = w.cellAt,
       G = w.G, OX = w.OX, OZ = w.OZ, TRAIL = w.TRAIL, i, j;
@@ -30,9 +34,18 @@ export function sampleGrid(w) {
     for(j=0;j<NZ;j++){ z=-half+j*V+V/2; k=i*NZ+j;
       c=cellAt(x,z);
       var topsp=c.sp[c.sp.length-1];
-      var d=c.water?G.detail(x+OX,z+OZ)*0.5:G.detail(x+OX,z+OZ);
+      /* Sub-metre relief, attenuated where the ground is not ordinary ground.
+         Water already got half of it. A trail gets less again, and for the same
+         reason the grading pass exists at all: region.mjs levels a route on the
+         1 m cell grid so it can be walked, and then this resample used to put
+         the chatter straight back on top of it — measured, a trail came out no
+         flatter than the ground it crossed, and on canyon ground 26% rougher
+         (issue #52). */
+      var tr=TRAIL[ci(x)*M+ci(z)];
+      var d=G.detail(x+OX,z+OZ);
+      if(tr) d*=TRAIL_DETAIL; else if(c.water) d*=0.5;
       Hs[k]=clamp(topsp[1]+d,0,CEIL); BOT[k]=topsp[0]; WL[k]=c.wl; DOM[k]=c.dom;
-      FLG[k]=(c.water?1:0)|(c.magma?2:0)|(TRAIL[ci(x)*M+ci(z)]?4:0);
+      FLG[k]=(c.water?1:0)|(c.magma?2:0)|(tr?4:0);
     } }
   w.NX = NX; w.NZ = NZ; w.Hs = Hs; w.BOT = BOT; w.WL = WL; w.DOM = DOM; w.FLG = FLG; w.ci = ci;
 }
