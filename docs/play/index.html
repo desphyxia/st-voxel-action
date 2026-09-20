@@ -2996,6 +2996,119 @@ function clearEdits(w) {
   if (w.edits) w.edits.clear();
   return n;
 }
+/* ---------- src/mesh/propmesh.mjs ---------- */
+/**
+ * Props, without the faces nobody can see — issue #51.
+ *
+ * ## Why props were the most expensive thing on screen
+ *
+ * `src/mesh/greedy.mjs` exists because a voxel world drawn as boxes draws six
+ * faces per voxel whether or not anything can see them. It solved that for
+ * *terrain* and terrain is now 15% of a frame. Props were left as instanced
+ * boxes on purpose — #12's reasoning was that felling a tree must not cost a
+ * chunk remesh — and nobody counted them again once the world grew from one
+ * window to twenty-five chunks. Measured there, props are **62% of every
+ * triangle drawn**, and of the faces they draw:
+ *
+ *     381,378 prop faces over four chunks and four seeds
+ *     289,786 of them — 76.0% — are against another solid voxel
+ *      91,592 — 24.0% — can actually be seen
+ *
+ * A trunk draws its own interior. This emits the 24% and drops the rest.
+ *
+ * ## What it deliberately does not do
+ *
+ * **It does not merge.** Adjacent coplanar faces of the same colour could be
+ * one quad, which is what the greedy pass does for terrain, and that would cut
+ * further. Culling alone is the larger and simpler half — four times fewer
+ * triangles — and it is worth knowing what it buys on its own before adding a
+ * second mechanism whose failure mode is a seam.
+ *
+ * **It does not touch what a prop looks like.** Each face carries its own
+ * voxel's resolved colour, exactly as the instanced box did: `palR/palG/palB`
+ * of that voxel's palette index and shade byte. Nothing is re-lit, nothing is
+ * occluded, nothing merges across a colour. The only difference on screen
+ * should be the absence of surfaces that were inside solid rock. The LOOK
+ * gate is what holds that claim to account.
+ *
+ * **It does not decide what is solid.** Foliage is drawn and is not collidable
+ * (#46); that split lives in `src/sim/collider.mjs` and is none of this file's
+ * business. Everything a prop emits is drawn.
+ *
+ * No DOM, no three.js.
+ */
+
+
+
+/**
+ * The six faces of a voxel, each as four corners in units of half a voxel,
+ * wound counter-clockwise seen from outside so the default front face is the
+ * one pointing away from the solid.
+ */
+const FACES = [
+  { n: [1, 0, 0], c: [[1, -1, 1], [1, -1, -1], [1, 1, -1], [1, 1, 1]] },
+  { n: [-1, 0, 0], c: [[-1, -1, -1], [-1, -1, 1], [-1, 1, 1], [-1, 1, -1]] },
+  { n: [0, 1, 0], c: [[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, -1]] },
+  { n: [0, -1, 0], c: [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1]] },
+  { n: [0, 0, 1], c: [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]] },
+  { n: [0, 0, -1], c: [[1, -1, -1], [-1, -1, -1], [-1, 1, -1], [1, 1, -1]] },
+];
+
+/** A voxel centre as an integer grid key. */
+function gkey(x, y, z) {
+  return Math.round(x / V) + ',' + Math.round(y / V) + ',' + Math.round(z / V);
+}
+
+/**
+ * Every prop voxel this world holds, as a set of grid keys — *and every
+ * terrain voxel too*.
+ *
+ * Both, because a face is hidden by whatever is next to it and a trunk sunk
+ * into a hillside is hidden by the hill. Taking only props would leave the
+ * buried half of every boulder on screen.
+ */
+function solidKeys(w) {
+  const n = w.pos.length / 3, set = new Set();
+  for (let q = 0; q < n; q++) set.add(gkey(w.pos[q * 3], w.pos[q * 3 + 1], w.pos[q * 3 + 2]));
+  return set;
+}
+
+/**
+ * The visible faces of this world's props, as buffers a renderer can upload.
+ *
+ * `clip` is a half-extent: only props standing on the ground a streamed chunk
+ * owns are emitted, the same rule `src/sim/chunks.mjs` uses for its collider.
+ * A neighbour's prop is still in `w` and still *hides* faces, which is what
+ * keeps a seam from opening along a chunk edge — it is counted as solid and
+ * drawn by the chunk that owns it.
+ */
+function meshProps(w, clip) {
+  const n = w.pos.length / 3;
+  const start = w.propStart === undefined ? n : w.propStart;
+  const solid = solidKeys(w);
+  const pos = [], nor = [], col = [], idx = [];
+  let faces = 0, culled = 0, vbase = 0;
+
+  for (let q = start; q < n; q++) {
+    const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+    if (clip !== undefined && (x < -clip || x >= clip || z < -clip || z >= clip)) continue;
+    const r = palR(w.pal[q], w.shd[q]), g = palG(w.pal[q], w.shd[q]), b = palB(w.pal[q], w.shd[q]);
+    for (let f = 0; f < 6; f++) {
+      const d = FACES[f];
+      if (solid.has(gkey(x + d.n[0] * V, y + d.n[1] * V, z + d.n[2] * V))) { culled++; continue; }
+      faces++;
+      for (let k = 0; k < 4; k++) {
+        const c = d.c[k];
+        pos.push(x + c[0] * V / 2, y + c[1] * V / 2, z + c[2] * V / 2);
+        nor.push(d.n[0], d.n[1], d.n[2]);
+        col.push(r, g, b);
+      }
+      idx.push(vbase, vbase + 1, vbase + 2, vbase, vbase + 2, vbase + 3);
+      vbase += 4;
+    }
+  }
+  return { pos, nor, col, idx, faces, culled, voxels: vbase / 4 };
+}
 /* ---------- src/sim/collider.mjs ---------- */
 /**
  * The world as the controller can touch it: one column of solid spans for every
@@ -5922,7 +6035,7 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -6214,11 +6327,47 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     }
     var vox=boxesFor(0,pStart), props=boxesFor(pStart,n);
 
+    /* ---------- props without their insides (#51) ----------
+       The instanced boxes above draw six faces per prop voxel whether or not
+       anything can see them, and 76% of those faces are against solid. Across
+       twenty-five streamed chunks that was 3.0M triangles — 62% of the frame,
+       more than terrain, grass and water together.
+
+       This is the same surfaces minus the invisible ones: every face keeps its
+       own voxel's colour, nothing merges, nothing is re-lit. It is a separate
+       mesh rather than part of the terrain mesh, because #12's reason for
+       instancing props stands — felling a tree must not remesh a chunk, and
+       with props on their own mesh it remeshes only them.
+
+       Drawn instead of the instanced props whenever the mesh renderer is on;
+       the box renderer keeps its boxes, which is what makes the two
+       comparable. */
+    var propMesh=null;
+    var pm=pre&&pre.props?pre.props:QS.meshProps(data,org?QS.CHUNK/2:undefined);
+    if(pm.faces){
+      var pg=new THREE.BufferGeometry();
+      pg.setAttribute('position',new THREE.BufferAttribute(
+        ArrayBuffer.isView(pm.pos)?pm.pos:new Float32Array(pm.pos),3));
+      pg.setAttribute('normal',new THREE.BufferAttribute(
+        ArrayBuffer.isView(pm.nor)?pm.nor:new Float32Array(pm.nor),3));
+      pg.setAttribute('color',new THREE.BufferAttribute(
+        ArrayBuffer.isView(pm.col)?pm.col:new Float32Array(pm.col),3));
+      pg.setIndex(ArrayBuffer.isView(pm.idx)?new THREE.BufferAttribute(pm.idx,1):pm.idx);
+      pg.userData={faces:pm.faces,culled:pm.culled};
+      propMesh=new THREE.Mesh(pg,mats.prop);
+      propMesh.castShadow=true; propMesh.receiveShadow=true; propMesh.frustumCulled=false;
+      propMesh.userData.kind='props';
+      g.add(propMesh);
+    }
+
     /* Both terrain renderers are built; only one is visible. Props, water and
        grass are untouched by either — a felled tree must not remesh a chunk. */
-    var terrainMesh=buildMesh(data,mats.mesh,org,pre);
+    var terrainMesh=buildMesh(data,mats.mesh,org,pre&&pre.terrain?pre.terrain:pre);
     g.add(terrainMesh);
     terrainMesh.visible=useMesh; if(vox) vox.visible=!useMesh;
+    /* One of the two prop renderers, never both. */
+    if(propMesh) propMesh.visible=useMesh;
+    if(props) props.visible=!useMesh||!propMesh;
 
     if(data.mpos.length){
       var msrc=[];
@@ -6279,13 +6428,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     (data.lamps||[]).filter(function(l){ return keep(l[0],l[2]); }).slice(0,3).forEach(function(l){
       var pl=new THREE.PointLight(0xffb066,0.9,9,2); pl.position.set(l[0],l[1]+0.1,l[2]); g.add(pl);
     });
-    return {g:g,vox:vox,props:props,mesh:terrainMesh,data:data,org:org};
+    return {g:g,vox:vox,props:props,propMesh:propMesh,mesh:terrainMesh,data:data,org:org};
   }
 
   /** The grass and water materials, shared across every chunk of one world. */
   function worldMaterials(){
     return {
       mesh:meshMaterial(),
+      /* What the instanced prop boxes were drawn with, so culling their
+         insides cannot change how the outsides are lit. */
+      prop:new THREE.MeshLambertMaterial({vertexColors:true}),
       grass:new THREE.ShaderMaterial({side:THREE.DoubleSide,
         uniforms:{uTime:{value:0},uP0:{value:new THREE.Vector3(1e5,0,1e5)},
                   uWind:{value:new THREE.Vector2(0.72,0.69)}},
@@ -6315,7 +6467,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     shell.scene.add(node.g);
     return {scene:shell.scene,sun:shell.sun,mats:mats,
             gmat:mats.grass,wmat:mats.water,
-            vox:node.vox,props:node.props,mesh:node.mesh,node:node};
+            vox:node.vox,props:node.props,propMesh:node.propMesh,
+            mesh:node.mesh,node:node};
   }
 
   /* ---------- the character ---------- */
@@ -6549,8 +6702,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(built&&built.mesh){ built.mesh.visible=useMesh; if(built.vox) built.vox.visible=!useMesh; }
     /* A streamed world has one of each per chunk, and chunks that arrive later
        read `useMesh` when they are made. */
+    if(built&&built.node){ var b0=built.node;
+      if(b0.propMesh) b0.propMesh.visible=useMesh;
+      if(b0.props) b0.props.visible=!useMesh||!b0.propMesh; }
     if(nodes) for(var k in nodes){ var nd=nodes[k];
-      if(nd.mesh) nd.mesh.visible=useMesh; if(nd.vox) nd.vox.visible=!useMesh; }
+      if(nd.mesh) nd.mesh.visible=useMesh; if(nd.vox) nd.vox.visible=!useMesh;
+      if(nd.propMesh) nd.propMesh.visible=useMesh;
+      if(nd.props) nd.props.visible=!useMesh||!nd.propMesh; }
     /* Two buttons, one state: the one on the page and the one in the view. Each
        is labelled with what it switches *to*, so they read the same either way
        and neither can be left saying the opposite of the other. */
@@ -6613,12 +6771,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(streaming){
       var c=QS.chunkAt(x,z), nd=nodeAt(c.cx,c.cz);
       if(!nd) return null;
-      host={data:nd.data,mesh:nd.mesh,vox:nd.vox};
+      host={data:nd.data,mesh:nd.mesh,vox:nd.vox,propMesh:nd.propMesh};
       bin=nd.hidden; ix=indexOfNode(nd);
       lx=x-c.cx*QS.CHUNK; lz=z-c.cz*QS.CHUNK;
     }else ix=voxelIndexOf(built.data);
     var r=QS.carve(host.data,lx,y,lz,opts||{});
     for(var q=0;q<r.chunks.length;q++) host.mesh.userData.remesh(host.data,r.chunks[q][0],r.chunks[q][1]);
+    /* Taking rock away can uncover a prop face that was buried in it, so the
+       prop mesh is rebuilt with the terrain mesh. This is what having props on
+       their own mesh buys: it is a prop rebuild, not a chunk remesh, which is
+       the constraint #12 set when it kept them instanced. */
+    if(r.cut&&host.propMesh) remeshProps(host);
     if(r.cut&&host.vox){
       var hid=0;
       /* `src` is which voxel of the window each instance came from: the clip
@@ -6637,6 +6800,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       if(hid) host.vox.instanceMatrix.needsUpdate=true;
     }
     return {cut:r.cut,held:r.held?r.held.nm:null,chunks:r.chunks.length,quads:host.mesh.userData.quads};
+  }
+
+  /** Rebuild one world's prop mesh in place, after an edit uncovered a face. */
+  function remeshProps(host){
+    var org=host.mesh&&host.mesh.userData?host.mesh.userData.org:null;
+    var pm=QS.meshProps(host.data,org?QS.CHUNK/2:undefined);
+    var g=host.propMesh.geometry;
+    g.dispose();
+    var ng=new THREE.BufferGeometry();
+    ng.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pm.pos),3));
+    ng.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(pm.nor),3));
+    ng.setAttribute('color',new THREE.BufferAttribute(new Float32Array(pm.col),3));
+    ng.setIndex(pm.idx);
+    ng.userData={faces:pm.faces,culled:pm.culled};
+    host.propMesh.geometry=ng;
+    return pm.faces;
   }
 
   /** The voxel index of one streamed chunk, made once and kept on its node. */
@@ -6716,13 +6895,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       if((n.isMesh||n.isInstancedMesh)&&!n.userData.keep){
         if(n.geometry&&n.geometry!==boxGeo) n.geometry.dispose();
         if(n.material&&n.material.dispose
-           &&n.material!==keepMats.mesh&&n.material!==keepMats.grass&&n.material!==keepMats.water)
+           &&n.material!==keepMats.mesh&&n.material!==keepMats.grass
+           &&n.material!==keepMats.water&&n.material!==keepMats.prop)
           n.material.dispose();
       }
     });
     if(keepMats.mesh) keepMats.mesh.dispose();
     if(keepMats.grass) keepMats.grass.dispose();
     if(keepMats.water) keepMats.water.dispose();
+    if(keepMats.prop) keepMats.prop.dispose();
   }
 
   /* The posts, the machines and the loot. Placed from the world on both
@@ -6792,7 +6973,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     nd.g.traverse(function(o){
       if((o.isMesh||o.isInstancedMesh)&&o.geometry&&o.geometry!==boxGeo) o.geometry.dispose();
       if(o.isInstancedMesh&&o.material&&o.material.dispose
-         &&o.material!==built.mats.mesh&&o.material!==built.mats.grass&&o.material!==built.mats.water)
+         &&o.material!==built.mats.mesh&&o.material!==built.mats.grass
+         &&o.material!==built.mats.water&&o.material!==built.mats.prop)
         o.material.dispose();
     });
     built.scene.remove(nd.g);
@@ -6897,8 +7079,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       +'    grp[v*2]=m.pal[v]; grp[v*2+1]=PAL_N[m.pal[v]]||1; }\n'
       +'  var mesh={pos:new Float32Array(m.pos),nor:new Float32Array(m.nor),\n'
       +'            col:col,grp:grp,idx:new Uint32Array(m.idx),quads:m.quads};\n'
-      +'  self.postMessage({cx:d.cx,cz:d.cz,w:out,mesh:mesh,gen:_now()-t0,mesh_ms:_now()-t1},\n'
-      +'    [mesh.pos.buffer,mesh.nor.buffer,mesh.col.buffer,mesh.grp.buffer,mesh.idx.buffer]);\n'
+      /* Props too, and for the same reason: their hidden faces were 62% of the
+         frame, and finding them means walking every prop voxel against an
+         occupancy set. That is not main-thread work either. */
+      +'  var pmr=QS.meshProps(w,QS.CHUNK/2);\n'
+      +'  var props={pos:new Float32Array(pmr.pos),nor:new Float32Array(pmr.nor),\n'
+      +'             col:new Float32Array(pmr.col),idx:new Uint32Array(pmr.idx),\n'
+      +'             faces:pmr.faces,culled:pmr.culled};\n'
+      +'  self.postMessage({cx:d.cx,cz:d.cz,w:out,mesh:mesh,props:props,\n'
+      +'                    gen:_now()-t0,mesh_ms:_now()-t1},\n'
+      +'    [mesh.pos.buffer,mesh.nor.buffer,mesh.col.buffer,mesh.grp.buffer,mesh.idx.buffer,\n'
+      +'     props.pos.buffer,props.nor.buffer,props.col.buffer,props.idx.buffer]);\n'
       +'  }catch(err){ self.postMessage({cx:d.cx,cz:d.cz,err:String((err&&err.message)||err)}); }\n'
       +'};\n';
     var url,ws=[];
@@ -6944,7 +7135,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
              a voxel's shade, and the worker could not send one. Same seed, same
              closures, same answers. */
           d.w.G=QS.makeGen(field.seed,field.force===undefined?null:field.force);
-          if(d.mesh) premesh[d.cx+','+d.cz]=d.mesh;
+          if(d.mesh) premesh[d.cx+','+d.cz]={terrain:d.mesh,props:d.props};
           P.mesh_ms=d.mesh_ms||0;
           stream.deliver(d.cx,d.cz,d.w);
           reconcileNodes();

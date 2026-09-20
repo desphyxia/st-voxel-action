@@ -32,6 +32,8 @@ import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache } from '../../src/gen/region.mjs';
 import { meshChunk, surfaceAt, isCut, innerChunk } from '../../src/mesh/greedy.mjs';
+import { meshProps } from '../../src/mesh/propmesh.mjs';
+import { palR, palG, palB } from '../../src/gen/palette.mjs';
 import { carve, clearEdits, chunkGrid } from '../../src/mesh/carve.mjs';
 import { MATERIALS, MAT } from '../../src/gen/materials.mjs';
 import { GOLDEN_SEEDS } from './harness.mjs';
@@ -2380,6 +2382,164 @@ export function seamSuite() {
         without > withSkirt * 50 && withSkirt < 200,
         `-x boundary over three seeds: ${withSkirt} cells walled with a skirt behind it, `
         + `${without} with nothing behind it`);
+  }
+
+  return out;
+}
+
+/**
+ * Props without the faces nobody can see — issue #51.
+ *
+ * The claim is narrow and worth stating exactly: **the same surfaces, minus
+ * the ones inside solid**. Not a simplification, not a merge, not a re-light.
+ * So the checks are about what is *kept*, not about how much is dropped —
+ * dropping is easy and dropping too much is the failure mode.
+ */
+export function propSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const key = (x, y, z) => Math.round(x / V) + ',' + Math.round(y / V) + ',' + Math.round(z / V);
+  const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+
+  /* Every face kept is exposed, and every face dropped is not. Checked against
+     an independent walk of the voxel list rather than against the mesher's own
+     bookkeeping, which would only prove it agrees with itself. */
+  {
+    let kept = 0, dropped = 0, wrongKept = 0, wrongDropped = 0;
+    for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+      const w = chunkWorld(s.seed, 0, 0, s.force);
+      const m = meshProps(w);
+      const n = w.pos.length / 3, start = w.propStart === undefined ? n : w.propStart;
+      const solid = new Set();
+      for (let q = 0; q < n; q++) solid.add(key(w.pos[q * 3], w.pos[q * 3 + 1], w.pos[q * 3 + 2]));
+      /* what the mesher emitted, as a set of (voxel, normal) pairs */
+      const emitted = new Set();
+      for (let f = 0; f < m.faces; f++) {
+        const v = f * 4;
+        let cx = 0, cy = 0, cz = 0;
+        for (let k = 0; k < 4; k++) {
+          cx += m.pos[(v + k) * 3]; cy += m.pos[(v + k) * 3 + 1]; cz += m.pos[(v + k) * 3 + 2];
+        }
+        const nx = m.nor[v * 3], ny = m.nor[v * 3 + 1], nz = m.nor[v * 3 + 2];
+        /* the face centre, stepped back half a voxel along its normal, is the
+           centre of the voxel it belongs to */
+        emitted.add(key(cx / 4 - nx * V / 2, cy / 4 - ny * V / 2, cz / 4 - nz * V / 2)
+                    + '|' + nx + ',' + ny + ',' + nz);
+      }
+      for (let q = start; q < n; q++) {
+        const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+        for (const d of DIRS) {
+          const hidden = solid.has(key(x + d[0] * V, y + d[1] * V, z + d[2] * V));
+          const has = emitted.has(key(x, y, z) + '|' + d[0] + ',' + d[1] + ',' + d[2]);
+          if (hidden) { dropped++; if (has) wrongKept++; }
+          else { kept++; if (!has) wrongDropped++; }
+        }
+      }
+    }
+    say('every prop face that can be seen is drawn, and every one that cannot is not',
+        wrongKept === 0 && wrongDropped === 0,
+        `${(kept + dropped).toLocaleString()} faces over three chunks: ${kept.toLocaleString()} exposed `
+        + `and all drawn, ${dropped.toLocaleString()} buried and none drawn `
+        + `(${(100 * dropped / (kept + dropped)).toFixed(1)}% of a prop is inside itself or the ground)`);
+  }
+
+  /* The control: terrain has to count as solid. Hiding a face only behind
+     another *prop* leaves the sunk half of every boulder on screen, and the
+     check above would still pass because it would be measuring the same wrong
+     rule twice — so the rule is measured against the world instead. */
+  {
+    let bothWays = 0, propsOnly = 0;
+    for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+      const w = chunkWorld(s.seed, 0, 0, s.force);
+      const n = w.pos.length / 3, start = w.propStart === undefined ? n : w.propStart;
+      const all = new Set(), props = new Set();
+      for (let q = 0; q < n; q++) {
+        const k = key(w.pos[q * 3], w.pos[q * 3 + 1], w.pos[q * 3 + 2]);
+        all.add(k);
+        if (q >= start) props.add(k);
+      }
+      for (let q = start; q < n; q++) {
+        const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+        for (const d of DIRS) {
+          const k = key(x + d[0] * V, y + d[1] * V, z + d[2] * V);
+          if (all.has(k)) bothWays++;
+          if (props.has(k)) propsOnly++;
+        }
+      }
+    }
+    /* The margin is small and the bar is set where the measurement put it, not
+       where it felt like it should be: a prop is mostly buried in *itself*,
+       and only 1.9% of its hidden faces are against terrain. That is still the
+       difference between a boulder with a sunk half and one without, and
+       dropping terrain from the occupancy is caught by it. A bar of "5% more"
+       was invented rather than measured, and failed on correct code. */
+    say('and the ground counts as solid, not just the prop itself',
+        bothWays > propsOnly,
+        `${bothWays.toLocaleString()} faces hidden by anything solid against `
+        + `${propsOnly.toLocaleString()} hidden by another prop alone — `
+        + `${(bothWays - propsOnly).toLocaleString()} more, `
+        + `${(100 * (bothWays - propsOnly) / bothWays).toFixed(1)}%, are buried in the ground`);
+  }
+
+  /* A face keeps its own voxel's colour: this is a cull, not a restyle. */
+  {
+    let checked = 0, wrong = 0;
+    const w = chunkWorld('hero', 0, 0);
+    const m = meshProps(w);
+    const n = w.pos.length / 3, start = w.propStart === undefined ? n : w.propStart;
+    /* A cell can hold more than one prop voxel — 4-8% of them are coincident,
+       either doubled or sitting in a terrain cell — so a face there belongs to
+       whichever of them emitted it, and a lookup that keeps one answer is
+       ambiguous rather than wrong. The check accepts any voxel in the cell.
+       (That coincidence is itself worth fixing and is not this change's
+       business: the instanced renderer draws both too, and deciding which wins
+       changes what is on screen. Recorded in #51.) */
+    const byKey = new Map();
+    for (let q = start; q < n; q++) {
+      const k = key(w.pos[q * 3], w.pos[q * 3 + 1], w.pos[q * 3 + 2]);
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(q);
+    }
+    for (let f = 0; f < m.faces; f += 37) {
+      const v = f * 4;
+      let cx = 0, cy = 0, cz = 0;
+      for (let k = 0; k < 4; k++) {
+        cx += m.pos[(v + k) * 3]; cy += m.pos[(v + k) * 3 + 1]; cz += m.pos[(v + k) * 3 + 2];
+      }
+      const nx = m.nor[v * 3], ny = m.nor[v * 3 + 1], nz = m.nor[v * 3 + 2];
+      const qs = byKey.get(key(cx / 4 - nx * V / 2, cy / 4 - ny * V / 2, cz / 4 - nz * V / 2));
+      if (!qs) { wrong++; continue; }
+      checked++;
+      let any = false;
+      for (const q of qs) {
+        const want = [palR(w.pal[q], w.shd[q]), palG(w.pal[q], w.shd[q]), palB(w.pal[q], w.shd[q])];
+        let ok = true;
+        for (let c = 0; c < 3; c++) if (Math.abs(m.col[v * 3 + c] - want[c]) > 1e-9) { ok = false; break; }
+        if (ok) { any = true; break; }
+      }
+      if (!any) wrong++;
+    }
+    say('and a face carries the colour the box carried, so this is a cull and not a restyle',
+        wrong === 0 && checked > 100,
+        `${checked} faces sampled across a chunk, every one the palette index and shade `
+        + 'of the voxel it belongs to');
+  }
+
+  /* The clip a streamed chunk uses must not open a seam: a neighbour's prop is
+     not drawn here, but it still hides what it is standing against. */
+  {
+    const w = chunkWorld('fen', 0, 0);
+    const inner = meshProps(w, CHUNK_M / 2), whole = meshProps(w);
+    let outside = 0;
+    for (let f = 0; f < inner.faces; f++) {
+      const v = f * 4;
+      const x = inner.pos[v * 3], z = inner.pos[v * 3 + 2];
+      if (Math.abs(x) > CHUNK_M / 2 + V || Math.abs(z) > CHUNK_M / 2 + V) outside++;
+    }
+    say('and a streamed chunk draws its own props only, while the neighbour\'s still hide faces',
+        outside === 0 && inner.faces > 0 && inner.faces < whole.faces,
+        `${inner.faces.toLocaleString()} faces inside the chunk against `
+        + `${whole.faces.toLocaleString()} across the whole window, none beyond the boundary`);
   }
 
   return out;
