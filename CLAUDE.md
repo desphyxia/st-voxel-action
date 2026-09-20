@@ -84,8 +84,12 @@ typed into the page, which is the one thing the check exists to rule out.
 If no commit matches, loop over the last twenty: `git log --format=%H -20 -- docs/play/index.html`
 and diff each. The last-published sha is rarely the one you remember — this note said
 `487222d` and the live pages were actually at **`5113762`** (play) and **`77d6278`** (concept)
-when the loop was run on 2026-09-19. Both pages are now published from **`378ec0f`**:
-play **version 10**, concept **version 13**, both checked clean before forcing.
+when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`46776c9`** and
+concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
+loop; do not trust this line for which sha, only for the recipe.
+
+Both pages are now published from **`9c26036`**: play **version 14**, concept **version 14**,
+both checked clean (zero differing lines) before forcing.
 
 Identical means nobody has typed into the page and forcing loses nothing. On 2026-09-18 both
 pages came back identical to `487222d`. **Force is still the user's call, not yours** — show
