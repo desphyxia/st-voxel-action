@@ -30,6 +30,29 @@ export function sampleGrid(w) {
       DOM=new Uint8Array(NX*NZ), FLG=new Uint8Array(NX*NZ);
   var x,z,k,c;
   function ci(px){return clamp(Math.round(px+half),0,M-1);}
+  /* The cell height field read between the lattice points. Cell `a` sits at
+     world -half + a, so px + half is a continuous cell coordinate and the four
+     cells around it are the corners to interpolate between.
+
+     This reads `cells`, which carries the region's grading (layRoutes applies
+     it before this pass), so it is the *graded* route being sampled and not the
+     ground the route was cut into. It stays the same from any window because
+     the cells do: it needs one metre of neighbourhood and a streamed chunk
+     throws away four. */
+  function cellH(a,b){
+    /* The column's *ground* top, which is what sampleGrid draws — not the
+       cell's H. The two differ wherever the generator floors a column at one
+       voxel of ground: a cell at H=0 still has a span of [0,1], and reading H
+       there put a metre-high ledge in the middle of a level route. */
+    return Math.max(cells[clamp(a,0,M-1)*M+clamp(b,0,M-1)].H,1);
+  }
+  function trailRamp(px,pz){
+    var fx=px+half, fz=pz+half;
+    var a=Math.floor(fx), b=Math.floor(fz), tx=fx-a, tz=fz-b;
+    var h0=cellH(a,b)*(1-tx)+cellH(a+1,b)*tx;
+    var h1=cellH(a,b+1)*(1-tx)+cellH(a+1,b+1)*tx;
+    return h0*(1-tz)+h1*tz;
+  }
   for(i=0;i<NX;i++){ x=-half+i*V+V/2;
     for(j=0;j<NZ;j++){ z=-half+j*V+V/2; k=i*NZ+j;
       c=cellAt(x,z);
@@ -44,7 +67,24 @@ export function sampleGrid(w) {
       var tr=TRAIL[ci(x)*M+ci(z)];
       var d=G.detail(x+OX,z+OZ);
       if(tr) d*=TRAIL_DETAIL; else if(c.water) d*=0.5;
-      Hs[k]=clamp(topsp[1]+d,0,CEIL); BOT[k]=topsp[0]; WL[k]=c.wl; DOM[k]=c.dom;
+      /* A trail rides the cell field *sampled continuously* rather than the one
+         cell it stands on. Everywhere else the whole-metre lattice is the
+         point — the world is authored in metres and the terraces are the look —
+         but a route is a built surface, and taking the nearest cell's integer
+         height made it climb in whole-metre jumps: measured, every step along a
+         trail was 0, 4, 8 or 12 voxels and never 1, 2 or 3.
+
+         Reading the same field between the cells turns a 1 m cell step into a
+         ramp four voxel columns long, which is 1 voxel per column — the tightest
+         a 25 cm grid can express. It is written as an offset from this cell's
+         own height so that a column whose top span was cut by a cave keeps its
+         span and gains only the ramp. */
+      /* Rounded to the voxel grid, because everything downstream of here — the
+         mesher, the collider, buildVoxels — is built out of 25 cm boxes. A
+         difference of at most one voxel survives that rounding: rounding is
+         monotone, so two values within V of each other land within V. */
+      var top=tr?Math.round(trailRamp(x,z)/V)*V:topsp[1];
+      Hs[k]=clamp(top+d,0,CEIL); BOT[k]=topsp[0]; WL[k]=c.wl; DOM[k]=c.dom;
       FLG[k]=(c.water?1:0)|(c.magma?2:0)|(tr?4:0);
     } }
   w.NX = NX; w.NZ = NZ; w.Hs = Hs; w.BOT = BOT; w.WL = WL; w.DOM = DOM; w.FLG = FLG; w.ci = ci;

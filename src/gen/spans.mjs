@@ -22,6 +22,8 @@ import { PASS } from './rng.mjs';
 
 export function cutSpans(w) {
   var M = w.M, cells = w.cells, half = w.half, G = w.G, OX = w.OX, OZ = w.OZ, i, j, d0;
+  /* layRoutes has already run, so the marked route is known here. */
+  var TRAIL = w.TRAIL;
   var ovhPos=null;
   for(i=0;i<M;i++)for(j=0;j<M;j++){
     var cs=cells[i*M+j];
@@ -43,7 +45,13 @@ export function cutSpans(w) {
            is dropped rather than clamped. */
         if(ti<0||tj<0||ti>M-1||tj>M-1) break;
         var tc=cells[ti*M+tj];
-        if(tc.H>=ch.H-1||tc.water) break;
+        /* An undercut stops when it reaches the route. sampleGrid reads the
+           *last* span as the column's surface, so a rim thrown over a trail
+           made the drawn path jump to the rim's height — three metres, on the
+           hero seed, between two cells that were both graded, both marked and
+           both at H=5. The route is a cutting whose shoulder was already pulled
+           back; hanging the cliff back over it undoes that. */
+        if(tc.H>=ch.H-1||tc.water||(TRAIL&&TRAIL[ti*M+tj])) break;
         tc.sp.push([ch.H-th,ch.H]);
       }
       if(!ovhPos) ovhPos=[-half+i,cl.H+1.3,-half+j];

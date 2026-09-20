@@ -363,6 +363,58 @@ function buildRegion(G, rx, rz) {
     }
   }
 
+  /* ---- level the marked route ----
+     gradePath caps the *path* at MOVE.step, but the trail mask is wider than
+     the path: markPath adds a shoulder beside every step and a ford marks its
+     own crossing, and neither was ever levelled against what it sits next to.
+     That left cell-to-cell steps of 2 and 3 m inside the trail mask, which the
+     voxel resample then rides faithfully however finely it samples.
+
+     Symmetric, because lowering only would cut a route into the ground every
+     time it met a rise: the high side comes down and the low side comes up by
+     turns until no two adjacent marked cells are more than one step apart.
+     Water and magma are left where they are — a crossing belongs at the
+     waterline, and a ford that levelled itself would stop being one.
+
+     Runs before recordGrades, so every metre it moves travels to a window as
+     part of the region's grading rather than being re-decided there. */
+  function levelTrail() {
+    var pts = [];
+    trail.forEach(function (k) {
+      var p = k.split(','), a = +p[0] - x0, b = +p[1] - z0;
+      if (a < 1 || b < 1 || a >= N - 1 || b >= N - 1) return;
+      var c0 = at(a, b);
+      if (!c0 || c0.water || c0.magma) return;
+      pts.push(a * N + b);
+    });
+    /* Sorted, so the sweep order is the region's and not the Set's insertion
+       order — which is the order the routes happened to be laid in. */
+    pts.sort(function (p, q) { return p - q; });
+    /* Four neighbours. Levelling the diagonals too was tried and measured: it
+       moved not one voxel on any of the six seeds, because a trail cell's
+       diagonal is either already within a step or is not a trail cell at all.
+       The half-metre steps that remain are the second case — the outer edge of
+       the route meeting ground that was never graded — and closing those means
+       widening every cutting, which is a bigger change than they are worth. */
+    for (var it = 0; it < 8; it++) {
+      var moved = 0;
+      for (var q2 = 0; q2 < pts.length; q2++) {
+        var a2 = (pts[q2] / N) | 0, b2 = pts[q2] % N, c2 = at(a2, b2);
+        for (var d2 = 0; d2 < 4; d2++) {
+          var na = a2 + DIRS4[d2][0], nb = b2 + DIRS4[d2][1];
+          if (!trail.has(key(x0 + na, z0 + nb))) continue;
+          var nc2 = at(na, nb);
+          if (!nc2 || nc2.water || nc2.magma) continue;
+          var gap = c2.H - nc2.H;
+          if (gap > MOVE.step) { c2.H -= 1; moved++; }
+          else if (gap < -MOVE.step) { c2.H += 1; moved++; }
+        }
+      }
+      if (!moved) break;
+    }
+  }
+  levelTrail();
+
   recordGrades();
 
   /* ---- one landmark, on the region's highest flat ground off the trail ---- */

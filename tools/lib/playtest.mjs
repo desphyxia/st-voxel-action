@@ -2508,7 +2508,54 @@ export function groundSuite() {
   const notFlat = rows.filter((r) => r.tn > 0 && r.trail >= r.beside);
   say('and a graded trail is flatter than the ground beside it',
       notFlat.length === 0 && rows.every((r) => r.tn > 0),
-      rows.map((r) => r.nm + ' ' + (r.beside / r.trail).toFixed(1) + 'x').join(', '));
+      rows.map((r) => r.nm + ' ' + (r.beside / r.trail).toFixed(2) + 'x').join(', ')
+        + '  (a mean, so the ramp counts against it: a route that climbs a voxel'
+        + ' at a time has more non-zero steps than one that was flat and then a'
+        + ' cliff, which is why the margin is thin on ash)');
+
+  /* A route may not climb faster than one voxel per voxel column.
+     Every step along a trail used to be 0, 4, 8 or 12 voxels and never 1, 2 or
+     3, because a trail took the integer height of the cell it stood on; a 1 m
+     cell step was a 1 m cliff across 25 cm of ground. Sampling the cell field
+     *between* the lattice points spreads that over four columns.
+     Two exclusions, both deliberate and both visible in the detail line:
+       a ford steps down into its water and a bank is a bank, so a pair with
+       water or magma on either side is counted separately;
+       the outer edge of a route meets ground that was never graded, which
+       leaves a handful of half-metre steps at the verge. Closing those means
+       widening every cutting in the world, which is a bigger change than they
+       are worth — so the bar is a small share rather than none. */
+  const STEP_BAR = 0.5;
+  const steps = [];
+  for (const s of GOLDEN_SEEDS) {
+    const w = buildWorld({ seed: s.seed, size: s.size, force: s.force, ox: s.ox, oz: s.oz });
+    const { Hs, FLG, NX, NZ } = w;
+    const onT = (i, j) => (FLG[i * NZ + j] & 4) !== 0;
+    const dry = (i, j) => (FLG[i * NZ + j] & 3) === 0;
+    let pairs = 0, over = 0, worst = 0, wet = 0;
+    for (let i = 0; i < NX; i++) {
+      for (let j = 0; j < NZ; j++) {
+        if (!onT(i, j)) continue;
+        for (const [di, dj] of D4) {
+          const ni = i + di, nj = j + dj;
+          if (ni < 0 || nj < 0 || ni >= NX || nj >= NZ || !onT(ni, nj)) continue;
+          if (ni < i || (ni === i && nj < j)) continue;
+          const d = Math.round(Math.abs(Hs[i * NZ + j] - Hs[ni * NZ + nj]) / V);
+          if (!dry(i, j) || !dry(ni, nj)) { if (d > 1) wet++; continue; }
+          pairs++;
+          if (d > 1) { over++; if (d > worst) worst = d; }
+        }
+      }
+    }
+    steps.push({ nm: s.nm, pct: 100 * over / pairs, worst, wet });
+  }
+  const jumpy = steps.filter((r) => r.pct > STEP_BAR || r.worst > 2);
+  say('and it never climbs more than a voxel at a time, bar the verge',
+      jumpy.length === 0,
+      steps.map((r) => r.nm + ' ' + r.pct.toFixed(2) + '% worst '
+        + (r.worst * V).toFixed(2) + ' m').join(', ')
+        + ', bar is ' + STEP_BAR + '% and 0.50 m; '
+        + steps.reduce((a, r) => a + r.wet, 0) + ' ford pairs excluded');
 
   return out;
 }
