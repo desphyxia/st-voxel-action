@@ -867,6 +867,61 @@ if (BROWSER_HALF) {
       check(bErrors.length === 0, 'BUILD: and neither renderer errors',
             bErrors.slice(0, 3).join(' | '));
 
+      /* ---------- BUILD: grass the frustum is allowed to reject (#51) ----------
+         The blades used to be one instanced cloud per window with culling
+         switched off, and it had to be: an InstancedMesh's bounding sphere in
+         three is its *blade's*, not its instances', so the whole cloud would
+         have vanished the moment the one blade at the origin left the view.
+         They are tiles now, each carrying a sphere measured from the blades
+         actually in it, and the point of the change is that a tile the camera
+         is not looking at stops being submitted.
+
+         So the cull is measured by taking it away. Count what a frame submits,
+         turn frustumCulled off on every tile, count again, and require the
+         second number to be higher by a real share of the grass. A check that
+         read only the first number would pass just as happily against the
+         single un-culled cloud this replaced, which is the failure it exists
+         to catch. */
+      const gcull = await bp.evaluate(() => {
+        const P = window.QSPLAY, tiles = [];
+        P.scene.traverse((o) => { if (o.userData.kind === 'grass') tiles.push(o); });
+        const scene = tiles.reduce((a, o) => a + o.count * (o.geometry.index.count / 3), 0);
+        P.draw();
+        const culled = P.draws.triangles;
+        /* Does each tile's sphere actually hold its blades — base and tip, the
+           tip taken at the tallest the shader can stretch one to? A sphere that
+           does not is a tile culled while part of it is still on screen, which
+           is a hole in the ground rather than a saving. */
+        const m = new window.THREE.Matrix4();
+        let blades = 0, outside = 0;
+        for (const o of tiles) {
+          const bs = o.geometry.boundingSphere;
+          if (!bs || !o.frustumCulled) { outside += o.count; blades += o.count; continue; }
+          const r2 = bs.radius * bs.radius;
+          for (let i = 0; i < o.count; i++) {
+            o.getMatrixAt(i, m); blades++;
+            const e = m.elements, dx = e[12] - bs.center.x, dz = e[14] - bs.center.z;
+            const dy = e[13] - bs.center.y, ty = e[13] + e[5] * 1.3 - bs.center.y;
+            if (dx * dx + dy * dy + dz * dz > r2) outside++;
+            else if (dx * dx + ty * ty + dz * dz > r2) outside++;
+          }
+        }
+        for (const o of tiles) o.frustumCulled = false;
+        P.draw();
+        const all = P.draws.triangles;
+        for (const o of tiles) o.frustumCulled = true;
+        return { tiles: tiles.length, scene, culled, all, blades, outside };
+      });
+      check(gcull.tiles > 4 && gcull.blades > 0 && gcull.outside === 0,
+            'BUILD: the grass is in tiles, each with bounds that hold its blades',
+            `${gcull.tiles} tiles over ${gcull.blades.toLocaleString()} blades, `
+            + `${gcull.outside} outside the sphere they are culled against`);
+      check(gcull.all - gcull.culled > gcull.scene * 0.2,
+            'BUILD: and a frame only pays for the tiles the camera holds',
+            `${gcull.scene.toLocaleString()} grass triangles in the scene, `
+            + `${(gcull.all - gcull.culled).toLocaleString()} of them never submitted `
+            + `— ${(100 * (gcull.all - gcull.culled) / gcull.scene).toFixed(0)}%`);
+
       /* ---------- BUILD: the mesh follows an edit (#12) ----------
          The node half asserts that meshChunk answers differently once a voxel
          is gone. What only the page can answer is whether the *scene* followed:

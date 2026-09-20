@@ -774,23 +774,23 @@ const BIOMES = [
  {k:'meadow',nm:'Meadowlands',t:0.58,m:0.66,c:'#6b9a45',ds:'Broadleaf stands, meandering rivers, boulder fields. The tutorial biome and the one the palette is calibrated against.',mt:'base 3 m · hills 1–3 m · rivers common',
   surf:PAL.MEADOW_SURF,soil:PAL.MEADOW_SOIL,rock:PAL.MEADOW_ROCK,bed:PAL.MEADOW_BED,
   mat:{surf:MAT.GRASS,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
-  gr:{d:0.9,c:0x86ab4f,dry:0xb6a35a,h:[0.30,0.28]},tree:{t:'broad',d:0.9},base:3,hill:3,canyon:0.1,col:0.05},
+  gr:{d:3.4,c:0x86ab4f,dry:0xb6a35a,h:[0.17,0.14]},tree:{t:'broad',d:0.9},base:3,hill:3,canyon:0.1,col:0.05},
  {k:'mesa',nm:'Redrock Mesa',t:0.82,m:0.20,c:'#c08a52',ds:'Stacked sandstone, dry washes, hoodoos. Canyons and arcs are generated here more than anywhere else.',mt:'base 6 m · hills 1–2 m · canyons 3–5 m',
   surf:PAL.MESA_SURF,soil:PAL.MESA_SOIL,rock:PAL.MESA_ROCK,bed:PAL.MESA_BED,
   mat:{surf:MAT.SAND,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
-  gr:{d:0.35,c:0xc0a760,dry:0xd8c07a,h:[0.26,0.22]},tree:{t:'scrub',d:0.25},base:6,hill:2,canyon:0.85,col:0.5},
+  gr:{d:1.3,c:0xc0a760,dry:0xd8c07a,h:[0.15,0.12]},tree:{t:'scrub',d:0.25},base:6,hill:2,canyon:0.85,col:0.5},
  {k:'fen',nm:'Boreal Fen',t:0.40,m:0.90,c:'#4a7a4e',ds:'Peat shelves, standing water, black conifers and reed beds. Wide slow water, poor footing.',mt:'base 2 m · hills 1 m · water 4–8 m wide',
   surf:PAL.FEN_SURF,soil:PAL.FEN_SOIL,rock:PAL.FEN_ROCK,bed:PAL.FEN_BED,
   mat:{surf:MAT.GRASS,soil:MAT.PEAT,rock:MAT.ROCK,bed:MAT.PEAT},
-  gr:{d:1.0,c:0x5f8a48,dry:0x7d8a3e,h:[0.55,0.35]},tree:{t:'conifer',d:0.8},base:2,hill:1,canyon:0,col:0},
+  gr:{d:3.8,c:0x5f8a48,dry:0x7d8a3e,h:[0.22,0.17]},tree:{t:'conifer',d:0.8},base:2,hill:1,canyon:0,col:0},
  {k:'ash',nm:'Ashfall Barrens',t:0.90,m:0.48,c:'#5a504a',ds:'Basalt columns, fissures and magma seams under a grey crust. Vertical cover everywhere, nothing to eat.',mt:'base 4 m · columns 2–4 m · magma seams',
   surf:PAL.ASH_SURF,soil:PAL.ASH_SOIL,rock:PAL.ASH_ROCK,bed:PAL.ASH_BED,
   mat:{surf:MAT.ASH,soil:MAT.ASH,rock:MAT.BASALT,bed:MAT.BASALT},
-  gr:{d:0.3,c:0x6b5a50,dry:0xd2642a,h:[0.24,0.2]},tree:{t:'snag',d:0.3},base:4,hill:2,canyon:0.3,col:0.9},
+  gr:{d:1.1,c:0x6b5a50,dry:0xd2642a,h:[0.13,0.11]},tree:{t:'snag',d:0.3},base:4,hill:2,canyon:0.3,col:0.9},
  {k:'frost',nm:'Frostmoor',t:0.12,m:0.44,c:'#cfd9e2',ds:'Snow over hard rock, frozen shelves, wind-stripped ridges. Tracks show, and so do you.',mt:'base 5 m · hills 2–3 m · ice shelves',
   surf:PAL.FROST_SURF,soil:PAL.FROST_SOIL,rock:PAL.FROST_ROCK,bed:PAL.FROST_BED,
   mat:{surf:MAT.SNOW,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.ICE},
-  gr:{d:0.45,c:0xc8d6de,dry:0x9fb4bf,h:[0.26,0.22]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
+  gr:{d:1.7,c:0xc8d6de,dry:0x9fb4bf,h:[0.14,0.11]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
 ];
 
 /** Picks one biome out of a blend, sharpened so blends still read as somewhere. */
@@ -2866,37 +2866,76 @@ function mixHex(h1,h2,t){
   var boxGeo=new THREE.BoxGeometry(V,V,V);
   (function(){var w=new Float32Array(boxGeo.attributes.position.count*3);w.fill(1);
     boxGeo.setAttribute('color',new THREE.BufferAttribute(w,3));})();
+  /* The blade is the build's (docs/play/index.html), and the two are still
+     duplicated rather than shared for the reason the note below the water
+     shader gives. Five vertices and three triangles: x is the side (-1 / +1),
+     y is t along the blade, and the shape — a cubic Bezier from the blade's
+     height, lean and how far the wind has pushed it — is built per vertex in
+     the shader. The biome rows ask for a 0.2 m blade now rather than a 0.55 m
+     one, and at that height the seven-vertex strip this replaced was spending
+     its middle pair inside a pixel. */
+  var GRASS_W=0.060;
   var bladeGeo=(function(){
-    var g=new THREE.BufferGeometry(),w0=0.055,w1=0.040,w2=0.024;
+    var g=new THREE.BufferGeometry();
     g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(
-      [-w0,0,0, w0,0,0, -w1,0.35,0, w1,0.35,0, -w2,0.70,0, w2,0.70,0, 0,1,0]),3));
-    g.setIndex([0,1,2, 1,3,2, 2,3,4, 3,5,4, 4,5,6]); return g;
+      [-1,0,0, 1,0,0, -1,0.52,0, 1,0.52,0, 0,1,0]),3));
+    g.setIndex([0,1,2, 1,3,2, 2,3,4]); return g;
   })();
   var GRASS_VS=[
     'attribute float aPhase; attribute float aTint; attribute vec3 aCol; attribute vec3 aDry;',
-    'uniform float uTime; uniform vec3 uP0; uniform vec3 uP1;',
+    'uniform float uTime; uniform vec3 uP0; uniform vec3 uP1; uniform float uW;',
     'uniform vec2 uWind; uniform float uGust;',
-    'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD;',
-    'void main(){ vec3 p=position; float h=p.y; vH=h; vT=aTint; vC=aCol; vD=aDry;',
-    ' vec4 wb=modelMatrix*instanceMatrix*vec4(0.0,0.0,0.0,1.0);',
-    ' float gust=sin(dot(wb.xz,uWind)*0.09-uTime*0.85);',
-    ' float w=(sin(uTime*1.5+dot(wb.xz,uWind)*0.5+aPhase)*0.45+gust*0.40)*(0.55+0.75*uGust);',
-    ' vec2 bend=uWind*(w*0.34)+vec2(-uWind.y,uWind.x)*(w*0.09);',
-    ' vec2 d0=wb.xz-uP0.xz; float l0=length(d0);',
-    ' if(l0<1.15) bend+=normalize(d0+vec2(0.001))*(1.0-l0/1.15)*0.85;',
-    ' vec2 d1=wb.xz-uP1.xz; float l1=length(d1);',
-    ' if(l1<1.15) bend+=normalize(d1+vec2(0.001))*(1.0-l1/1.15)*0.85;',
-    ' vec4 wp=modelMatrix*instanceMatrix*vec4(p,1.0);',
-    ' float k=h*h; wp.xz+=bend*k; wp.y-=length(bend)*k*0.12;',
-    ' gl_Position=projectionMatrix*viewMatrix*wp; }'].join('\n');
+    'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD; varying vec3 vN;',
+    'float h11(vec2 q){ return fract(sin(dot(q,vec2(127.1,311.7)))*43758.545); }',
+    'vec3 bez(vec3 a,vec3 b,vec3 c,vec3 d,float t){ float u=1.0-t;',
+    ' return u*u*u*a+3.0*u*u*t*b+3.0*u*t*t*c+t*t*t*d; }',
+    'vec3 bezT(vec3 a,vec3 b,vec3 c,vec3 d,float t){ float u=1.0-t;',
+    ' return 3.0*u*u*(b-a)+6.0*u*t*(c-b)+3.0*t*t*(d-c); }',
+    'vec3 rodr(vec3 v,vec3 ax,float a){',
+    ' return v*cos(a)+cross(ax,v)*sin(a)+ax*dot(ax,v)*(1.0-cos(a)); }',
+    'void main(){ float t=position.y; vH=t; vT=aTint; vC=aCol; vD=aDry;',
+    ' vec3 base=(modelMatrix*instanceMatrix*vec4(0.0,0.0,0.0,1.0)).xyz;',
+    ' float hh=length(instanceMatrix[1].xyz);',
+    ' vec3 own=normalize(instanceMatrix[2].xyz+vec3(1e-5));',
+    /* the tuft this blade is part of: one lean and one height for all of it */
+    ' vec2 cid=floor(base.xz*2.0); float ca=h11(cid)*6.2831;',
+    ' vec3 dir=normalize(mix(own,vec3(cos(ca),0.0,sin(ca)),0.68)+vec3(1e-5));',
+    ' hh*=0.70+h11(cid+11.3)*0.60;',
+    ' float gust=sin(dot(base.xz,uWind)*0.09-uTime*0.85);',
+    ' float w=(sin(uTime*1.5+dot(base.xz,uWind)*0.5+aPhase)*0.45+gust*0.40)*(0.55+0.75*uGust);',
+    ' float tilt=clamp(0.24+w*0.18,0.0,0.72);',
+    ' vec3 up=vec3(0.0,1.0,0.0);',
+    ' vec3 lean=normalize(dir*0.55+vec3(uWind.x,0.0,uWind.y)*0.45+vec3(1e-5));',
+    ' vec3 p0=base, p1=base+up*hh*0.34;',
+    ' vec3 p2=base+up*hh*0.70+lean*(tilt*hh*0.34);',
+    ' vec3 p3=base+up*hh*(1.0-0.34*tilt)+lean*(tilt*hh);',
+    ' vec3 ctr=bez(p0,p1,p2,p3,t);',
+    ' vec3 tn=normalize(bezT(p0,p1,p2,p3,t)+vec3(1e-5));',
+    ' vec3 sv=normalize(cross(tn,dir)+vec3(1e-5));',
+    ' vec3 p=ctr+sv*(position.x*uW*0.5*(1.0-t*0.62));',
+    ' vec2 d0=base.xz-uP0.xz; float l0=length(d0);',
+    ' if(l0<1.15){ float f=(1.0-l0/1.15)*t*t;',
+    '   p.xz+=normalize(d0+vec2(0.001))*(f*hh*1.20); p.y-=f*hh*0.70; }',
+    ' vec2 d1=base.xz-uP1.xz; float l1=length(d1);',
+    ' if(l1<1.15){ float f=(1.0-l1/1.15)*t*t;',
+    '   p.xz+=normalize(d1+vec2(0.001))*(f*hh*1.20); p.y-=f*hh*0.70; }',
+    ' vN=normalize(rodr(normalize(cross(sv,tn)),tn,position.x*0.75));',
+    ' gl_Position=projectionMatrix*viewMatrix*vec4(p,1.0); }'].join('\n');
   /* The dry colour is per blade, not one uniform for the whole world. It used
      to be a hardcoded 0xb6a35a — the meadow value — so dry blades on the mesa
      and in the fen were meadow-coloured, and the gr.dry column every biome row
      carries had never been read by anything (issue #39). */
   var GRASS_FS=[
-    'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD;',
-    'void main(){ vec3 c=mix(vC*0.34,vC,vH*0.85+0.15); c=mix(c,vD,vT*0.7);',
-    ' gl_FragColor=vec4(c,1.0); }'].join('\n');
+    'uniform vec3 uSun;',
+    'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD; varying vec3 vN;',
+    'void main(){ vec3 c=mix(vC*0.42,vC,vH*0.80+0.20); c=mix(c,vD,vT*0.7);',
+    ' vec3 n=normalize(vN);',
+    /* abs(), not max(): a blade is a surface with no inside, and the back of
+       one is as lit as the front. The second term is light coming *through*
+       it, which is most of what makes a sunlit field read as a field. */
+    ' vec3 lit=c*(0.60+abs(dot(n,uSun))*0.58);',
+    ' lit+=c*(max(0.0,dot(-n,uSun))*vH*0.55);',
+    ' gl_FragColor=vec4(lit,1.0); }'].join('\n');
   var WATER_VS=['uniform float uTime;','attribute float aDepth; attribute float aFoam; attribute vec2 aFlow;',
     'varying float vW; varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
     'void main(){ vec3 p=position; vD=aDepth; vF=aFoam; vFl=aFlow;',
@@ -2959,7 +2998,8 @@ function mixHex(h1,h2,t){
       var geo=bladeGeo.clone();
       gmat=new THREE.ShaderMaterial({side:THREE.DoubleSide,
         uniforms:{uTime:{value:0},uP0:{value:new THREE.Vector3(1e5,0,1e5)},uP1:{value:new THREE.Vector3(1e5,0,1e5)},
-                  uWind:{value:new THREE.Vector2(0.72,0.69)},uGust:{value:0.6}},
+                  uWind:{value:new THREE.Vector2(0.72,0.69)},uGust:{value:0.6},uW:{value:GRASS_W},
+                  uSun:{value:new THREE.Vector3(-16,26,12).normalize()}},
         vertexShader:GRASS_VS,fragmentShader:GRASS_FS});
       grass=new THREE.InstancedMesh(geo,gmat,gn);
       var qq=new THREE.Quaternion(),eu=new THREE.Euler(),sv=new THREE.Vector3(),tv=new THREE.Vector3();
