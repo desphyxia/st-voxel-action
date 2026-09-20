@@ -79,7 +79,7 @@ import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, meshSuite,
-         carveSuite, foliageSuite, trailSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
@@ -283,6 +283,21 @@ if (NODE_HALF) {
             + '— update ONE_SIDED in tools/lib/consume.mjs if that is intended'
           : `${seen.oneSided.length} fields read by one page and not the other, as recorded`);
 }
+
+/* ---------- CHUNK: a chunk alone is the ground its neighbour sees, issue #13 ---------- */
+if (NODE_HALF) for (const r of chunkSuite()) check(r.ok, `CHUNK: ${r.label}`, r.detail);
+
+/* ---------- FIELD: loaded chunks answer as one world, issue #13 ---------- */
+if (NODE_HALF) for (const r of fieldSuite()) check(r.ok, `FIELD: ${r.label}`, r.detail);
+
+/* ---------- PROPS: only the faces that can be seen, issue #51 ---------- */
+if (NODE_HALF) for (const r of propSuite()) check(r.ok, `PROPS: ${r.label}`, r.detail);
+
+/* ---------- SEAM: a streamed world draws without a visible join, issue #13 ---------- */
+if (NODE_HALF) for (const r of seamSuite()) check(r.ok, `SEAM: ${r.label}`, r.detail);
+
+/* ---------- STREAM: which chunk to build next, and when, issue #13 ---------- */
+if (NODE_HALF) for (const r of streamSuite()) check(r.ok, `STREAM: ${r.label}`, r.detail);
 
 /* ---------- WALK: the routed trail fits a body, issue #45 ---------- */
 if (NODE_HALF) for (const r of trailSuite()) check(r.ok, `WALK: ${r.label}`, r.detail);
@@ -1250,6 +1265,202 @@ if (BROWSER_HALF) {
       check(bErrors.length === 0, 'NET: no errors in either window', bErrors.slice(0, 3).join(' | '));
       await peerPage.close();
       await bp.close();
+
+      /* ---------- STREAM: a world with no edge, issue #13 ----------
+         The node half proves the chunks agree, that the field answers what one
+         collider answers, that the scheduler stays ahead of a run, and that a
+         seam is not drawn twice. None of it says the *page* is wired to any of
+         it — the same gap BUILD exists to close for the controller.
+
+         Its own page, because `?stream=1` is the flag a person would use and
+         because a streamed world replaces the world: run on the page above, it
+         would leave every check before it looking at something else.
+
+         Driven through QSPLAY.run rather than wall clock, like everything else
+         here. That is also why the page pumps the stream from its tick and not
+         from its render loop: a gate that never draws a frame would otherwise
+         walk straight into ground nobody had decided, and the wall would have
+         read as the controller's fault. */
+      /* ---------- STREAM: the control that turns it on, issue #13/#51 ----------
+         `?stream=1` is not reachable in the published artifact — the page runs
+         in an iframe whose own URL carries no query — so the button below the
+         view is the only way a player gets to a world with no edge, and it is
+         what has to be asserted. Off at boot, on when pressed, and the world
+         it grows is a different one from the same seed. */
+      const cp = await browser.newPage({ viewport: { width: 1100, height: 700 } });
+      cp.setDefaultTimeout(PATIENCE);
+      const cErrors = [];
+      cp.on('pageerror', (e) => cErrors.push(e.message));
+      await cp.goto(`file://${bfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      await cp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      /* The in-view button, first and on its own, because it is the only one
+         reachable in the state the build opens in: the stage fills the
+         viewport and the page furniture is behind it. A control that is only
+         below the stage is not a control, which is how the first version of
+         this shipped. */
+      const inView = await cp.evaluate(async () => {
+        const P = window.QSPLAY;
+        const t = document.getElementById('streamtog');
+        const st = document.querySelector('#stage');
+        const covered = st.classList.contains('maxed') || document.fullscreenElement === st;
+        const r = t.getBoundingClientRect();
+        const onScreen = r.width > 0 && r.height > 0 && r.top >= 0
+          && r.bottom <= (window.innerHeight || 1e9);
+        t.click();
+        await new Promise((x) => setTimeout(x, 50));
+        const on = { streaming: P.streaming, pressed: t.getAttribute('aria-pressed'),
+                     chunks: P.chunks, grounded: P.actor.grounded };
+        t.click();
+        await new Promise((x) => setTimeout(x, 50));
+        return { covered, onScreen, on, off: { streaming: P.streaming,
+                 pressed: t.getAttribute('aria-pressed') } };
+      });
+      check(inView.covered && inView.onScreen,
+            'STREAM: the switch is reachable in the view the build opens in',
+            inView.covered ? 'stage fills the viewport, and the Stream button is on screen inside it'
+                           : 'stage was not filling the viewport, so this proved nothing');
+      check(inView.on.streaming === true && inView.on.pressed === 'true'
+            && inView.on.chunks && inView.on.chunks.loaded > 1 && inView.on.grounded
+            && inView.off.streaming === false && inView.off.pressed === 'false',
+            'STREAM: and pressing it there turns streaming on and off again',
+            `${inView.on.chunks ? inView.on.chunks.loaded : 0} chunks loaded while on, `
+            + 'standing, and back to one window after');
+
+      const toggled = await cp.evaluate(async () => {
+        const P = window.QSPLAY;
+        const b = document.getElementById('streambtn');
+        const before = { on: P.streaming, label: b.textContent, pressed: b.getAttribute('aria-pressed'),
+                         boxes: P.boxCount, seed: P.seed };
+        b.click();
+        await new Promise((r) => setTimeout(r, 50));
+        const after = { on: P.streaming, label: b.textContent, pressed: b.getAttribute('aria-pressed'),
+                        chunks: P.chunks, grounded: P.actor.grounded, seed: P.seed };
+        b.click();
+        await new Promise((r) => setTimeout(r, 50));
+        return { before, after, back: { on: P.streaming, label: b.textContent, seed: P.seed } };
+      });
+      check(toggled.before.on === false && /off/.test(toggled.before.label)
+            && toggled.before.pressed === 'false',
+            'STREAM: the build opens on one window, with streaming offered and off',
+            `the page button reads "${toggled.before.label}"`);
+      check(toggled.after.on === true && /on/.test(toggled.after.label)
+            && toggled.after.pressed === 'true' && toggled.after.chunks
+            && toggled.after.chunks.loaded > 1 && toggled.after.grounded,
+            'STREAM: and pressing it grows a world with no edge, standing',
+            `"${toggled.after.label}", ${toggled.after.chunks ? toggled.after.chunks.loaded : 0} chunks `
+            + `loaded, same seed ${toggled.after.seed}`);
+      check(toggled.back.on === false && /off/.test(toggled.back.label)
+            && toggled.back.seed === toggled.before.seed,
+            'STREAM: and pressing it again comes back to the one window it started in',
+            `"${toggled.back.label}", seed ${toggled.back.seed}`);
+      check(cErrors.length === 0, 'STREAM: and the swap errors nothing',
+            cErrors.slice(0, 3).join(' | '));
+      await cp.close();
+
+      const sp = await browser.newPage({ viewport: { width: 900, height: 600 } });
+      sp.setDefaultTimeout(PATIENCE);
+      const sErrors = [];
+      sp.on('pageerror', (e) => sErrors.push(e.message));
+      sp.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) sErrors.push(m.text()); });
+      await sp.goto(`file://${bfile}?stream=1`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      await sp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      const streamed = await sp.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS;
+        const a0 = P.actor;
+        const boot = { on: P.streaming, chunks: P.chunks, grounded: a0.grounded,
+                       y: a0.y, quads: P.meshQuads };
+        /* A body that picks its way, not one that holds a key.
+ 
+           The first version held KeyD for 15 s, then KeyS. On the golden seed
+           that walks into a lake and then into a machine: it ended `swimming`
+           in 0.875 m of water at (27.9, -27.4) having covered 39 m, and the
+           other leg ended `dead: struck`. Both read as streaming failing to
+           keep up, and neither was — held the other way the same build walks
+           78 m and crosses to chunk (-2, -2) without complaint.
+ 
+           So this turns instead, the way the node soak's wanderer does and for
+           the same reason: the question is whether the ground holds together
+           across chunks, not whether a body walking blind into a lake drowns.
+           Water and machines are the controller's business and are pinned
+           elsewhere. */
+        const KEYS = ['KeyW', 'KeyA', 'KeyD', 'KeyS'];
+        const seen = new Set();
+        let lowest = Infinity, inside = 0, peak = 0, deaths = 0, turns = 0;
+        let k = 0, held = KEYS[0];
+        P.input.press(held);
+        let last = { x: P.actor.x, z: P.actor.z };
+        for (let i = 0; i < 4800; i++) {
+          P.run(1);
+          const a = P.actor, c = QS.chunkAt(a.x, a.z);
+          seen.add(c.cx + ',' + c.cz);
+          if (a.y < lowest) lowest = a.y;
+          if (QS.embedded(P.collider, a)) inside++;
+          if (P.chunks.loaded > peak) peak = P.chunks.loaded;
+          if (i % 120 === 119) {
+            /* Turn when the way ahead stops being ground to walk on: too
+               little progress, water, or having been killed. */
+            const moved = Math.hypot(a.x - last.x, a.z - last.z);
+            const wet = !!a.inWater || !!a.swimming;
+            if (a.dead) { deaths++; P.respawn(); }
+            if (moved < 3 || wet || a.dead) {
+              P.input.release(held);
+              k = (k + 1) % KEYS.length; held = KEYS[k]; turns++;
+              P.input.press(held);
+            }
+            last = { x: P.actor.x, z: P.actor.z };
+          }
+        }
+        P.input.release(held);
+        for (let i = 0; i < 90; i++) P.run(1);
+        const a1 = P.actor;
+        return { boot, seen: seen.size, lowest, inside, peak, deaths, turns,
+                 end: { x: a1.x, z: a1.z, y: a1.y, grounded: a1.grounded },
+                 chunks: P.chunks, quads: P.meshQuads,
+                 nodesMatch: P.chunks.nodes === P.chunks.loaded };
+      });
+      check(streamed.boot.on && streamed.boot.grounded && streamed.boot.quads > 0,
+            'STREAM: the build opens on a world with no edge',
+            `${streamed.boot.chunks.loaded} chunks loaded, ${streamed.boot.quads} quads, `
+            + `character standing at y ${streamed.boot.y.toFixed(2)}`);
+      check(streamed.seen >= 4 && streamed.inside === 0 && streamed.lowest > -2,
+            'STREAM: and walking across chunk after chunk neither falls through nor sticks',
+            `${streamed.seen} chunks walked in 80 s over ${streamed.turns} turns, `
+            + `${streamed.inside} ticks inside the ground, lowest y `
+            + `${streamed.lowest.toFixed(2)}, ended at `
+            + `(${streamed.end.x.toFixed(0)}, ${streamed.end.z.toFixed(0)}) `
+            + `${streamed.end.grounded ? 'standing' : 'in the air'}`);
+      check(streamed.chunks.dropped > 0 && streamed.chunks.built > streamed.chunks.loaded
+            && streamed.nodesMatch,
+            'STREAM: and the world behind is let go rather than kept',
+            `${streamed.chunks.built} built, ${streamed.chunks.dropped} let go, `
+            + `${streamed.chunks.loaded} held (peak ${streamed.peak}), and the scene holds `
+            + `${streamed.chunks.nodes} of them`);
+      check(sErrors.length === 0, 'STREAM: and no errors while it streams',
+            sErrors.slice(0, 3).join(' | '));
+
+      /* ---------- WORKER: generation off the main thread, issue #13 ----------
+         The hitch #13 asks to be rid of is a 86-290 ms freeze every time a
+         chunk arrives, so the only thing worth asserting is *what the main
+         thread still pays* once a worker is generating. Reported either way,
+         because a page's CSP may refuse a blob: worker and a refusal does not
+         arrive as an exception — the build falls back and keeps playing, and
+         the gate should say which of the two it measured rather than fail on
+         an environment question. */
+      const worker = streamed.chunks;
+      if (worker.workers > 0 && worker.offThread > 0) {
+        check(worker.gen > worker.deliver + worker.take,
+              'WORKER: generating a chunk costs the main thread less than doing it',
+              `${worker.offThread} windows off this thread: ${worker.gen.toFixed(0)} ms to `
+              + `generate, ${worker.deliver.toFixed(0)} ms to deliver and `
+              + `${worker.take.toFixed(0)} ms to adopt — ${(worker.deliver + worker.take).toFixed(0)} ms `
+              + `on this thread against ${worker.gen.toFixed(0)} doing it here`);
+      } else {
+        check(true, 'WORKER: no worker here, and the build streams without one',
+              worker.poolFailed ? 'the pool was refused or never answered — main-thread fallback'
+                                : 'no worker started; the stream ran on the main thread');
+      }
+      await sp.screenshot({ path: join(OUT, 'play-streamed.png') });
+      await sp.close();
     }
 
     /* ---------- LOOK: does the world still look like itself? (#29) ----------

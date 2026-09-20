@@ -27,9 +27,9 @@ export const END = '/* QS-BUNDLE-END */';
 /** Dependency order, per directory. A module may only use names above it. */
 const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'palette', 'rng', 'biomes', 'field', 'erosion', 'region', 'ground', 'routes',
-              'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index'],
-  'src/mesh': ['greedy', 'carve'],
-  'src/sim': ['collider', 'combat', 'lattice', 'loot', 'actor', 'enemy', 'camera', 'input'],
+              'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index', 'chunk'],
+  'src/mesh': ['greedy', 'carve', 'propmesh'],
+  'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'loot', 'actor', 'enemy', 'camera', 'input'],
   'src/net': ['transport', 'session'],
 };
 
@@ -40,14 +40,19 @@ const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERI
                     index and restyle without regenerating — issue #28 */
                  'PALETTE', 'PAL', 'palR', 'palG', 'palB', 'shadeValue',
                  /* the pinned math, so the smoke test can compare it across engines */
-                 'sin', 'cos', 'exp', 'hyp'];
+                 'sin', 'cos', 'exp', 'hyp',
+                 /* the chunked world, for the build's streamed renderer — issue #13 */
+                 'chunkWorld', 'chunkCentre', 'SKIRT', 'WINDOW'];
 
 /** The greedy mesher, behind the build's renderer flag — issue #12. */
-const MESH_API = ['meshChunk', 'chunkOccupancy', 'openAir', 'surfaceAt', 'LEVELS',
-  'isCut', 'solidVox', 'carve', 'clearEdits', 'chunkGrid', 'BITE', 'BITE_R'];
+const MESH_API = ['meshChunk', 'chunkOccupancy', 'innerChunk', 'openAir', 'surfaceAt', 'LEVELS',
+  'isCut', 'solidVox', 'carve', 'clearEdits', 'chunkGrid', 'BITE', 'BITE_R',
+  /* props without the faces nobody can see — issue #51 */
+  'meshProps', 'solidKeys'];
 
 /** Everything the playable build needs on top of it: the simulation and the wire. */
-const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld',
+const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'softProp',
+                 'chunkAt', 'makeChunkField', 'makeStream', 'STREAM',
                  'ACTOR', 'TICK', 'RUN', 'GRAVITY', 'JUMP_V', 'JUMP_APEX',
                  'makeActor', 'placeOnGround', 'embedded', 'step', 'display', 'applyDisplay',
                  'PHASE', 'phase', 'swingProgress', 'dodging', 'invulnerable',

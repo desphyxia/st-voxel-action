@@ -7,7 +7,7 @@ progression on — see `docs/PROTOTYPE.md` for what lands next and in what order
 | Path | What it is |
 | --- | --- |
 | `gen/` | The seeded terrain generator. Plain ES modules: no DOM, no three.js, no renderer. |
-| `sim/` | Collision, the character controller, the isometric camera, the input table, combat, the enemy, the socket lattice and what is lying on the ground. Same rules: no DOM, no three.js, no renderer. |
+| `sim/` | Collision, the character controller, the isometric camera, the input table, combat, the enemy, the socket lattice, what is lying on the ground, and the chunked world and its scheduler. Same rules: no DOM, no three.js, no renderer. |
 | `net/` | The transport interface, a loopback double, and the host and guest sessions. Same rules again. |
 
 ## src/gen
@@ -87,8 +87,32 @@ an anchor cell and reaches past it, and reads the surface through a lookup that
 clamps at the window edge. Measured across seven seeds and six offsets, **4 m** is
 the skirt — inside it two windows agree voxel for voxel, at 3 m they differ by eight
 voxels out of 2.4 million. That band is exactly the overlap chunk streaming (#13)
-will have to generate and throw away. The REGION checks in `tools/smoke.mjs` assert
-all of this.
+generates and throws away. The REGION checks in `tools/smoke.mjs` assert all of this.
+
+**The skirt result holds for windows of the same size, and that qualifier is not
+cosmetic.** It went unstated here for as long as nothing generated a second size.
+A 32 m window and a 64 m window centred on the same point disagree on **87% of the
+cells they share**, 15.75 m deep, nowhere near a rim — the generator is not
+size-invariant. So streaming fixes the window size once and for all: a chunk is
+`CHUNK` 32 m, its window is `WINDOW` 40 m, and chunks differ by offset and by
+nothing else. `src/gen/chunk.mjs` exists to hold that rule; the CHUNK checks assert
+it, including that the two sizes really do disagree, so the rule cannot quietly
+stop being necessary without someone noticing.
+
+### Streaming, in three layers
+
+| | |
+| --- | --- |
+| `gen/chunk.mjs` | **what** to generate: one chunk's window, at the one size. |
+| `sim/chunks.mjs` | **what is solid** across the chunks that are loaded. Each keeps its own *unwalled* collider in its own local coordinates; the world's real edge is imposed here, and ground that is not loaded is a wall rather than a hole. |
+| `sim/stream.mjs` | **which chunk next, and when to let one go.** It builds nothing itself — it hands out work and takes delivery, so a worker pool and a test with a fake clock are the same shape of caller. |
+
+One number decides the shape of all of it: **a 40 m window costs 57–292 ms to
+generate, and a 60 Hz frame is 16.7 ms.** A chunk does not fit in a frame, so
+generation cannot be fitted into a frame budget — it has to leave the main thread.
+The loader is not in danger of being outrun (a body crosses a chunk in eight
+seconds and a new column is under 1.5 s of work); the problem is entirely that the
+work arrives in lumps a dozen frames wide.
 
 ### Three things to know before editing
 

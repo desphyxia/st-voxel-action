@@ -210,6 +210,7 @@
         <span class="tgrp r">
           <button id="zoomin" type="button" title="Zoom in" aria-label="zoom in">+</button>
           <button id="meshtog" type="button" title="Swap the terrain renderer: a greedy mesh with baked occlusion, or instanced boxes">Boxes</button>
+          <button id="streamtog" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window — a world with no edge, and a different world from the same seed">Stream</button>
         </span>
       </div>
       <div class="vitals" id="vitals">
@@ -238,7 +239,10 @@
         the lattice below. It opens filling the window; <b>Esc</b> or <b>Exit</b> drops back to
         the page and the lattice, and <b>Fullscreen</b> goes to the real thing. <b>New</b> at the top of
         the view grows a fresh world from a random seed, and <b>Boxes</b>/<b>Mesh</b> swaps the terrain
-        renderer.
+        renderer. <b>Stream</b> at the top of the view &mdash; and <b>Streaming</b> below it &mdash;
+        replaces the one 64 m window with 32 m chunks that load and unload as you walk, so the
+        world has no edge. It is off by default, and it grows a <i>different</i> world from the
+        same seed, because a 40 m window and a 64 m one disagree about the ground between them.
         <b>On a phone</b>, hold it sideways: your left thumb is a stick wherever you put it, and the
         buttons on the right cut, dodge and jump.
         Click the view first to give it the keyboard.</p>
@@ -247,6 +251,7 @@
       <button class="ctl" id="respawn" type="button">Respawn</button>
       <button class="ctl" id="hostbtn" type="button">Host a game</button>
       <button class="ctl" id="meshbtn" type="button" title="Swap the terrain renderer: a greedy mesh with baked occlusion, or instanced boxes">Boxes</button>
+      <button class="ctl" id="streambtn" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window. A world with no edge, from the same seed — and a different world, because the generator is not size-invariant.">Streaming: off</button>
       <button class="ctl" id="fullbtn" type="button">Fullscreen</button>
     </div>
     <p class="netstat" id="netstat">Playing alone. <b>Host a game</b> opens a second window on
@@ -344,7 +349,7 @@
 
 <!-- The generator and the simulation, bundled from src/. Generated — do not edit
      here: edit src/gen/*.mjs and src/sim/*.mjs, then run tools/bundle-gen.mjs. -->
-<script>
+<script id="qsbundle">
 /* QS-BUNDLE-BEGIN — generated from src/gen by tools/bundle-gen.mjs */
 (function(){
 "use strict";
@@ -2459,6 +2464,88 @@ function buildWorld(cfg) {
     G: w.G, OX: w.OX, OZ: w.OZ,
   };
 }
+/* ---------- src/gen/chunk.mjs ---------- */
+/**
+ * The world as chunks that can be generated and thrown away independently —
+ * issue #13, the part everything else in it stands on.
+ *
+ * ## Why a chunk is a window and not a slice
+ *
+ * `buildWorld` generates a *window*: a square of ground centred on (ox, oz).
+ * Streaming needs each chunk generated alone, at any time, in any order, on any
+ * thread — and the result has to be the same ground the chunk beside it thinks
+ * is there. Two things decide whether that is possible, and only one of them
+ * was written down.
+ *
+ * **Same-size windows at different offsets agree.** That is the skirt result
+ * #41 measured and `src/README.md` records: two windows onto the same ground
+ * differ only within a few voxels of a rim.
+ *
+ * **Windows of different sizes do not.** This is not in the issue and was not
+ * recorded anywhere. A 32 m window and a 64 m window centred on the same point
+ * disagree on 14,184 of the 16,384 cells they share — 87% — and the
+ * disagreement runs 15.75 m deep, nowhere near a rim. The generator is not
+ * size-invariant, and a chunk cut from a small window would be a different
+ * world from the same chunk cut from a large one.
+ *
+ * So the rule this module exists to enforce is: **every streamed window is the
+ * same size, always.** Chunks differ by offset and by nothing else. That is not
+ * a limitation to work around later; it is the condition under which the skirt
+ * guarantee means anything at all.
+ *
+ * ## The numbers
+ *
+ * A chunk is 32 m (`CHUNK`). The window generated for it is 40 m — the chunk
+ * plus a 4 m skirt on every side, generated and discarded. Measured across the
+ * golden seeds, neighbouring 40 m windows 32 m apart are **identical on every
+ * cell they share**: not "differ by eight voxels at the rim", zero. At 48 m and
+ * 64 m the same test differs by 16 voxels within 0.25 m of a rim, which is the
+ * ordinary skirt effect — 40 m avoids even that, because the overlap between
+ * neighbours is exactly the two skirts and nothing of either chunk proper.
+ *
+ * No DOM, no three.js. This decides *what* to generate; it does not schedule,
+ * cache or draw anything, and it knows nothing about a player.
+ */
+
+
+
+/** The skirt generated on each side of a chunk and then thrown away, in metres. */
+const SKIRT = 4;
+
+/**
+ * The window generated for one chunk. Fixed for all time and for every chunk:
+ * two windows of different sizes are two different worlds, so this number is
+ * part of the world's identity in the way the seed is.
+ */
+const WINDOW = CHUNK + 2 * SKIRT;
+
+/** Where a chunk's centre sits in the world, in metres. */
+function chunkCentre(cx, cz) {
+  return { ox: cx * CHUNK, oz: cz * CHUNK };
+}
+
+/**
+ * Generate one chunk's window. The caller gets the whole 40 m of it — the skirt
+ * included — because the mesher needs a ring of neighbours to shade a seam and
+ * the collider needs somewhere to put the wall at the edge. What the caller
+ * must not do is *keep* anything from the skirt: that ground belongs to the
+ * neighbouring chunk, which will generate it identically.
+ */
+function chunkWorld(seed, cx, cz, force) {
+  const { ox, oz } = chunkCentre(cx, cz);
+  return buildWorld({ seed, size: WINDOW, force: force === undefined ? null : force, ox, oz });
+}
+
+/**
+ * Is this window cell part of the chunk proper, or is it skirt?
+ *
+ * The skirt is what two neighbours both generate, so keeping it from both is
+ * how a voxel gets drawn twice and a column gets its spans doubled.
+ */
+function inChunk(w, i, j) {
+  const pad = Math.round(SKIRT / (2 * w.half / w.NX));
+  return i >= pad && j >= pad && i < w.NX - pad && j < w.NZ - pad;
+}
 /* ---------- src/mesh/greedy.mjs ---------- */
 /**
  * Greedy meshing with baked per-face ambient occlusion — issue #12.
@@ -2550,6 +2637,21 @@ function solidVox(w, gi, gj, y) {
 }
 
 /**
+ * Where the chunk a streamed window owns begins, in window cells.
+ *
+ * A window generated for one chunk is `CHUNK` plus a skirt on every side, and
+ * only the middle `CHUNK` is that chunk's to draw — the skirt is the
+ * neighbour's ground, generated so this window's edge effects and its AO ring
+ * fall outside what it keeps. Drawing the whole window would put every seam's
+ * geometry in twice, and leaning on the window's own chunk grid would draw a
+ * 32 m square starting at the window's corner: the chunk, shifted by a skirt.
+ */
+function innerChunk(w) {
+  var k = Math.round((w.NX - CHUNK / V) / 2);
+  return { i: k, j: k };
+}
+
+/**
  * The solid volume of one chunk at 25 cm, from the spans — not from the voxels
  * the generator emitted. `pad` of 1 gives the AO and the face test a ring of
  * neighbours to read, so a chunk's edge is shaded by the chunk beside it.
@@ -2557,12 +2659,19 @@ function solidVox(w, gi, gj, y) {
  * Carved voxels are subtracted afterwards rather than tested per cell: edits
  * are sparse by nature, so walking the map costs what has been carved instead
  * of what has not.
+ *
+ * `org` overrides where the chunk starts, in **window cells**. Chunks are
+ * normally laid on the window's own grid from cell 0, which is right for a
+ * world that is a whole number of chunks across. A streamed window is not: it
+ * is a chunk plus a skirt on every side, so the chunk it owns begins
+ * `SKIRT / V` cells in, nowhere near a multiple of `CHUNK / V`.
+ * `innerChunk(w)` is that origin.
  */
-function chunkOccupancy(w, cx, cz, pad) {
+function chunkOccupancy(w, cx, cz, pad, org) {
   pad = pad === undefined ? 1 : pad;
   var side = Math.round(CHUNK / V);
   var nx = side + pad * 2, nz = side + pad * 2, ny = LEVELS;
-  var i0 = cx * side - pad, j0 = cz * side - pad;
+  var i0 = (org ? org.i : cx * side) - pad, j0 = (org ? org.j : cz * side) - pad;
   var occ = new Uint8Array(nx * nz * ny);
   var NZ = w.NZ, NX = w.NX;
   var a, b, base = 0;
@@ -2661,8 +2770,8 @@ function cornerAO(s1, s2, cor) { return (s1 && s2) ? 0 : 3 - (s1 + s2 + cor); }
  * key is material and the four AO corners packed together — faces only merge
  * when they would draw identically, which is what keeps the creases.
  */
-function meshChunk(w, cx, cz) {
-  var g = chunkOccupancy(w, cx, cz), open = openAir(g);
+function meshChunk(w, cx, cz, org) {
+  var g = chunkOccupancy(w, cx, cz, undefined, org), open = openAir(g);
   var nx = g.nx, nz = g.nz, ny = g.ny, occ = g.occ, pad = g.pad;
   var pos = [], nor = [], ao = [], mat = [], pal = [], idx = [];
   var quads = 0, faces = 0, vbase = 0;
@@ -2892,6 +3001,119 @@ function clearEdits(w) {
   if (w.edits) w.edits.clear();
   return n;
 }
+/* ---------- src/mesh/propmesh.mjs ---------- */
+/**
+ * Props, without the faces nobody can see — issue #51.
+ *
+ * ## Why props were the most expensive thing on screen
+ *
+ * `src/mesh/greedy.mjs` exists because a voxel world drawn as boxes draws six
+ * faces per voxel whether or not anything can see them. It solved that for
+ * *terrain* and terrain is now 15% of a frame. Props were left as instanced
+ * boxes on purpose — #12's reasoning was that felling a tree must not cost a
+ * chunk remesh — and nobody counted them again once the world grew from one
+ * window to twenty-five chunks. Measured there, props are **62% of every
+ * triangle drawn**, and of the faces they draw:
+ *
+ *     381,378 prop faces over four chunks and four seeds
+ *     289,786 of them — 76.0% — are against another solid voxel
+ *      91,592 — 24.0% — can actually be seen
+ *
+ * A trunk draws its own interior. This emits the 24% and drops the rest.
+ *
+ * ## What it deliberately does not do
+ *
+ * **It does not merge.** Adjacent coplanar faces of the same colour could be
+ * one quad, which is what the greedy pass does for terrain, and that would cut
+ * further. Culling alone is the larger and simpler half — four times fewer
+ * triangles — and it is worth knowing what it buys on its own before adding a
+ * second mechanism whose failure mode is a seam.
+ *
+ * **It does not touch what a prop looks like.** Each face carries its own
+ * voxel's resolved colour, exactly as the instanced box did: `palR/palG/palB`
+ * of that voxel's palette index and shade byte. Nothing is re-lit, nothing is
+ * occluded, nothing merges across a colour. The only difference on screen
+ * should be the absence of surfaces that were inside solid rock. The LOOK
+ * gate is what holds that claim to account.
+ *
+ * **It does not decide what is solid.** Foliage is drawn and is not collidable
+ * (#46); that split lives in `src/sim/collider.mjs` and is none of this file's
+ * business. Everything a prop emits is drawn.
+ *
+ * No DOM, no three.js.
+ */
+
+
+
+/**
+ * The six faces of a voxel, each as four corners in units of half a voxel,
+ * wound counter-clockwise seen from outside so the default front face is the
+ * one pointing away from the solid.
+ */
+const FACES = [
+  { n: [1, 0, 0], c: [[1, -1, 1], [1, -1, -1], [1, 1, -1], [1, 1, 1]] },
+  { n: [-1, 0, 0], c: [[-1, -1, -1], [-1, -1, 1], [-1, 1, 1], [-1, 1, -1]] },
+  { n: [0, 1, 0], c: [[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, -1]] },
+  { n: [0, -1, 0], c: [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1]] },
+  { n: [0, 0, 1], c: [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]] },
+  { n: [0, 0, -1], c: [[1, -1, -1], [-1, -1, -1], [-1, 1, -1], [1, 1, -1]] },
+];
+
+/** A voxel centre as an integer grid key. */
+function gkey(x, y, z) {
+  return Math.round(x / V) + ',' + Math.round(y / V) + ',' + Math.round(z / V);
+}
+
+/**
+ * Every prop voxel this world holds, as a set of grid keys — *and every
+ * terrain voxel too*.
+ *
+ * Both, because a face is hidden by whatever is next to it and a trunk sunk
+ * into a hillside is hidden by the hill. Taking only props would leave the
+ * buried half of every boulder on screen.
+ */
+function solidKeys(w) {
+  const n = w.pos.length / 3, set = new Set();
+  for (let q = 0; q < n; q++) set.add(gkey(w.pos[q * 3], w.pos[q * 3 + 1], w.pos[q * 3 + 2]));
+  return set;
+}
+
+/**
+ * The visible faces of this world's props, as buffers a renderer can upload.
+ *
+ * `clip` is a half-extent: only props standing on the ground a streamed chunk
+ * owns are emitted, the same rule `src/sim/chunks.mjs` uses for its collider.
+ * A neighbour's prop is still in `w` and still *hides* faces, which is what
+ * keeps a seam from opening along a chunk edge — it is counted as solid and
+ * drawn by the chunk that owns it.
+ */
+function meshProps(w, clip) {
+  const n = w.pos.length / 3;
+  const start = w.propStart === undefined ? n : w.propStart;
+  const solid = solidKeys(w);
+  const pos = [], nor = [], col = [], idx = [];
+  let faces = 0, culled = 0, vbase = 0;
+
+  for (let q = start; q < n; q++) {
+    const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+    if (clip !== undefined && (x < -clip || x >= clip || z < -clip || z >= clip)) continue;
+    const r = palR(w.pal[q], w.shd[q]), g = palG(w.pal[q], w.shd[q]), b = palB(w.pal[q], w.shd[q]);
+    for (let f = 0; f < 6; f++) {
+      const d = FACES[f];
+      if (solid.has(gkey(x + d.n[0] * V, y + d.n[1] * V, z + d.n[2] * V))) { culled++; continue; }
+      faces++;
+      for (let k = 0; k < 4; k++) {
+        const c = d.c[k];
+        pos.push(x + c[0] * V / 2, y + c[1] * V / 2, z + c[2] * V / 2);
+        nor.push(d.n[0], d.n[1], d.n[2]);
+        col.push(r, g, b);
+      }
+      idx.push(vbase, vbase + 1, vbase + 2, vbase, vbase + 2, vbase + 3);
+      vbase += 4;
+    }
+  }
+  return { pos, nor, col, idx, faces, culled, voxels: vbase / 4 };
+}
 /* ---------- src/sim/collider.mjs ---------- */
 /**
  * The world as the controller can touch it: one column of solid spans for every
@@ -2927,26 +3149,89 @@ SOFT[MAT.LEAF] = 1;
 SOFT[MAT.SNOW] = 1;
 
 /**
+ * Is this voxel one a body walks through? One definition, exported, because
+ * the chunked field in chunks.mjs builds colliders too and a second copy of
+ * this rule went wrong immediately: it was written as an empty table, every
+ * leaf stayed solid, and a chunk disagreed with the same ground through the
+ * ordinary collider by the height of a conifer.
+ */
+function softProp(mat, index, propStart) {
+  return index >= propStart && !!SOFT[mat];
+}
+
+/**
  * An empty column grid covering [-half, half] on both axes, `v` metres a side.
  * Fill it with addSpan/addVoxel/setLiquid, then call finish() once.
  */
-function makeCollider(half, v) {
+function makeCollider(half, v, bounded, origin) {
   const n = Math.max(1, Math.round((2 * half) / v));
+  /* Where the grid sits in the world, per axis. Zero for a window, which is
+     centred on the origin of its own coordinates; a chunk's centre for a
+     streamed chunk, which is queried in world coordinates so that nothing has
+     to be converted at query time. Two numbers and not one: chunk (1, -1) is
+     centred at x 32 and z -32, and sharing one origin between the axes put
+     every query of it a kilometre off its own grid. */
+  const orgX = origin ? origin.x : 0, orgZ = origin ? origin.z : 0;
   const cols = new Array(n * n);
   const liq = new Uint8Array(n * n);
   const lev = new Float32Array(n * n);
   let sealed = false;
 
-  /** Column index for a world coordinate, or -1 outside the grid. */
-  const ax = (p) => {
-    const i = Math.floor((p + half) / v);
-    return i < 0 || i >= n ? -1 : i;
-  };
+  /**
+   * Column index for a world coordinate, or -1 outside the grid.
+   *
+   * **Divide first, then offset by a whole number of cells.** Both halves of
+   * that matter, and both were learned from a body that stopped dead in a lake
+   * and would not move again.
+   *
+   * `floor((p + half) / v)` makes the answer depend on `half`, because
+   * `p + half` is rounded to a double before the division:
+   *
+   *     p = -3.7500000000000013
+   *     (p + 20) / 0.25 = 65                    → column 65, i.e. 49 of a chunk
+   *     (p + 16) / 0.25 = 48.99999999999999     → column 48
+   *
+   * One column of a box's footprint — and it cost the body its support. A
+   * chunk collider (half 16) and a window collider (half 20) over *identical*
+   * ground answered `supportUnder` 4.875 and 5.000 at the same point, because
+   * the window saw one more column and that column was a quarter-metre higher.
+   *
+   * The second half is worse, and is why the grid is placed in the world
+   * rather than in its own coordinates. A field of chunks used to convert a
+   * world coordinate to the owning chunk's local one before asking, and
+   * `(32 + -10.6) - 32` is not `-10.6`, it is `-10.600000000000001`. Divided
+   * by 0.25 that is a hair under an integer, and `floor` drops a whole column.
+   * At a cliff that is **3.125 m** of support appearing or vanishing at one
+   * position, from an error in the sixteenth decimal place.
+   *
+   * So a chunk's grid is built and queried in world coordinates and nothing is
+   * converted at all. `(org - half) / v` is an exact integer for every
+   * collider here, so subtracting it after the division leaves the grid where
+   * it was and makes the column depend only on `p`. Colliders of different
+   * sizes and different places now agree column for column, which is what
+   * makes a streamed chunk answerable against the window it came from.
+   */
+  const hcX = Math.round((orgX - half) / v), hcZ = Math.round((orgZ - half) / v);
+  const cellX = (p) => Math.floor(p / v) - hcX;
+  const cellZ = (p) => Math.floor(p / v) - hcZ;
+  const ax = (p) => { const i = cellX(p); return i < 0 || i >= n ? -1 : i; };
+  const az = (p) => { const j = cellZ(p); return j < 0 || j >= n ? -1 : j; };
   /** Same, clamped — for queries that only need the nearest column. */
-  const axc = (p) => clamp(Math.floor((p + half) / v), 0, n - 1);
-  /** Does this footprint reach past the edge of the window? */
+  const axc = (p) => clamp(cellX(p), 0, n - 1);
+  const azc = (p) => clamp(cellZ(p), 0, n - 1);
+  /**
+   * Does this footprint reach past the edge of the window?
+   *
+   * For a single bounded window the answer is a wall, and that is right: the
+   * world ends there and without it a player walks off the map and falls
+   * forever. For one chunk of a streamed world it is exactly wrong — the ground
+   * continues, in the chunk next door. A chunked field passes `bounded: false`
+   * and imposes the world's real boundary itself, because only it knows where
+   * that is. Default stays walled, so nothing that exists today changes. */
+  const walled = bounded !== false;
   const outside = (x, z, r) =>
-    x - r < -half || x + r > half || z - r < -half || z + r > half;
+    walled && (x - r < orgX - half || x + r > orgX + half
+            || z - r < orgZ - half || z + r > orgZ + half);
 
   function push(i, j, lo, hi) {
     if (i < 0 || j < 0 || hi - lo <= EPS) return;
@@ -2957,14 +3242,21 @@ function makeCollider(half, v) {
   return {
     n, v, half,
 
-    addSpan(x, z, lo, hi) { push(ax(x), ax(z), lo, hi); },
+    addSpan(x, z, lo, hi) { push(ax(x), az(z), lo, hi); },
 
     /** One voxel, by its centre. Nearest column: a prop's lattice is offset
         half a voxel from the terrain's, and widening it to both would fatten
         every trunk and railing by 25 cm. */
     addVoxel(x, y, z) {
-      const i = Math.round((x + half) / v - 0.5), j = Math.round((z + half) / v - 0.5);
-      if (i < 0 || j < 0 || i >= n || j >= n) return;
+      /* Through the same `ax`/`az` as everything else. It had its own copy of
+         the index arithmetic — `round((x + half) / v - 0.5)` — which is the
+         same answer for a grid centred on the origin and the wrong column for
+         one placed in the world. Every prop of every streamed chunk went in
+         four metres from where it stood, or off the grid entirely: 446 of a
+         chunk's 16,384 columns disagreed with the window they came from, by up
+         to the height of a tree. Two copies of one rule, again. */
+      const i = ax(x), j = az(z);
+      if (i < 0 || j < 0) return;
       push(i, j, y - v / 2, y + v / 2);
     },
 
@@ -2976,7 +3268,7 @@ function makeCollider(half, v) {
 
     /** One column, by a point inside it. What colliderForWorld uses. */
     setLiquidAt(x, z, kind, level) {
-      const i = ax(x), j = ax(z);
+      const i = ax(x), j = az(z);
       if (i < 0 || j < 0) return;
       liq[i * n + j] = kind; lev[i * n + j] = level;
     },
@@ -2987,10 +3279,10 @@ function makeCollider(half, v) {
 
     forColumns(x0, x1, z0, z1, fn) {
       for (let i = 0; i < n; i++) {
-        const cx = -half + (i + 0.5) * v;
+        const cx = orgX - half + (i + 0.5) * v;
         if (cx < x0 || cx > x1) continue;
         for (let j = 0; j < n; j++) {
-          const cz = -half + (j + 0.5) * v;
+          const cz = orgZ - half + (j + 0.5) * v;
           if (cz < z0 || cz > z1) continue;
           fn(i, j);
         }
@@ -3017,10 +3309,10 @@ function makeCollider(half, v) {
       return this;
     },
 
-    spansAt(x, z) { return cols[axc(x) * n + axc(z)] || null; },
+    spansAt(x, z) { return cols[axc(x) * n + azc(z)] || null; },
 
     liquidAt(x, z) {
-      const k = axc(x) * n + axc(z);
+      const k = axc(x) * n + azc(z);
       return { kind: liq[k], level: lev[k] };
     },
 
@@ -3032,7 +3324,7 @@ function makeCollider(half, v) {
      */
     supportUnder(x, z, r, ceilY) {
       let best = -Infinity;
-      const i0 = axc(x - r), i1 = axc(x + r), j0 = axc(z - r), j1 = axc(z + r);
+      const i0 = axc(x - r), i1 = axc(x + r), j0 = azc(z - r), j1 = azc(z + r);
       /* Columns outside the window are skipped, not clamped: clamping would
          smear the rim column outwards and give a player ground to walk on
          past the edge of the world. */
@@ -3054,7 +3346,7 @@ function makeCollider(half, v) {
       /* The window is bounded, and its edge is a wall. Without this a player
          walks off the map and falls forever. */
       if (outside(x, z, r)) return true;
-      const i0 = axc(x - r), i1 = axc(x + r), j0 = axc(z - r), j1 = axc(z + r);
+      const i0 = axc(x - r), i1 = axc(x + r), j0 = azc(z - r), j1 = azc(z + r);
       for (let i = i0; i <= i1; i++) {
         for (let j = j0; j <= j1; j++) {
           const sp = cols[i * n + j];
@@ -3071,7 +3363,7 @@ function makeCollider(half, v) {
     /** The lowest solid underside above `y`. Infinity if there is open sky. */
     ceilingOver(x, z, r, y) {
       let best = Infinity;
-      const i0 = axc(x - r), i1 = axc(x + r), j0 = axc(z - r), j1 = axc(z + r);
+      const i0 = axc(x - r), i1 = axc(x + r), j0 = azc(z - r), j1 = azc(z + r);
       for (let i = i0; i <= i1; i++) {
         for (let j = j0; j <= j1; j++) {
           const sp = cols[i * n + j];
@@ -3092,24 +3384,30 @@ function makeCollider(half, v) {
  * A collider for one generated window. Spans first, then every voxel the
  * generator emitted, then the liquid surfaces.
  */
-function colliderForWorld(world) {
+function colliderForWorld(world, origin) {
   const half = world.half, M = world.M, NX = world.NX, NZ = world.NZ;
-  const c = makeCollider(half, V);
+  /* `origin` places the grid in the world instead of at its own centre, so a
+     window can be compared against a streamed chunk **at the same world
+     coordinate** rather than at a local one reconstructed from it. Those are
+     not the same real number once doubles are involved, and a test that
+     converts between them measures its own arithmetic as much as the code's. */
+  const c = makeCollider(half, V, undefined, origin);
+  const ox = origin ? origin.x : 0, oz = origin ? origin.z : 0;
   const ci = (p) => clamp(Math.round(p + half), 0, M - 1);
 
   /* Terrain. The top span is refined to the 25 cm height field; everything
      below it stays at the 1 m resolution the spans were cut at. */
   for (let i = 0; i < NX; i++) {
-    const x = -half + i * V + V / 2;
+    const x = -half + i * V + V / 2, wx = x + ox;
     for (let j = 0; j < NZ; j++) {
-      const z = -half + j * V + V / 2, k = i * NZ + j;
+      const z = -half + j * V + V / 2, wz = z + oz, k = i * NZ + j;
       const cell = world.cells[ci(x) * M + ci(z)], sp = cell.sp;
-      for (let q = 0; q < sp.length - 1; q++) c.addSpan(x, z, sp[q][0], sp[q][1]);
-      c.addSpan(x, z, sp[sp.length - 1][0], Math.min(world.Hs[k], CEIL));
+      for (let q = 0; q < sp.length - 1; q++) c.addSpan(wx, wz, sp[q][0], sp[q][1]);
+      c.addSpan(wx, wz, sp[sp.length - 1][0], Math.min(world.Hs[k], CEIL));
 
       const f = world.FLG[k];
-      if (f & 2) c.setLiquidAt(x, z, LIQUID.MAGMA, world.Hs[k]);
-      else if (f & 1) c.setLiquidAt(x, z, LIQUID.WATER, cell.wl);
+      if (f & 2) c.setLiquidAt(wx, wz, LIQUID.MAGMA, world.Hs[k]);
+      else if (f & 1) c.setLiquidAt(wx, wz, LIQUID.WATER, cell.wl);
     }
   }
 
@@ -3133,11 +3431,438 @@ function colliderForWorld(world) {
      height is usually capped. */
   const propStart = world.propStart === undefined ? world.pos.length / 3 : world.propStart;
   for (let q = 0; q < world.pos.length / 3; q++) {
-    if (q >= propStart && SOFT[world.mat[q]]) continue;
-    c.addVoxel(world.pos[q * 3], world.pos[q * 3 + 1], world.pos[q * 3 + 2]);
+    if (softProp(world.mat[q], q, propStart)) continue;
+    c.addVoxel(world.pos[q * 3] + ox, world.pos[q * 3 + 1], world.pos[q * 3 + 2] + oz);
   }
 
   return c.finish();
+}
+/* ---------- src/sim/chunks.mjs ---------- */
+/**
+ * The world as loaded chunks, and the four questions the controller asks of it
+ * — issue #13.
+ *
+ * ## Why not one collider over the loaded region
+ *
+ * `colliderForWorld` builds one bounded grid whose edge is a wall, and that is
+ * right for a single window: the world ends there, and without the wall a
+ * player walks off the map and falls forever. It is exactly wrong for a chunk,
+ * whose edge is where the ground continues.
+ *
+ * One collider spanning everything loaded would have to be rebuilt every time a
+ * chunk arrives or leaves, which is the one thing streaming must not do. So
+ * each chunk keeps its own collider in **its own local coordinates**, built
+ * unwalled, and this field routes a query to every chunk its footprint touches
+ * and combines the answers. A chunk arriving or leaving is a Map entry, not a
+ * rebuild.
+ *
+ * ## Where the wall went
+ *
+ * It moved here, because only this layer knows where the world actually ends.
+ * A footprint that reaches a chunk which is not loaded is **blocked**. That is
+ * deliberate and it is not a placeholder: a body may not walk into ground that
+ * has not been decided yet, and the load radius is what keeps it from ever
+ * meeting that boundary. A radius too small does not produce a fall through the
+ * floor — it produces an invisible wall, which is a bug you can see.
+ *
+ * ## What one chunk holds
+ *
+ * The generated window is 40 m — the chunk plus the 4 m skirt `src/gen/chunk.mjs`
+ * explains. The **collider covers the 32 m chunk proper only**. The skirt exists
+ * so the generator's edge effects fall outside the ground this chunk owns, and
+ * so the mesher has a ring to shade its seam against; letting it into the
+ * collider would give every boundary two sets of spans, one from each side.
+ *
+ * No DOM, no three.js, and no renderer: this decides what is solid, not what is
+ * drawn.
+ */
+
+
+
+
+/** Which chunk a world coordinate falls in. */
+function chunkAt(x, z) {
+  return { cx: Math.floor(x / CHUNK + 0.5), cz: Math.floor(z / CHUNK + 0.5) };
+}
+
+/** The chunk's centre in world metres — the same convention chunkWorld uses. */
+function centreOf(cx, cz) { return { x: cx * CHUNK, z: cz * CHUNK }; }
+
+const key = (cx, cz) => cx + ',' + cz;
+
+/**
+ * One chunk's collider, in coordinates local to that chunk's centre, holding
+ * only the ground the chunk owns.
+ */
+function colliderForChunk(w, cx, cz) {
+  /* In world coordinates, not the chunk's own. A field used to convert a world
+     coordinate to the owning chunk's local one before asking, and the round
+     trip does not come back where it started: `(32 + -10.6) - 32` is
+     `-10.600000000000001`, which floors into the column next door and, at a
+     cliff, moved the ground under a body by 3.125 m. Nothing is converted now.
+     See the note on `cell` in collider.mjs. */
+  const c0 = centreOf(cx, cz);
+  const c = makeCollider(CHUNK / 2, V, false, c0);
+  const pad = Math.round(SKIRT / V);
+  const NZ = w.NZ, M = w.M, half = w.half;
+  const cell = (p) => Math.min(M - 1, Math.max(0, Math.round(p + half)));
+  for (let i = pad; i < w.NX - pad; i++) {
+    const wx = -half + i * V + V / 2, lx = wx + c0.x;
+    for (let j = pad; j < NZ - pad; j++) {
+      const wz = -half + j * V + V / 2, lz = wz + c0.z, k = i * NZ + j;
+      const cl = w.cells[cell(wx) * M + cell(wz)], sp = cl.sp;
+      for (let q = 0; q < sp.length - 1; q++) c.addSpan(lx, lz, sp[q][0], sp[q][1]);
+      c.addSpan(lx, lz, sp[sp.length - 1][0], Math.min(w.Hs[k], CEIL));
+      const f = w.FLG[k];
+      if (f & 2) c.setLiquidAt(lx, lz, LIQUID.MAGMA, w.Hs[k]);
+      else if (f & 1) c.setLiquidAt(lx, lz, LIQUID.WATER, cl.wl);
+    }
+  }
+  /* Props, but only the ones standing on ground this chunk owns. A trunk whose
+     anchor is in the skirt belongs to the neighbour and will be added there. */
+  const lim = CHUNK / 2;
+  const ps = w.propStart === undefined ? w.pos.length / 3 : w.propStart;
+  for (let q = 0; q < w.pos.length / 3; q++) {
+    const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+    if (x < -lim || x >= lim || z < -lim || z >= lim) continue;
+    if (softProp(w.mat[q], q, ps)) continue;
+    c.addVoxel(x + c0.x, y, z + c0.z);
+  }
+  return c.finish();
+}
+
+/**
+ * A field of loaded chunks. `keep(centres, radius)` decides which chunks exist;
+ * everything else is a wall.
+ */
+function makeChunkField(seed, force) {
+  const live = new Map();
+  let built = 0, dropped = 0;
+
+  /** Take a generated window as this chunk's ground. Where a streamed chunk
+      arrives: whoever built it — this thread, a worker, a cache — hands it
+      here and the field starts answering from it on the next query. */
+  function adopt(cx, cz, w) {
+    const e = { cx, cz, w, col: colliderForChunk(w, cx, cz) };
+    live.set(key(cx, cz), e); built++;
+    return e;
+  }
+
+  function drop(cx, cz) {
+    if (!live.delete(key(cx, cz))) return false;
+    dropped++;
+    return true;
+  }
+
+  function ensure(cx, cz) {
+    const e = live.get(key(cx, cz));
+    return e || adopt(cx, cz, chunkWorld(seed, cx, cz, force));
+  }
+
+  /** Every chunk a footprint touches, loaded or not. */
+  function span(x, z, r) {
+    const a = chunkAt(x - r, z - r), b = chunkAt(x + r, z + r);
+    const out = [];
+    for (let cx = a.cx; cx <= b.cx; cx++) for (let cz = a.cz; cz <= b.cz; cz++) out.push([cx, cz]);
+    return out;
+  }
+  const got = (cx, cz) => live.get(key(cx, cz));
+
+  return {
+    /** Chunks within `radius` of any centre are loaded; the rest are let go. */
+    keep(centres, radius) {
+      const want = new Set();
+      for (const p of centres) {
+        const c = chunkAt(p.x, p.z);
+        for (let dx = -radius; dx <= radius; dx++) {
+          for (let dz = -radius; dz <= radius; dz++) want.add(key(c.cx + dx, c.cz + dz));
+        }
+      }
+      for (const k of [...live.keys()]) if (!want.has(k)) { const [cx, cz] = k.split(',').map(Number); drop(cx, cz); }
+      for (const k of want) { const [cx, cz] = k.split(',').map(Number); ensure(cx, cz); }
+      return live.size;
+    },
+
+    /** The seed this field is of, so a scheduler can generate for it. */
+    seed, force,
+    adopt, drop,
+
+    get loaded() { return live.size; },
+    get built() { return built; },
+    get dropped() { return dropped; },
+    has(cx, cz) { return live.has(key(cx, cz)); },
+    chunk(cx, cz) { return got(cx, cz); },
+    /** Every loaded chunk, for a scheduler deciding what to let go. A copy,
+        because the caller drops from it while walking it. */
+    live() { return [...live.values()]; },
+
+    /* ---- the four the controller asks ---- */
+
+    /** Highest support anywhere under the box, across every chunk it touches. */
+    supportUnder(x, z, r, ceilY) {
+      let best = -Infinity;
+      for (const [cx, cz] of span(x, z, r)) {
+        const e = got(cx, cz);
+        if (!e) continue;
+        const g = e.col.supportUnder(x, z, r, ceilY);
+        if (g > best) best = g;
+      }
+      return best;
+    },
+
+    /** Solid if any loaded chunk says so — or if the box reaches one that is
+        not loaded, which is the world's edge as far as anyone standing here is
+        concerned. */
+    overlaps(x, z, r, lo, hi) {
+      for (const [cx, cz] of span(x, z, r)) {
+        const e = got(cx, cz);
+        if (!e) return true;
+        if (e.col.overlaps(x, z, r, lo, hi)) return true;
+      }
+      return false;
+    },
+
+    ceilingOver(x, z, r, y) {
+      let best = Infinity;
+      for (const [cx, cz] of span(x, z, r)) {
+        const e = got(cx, cz);
+        if (!e) continue;
+        const c = e.col.ceilingOver(x, z, r, y);
+        if (c < best) best = c;
+      }
+      return best;
+    },
+
+    liquidAt(x, z) {
+      const c = chunkAt(x, z), e = got(c.cx, c.cz);
+      if (!e) return { kind: LIQUID.NONE, level: 0 };
+      return e.col.liquidAt(x, z);
+    },
+  };
+}
+/* ---------- src/sim/stream.mjs ---------- */
+/**
+ * Which chunk to build next, how many at once, and when to let one go —
+ * issue #13.
+ *
+ * `src/sim/chunks.mjs` answers what is solid across the chunks that are
+ * loaded. It does not decide *which* those are beyond "everything within a
+ * radius, right now, synchronously". This decides that, and deliberately does
+ * not build anything itself: it hands out work and takes delivery. A main
+ * thread, a pool of workers and a test with a fake clock are then the same
+ * shape of caller, which is the only way the thing that runs in the browser is
+ * the thing node asserts.
+ *
+ * ## The measurement that decides the design
+ *
+ * One 40 m window costs **57 ms at the median and 292 ms at the ninetieth
+ * percentile** to generate (node 22, six golden seeds, nine chunks each). A
+ * 60 Hz frame is 16.7 ms.
+ *
+ * So a chunk does not fit in a frame — not at the median, not at the best case
+ * measured, not by a factor of three. The "frame budget" #13 asks for cannot be
+ * a budget that generation is fitted into, because the smallest indivisible
+ * unit of generation is already four frames wide. There are two honest
+ * responses and this module is built for the second:
+ *
+ * - make generation resumable, so a window can be built a slice at a time;
+ * - move it off the main thread and keep the main thread's share to adopting
+ *   the result.
+ *
+ * ## What is not actually a problem
+ *
+ * Outrunning the loader. A body runs at `RUN` 4 m/s and a chunk is 32 m, so
+ * crossing one takes eight seconds; entering a new chunk at load radius 2 makes
+ * a column of five chunks newly wanted, which is under 1.5 s of generation even
+ * at the p90 cost. The front of decided ground stays tens of metres ahead at
+ * every moment. The soak below measures it rather than assuming it.
+ *
+ * The problem is entirely one of *smoothness*: on the main thread the same work
+ * arrives as a 57–406 ms freeze every eight seconds. That is why generation
+ * leaves the main thread — not because it is too slow, but because it is too
+ * lumpy.
+ *
+ * ## Hysteresis
+ *
+ * Wanted and unwanted are two different radii. With one radius, a body standing
+ * on a chunk boundary and stepping back and forth drops and regenerates a whole
+ * column every few steps, which is the most expensive thing it is possible to
+ * do and looks like nothing at all. `keepR` is larger than `loadR`, so a chunk
+ * has to be properly left behind before it is let go.
+ *
+ * No DOM, no three.js, no timers: the caller owns the clock.
+ */
+
+
+/**
+ * Defaults, in chunks. `loadR` 2 puts decided ground at least 48 m away in
+ * every direction, which at `RUN` is twelve seconds of warning. `keepR` one
+ * larger is the cheapest hysteresis that works: a body has to cross a whole
+ * chunk to undo its own last decision.
+ */
+const STREAM = { loadR: 2, keepR: 3, flight: 2 };
+
+/* Not `key`: chunks.mjs already declares one at top level and the bundle is
+   one flat scope, so the second would win everywhere. */
+const ckey = (cx, cz) => cx + ',' + cz;
+
+/**
+ * A scheduler over a chunk field.
+ *
+ * The caller's loop is: `want(centres)` when the players move, then take work
+ * with `next()` and return it with `deliver()`. `pump()` is the shorthand for a
+ * caller that builds on its own thread.
+ */
+function makeStream(field, opts) {
+  const o = Object.assign({}, STREAM, opts || {});
+  const flight = new Map();          /* key -> {cx, cz} begun and not yet delivered */
+  let wanted = new Map();            /* key -> {cx, cz, d2} nearest-centre distance */
+  let centres = [{ x: 0, z: 0 }];
+  let delivered = 0, failed = 0, released = 0;
+
+  /**
+   * Two distances, and they are not interchangeable.
+   *
+   * `near2` is squared Euclidean and orders the queue: the chunk you are
+   * standing on comes before the one at the corner of the same square, which
+   * is what "nearest first" should mean to someone walking.
+   *
+   * `ring` is Chebyshev, and it is what decides whether a chunk is wanted or
+   * let go, because the region `want` fills is a **square** — `loadR` chunks
+   * on each axis. Testing that square for membership with a radius measured
+   * as a circle was the first version, and the hysteresis silently did almost
+   * nothing: at `loadR` 1 the four corners of a neighbour's square sit at
+   * Euclidean distance sqrt(5), outside a keep radius of 2, so every crossing
+   * dropped and rebuilt them. 20 crossings cost 48 builds where 12 was the
+   * whole point. A square region needs a square keep.
+   */
+  function near2(cx, cz) {
+    let best = Infinity;
+    for (const p of centres) {
+      const c = chunkAt(p.x, p.z);
+      const dx = cx - c.cx, dz = cz - c.cz, d2 = dx * dx + dz * dz;
+      if (d2 < best) best = d2;
+    }
+    return best;
+  }
+
+  function ring(cx, cz) {
+    let best = Infinity;
+    for (const p of centres) {
+      const c = chunkAt(p.x, p.z);
+      const d = Math.max(Math.abs(cx - c.cx), Math.abs(cz - c.cz));
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
+  /**
+   * Recompute what should exist. Chunks within `loadR` of a centre are wanted;
+   * chunks past `keepR` are let go; the ring between is kept if it is already
+   * there and not built if it is not. That gap is the hysteresis.
+   */
+  function want(cs) {
+    if (cs && cs.length) centres = cs.map((p) => ({ x: p.x, z: p.z }));
+    const next = new Map();
+    for (const p of centres) {
+      const c = chunkAt(p.x, p.z);
+      for (let dx = -o.loadR; dx <= o.loadR; dx++) {
+        for (let dz = -o.loadR; dz <= o.loadR; dz++) {
+          const cx = c.cx + dx, cz = c.cz + dz, k = ckey(cx, cz);
+          if (!next.has(k)) next.set(k, { cx, cz, d2: near2(cx, cz) });
+        }
+      }
+    }
+    wanted = next;
+    for (const e of field.live()) {
+      if (wanted.has(ckey(e.cx, e.cz))) continue;
+      if (ring(e.cx, e.cz) <= o.keepR) continue;
+      field.drop(e.cx, e.cz); released++;
+    }
+    /* Work in flight for ground nobody wants any more is abandoned rather than
+       delivered into a field that would have to drop it again. */
+    for (const [k, w] of [...flight]) if (ring(w.cx, w.cz) > o.keepR) flight.delete(k);
+    return wanted.size;
+  }
+
+  /** The most urgent chunk that is missing and not already being built. */
+  function next() {
+    let best = null;
+    for (const w of wanted.values()) {
+      const k = ckey(w.cx, w.cz);
+      if (flight.has(k) || field.has(w.cx, w.cz)) continue;
+      if (!best || w.d2 < best.d2) best = w;
+    }
+    if (!best || flight.size >= o.flight) return null;
+    flight.set(ckey(best.cx, best.cz), { cx: best.cx, cz: best.cz });
+    return { cx: best.cx, cz: best.cz };
+  }
+
+  /** Ground that has been generated, from wherever. */
+  function deliver(cx, cz, w) {
+    flight.delete(ckey(cx, cz));
+    if (ring(cx, cz) > o.keepR) return false;
+    field.adopt(cx, cz, w);
+    delivered++;
+    return true;
+  }
+
+  /** A build that did not happen. The chunk goes back in the queue. */
+  function fail(cx, cz) { flight.delete(ckey(cx, cz)); failed++; }
+
+  return {
+    want, next, deliver, fail,
+
+    /**
+     * Change how far the world reaches. Spawning settles a small radius
+     * synchronously — a loading screen's worth — and then widens, because
+     * settling the playing radius before the first frame is several seconds of
+     * nothing. The wider ring fills in a window at a time while you play.
+     */
+    radius(loadR, keepR) {
+      o.loadR = loadR;
+      if (keepR !== undefined) o.keepR = keepR;
+      want(null);
+    },
+
+    /**
+     * Build on this thread until `budgetMs` is spent, and report the overrun.
+     *
+     * A chunk cannot be abandoned half-built, so the last one always finishes:
+     * the budget decides how many are *started*, never how long the call takes.
+     * With the measured per-chunk cost and a frame's budget this returns after
+     * one chunk and roughly four frames, which is the whole argument for the
+     * worker and is why the overrun is reported rather than swallowed.
+     */
+    pump(build, budgetMs, clock) {
+      const now = clock || (() => performance.now());
+      const t0 = now();
+      let n = 0;
+      for (;;) {
+        const spent = now() - t0;
+        if (n && spent >= budgetMs) break;
+        const j = next();
+        if (!j) break;
+        deliver(j.cx, j.cz, build(j.cx, j.cz));
+        n++;
+      }
+      const took = now() - t0;
+      return { built: n, ms: took, over: Math.max(0, took - budgetMs) };
+    },
+
+    /** Everything wanted is there: nothing queued and nothing in flight. */
+    get settled() { return this.pending === 0 && flight.size === 0; },
+    get pending() {
+      let k = 0;
+      for (const w of wanted.values()) if (!field.has(w.cx, w.cz) && !flight.has(ckey(w.cx, w.cz))) k++;
+      return k;
+    },
+    get inFlight() { return flight.size; },
+    get wanted() { return wanted.size; },
+    get delivered() { return delivered; },
+    get failed() { return failed; },
+    get released() { return released; },
+  };
 }
 /* ---------- src/sim/combat.mjs ---------- */
 /**
@@ -5315,7 +6040,7 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -5484,62 +6209,101 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return t;
   })();
 
-  function chunkGeometry(data,cx,cz){
-    var m=QS.meshChunk(data,cx,cz), n=m.pos.length/3;
-    /* The vertex colour is now the baked occlusion and nothing else. The hue
-       is chosen per 25 cm cell in the shader, from the group this quad carries
-       — see meshMaterial. */
-    var col=new Float32Array(n*3), grp=new Float32Array(n*2);
-    for(var v=0;v<n;v++){
-      var k=AO_STEP[m.ao[v]];
-      col[v*3]=k; col[v*3+1]=k; col[v*3+2]=k;
-      grp[v*2]=m.pal[v]; grp[v*2+1]=PAL_N[m.pal[v]]||1;
+  /**
+   * One chunk's geometry, meshed here or handed over ready-made.
+   *
+   * `pre` is a mesh a worker already built and *transferred* — the same
+   * arrays, in the same layout, arriving as typed arrays this thread did not
+   * have to fill. Meshing is 209 ms of the ~220 ms adopting a chunk used to
+   * cost, so this is where the hitch actually goes; everything below it is an
+   * upload. There is no second implementation: the worker calls the same
+   * `meshChunk` through the same bundle, and this function does the same
+   * conversion when nothing was handed to it.
+   */
+  function chunkGeometry(data,cx,cz,org,pre){
+    var pos,nor,col,grp,idx,quads;
+    if(pre){
+      pos=pre.pos; nor=pre.nor; col=pre.col; grp=pre.grp; idx=pre.idx; quads=pre.quads;
+    }else{
+      var m=QS.meshChunk(data,cx,cz,org), n=m.pos.length/3;
+      /* The vertex colour is the baked occlusion and nothing else. The hue is
+         chosen per 25 cm cell in the shader, from the group this quad carries
+         — see meshMaterial. */
+      col=new Float32Array(n*3); grp=new Float32Array(n*2);
+      for(var v=0;v<n;v++){
+        var k=AO_STEP[m.ao[v]];
+        col[v*3]=k; col[v*3+1]=k; col[v*3+2]=k;
+        grp[v*2]=m.pal[v]; grp[v*2+1]=PAL_N[m.pal[v]]||1;
+      }
+      pos=new Float32Array(m.pos); nor=new Float32Array(m.nor);
+      idx=m.idx; quads=m.quads;
     }
     var g=new THREE.BufferGeometry();
-    g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(m.pos),3));
-    g.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(m.nor),3));
+    g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    g.setAttribute('normal',new THREE.BufferAttribute(nor,3));
     g.setAttribute('color',new THREE.BufferAttribute(col,3));
     g.setAttribute('aGroup',new THREE.BufferAttribute(grp,2));
-    g.setIndex(m.idx);
-    g.userData={quads:m.quads};
+    /* A transferred index arrives as a Uint32Array and is handed to three.js
+       as one. Copying it back into a plain Array would undo the transfer that
+       was the point of sending it. */
+    g.setIndex(ArrayBuffer.isView(idx)?new THREE.BufferAttribute(idx,1):idx);
+    g.userData={quads:quads};
     return g;
   }
 
   /* The terrain mesh is a chunk per child, not one buffer, because a carve has
      to be able to rebuild what it touched and nothing else. That is #12's
-     third clause, and it is the same shape #13 will stream into. */
-  function buildMesh(data){
-    var n=QS.chunkGrid(data), mat=meshMaterial(), grp=new THREE.Group(), quads=0;
+     third clause, and it is the shape #13 streams into.
+
+     `org` switches which chunks a window holds. Without it the window is laid
+     out on its own grid, which is right for a world that is a whole number of
+     chunks across. With it the window is a *streamed* one — one chunk plus a
+     skirt — and holds exactly one child, covering the middle CHUNK metres.
+     The skirt is not drawn: it is the neighbour's ground, and drawing it would
+     put every seam's geometry in twice. */
+  function buildMesh(data,mat,org,pre){
+    var n=org?1:QS.chunkGrid(data), grp=new THREE.Group(), quads=0;
     for(var cx=0;cx<n;cx++)for(var cz=0;cz<n;cz++){
-      var g=chunkGeometry(data,cx,cz), mesh=new THREE.Mesh(g,mat);
+      var g=chunkGeometry(data,cx,cz,org,pre), mesh=new THREE.Mesh(g,mat);
       mesh.castShadow=true; mesh.receiveShadow=true; mesh.frustumCulled=false;
-      mesh.userData.chunk=[cx,cz];
+      mesh.userData.chunk=[cx,cz]; mesh.userData.kind='terrain';
       grp.add(mesh); quads+=g.userData.quads;
     }
-    grp.userData={quads:quads,grid:n,mat:mat,
+    grp.userData={quads:quads,grid:n,mat:mat,org:org,
       /* Swap one chunk's geometry for a freshly meshed one and drop the old. */
       remesh:function(data2,cx,cz){
-        var child=grp.children[cx*n+cz]; if(!child) return 0;
+        var child=grp.children[org?0:cx*n+cz]; if(!child) return 0;
         var before=child.geometry.userData.quads;
         child.geometry.dispose();
-        child.geometry=chunkGeometry(data2,cx,cz);
+        child.geometry=chunkGeometry(data2,org?0:cx,org?0:cz,org);
         grp.userData.quads+=child.geometry.userData.quads-before;
         return child.geometry.userData.quads;
       }};
     return grp;
   }
 
-  function buildScene(data){
-    var scene=new THREE.Scene();
-    scene.add(new THREE.HemisphereLight(0x9fc3e8,0x4a3a2c,0.62));
-    var sun=new THREE.DirectionalLight(0xfff0d2,1.05);
-    sun.position.set(-16,26,12); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
-    var sc=sun.shadow.camera, e=data.half+4;
-    sc.left=-e;sc.right=e;sc.top=e;sc.bottom=-e;sc.near=1;sc.far=200;
-    sun.shadow.bias=-0.0006; sun.shadow.normalBias=0.04;
-    scene.add(sun); scene.add(sun.target);
+  /* ---------- one world node ----------
+     Everything that comes out of one generated window, in one Group: both
+     terrain renderers, the props, the emissive record, the grass, the water
+     and up to three lamps. The lights and the sky are not in here, because a
+     streamed world has many of these and one of those.
 
-    var m4=new THREE.Matrix4(), col=new THREE.Color(), i;
+     `org` again means a streamed window, and here it also means **clip**: only
+     what stands on the chunk this window owns belongs to it. A prop rooted in
+     the skirt is the neighbour's and is drawn there. Without the clip every
+     boundary would carry two copies of four metres of world, z-fighting with
+     itself.
+
+     The materials are passed in rather than made here: a streamed world has
+     one grass material and one water material across every chunk, because the
+     frame loop advances their clock once and the wind has to agree from one
+     chunk to the next. */
+  function worldNode(data,mats,org,pre){
+    var g=new THREE.Group(), m4=new THREE.Matrix4(), col=new THREE.Color(), i;
+    var H=QS.CHUNK/2;
+    var keep=org?function(x,z){ return x>=-H&&x<H&&z>=-H&&z<H; }
+                :function(){ return true; };
+
     var n=data.pos.length/3;
     /* Terrain first, then the stamps. The greedy mesh replaces only the first
        part, so they are drawn as two instanced meshes rather than one — props
@@ -5550,74 +6314,166 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          colour. Resolving it here is what makes a restyle possible — change
          PALETTE and redraw, with nothing regenerated. */
     function boxesFor(lo,hi){
-      var cnt=hi-lo;
-      if(cnt<=0) return null;
-      var im=new THREE.InstancedMesh(boxGeo,new THREE.MeshLambertMaterial({vertexColors:true}),cnt);
-      for(var q2=0;q2<cnt;q2++){ var k2=lo+q2;
+      /* `src` is which voxel of the window each instance came from, because
+         the clip makes the two no longer the same number. Carving reads it to
+         find the instance to hide. */
+      var src=[];
+      for(var q=lo;q<hi;q++) if(keep(data.pos[q*3],data.pos[q*3+2])) src.push(q);
+      if(!src.length) return null;
+      var im=new THREE.InstancedMesh(boxGeo,new THREE.MeshLambertMaterial({vertexColors:true}),src.length);
+      for(var q2=0;q2<src.length;q2++){ var k2=src[q2];
         m4.makeTranslation(data.pos[k2*3],data.pos[k2*3+1],data.pos[k2*3+2]); im.setMatrixAt(q2,m4);
         col.setRGB(QS.palR(data.pal[k2],data.shd[k2]),QS.palG(data.pal[k2],data.shd[k2]),
                   QS.palB(data.pal[k2],data.shd[k2])); im.setColorAt(q2,col); }
       im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
-      im.castShadow=true; im.receiveShadow=true; im.frustumCulled=false; scene.add(im);
+      im.castShadow=true; im.receiveShadow=true; im.frustumCulled=false;
+      im.userData.src=src; im.userData.kind=(lo===0?'boxes':'props'); g.add(im);
       return im;
     }
     var vox=boxesFor(0,pStart), props=boxesFor(pStart,n);
 
-    /* Both terrain renderers are built; only one is visible. Props, water and
-       grass are untouched by either — a felled tree must not remesh a chunk. */
-    var terrainMesh=buildMesh(data);
-    scene.add(terrainMesh);
-    terrainMesh.visible=useMesh; if(vox) vox.visible=!useMesh;
+    /* ---------- props without their insides (#51) ----------
+       The instanced boxes above draw six faces per prop voxel whether or not
+       anything can see them, and 76% of those faces are against solid. Across
+       twenty-five streamed chunks that was 3.0M triangles — 62% of the frame,
+       more than terrain, grass and water together.
 
-    if(data.mpos.length){
-      var mn=data.mpos.length/3;
-      var em=new THREE.InstancedMesh(boxGeo,new THREE.MeshBasicMaterial({vertexColors:true}),mn);
-      for(i=0;i<mn;i++){ m4.makeTranslation(data.mpos[i*3],data.mpos[i*3+1]+0.02,data.mpos[i*3+2]); em.setMatrixAt(i,m4);
-        col.setRGB(QS.palR(data.mpal[i],data.mshd[i]),QS.palG(data.mpal[i],data.mshd[i]),
-                  QS.palB(data.mpal[i],data.mshd[i])); em.setColorAt(i,col); }
-      em.instanceMatrix.needsUpdate=true; if(em.instanceColor) em.instanceColor.needsUpdate=true;
-      em.frustumCulled=false; scene.add(em);
+       This is the same surfaces minus the invisible ones: every face keeps its
+       own voxel's colour, nothing merges, nothing is re-lit. It is a separate
+       mesh rather than part of the terrain mesh, because #12's reason for
+       instancing props stands — felling a tree must not remesh a chunk, and
+       with props on their own mesh it remeshes only them.
+
+       Drawn instead of the instanced props whenever the mesh renderer is on;
+       the box renderer keeps its boxes, which is what makes the two
+       comparable. */
+    var propMesh=null;
+    var pm=pre&&pre.props?pre.props:QS.meshProps(data,org?QS.CHUNK/2:undefined);
+    if(pm.faces){
+      var pg=new THREE.BufferGeometry();
+      pg.setAttribute('position',new THREE.BufferAttribute(
+        ArrayBuffer.isView(pm.pos)?pm.pos:new Float32Array(pm.pos),3));
+      pg.setAttribute('normal',new THREE.BufferAttribute(
+        ArrayBuffer.isView(pm.nor)?pm.nor:new Float32Array(pm.nor),3));
+      pg.setAttribute('color',new THREE.BufferAttribute(
+        ArrayBuffer.isView(pm.col)?pm.col:new Float32Array(pm.col),3));
+      pg.setIndex(ArrayBuffer.isView(pm.idx)?new THREE.BufferAttribute(pm.idx,1):pm.idx);
+      pg.userData={faces:pm.faces,culled:pm.culled};
+      propMesh=new THREE.Mesh(pg,mats.prop);
+      propMesh.castShadow=true; propMesh.receiveShadow=true; propMesh.frustumCulled=false;
+      propMesh.userData.kind='props';
+      g.add(propMesh);
     }
 
-    var gd=data.grass, gn=gd.ph.length, gmat=null;
-    if(gn){
-      var geo=bladeGeo.clone();
-      gmat=new THREE.ShaderMaterial({side:THREE.DoubleSide,
-        uniforms:{uTime:{value:0},uP0:{value:new THREE.Vector3(1e5,0,1e5)},
-                  uWind:{value:new THREE.Vector2(0.72,0.69)}},
-        vertexShader:GRASS_VS,fragmentShader:GRASS_FS});
-      var grass=new THREE.InstancedMesh(geo,gmat,gn);
+    /* Both terrain renderers are built; only one is visible. Props, water and
+       grass are untouched by either — a felled tree must not remesh a chunk. */
+    var terrainMesh=buildMesh(data,mats.mesh,org,pre&&pre.terrain?pre.terrain:pre);
+    g.add(terrainMesh);
+    terrainMesh.visible=useMesh; if(vox) vox.visible=!useMesh;
+    /* One of the two prop renderers, never both. */
+    if(propMesh) propMesh.visible=useMesh;
+    if(props) props.visible=!useMesh||!propMesh;
+
+    if(data.mpos.length){
+      var msrc=[];
+      for(i=0;i<data.mpos.length/3;i++) if(keep(data.mpos[i*3],data.mpos[i*3+2])) msrc.push(i);
+      if(msrc.length){
+        var em=new THREE.InstancedMesh(boxGeo,new THREE.MeshBasicMaterial({vertexColors:true}),msrc.length);
+        for(i=0;i<msrc.length;i++){ var mk=msrc[i];
+          m4.makeTranslation(data.mpos[mk*3],data.mpos[mk*3+1]+0.02,data.mpos[mk*3+2]); em.setMatrixAt(i,m4);
+          col.setRGB(QS.palR(data.mpal[mk],data.mshd[mk]),QS.palG(data.mpal[mk],data.mshd[mk]),
+                    QS.palB(data.mpal[mk],data.mshd[mk])); em.setColorAt(i,col); }
+        em.instanceMatrix.needsUpdate=true; if(em.instanceColor) em.instanceColor.needsUpdate=true;
+        em.userData.kind='emissive'; em.frustumCulled=false; g.add(em);
+      }
+    }
+
+    var gd=data.grass, gsrc=[];
+    for(i=0;i<gd.ph.length;i++) if(keep(gd.p[i*3],gd.p[i*3+2])) gsrc.push(i);
+    if(gsrc.length){
+      var gn=gsrc.length, geo=bladeGeo.clone();
+      var grass=new THREE.InstancedMesh(geo,mats.grass,gn);
       var qq=new THREE.Quaternion(),eu=new THREE.Euler(),sv=new THREE.Vector3(),tv=new THREE.Vector3();
       var ph=new Float32Array(gn),ti=new Float32Array(gn),cl=new Float32Array(gn*3),dl=new Float32Array(gn*3);
-      for(i=0;i<gn;i++){ tv.set(gd.p[i*3],gd.p[i*3+1],gd.p[i*3+2]); eu.set(0,gd.yw[i],0); qq.setFromEuler(eu);
-        sv.set(1,gd.sc[i],1); m4.compose(tv,qq,sv); grass.setMatrixAt(i,m4);
-        ph[i]=gd.ph[i]; ti[i]=gd.ti[i]; cl[i*3]=gd.c[i*3]; cl[i*3+1]=gd.c[i*3+1]; cl[i*3+2]=gd.c[i*3+2];
-        dl[i*3]=gd.dc[i*3]; dl[i*3+1]=gd.dc[i*3+1]; dl[i*3+2]=gd.dc[i*3+2]; }
+      for(i=0;i<gn;i++){ var gk=gsrc[i];
+        tv.set(gd.p[gk*3],gd.p[gk*3+1],gd.p[gk*3+2]); eu.set(0,gd.yw[gk],0); qq.setFromEuler(eu);
+        sv.set(1,gd.sc[gk],1); m4.compose(tv,qq,sv); grass.setMatrixAt(i,m4);
+        ph[i]=gd.ph[gk]; ti[i]=gd.ti[gk]; cl[i*3]=gd.c[gk*3]; cl[i*3+1]=gd.c[gk*3+1]; cl[i*3+2]=gd.c[gk*3+2];
+        dl[i*3]=gd.dc[gk*3]; dl[i*3+1]=gd.dc[gk*3+1]; dl[i*3+2]=gd.dc[gk*3+2]; }
       grass.instanceMatrix.needsUpdate=true;
       geo.setAttribute('aPhase',new THREE.InstancedBufferAttribute(ph,1));
       geo.setAttribute('aTint',new THREE.InstancedBufferAttribute(ti,1));
       geo.setAttribute('aCol',new THREE.InstancedBufferAttribute(cl,3));
       geo.setAttribute('aDry',new THREE.InstancedBufferAttribute(dl,3));
-      grass.frustumCulled=false; scene.add(grass);
+      grass.userData.kind='grass'; grass.frustumCulled=false; g.add(grass);
     }
 
-    var wmat=null;
     if(data.water.v.length){
-      var wg=new THREE.BufferGeometry();
-      wg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(data.water.v),3));
-      wg.setAttribute('aDepth',new THREE.BufferAttribute(new Float32Array(data.water.d),1));
-      wg.setAttribute('aFoam',new THREE.BufferAttribute(new Float32Array(data.water.f),1));
-      wg.setAttribute('aFlow',new THREE.BufferAttribute(new Float32Array(data.water.fl),2));
-      wg.setIndex(data.water.i);
-      wmat=new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,
-        uniforms:{uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)}},
-        vertexShader:WATER_VS,fragmentShader:WATER_FS});
-      var wm=new THREE.Mesh(wg,wmat); wm.frustumCulled=false; scene.add(wm);
+      /* Water is indexed, so the clip is per triangle and by its centroid — a
+         triangle that straddles the boundary belongs to whichever side holds
+         most of it, which keeps the surface closed across a seam rather than
+         leaving a slot of missing water down every chunk edge. */
+      var wv=data.water.v, wi=data.water.i, wid=[];
+      for(i=0;i<wi.length;i+=3){
+        var ax=wv[wi[i]*3],az=wv[wi[i]*3+2],bx=wv[wi[i+1]*3],bz=wv[wi[i+1]*3+2],
+            cx2=wv[wi[i+2]*3],cz2=wv[wi[i+2]*3+2];
+        if(keep((ax+bx+cx2)/3,(az+bz+cz2)/3)){ wid.push(wi[i],wi[i+1],wi[i+2]); }
+      }
+      if(wid.length){
+        var wg=new THREE.BufferGeometry();
+        wg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(wv),3));
+        wg.setAttribute('aDepth',new THREE.BufferAttribute(new Float32Array(data.water.d),1));
+        wg.setAttribute('aFoam',new THREE.BufferAttribute(new Float32Array(data.water.f),1));
+        wg.setAttribute('aFlow',new THREE.BufferAttribute(new Float32Array(data.water.fl),2));
+        wg.setIndex(wid);
+        var wm=new THREE.Mesh(wg,mats.water); wm.userData.kind='water';
+        wm.frustumCulled=false; g.add(wm);
+      }
     }
-    (data.lamps||[]).slice(0,3).forEach(function(l){
-      var pl=new THREE.PointLight(0xffb066,0.9,9,2); pl.position.set(l[0],l[1]+0.1,l[2]); scene.add(pl);
+    (data.lamps||[]).filter(function(l){ return keep(l[0],l[2]); }).slice(0,3).forEach(function(l){
+      var pl=new THREE.PointLight(0xffb066,0.9,9,2); pl.position.set(l[0],l[1]+0.1,l[2]); g.add(pl);
     });
-    return {scene:scene,gmat:gmat,wmat:wmat,vox:vox,props:props,mesh:terrainMesh};
+    return {g:g,vox:vox,props:props,propMesh:propMesh,mesh:terrainMesh,data:data,org:org};
+  }
+
+  /** The grass and water materials, shared across every chunk of one world. */
+  function worldMaterials(){
+    return {
+      mesh:meshMaterial(),
+      /* What the instanced prop boxes were drawn with, so culling their
+         insides cannot change how the outsides are lit. */
+      prop:new THREE.MeshLambertMaterial({vertexColors:true}),
+      grass:new THREE.ShaderMaterial({side:THREE.DoubleSide,
+        uniforms:{uTime:{value:0},uP0:{value:new THREE.Vector3(1e5,0,1e5)},
+                  uWind:{value:new THREE.Vector2(0.72,0.69)}},
+        vertexShader:GRASS_VS,fragmentShader:GRASS_FS}),
+      water:new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,
+        uniforms:{uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)}},
+        vertexShader:WATER_VS,fragmentShader:WATER_FS}),
+    };
+  }
+
+  /** The sky, the lights and nothing that came out of a generator. */
+  function sceneShell(reach){
+    var scene=new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0x9fc3e8,0x4a3a2c,0.62));
+    var sun=new THREE.DirectionalLight(0xfff0d2,1.05);
+    sun.position.set(-16,26,12); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+    var sc=sun.shadow.camera, e=reach;
+    sc.left=-e;sc.right=e;sc.top=e;sc.bottom=-e;sc.near=1;sc.far=200;
+    sun.shadow.bias=-0.0006; sun.shadow.normalBias=0.04;
+    scene.add(sun); scene.add(sun.target);
+    return {scene:scene,sun:sun};
+  }
+
+  function buildScene(data){
+    var shell=sceneShell(data.half+4), mats=worldMaterials();
+    var node=worldNode(data,mats,null);
+    shell.scene.add(node.g);
+    return {scene:shell.scene,sun:shell.sun,mats:mats,
+            gmat:mats.grass,wmat:mats.water,
+            vox:node.vox,props:node.props,propMesh:node.propMesh,
+            mesh:node.mesh,node:node};
   }
 
   /* ---------- the character ---------- */
@@ -5845,16 +6701,39 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
 
      Boxes are still one click away, and the comparison harness still drives
      both — tools/compare-renderers.mjs and tools/compare-plates.mjs. */
-  var useMesh=true;
+  var useMesh=true, streaming=false;
   function setMesh(on){
     useMesh=!!on;
     if(built&&built.mesh){ built.mesh.visible=useMesh; if(built.vox) built.vox.visible=!useMesh; }
+    /* A streamed world has one of each per chunk, and chunks that arrive later
+       read `useMesh` when they are made. */
+    if(built&&built.node){ var b0=built.node;
+      if(b0.propMesh) b0.propMesh.visible=useMesh;
+      if(b0.props) b0.props.visible=!useMesh||!b0.propMesh; }
+    if(nodes) for(var k in nodes){ var nd=nodes[k];
+      if(nd.mesh) nd.mesh.visible=useMesh; if(nd.vox) nd.vox.visible=!useMesh;
+      if(nd.propMesh) nd.propMesh.visible=useMesh;
+      if(nd.props) nd.props.visible=!useMesh||!nd.propMesh; }
     /* Two buttons, one state: the one on the page and the one in the view. Each
        is labelled with what it switches *to*, so they read the same either way
        and neither can be left saying the opposite of the other. */
     var lbl=useMesh?'Boxes':'Mesh';
     var b2=document.getElementById('meshbtn'); if(b2) b2.textContent=lbl;
     var b3=document.getElementById('meshtog'); if(b3) b3.textContent=lbl;
+  }
+
+  /** Swap between the culled prop mesh and the instanced boxes. */
+  var propCulled=true;
+  function setPropMesh(on){
+    propCulled=!!on;
+    function apply(nd){
+      if(!nd) return;
+      if(nd.propMesh) nd.propMesh.visible=useMesh&&propCulled;
+      if(nd.props) nd.props.visible=!useMesh||!nd.propMesh||!propCulled;
+    }
+    if(built&&built.node) apply(built.node);
+    if(nodes) for(var k in nodes) apply(nodes[k]);
+    return propCulled;
   }
 
   /* ---------- taking a bite out of it ----------
@@ -5885,19 +6764,90 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return voxIndex;
   }
   var zeroM=new THREE.Matrix4().makeScale(0,0,0), hidM=new THREE.Matrix4(), hidden=[];
+  /**
+   * A bite, in whichever window owns the ground it lands in.
+   *
+   * Unstreamed that is the only window there is. Streamed it is one chunk of
+   * twenty-five, addressed in its own local coordinates — a chunk's arrays are
+   * all relative to its centre, which is also why its node is *positioned*
+   * rather than generated in world space.
+   *
+   * A bite within a voxel of a chunk boundary leaves the neighbour's AO ring
+   * stale, and this does not chase it. `src/mesh/carve.mjs` reports the chunks
+   * an edit dirties inside one window and has no way to name one in another;
+   * making it able to is the same problem as meshing across a seam and belongs
+   * with it, not here. What you see is a correctly shaded bite with a
+   * neighbouring face that keeps the shading it had.
+   */
   function carveAt(x,y,z,opts){
     if(!built) return null;
-    var r=QS.carve(built.data,x,y,z,opts||{});
-    for(var q=0;q<r.chunks.length;q++) built.mesh.userData.remesh(built.data,r.chunks[q][0],r.chunks[q][1]);
-    if(r.cut&&built.vox){
-      var ix=voxelIndexOf(built.data), hid=0;
+    /* Which window owns this ground, which index finds a voxel in it, and
+       which list remembers what has been hidden. Picking the last two off the
+       *world* rather than off `streaming` was the first version, and the
+       unstreamed build carries a node too — so every carve without streaming
+       reached for a list that only a streamed chunk has. */
+    var host=built, lx=x, lz=z, bin=hidden, ix=null;
+    if(streaming){
+      var c=QS.chunkAt(x,z), nd=nodeAt(c.cx,c.cz);
+      if(!nd) return null;
+      host={data:nd.data,mesh:nd.mesh,vox:nd.vox,propMesh:nd.propMesh};
+      bin=nd.hidden; ix=indexOfNode(nd);
+      lx=x-c.cx*QS.CHUNK; lz=z-c.cz*QS.CHUNK;
+    }else ix=voxelIndexOf(built.data);
+    var r=QS.carve(host.data,lx,y,lz,opts||{});
+    for(var q=0;q<r.chunks.length;q++) host.mesh.userData.remesh(host.data,r.chunks[q][0],r.chunks[q][1]);
+    /* Taking rock away can uncover a prop face that was buried in it, so the
+       prop mesh is rebuilt with the terrain mesh. This is what having props on
+       their own mesh buys: it is a prop rebuild, not a chunk remesh, which is
+       the constraint #12 set when it kept them instanced. */
+    if(r.cut&&host.propMesh) remeshProps(host);
+    if(r.cut&&host.vox){
+      var hid=0;
+      /* `src` is which voxel of the window each instance came from: the clip
+         that keeps a chunk from drawing its skirt makes the two different
+         numbers, and hiding the wrong instance would put a hole somewhere
+         nobody swung. */
+      var back=host.vox.userData.back;
+      if(!back){ back=host.vox.userData.back=new Map();
+        var sr=host.vox.userData.src;
+        for(var t=0;t<sr.length;t++) back.set(sr[t],t); }
       for(var v=0;v<r.removed.length;v+=3){
-        var k=ix.get((r.removed[v]*built.data.NZ+r.removed[v+1])*QS.LEVELS+r.removed[v+2]);
-        if(k!==undefined){ built.vox.setMatrixAt(k,zeroM); hidden.push(k); hid++; }
+        var k=ix.get((r.removed[v]*host.data.NZ+r.removed[v+1])*QS.LEVELS+r.removed[v+2]);
+        var slot=k===undefined?undefined:back.get(k);
+        if(slot!==undefined){ host.vox.setMatrixAt(slot,zeroM); bin.push(slot); hid++; }
       }
-      if(hid) built.vox.instanceMatrix.needsUpdate=true;
+      if(hid) host.vox.instanceMatrix.needsUpdate=true;
     }
-    return {cut:r.cut,held:r.held?r.held.nm:null,chunks:r.chunks.length,quads:built.mesh.userData.quads};
+    return {cut:r.cut,held:r.held?r.held.nm:null,chunks:r.chunks.length,quads:host.mesh.userData.quads};
+  }
+
+  /** Rebuild one world's prop mesh in place, after an edit uncovered a face. */
+  function remeshProps(host){
+    var org=host.mesh&&host.mesh.userData?host.mesh.userData.org:null;
+    var pm=QS.meshProps(host.data,org?QS.CHUNK/2:undefined);
+    var g=host.propMesh.geometry;
+    g.dispose();
+    var ng=new THREE.BufferGeometry();
+    ng.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pm.pos),3));
+    ng.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(pm.nor),3));
+    ng.setAttribute('color',new THREE.BufferAttribute(new Float32Array(pm.col),3));
+    ng.setIndex(pm.idx);
+    ng.userData={faces:pm.faces,culled:pm.culled};
+    host.propMesh.geometry=ng;
+    return pm.faces;
+  }
+
+  /** The voxel index of one streamed chunk, made once and kept on its node. */
+  function indexOfNode(nd){
+    if(nd.ix) return nd.ix;
+    var d=nd.data, pStart=d.propStart===undefined?d.pos.length/3:d.propStart, V2=QS.V;
+    nd.ix=new Map();
+    for(var q=0;q<pStart;q++){
+      var gi=Math.round((d.pos[q*3]+d.half-V2/2)/V2);
+      var gj=Math.round((d.pos[q*3+2]+d.half-V2/2)/V2);
+      nd.ix.set((gi*d.NZ+gj)*QS.LEVELS+Math.floor(d.pos[q*3+1]/V2),q);
+    }
+    return nd.ix;
   }
   var camT=new THREE.Vector3();
 
@@ -5953,21 +6903,34 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   }
 
   /** Build (or rebuild) the world and its scene. Returns what a session needs. */
-  function buildFor(cfg){
-    var data=QS.buildWorld(cfg);
-    if(built) built.scene.traverse(function(n){
+  /* Throw away everything the last world put in the scene. Shared materials
+     are held on `built.mats` and are not disposed here — a streamed world has
+     one of each across every chunk, and disposing one with a chunk would take
+     the grass off the other twenty-four. */
+  function disposeWorld(){
+    if(!built) return;
+    var keepMats=built.mats||{};
+    built.scene.traverse(function(n){
       if((n.isMesh||n.isInstancedMesh)&&!n.userData.keep){
         if(n.geometry&&n.geometry!==boxGeo) n.geometry.dispose();
-        if(n.material&&n.material.dispose) n.material.dispose();
+        if(n.material&&n.material.dispose
+           &&n.material!==keepMats.mesh&&n.material!==keepMats.grass
+           &&n.material!==keepMats.water&&n.material!==keepMats.prop)
+          n.material.dispose();
       }
     });
-    built=buildScene(data); built.data=data; built.cfg=cfg; voxIndex=null; hidden.length=0;
-    built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
-    col=QS.colliderForWorld(data);
+    if(keepMats.mesh) keepMats.mesh.dispose();
+    if(keepMats.grass) keepMats.grass.dispose();
+    if(keepMats.water) keepMats.water.dispose();
+    if(keepMats.prop) keepMats.prop.dispose();
+  }
 
-    /* Something to swing at that does not swing back — the machines below do.
-       Derived from the world on both machines rather than sent, like the
-       terrain — see src/sim/combat.mjs. */
+  /* The posts, the machines and the loot. Placed from the world on both
+     machines rather than sent — see src/sim/combat.mjs. A streamed world
+     places them from the chunk it spawns in, which is the same call with a
+     smaller window: an encounter spanning more than one chunk is its own
+     problem and not this one. */
+  function populate(data){
     var posts=QS.practicePosts(col,data.spawn);
     postMeshes=posts.map(function(t){
       var m=new THREE.Mesh(new THREE.CylinderGeometry(t.r,t.r*1.15,1.5,8),
@@ -5977,11 +6940,6 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     });
     postHits=posts.map(function(){return 0;});
     postFlash=posts.map(function(){return 0;});
-
-    /* The machines, and what they and the world leave lying around. Both come
-       with the world because both are placed from it — a guest is sent what
-       they look like and one integer of what has been picked up, never what
-       they are or where the caches went. */
     encounter=QS.makeEncounter(col,data,posts);
     targets=encounter.targets;
     foeMeshes.forEach(function(f){ built.scene.remove(f.g); });
@@ -5996,10 +6954,357 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     drawLattice();
     return {col:col,spawn:data.spawn,targets:targets,encounter:encounter};
   }
+
+  function buildFor(cfg){
+    var data=QS.buildWorld(cfg);
+    disposeWorld();
+    field=null; stream=null; nodes=null;
+    built=buildScene(data); built.data=data; built.cfg=cfg; voxIndex=null; hidden.length=0;
+    built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
+    col=QS.colliderForWorld(data);
+    return populate(data);
+  }
+
+  /* ---------- the streamed world (issue #13) ----------
+     The same scene, assembled a chunk at a time and never finished: chunks
+     within a radius of a player exist, chunks past a wider one are let go, and
+     the collider is `makeChunkField` rather than one grid over one window.
+
+     What the build does here is the fallback path `src/sim/stream.mjs`
+     describes and not the one it recommends. Generating a 40 m window costs
+     90-290 ms and a frame is 16.7, so a chunk arriving on the main thread is a
+     freeze a dozen frames long. That is measured, it is why the HUD reports
+     the cost of the last one, and it is what a worker is for. Streaming is
+     behind a switch until then.
+
+     A streamed world is also not the same world as an unstreamed one of the
+     same seed, and that is not a defect to be fixed: the generator is not
+     size-invariant, so a 40 m window and a 64 m window centred on the same
+     point are different ground. See src/gen/chunk.mjs. */
+  var field=null, stream=null, nodes=null;
+  var streamMs=0, streamBuilt=0;
+  var STREAM_LOAD=2, STREAM_KEEP=3;
+
+  function nodeAt(cx,cz){ return nodes?nodes[cx+','+cz]:null; }
+
+  function dropNode(k){
+    var nd=nodes[k];
+    nd.g.traverse(function(o){
+      if((o.isMesh||o.isInstancedMesh)&&o.geometry&&o.geometry!==boxGeo) o.geometry.dispose();
+      if(o.isInstancedMesh&&o.material&&o.material.dispose
+         &&o.material!==built.mats.mesh&&o.material!==built.mats.grass
+         &&o.material!==built.mats.water&&o.material!==built.mats.prop)
+        o.material.dispose();
+    });
+    built.scene.remove(nd.g);
+    delete nodes[k];
+  }
+
+  /** Make the scene hold exactly the chunks the field holds. */
+  function reconcileNodes(){
+    var live=field.live(), want={}, i;
+    for(i=0;i<live.length;i++){
+      var e=live[i], k=e.cx+','+e.cz; want[k]=1;
+      if(nodes[k]) continue;
+      var k3=e.cx+','+e.cz, pre=premesh[k3];
+      if(pre) delete premesh[k3];
+      var nd=worldNode(e.w,built.mats,QS.innerChunk(e.w),pre);
+      nd.g.position.set(e.cx*QS.CHUNK,0,e.cz*QS.CHUNK);
+      nd.cx=e.cx; nd.cz=e.cz; nd.ix=null; nd.hidden=[];
+      built.scene.add(nd.g); nodes[k]=nd;
+    }
+    for(var k2 in nodes) if(!want[k2]) dropNode(k2);
+    /* A mesh whose chunk never became a node, because the players moved on
+       while it was being built, is not kept against a return. */
+    for(var k4 in premesh) if(!want[k4]) delete premesh[k4];
+  }
+
+  /* ---------- generation off the main thread (issue #13) ----------
+     A 40 m window costs 86-290 ms to generate and a frame is 16.7 ms, so a
+     chunk arriving on the main thread is a freeze a dozen frames long. That is
+     measured in src/sim/stream.mjs and it is the whole reason streaming is
+     behind a flag. This is the answer to it.
+
+     The worker is built from the page's own inlined bundle — the same text the
+     page runs, read back out of its script tag and handed to a Blob. There is
+     no second copy to drift, and no second file to host, which matters because
+     this page is published as a single self-contained artifact.
+
+     **Whether that is allowed is not something to assume.** A page's CSP may
+     refuse a blob: worker, and a refusal does not arrive as an exception from
+     `new Worker` — it arrives later, as an error event, or not at all. So the
+     pool is *probed*: it is sent a ping, and it counts as live the moment it
+     answers. Until then the stream is pumped on this thread exactly as before,
+     so nothing waits on the worker and nothing breaks if it never comes.
+
+     **The probe does not have a deadline, and that is the point.** It used to
+     give the pool four seconds of wall clock and mark it dead otherwise, which
+     is the one thing that cannot work here: a `postMessage` reply is delivered
+     on the main thread, and the main thread is — by construction, this being
+     the problem the worker exists to solve — blocked for seconds at a time
+     generating chunks. A healthy worker answered and the answer sat in a queue
+     behind the very work it was meant to take over, and the pool was declared
+     refused every single run. Readiness is an event now, never a timer. */
+  var pool=null;
+  /* Meshes that arrived from a worker, waiting for the node that will draw
+     them. Keyed by chunk and emptied by reconcileNodes; a chunk let go before
+     its node is made drops its mesh with it. */
+  var premesh={};
+  var POOL_N=2;
+  /* How many ticks of pending work with nothing arriving before this thread
+     stops waiting and builds one itself. See `pumpStream`. */
+  var POOL_PATIENCE=20;
+
+  function makePool(n){
+    var tag=document.getElementById('qsbundle');
+    if(!tag||typeof Worker!=='function'||typeof Blob!=='function') return null;
+    var body=tag.textContent+'\n'
+      +'var _now=function(){return (self.performance||Date).now();};\n'
+      +'self.onmessage=function(e){\n'
+      +'  var d=e.data;\n'
+      +'  if(d.ping){ self.postMessage({pong:1}); return; }\n'
+      /* Anything that throws in here is posted back by name. A worker that
+         fails quietly is indistinguishable from one a CSP refused, and this
+         build already has a fallback that hides both: the main thread simply
+         carries on generating and the readout says nothing is wrong. That cost
+         a whole cycle to find once. */
+      +'  try{\n'
+      /* The AO ramp and the palette-group widths, so the worker can turn a mesh
+         into the exact attribute buffers the material wants. Both are tables,
+         not state: the ramp is four numbers and the widths come straight off
+         QS.PALETTE, which the worker has too. */
+      +'var AO_STEP=['+AO_STEP.join(',')+'];\n'
+      +'var PAL_N=(function(){var t=new Uint8Array(QS.PALETTE.length);\n'
+      +'  for(var k in QS.PAL) t[QS.PAL[k].at]=QS.PAL[k].n; return t;})();\n'
+      +'  var t0=_now(), w=QS.chunkWorld(d.seed,d.cx,d.cz,d.force);\n'
+      /* A world carries its generator on `w.G`, and a generator is nine
+         closures. structuredClone refuses the whole object over them — "function
+         cell(x,z){...} could not be cloned" — so the worker could never post
+         anything back, whatever the CSP allowed. Everything else on a world is
+         plain data and clones in about 22 ms. The generator is not sent; the
+         main thread makes its own from the same seed, which is what `makeGen`
+         is for and costs nothing but closures. */
+      +'  var out={}; for(var k in w){ if(k!=="G") out[k]=w[k]; }\n'
+      /* And mesh it here. This is the reason the worker exists at all: the
+         greedy pass is 209 ms of the ~220 ms the main thread used to spend
+         adopting a chunk, and everything else in that figure is rounding.
+         The buffers go back as typed arrays in the transfer list, so they are
+         handed over rather than copied — a mesh is the one part of a chunk
+         big enough for that to matter. */
+      +'  var t1=_now(), m=QS.meshChunk(w,0,0,QS.innerChunk(w)), n=m.pos.length/3;\n'
+      +'  var col=new Float32Array(n*3), grp=new Float32Array(n*2);\n'
+      +'  for(var v=0;v<n;v++){ var kk=AO_STEP[m.ao[v]];\n'
+      +'    col[v*3]=kk; col[v*3+1]=kk; col[v*3+2]=kk;\n'
+      +'    grp[v*2]=m.pal[v]; grp[v*2+1]=PAL_N[m.pal[v]]||1; }\n'
+      +'  var mesh={pos:new Float32Array(m.pos),nor:new Float32Array(m.nor),\n'
+      +'            col:col,grp:grp,idx:new Uint32Array(m.idx),quads:m.quads};\n'
+      /* Props too, and for the same reason: their hidden faces were 62% of the
+         frame, and finding them means walking every prop voxel against an
+         occupancy set. That is not main-thread work either. */
+      +'  var pmr=QS.meshProps(w,QS.CHUNK/2);\n'
+      +'  var props={pos:new Float32Array(pmr.pos),nor:new Float32Array(pmr.nor),\n'
+      +'             col:new Float32Array(pmr.col),idx:new Uint32Array(pmr.idx),\n'
+      +'             faces:pmr.faces,culled:pmr.culled};\n'
+      +'  self.postMessage({cx:d.cx,cz:d.cz,w:out,mesh:mesh,props:props,\n'
+      +'                    gen:_now()-t0,mesh_ms:_now()-t1},\n'
+      +'    [mesh.pos.buffer,mesh.nor.buffer,mesh.col.buffer,mesh.grp.buffer,mesh.idx.buffer,\n'
+      +'     props.pos.buffer,props.nor.buffer,props.col.buffer,props.idx.buffer]);\n'
+      +'  }catch(err){ self.postMessage({cx:d.cx,cz:d.cz,err:String((err&&err.message)||err)}); }\n'
+      +'};\n';
+    var url,ws=[];
+    try{
+      url=URL.createObjectURL(new Blob([body],{type:'text/javascript'}));
+      for(var i=0;i<n;i++) ws.push(new Worker(url));
+    }catch(err){
+      ws.forEach(function(w){ try{w.terminate();}catch(e2){} });
+      return null;
+    }
+    var P={ws:ws,url:url,ready:false,busy:ws.map(function(){return null;}),
+            sentAt:ws.map(function(){return 0;}),
+            gen:0,mesh_ms:0,deliver:0,take:0,done:0,sent:0,failed:false,waited:0,err:null};
+    ws.forEach(function(w,k){
+      w.onerror=function(e){ P.failed=true; P.ready=false;
+        P.err=(e&&e.message)||'refused'; };
+      w.onmessage=function(ev){
+        var d=ev.data;
+        if(d.pong){ P.ready=true; return; }
+        if(d.err){ P.failed=true; P.err=d.err; P.busy[k]=null; return; }
+        /* Three numbers, and they are not the same number.
+ 
+           `gen` is the worker's own generation time. It is a *duration*, which
+           is the only thing about a worker's clock that means anything here: a
+           worker has its own `performance` time origin, so subtracting one of
+           its timestamps from one of ours is nonsense. That is what the first
+           version of this did.
+ 
+           `deliver` is the round trip this side measured, less that duration —
+           so everything that is not generating: posting, structured-cloning
+           the window out, and cloning it back in. The clone comes back *in* on
+           this thread, before this handler runs, so it is the part a worker
+           does not remove.
+ 
+           `take` is this handler: building the chunk's collider, meshing it and
+           putting it in the scene. That was always on this thread and still is. */
+        var rt=performance.now()-P.sentAt[k];
+        P.gen=d.gen; P.deliver=Math.max(0,rt-d.gen); P.done++;
+        P.busy[k]=null; P.waited=0;
+        if(streaming&&stream){
+          var t1=performance.now();
+          /* Put a generator back on it: the mesher reads `w.G.pstream` to pick
+             a voxel's shade, and the worker could not send one. Same seed, same
+             closures, same answers. */
+          d.w.G=QS.makeGen(field.seed,field.force===undefined?null:field.force);
+          if(d.mesh) premesh[d.cx+','+d.cz]={terrain:d.mesh,props:d.props};
+          P.mesh_ms=d.mesh_ms||0;
+          stream.deliver(d.cx,d.cz,d.w);
+          reconcileNodes();
+          P.take=performance.now()-t1;
+          streamMs=P.deliver+P.take; streamBuilt++;
+        }
+      };
+      w.postMessage({ping:1});
+    });
+    return P;
+  }
+
+  /** Hand the pool as much as it will take. True if it took anything. */
+  function feedPool(){
+    if(!pool||!pool.ready||pool.failed) return false;
+    var any=false;
+    for(var k=0;k<pool.ws.length;k++){
+      if(pool.busy[k]) continue;
+      var j=stream.next();
+      if(!j) break;
+      pool.busy[k]=j;
+      pool.sentAt[k]=performance.now(); pool.sent++;
+      pool.ws[k].postMessage({seed:field.seed,force:field.force,cx:j.cx,cz:j.cz});
+      any=true;
+    }
+    return any;
+  }
+
+  function pumpStream(){
+    if(!stream) return;
+    var cs=[], a=player(), b=other();
+    if(a) cs.push({x:a.x,z:a.z});
+    if(b) cs.push({x:b.x,z:b.z});
+    stream.want(cs.length?cs:[{x:0,z:0}]);
+    /* A worker if one answered, and this thread if none did — one window per
+       tick either way, and no pretence that it fits inside a frame.
+
+       Per *tick*, not per frame, because the gate drives the simulation
+       through QSPLAY.run and never reaches the render loop at all. Loading
+       that only happened while frames were being drawn would leave every
+       assertion walking into ground nobody had decided — which is a wall, and
+       would have read as the controller's fault. */
+    var live=pool&&pool.ready&&!pool.failed;
+    if(live) feedPool();
+    /* Build here when there is no pool, or when there is one and it is not
+       keeping the ground ahead decided. The second half is not belt and
+       braces: a worker's answer arrives as a message, and a caller that never
+       returns to the event loop — the gate drives whole minutes of simulation
+       inside one call — will not receive one however healthy the worker is.
+       Waiting on it there would walk a body into ground nobody had decided. */
+    if(live&&stream.pending>0) pool.waited++; else if(live) pool.waited=0;
+    if(!live||pool.waited>POOL_PATIENCE){
+      var j=stream.next();
+      if(j){
+        var t0=performance.now();
+        stream.deliver(j.cx,j.cz,QS.chunkWorld(field.seed,j.cx,j.cz,field.force));
+        streamMs=performance.now()-t0; streamBuilt++;
+        if(live) pool.waited=0;
+      }
+    }
+    /* Every tick, not only when one arrives: `want` lets chunks go as the
+       players move, and a node whose chunk is gone has to go with it. It walks
+       the loaded set, which is twenty-five entries. */
+    reconcileNodes();
+  }
+
+  /* The sun's shadow box is a fixed span around the player rather than the
+     whole world, because a streamed world does not have a whole. */
+  function followSun(){
+    var a=player();
+    if(!a||!built||!built.sun) return;
+    built.sun.position.set(a.x-16,a.y+26,a.z+12);
+    built.sun.target.position.set(a.x,a.y,a.z);
+    built.sun.target.updateMatrixWorld();
+  }
+
+  function buildStreamFor(cfg){
+    disposeWorld();
+    var mats=worldMaterials(), shell=sceneShell(52);
+    field=QS.makeChunkField(cfg.seed,cfg.force===undefined?null:cfg.force);
+    stream=QS.makeStream(field,{loadR:1,keepR:STREAM_KEEP,flight:POOL_N});
+    nodes={}; voxIndex=null; hidden.length=0; streamBuilt=0; streamMs=0;
+    built={scene:shell.scene,sun:shell.sun,mats:mats,gmat:mats.grass,wmat:mats.water,
+           vox:null,props:null,mesh:null,cfg:cfg,streamed:true};
+    built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
+    col=field;
+    /* Settle the nine chunks around the origin before the first frame — that
+       is a loading screen's worth of work and it is the only synchronous
+       stretch. The wider radius fills in as you play, a window per frame. */
+    stream.want([{x:0,z:0}]);
+    for(;;){ var j=stream.next(); if(!j) break;
+      stream.deliver(j.cx,j.cz,QS.chunkWorld(cfg.seed,j.cx,j.cz,field.force)); }
+    stream.radius(STREAM_LOAD,STREAM_KEEP);
+    /* Ask for workers once, after there is ground to stand on. If they never
+       answer, the pump stays on this thread and nothing else changes. */
+    if(!pool) pool=makePool(POOL_N);
+    reconcileNodes();
+    built.data=field.chunk(0,0).w;
+    return populate(built.data);
+  }
+
   function regen(seedStr){
     if(session){ says('leave the game first'); return; }
-    buildFor({seed:seedStr,size:64,force:null,ox:0,oz:0});
+    if(streaming) buildStreamFor({seed:seedStr,force:null});
+    else buildFor({seed:seedStr,size:64,force:null,ox:0,oz:0});
     solo=null; spawn();
+  }
+
+  /**
+   * Switch the world between one window and a field of chunks.
+   *
+   * Not a toolbar button. Streaming costs a dozen-frame freeze every time a
+   * chunk arrives, because generation is still on the main thread — that is
+   * measured in src/sim/stream.mjs and shown in the readout — and until a
+   * worker takes it, putting it a click away from someone who came here to
+   * play would be offering them a worse game. It is a flag: `?stream=1`, or
+   * `QSPLAY.setStream(true)` from a console.
+   *
+   * The seed is kept, and the world still changes. A 40 m window and a 64 m
+   * window centred on the same point are different ground — the generator is
+   * not size-invariant, which src/gen/chunk.mjs measures at 87% of shared
+   * cells. Same seed, same rules, a world you have not seen.
+   */
+  function setStreaming(on){
+    on=!!on;
+    if(on===streaming) return streaming;
+    if(session){ says2('leave the game first'); return streaming; }
+    streaming=on;
+    regen((built&&built.cfg&&built.cfg.seed)||seedin.value||'QUARTERSTONE');
+    syncStreamBtn();
+    return streaming;
+  }
+
+  /* The label says which state it is in, not which it switches to. `Boxes` can
+     get away with the latter because both of its states are ordinary; an
+     option that is off by default and changes the world it grows should say so
+     plainly. */
+  function syncStreamBtn(){
+    /* Two buttons, one state, for exactly the reason `Boxes` has two: the
+       build opens with the stage filling the viewport, so everything on the
+       page below it is behind that. A control that lives only down there is
+       not reachable without leaving the game first — which is what shipped,
+       and the first thing anyone asked was where the button was. */
+    var b=document.getElementById('streambtn');
+    if(b){
+      b.textContent='Streaming: '+(streaming?'on':'off');
+      b.setAttribute('aria-pressed',streaming?'true':'false');
+    }
+    var t=document.getElementById('streamtog');
+    if(t) t.setAttribute('aria-pressed',streaming?'true':'false');
   }
 
   /* ---------- a pose the gate can come back to (issue #29) ----------
@@ -6149,6 +7454,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   document.getElementById('meshbtn').addEventListener('click',function(){
     setMesh(!useMesh); stage.focus();
   });
+  function toggleStream(inView){
+    var was=streaming, now=setStreaming(!streaming);
+    if(now!==was) (inView?says:says2)(now
+      ? 'streaming on \u2014 32 m chunks around you, and a different world from the same seed'
+      : 'streaming off \u2014 back to one 64 m window');
+    stage.focus();
+  }
+  document.getElementById('streambtn').addEventListener('click',function(){ toggleStream(false); });
   fullBtn.addEventListener('click',function(){ toggleFull(); });
 
   /* ---------- the view's own controls ----------
@@ -6225,6 +7538,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return a+'-'+b+'-'+(1+(Math.random()*98)|0);
   }
   var newBtn=document.getElementById('newworld'), meshTog=document.getElementById('meshtog');
+  var streamTog=document.getElementById('streamtog');
   function newWorld(){
     /* The host owns which world everyone is in. A guest growing its own would
        be a different world with the same characters walking around in it. */
@@ -6240,7 +7554,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
    [zoomInBtn,function(){ zoomBy(-1); }],
    [zoomOutBtn,function(){ zoomBy(1); }],
    [newBtn,function(){ newWorld(); }],
-   [meshTog,function(){ setMesh(!useMesh); }]].forEach(function(pair){
+   [meshTog,function(){ setMesh(!useMesh); }],
+   [streamTog,function(){ toggleStream(true); }]].forEach(function(pair){
     pair[0].addEventListener('pointerdown',function(e){ e.stopPropagation(); });
     pair[0].addEventListener('click',function(e){ e.stopPropagation(); pair[1](); stage.focus(); });
   });
@@ -6575,6 +7890,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return null;
   }
   function tick(){
+    /* Before anything moves: a body may not walk into ground that has not been
+       decided, and the load radius is what keeps it from ever meeting that
+       boundary — see src/sim/chunks.mjs. */
+    if(streaming) pumpStream();
     if(input.took('rotateLeft')) QS.snap(cam,-1);
     if(input.took('rotateRight')) QS.snap(cam,1);
     if(input.took('respawn')) spawn();
@@ -6683,6 +8002,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         : '<b>Joined.</b> You are predicting locally and reconciling against the host.',true);
     }
     if(!built) return;
+    if(streaming) followSun();
 
     frames++;
     if(now-fpsAt>500){ fps=frames*1000/(now-fpsAt); frames=0; fpsAt=now; }
@@ -6730,7 +8050,19 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          snaps sit on START_YAW + n quarters, so dividing the raw angle by a
          quarter never lands on an integer. */
       'view '+((Math.round((cam.yawTo-QS.START_YAW)/QS.QUARTER)%4+4)%4)+'/4   vaults '+a.vaults+
-      '   deaths '+deaths+'\n'+net+'   '+fps.toFixed(0)+' fps';
+      '   deaths '+deaths+'\n'+
+      /* What streaming costs, where you can see it. The last window's
+         generation time is the number that says why this is behind a switch:
+         it is the length of the freeze, in one figure. */
+      (streaming&&field?('chunks '+field.loaded+' loaded, '+field.built+' built, '+field.dropped+
+                  ' let go   last '+streamMs.toFixed(0)+' ms '+
+                  (pool&&pool.ready&&!pool.failed?
+                    '('+pool.ws.length+' workers: '+pool.gen.toFixed(0)+'+'+
+                    pool.mesh_ms.toFixed(0)+' ms generating and meshing off this thread, '+
+                    pool.deliver.toFixed(0)+' ms delivering, '+
+                    pool.take.toFixed(0)+' ms adopting)':'generated on this thread')+
+                  (stream.pending?('   '+stream.pending+' queued'):'')+'\n'):'')+
+      net+'   '+fps.toFixed(0)+' fps';
   }
 
   resize();
@@ -6753,7 +8085,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   hostBtn.addEventListener('click',function(){ startHost(); stage.focus(); });
   /* Opened by a host: do not generate anything, wait to be told which world. */
   if(location.hash.indexOf('join')>=0&&window.opener) startGuest();
-  else regen(seedin.value||'QUARTERSTONE');
+  else {
+    /* Streaming is opt-in per the note on setStreaming. */
+    /* `?stream=1` still works where the page is opened directly, but it is no
+       longer the only way in: published as an artifact this page runs inside
+       an iframe whose own URL carries no query, so the flag never reached it
+       and the feature was unreachable there. The control below the view is. */
+    if(/[?&]stream=1\b/.test(location.search)) streaming=true;
+    regen(seedin.value||'QUARTERSTONE');
+    syncStreamBtn();
+  }
   stage.focus();
   requestAnimationFrame(frame);
   /* A handle for the smoke test, and for anyone poking at this in a console.
@@ -6791,6 +8132,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* Issue #12: the gate drives the swap so the side-by-side is two
        screenshots of one camera, not two runs that might differ. */
     setMesh:setMesh,
+    /* The same, for the two prop renderers (#51): instanced boxes that draw
+       every face, or a mesh of only the faces that can be seen. The gate
+       needs to be able to put them side by side for the same reason. */
+    setPropMesh:setPropMesh,
     /* The view's own controls, driven through the real buttons by the gate. */
     get hudShown(){ return hudOn; },
     get view(){ return cam.view; },
@@ -6798,18 +8143,91 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* Issue #29: the fixed pose the look baseline is made of. */
     plate:plate,
     carve:carveAt,
-    clearEdits:function(){ if(!built) return 0; var n=QS.clearEdits(built.data), g=QS.chunkGrid(built.data);
-      for(var a=0;a<g;a++)for(var b=0;b<g;b++) built.mesh.userData.remesh(built.data,a,b);
-      if(hidden.length&&built.vox){
-        for(var q=0;q<hidden.length;q++){ var k=hidden[q];
-          hidM.makeTranslation(built.data.pos[k*3],built.data.pos[k*3+1],built.data.pos[k*3+2]);
-          built.vox.setMatrixAt(k,hidM); }
-        built.vox.instanceMatrix.needsUpdate=true; hidden.length=0;
+    clearEdits:function(){
+      if(!built) return 0;
+      function restore(data,mesh,vox,bin){
+        var n=QS.clearEdits(data), g=mesh.userData.org?1:QS.chunkGrid(data);
+        for(var a=0;a<g;a++)for(var b=0;b<g;b++) mesh.userData.remesh(data,a,b);
+        if(bin.length&&vox){
+          var src=vox.userData.src;
+          for(var q=0;q<bin.length;q++){ var k=src[bin[q]];
+            hidM.makeTranslation(data.pos[k*3],data.pos[k*3+1],data.pos[k*3+2]);
+            vox.setMatrixAt(bin[q],hidM); }
+          vox.instanceMatrix.needsUpdate=true; bin.length=0;
+        }
+        return n;
       }
-      return n; },
+      if(streaming){
+        var t=0;
+        for(var k2 in nodes){ var nd=nodes[k2]; t+=restore(nd.data,nd.mesh,nd.vox,nd.hidden); }
+        return t;
+      }
+      return restore(built.data,built.mesh,built.vox,hidden); },
     get mesh(){ return useMesh; },
-    get meshQuads(){ return built&&built.mesh?built.mesh.userData.quads:0; },
-    get boxCount(){ return built?built.data.pos.length/3:0; },
+    /* Whatever is answering "what is solid" — one grid over one window, or a
+       field of loaded chunks. The gate asks it the same question either way. */
+    get collider(){ return col; },
+    /* The scene itself, for a measurement that has to reach past the API —
+       telling the two prop renderers apart means changing one property on
+       exactly the meshes in question. */
+    get scene(){ return built?built.scene:null; },
+    /**
+     * What a frame actually submits, and where it comes from.
+     *
+     * Frame *time* in a headless sandbox is software rendering and says
+     * nothing about a real GPU, so it is not here. Draw calls and triangles
+     * are counts, not timings: they are what they are on any machine, and they
+     * are what a distant-chunk LOD would reduce. `rings` splits the terrain by
+     * how far each chunk is from the one the player stands in, which is the
+     * number that decides whether LOD is worth building — geometry nobody is
+     * near is the only geometry it can help with.
+     */
+    get draws(){
+      var info=renderer.info.render, out={calls:info.calls,triangles:info.triangles,
+        geometries:renderer.info.memory.geometries,rings:[],perChunk:[],kinds:{}};
+      /* Triangles by what they are. The ring split says *where* geometry is;
+         this says *what* it is, and the two answer different questions. A
+         terrain LOD can only help with terrain, so knowing terrain's share is
+         what decides whether one is worth building. */
+      function tally(root){
+        root.traverse(function(o){
+          if(!(o.isMesh||o.isInstancedMesh)||!o.visible) return;
+          var gg=o.geometry; if(!gg) return;
+          var per=(gg.index?gg.index.count:(gg.attributes.position?gg.attributes.position.count:0))/3;
+          var n=o.isInstancedMesh?o.count:1;
+          var kind=o.userData.kind||'other';
+          out.kinds[kind]=(out.kinds[kind]||0)+per*n;
+        });
+      }
+      if(built&&built.scene) tally(built.scene);
+      if(!nodes||!streaming) return out;
+      var a=player(), c=a?QS.chunkAt(a.x,a.z):{cx:0,cz:0};
+      for(var k in nodes){
+        var nd=nodes[k], d=Math.max(Math.abs(nd.cx-c.cx),Math.abs(nd.cz-c.cz));
+        var vis=0; nd.g.traverse(function(o){ if((o.isMesh||o.isInstancedMesh)&&o.visible) vis++; });
+        var q=nd.mesh?nd.mesh.userData.quads:0;
+        out.perChunk.push({d:d,quads:q,meshes:vis});
+        while(out.rings.length<=d) out.rings.push({ring:out.rings.length,chunks:0,quads:0,meshes:0});
+        out.rings[d].chunks++; out.rings[d].quads+=q; out.rings[d].meshes+=vis;
+      }
+      return out;
+    },
+    get streaming(){ return streaming; },
+    setStream:setStreaming,
+    get chunks(){ return streaming?{loaded:field.loaded,built:field.built,dropped:field.dropped,
+                                    pending:stream.pending,ms:streamMs,nodes:Object.keys(nodes).length,
+                                    workers:pool&&pool.ready&&!pool.failed?pool.ws.length:0,
+                                    offThread:pool?pool.done:0,poolFailed:!!(pool&&pool.failed),
+                                    err:pool?pool.err:null,sent:pool?pool.sent:0,
+                                    gen:pool?pool.gen:0,mesh:pool?pool.mesh_ms:0,
+                                    deliver:pool?pool.deliver:0,
+                                    take:pool?pool.take:0}:null; },
+    get meshQuads(){
+      if(streaming){ var q=0; for(var k in nodes) q+=nodes[k].mesh.userData.quads; return q; }
+      return built&&built.mesh?built.mesh.userData.quads:0; },
+    get boxCount(){
+      if(streaming){ var n=0; for(var k in nodes) n+=nodes[k].data.pos.length/3; return n; }
+      return built?built.data.pos.length/3:0; },
     setTouch:setTouchMode,
     get touch(){ return touchMode; },
     draw:draw,

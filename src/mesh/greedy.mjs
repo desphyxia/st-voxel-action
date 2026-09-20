@@ -88,6 +88,21 @@ export function solidVox(w, gi, gj, y) {
 }
 
 /**
+ * Where the chunk a streamed window owns begins, in window cells.
+ *
+ * A window generated for one chunk is `CHUNK` plus a skirt on every side, and
+ * only the middle `CHUNK` is that chunk's to draw — the skirt is the
+ * neighbour's ground, generated so this window's edge effects and its AO ring
+ * fall outside what it keeps. Drawing the whole window would put every seam's
+ * geometry in twice, and leaning on the window's own chunk grid would draw a
+ * 32 m square starting at the window's corner: the chunk, shifted by a skirt.
+ */
+export function innerChunk(w) {
+  var k = Math.round((w.NX - CHUNK / V) / 2);
+  return { i: k, j: k };
+}
+
+/**
  * The solid volume of one chunk at 25 cm, from the spans — not from the voxels
  * the generator emitted. `pad` of 1 gives the AO and the face test a ring of
  * neighbours to read, so a chunk's edge is shaded by the chunk beside it.
@@ -95,12 +110,19 @@ export function solidVox(w, gi, gj, y) {
  * Carved voxels are subtracted afterwards rather than tested per cell: edits
  * are sparse by nature, so walking the map costs what has been carved instead
  * of what has not.
+ *
+ * `org` overrides where the chunk starts, in **window cells**. Chunks are
+ * normally laid on the window's own grid from cell 0, which is right for a
+ * world that is a whole number of chunks across. A streamed window is not: it
+ * is a chunk plus a skirt on every side, so the chunk it owns begins
+ * `SKIRT / V` cells in, nowhere near a multiple of `CHUNK / V`.
+ * `innerChunk(w)` is that origin.
  */
-export function chunkOccupancy(w, cx, cz, pad) {
+export function chunkOccupancy(w, cx, cz, pad, org) {
   pad = pad === undefined ? 1 : pad;
   var side = Math.round(CHUNK / V);
   var nx = side + pad * 2, nz = side + pad * 2, ny = LEVELS;
-  var i0 = cx * side - pad, j0 = cz * side - pad;
+  var i0 = (org ? org.i : cx * side) - pad, j0 = (org ? org.j : cz * side) - pad;
   var occ = new Uint8Array(nx * nz * ny);
   var NZ = w.NZ, NX = w.NX;
   var a, b, base = 0;
@@ -199,8 +221,8 @@ function cornerAO(s1, s2, cor) { return (s1 && s2) ? 0 : 3 - (s1 + s2 + cor); }
  * key is material and the four AO corners packed together — faces only merge
  * when they would draw identically, which is what keeps the creases.
  */
-export function meshChunk(w, cx, cz) {
-  var g = chunkOccupancy(w, cx, cz), open = openAir(g);
+export function meshChunk(w, cx, cz, org) {
+  var g = chunkOccupancy(w, cx, cz, undefined, org), open = openAir(g);
   var nx = g.nx, nz = g.nz, ny = g.ny, occ = g.occ, pad = g.pad;
   var pos = [], nor = [], ao = [], mat = [], pal = [], idx = [];
   var quads = 0, faces = 0, vbase = 0;

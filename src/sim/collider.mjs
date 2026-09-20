@@ -32,26 +32,89 @@ SOFT[MAT.LEAF] = 1;
 SOFT[MAT.SNOW] = 1;
 
 /**
+ * Is this voxel one a body walks through? One definition, exported, because
+ * the chunked field in chunks.mjs builds colliders too and a second copy of
+ * this rule went wrong immediately: it was written as an empty table, every
+ * leaf stayed solid, and a chunk disagreed with the same ground through the
+ * ordinary collider by the height of a conifer.
+ */
+export function softProp(mat, index, propStart) {
+  return index >= propStart && !!SOFT[mat];
+}
+
+/**
  * An empty column grid covering [-half, half] on both axes, `v` metres a side.
  * Fill it with addSpan/addVoxel/setLiquid, then call finish() once.
  */
-export function makeCollider(half, v) {
+export function makeCollider(half, v, bounded, origin) {
   const n = Math.max(1, Math.round((2 * half) / v));
+  /* Where the grid sits in the world, per axis. Zero for a window, which is
+     centred on the origin of its own coordinates; a chunk's centre for a
+     streamed chunk, which is queried in world coordinates so that nothing has
+     to be converted at query time. Two numbers and not one: chunk (1, -1) is
+     centred at x 32 and z -32, and sharing one origin between the axes put
+     every query of it a kilometre off its own grid. */
+  const orgX = origin ? origin.x : 0, orgZ = origin ? origin.z : 0;
   const cols = new Array(n * n);
   const liq = new Uint8Array(n * n);
   const lev = new Float32Array(n * n);
   let sealed = false;
 
-  /** Column index for a world coordinate, or -1 outside the grid. */
-  const ax = (p) => {
-    const i = Math.floor((p + half) / v);
-    return i < 0 || i >= n ? -1 : i;
-  };
+  /**
+   * Column index for a world coordinate, or -1 outside the grid.
+   *
+   * **Divide first, then offset by a whole number of cells.** Both halves of
+   * that matter, and both were learned from a body that stopped dead in a lake
+   * and would not move again.
+   *
+   * `floor((p + half) / v)` makes the answer depend on `half`, because
+   * `p + half` is rounded to a double before the division:
+   *
+   *     p = -3.7500000000000013
+   *     (p + 20) / 0.25 = 65                    → column 65, i.e. 49 of a chunk
+   *     (p + 16) / 0.25 = 48.99999999999999     → column 48
+   *
+   * One column of a box's footprint — and it cost the body its support. A
+   * chunk collider (half 16) and a window collider (half 20) over *identical*
+   * ground answered `supportUnder` 4.875 and 5.000 at the same point, because
+   * the window saw one more column and that column was a quarter-metre higher.
+   *
+   * The second half is worse, and is why the grid is placed in the world
+   * rather than in its own coordinates. A field of chunks used to convert a
+   * world coordinate to the owning chunk's local one before asking, and
+   * `(32 + -10.6) - 32` is not `-10.6`, it is `-10.600000000000001`. Divided
+   * by 0.25 that is a hair under an integer, and `floor` drops a whole column.
+   * At a cliff that is **3.125 m** of support appearing or vanishing at one
+   * position, from an error in the sixteenth decimal place.
+   *
+   * So a chunk's grid is built and queried in world coordinates and nothing is
+   * converted at all. `(org - half) / v` is an exact integer for every
+   * collider here, so subtracting it after the division leaves the grid where
+   * it was and makes the column depend only on `p`. Colliders of different
+   * sizes and different places now agree column for column, which is what
+   * makes a streamed chunk answerable against the window it came from.
+   */
+  const hcX = Math.round((orgX - half) / v), hcZ = Math.round((orgZ - half) / v);
+  const cellX = (p) => Math.floor(p / v) - hcX;
+  const cellZ = (p) => Math.floor(p / v) - hcZ;
+  const ax = (p) => { const i = cellX(p); return i < 0 || i >= n ? -1 : i; };
+  const az = (p) => { const j = cellZ(p); return j < 0 || j >= n ? -1 : j; };
   /** Same, clamped — for queries that only need the nearest column. */
-  const axc = (p) => clamp(Math.floor((p + half) / v), 0, n - 1);
-  /** Does this footprint reach past the edge of the window? */
+  const axc = (p) => clamp(cellX(p), 0, n - 1);
+  const azc = (p) => clamp(cellZ(p), 0, n - 1);
+  /**
+   * Does this footprint reach past the edge of the window?
+   *
+   * For a single bounded window the answer is a wall, and that is right: the
+   * world ends there and without it a player walks off the map and falls
+   * forever. For one chunk of a streamed world it is exactly wrong — the ground
+   * continues, in the chunk next door. A chunked field passes `bounded: false`
+   * and imposes the world's real boundary itself, because only it knows where
+   * that is. Default stays walled, so nothing that exists today changes. */
+  const walled = bounded !== false;
   const outside = (x, z, r) =>
-    x - r < -half || x + r > half || z - r < -half || z + r > half;
+    walled && (x - r < orgX - half || x + r > orgX + half
+            || z - r < orgZ - half || z + r > orgZ + half);
 
   function push(i, j, lo, hi) {
     if (i < 0 || j < 0 || hi - lo <= EPS) return;
@@ -62,14 +125,21 @@ export function makeCollider(half, v) {
   return {
     n, v, half,
 
-    addSpan(x, z, lo, hi) { push(ax(x), ax(z), lo, hi); },
+    addSpan(x, z, lo, hi) { push(ax(x), az(z), lo, hi); },
 
     /** One voxel, by its centre. Nearest column: a prop's lattice is offset
         half a voxel from the terrain's, and widening it to both would fatten
         every trunk and railing by 25 cm. */
     addVoxel(x, y, z) {
-      const i = Math.round((x + half) / v - 0.5), j = Math.round((z + half) / v - 0.5);
-      if (i < 0 || j < 0 || i >= n || j >= n) return;
+      /* Through the same `ax`/`az` as everything else. It had its own copy of
+         the index arithmetic — `round((x + half) / v - 0.5)` — which is the
+         same answer for a grid centred on the origin and the wrong column for
+         one placed in the world. Every prop of every streamed chunk went in
+         four metres from where it stood, or off the grid entirely: 446 of a
+         chunk's 16,384 columns disagreed with the window they came from, by up
+         to the height of a tree. Two copies of one rule, again. */
+      const i = ax(x), j = az(z);
+      if (i < 0 || j < 0) return;
       push(i, j, y - v / 2, y + v / 2);
     },
 
@@ -81,7 +151,7 @@ export function makeCollider(half, v) {
 
     /** One column, by a point inside it. What colliderForWorld uses. */
     setLiquidAt(x, z, kind, level) {
-      const i = ax(x), j = ax(z);
+      const i = ax(x), j = az(z);
       if (i < 0 || j < 0) return;
       liq[i * n + j] = kind; lev[i * n + j] = level;
     },
@@ -92,10 +162,10 @@ export function makeCollider(half, v) {
 
     forColumns(x0, x1, z0, z1, fn) {
       for (let i = 0; i < n; i++) {
-        const cx = -half + (i + 0.5) * v;
+        const cx = orgX - half + (i + 0.5) * v;
         if (cx < x0 || cx > x1) continue;
         for (let j = 0; j < n; j++) {
-          const cz = -half + (j + 0.5) * v;
+          const cz = orgZ - half + (j + 0.5) * v;
           if (cz < z0 || cz > z1) continue;
           fn(i, j);
         }
@@ -122,10 +192,10 @@ export function makeCollider(half, v) {
       return this;
     },
 
-    spansAt(x, z) { return cols[axc(x) * n + axc(z)] || null; },
+    spansAt(x, z) { return cols[axc(x) * n + azc(z)] || null; },
 
     liquidAt(x, z) {
-      const k = axc(x) * n + axc(z);
+      const k = axc(x) * n + azc(z);
       return { kind: liq[k], level: lev[k] };
     },
 
@@ -137,7 +207,7 @@ export function makeCollider(half, v) {
      */
     supportUnder(x, z, r, ceilY) {
       let best = -Infinity;
-      const i0 = axc(x - r), i1 = axc(x + r), j0 = axc(z - r), j1 = axc(z + r);
+      const i0 = axc(x - r), i1 = axc(x + r), j0 = azc(z - r), j1 = azc(z + r);
       /* Columns outside the window are skipped, not clamped: clamping would
          smear the rim column outwards and give a player ground to walk on
          past the edge of the world. */
@@ -159,7 +229,7 @@ export function makeCollider(half, v) {
       /* The window is bounded, and its edge is a wall. Without this a player
          walks off the map and falls forever. */
       if (outside(x, z, r)) return true;
-      const i0 = axc(x - r), i1 = axc(x + r), j0 = axc(z - r), j1 = axc(z + r);
+      const i0 = axc(x - r), i1 = axc(x + r), j0 = azc(z - r), j1 = azc(z + r);
       for (let i = i0; i <= i1; i++) {
         for (let j = j0; j <= j1; j++) {
           const sp = cols[i * n + j];
@@ -176,7 +246,7 @@ export function makeCollider(half, v) {
     /** The lowest solid underside above `y`. Infinity if there is open sky. */
     ceilingOver(x, z, r, y) {
       let best = Infinity;
-      const i0 = axc(x - r), i1 = axc(x + r), j0 = axc(z - r), j1 = axc(z + r);
+      const i0 = axc(x - r), i1 = axc(x + r), j0 = azc(z - r), j1 = azc(z + r);
       for (let i = i0; i <= i1; i++) {
         for (let j = j0; j <= j1; j++) {
           const sp = cols[i * n + j];
@@ -197,24 +267,30 @@ export function makeCollider(half, v) {
  * A collider for one generated window. Spans first, then every voxel the
  * generator emitted, then the liquid surfaces.
  */
-export function colliderForWorld(world) {
+export function colliderForWorld(world, origin) {
   const half = world.half, M = world.M, NX = world.NX, NZ = world.NZ;
-  const c = makeCollider(half, V);
+  /* `origin` places the grid in the world instead of at its own centre, so a
+     window can be compared against a streamed chunk **at the same world
+     coordinate** rather than at a local one reconstructed from it. Those are
+     not the same real number once doubles are involved, and a test that
+     converts between them measures its own arithmetic as much as the code's. */
+  const c = makeCollider(half, V, undefined, origin);
+  const ox = origin ? origin.x : 0, oz = origin ? origin.z : 0;
   const ci = (p) => clamp(Math.round(p + half), 0, M - 1);
 
   /* Terrain. The top span is refined to the 25 cm height field; everything
      below it stays at the 1 m resolution the spans were cut at. */
   for (let i = 0; i < NX; i++) {
-    const x = -half + i * V + V / 2;
+    const x = -half + i * V + V / 2, wx = x + ox;
     for (let j = 0; j < NZ; j++) {
-      const z = -half + j * V + V / 2, k = i * NZ + j;
+      const z = -half + j * V + V / 2, wz = z + oz, k = i * NZ + j;
       const cell = world.cells[ci(x) * M + ci(z)], sp = cell.sp;
-      for (let q = 0; q < sp.length - 1; q++) c.addSpan(x, z, sp[q][0], sp[q][1]);
-      c.addSpan(x, z, sp[sp.length - 1][0], Math.min(world.Hs[k], CEIL));
+      for (let q = 0; q < sp.length - 1; q++) c.addSpan(wx, wz, sp[q][0], sp[q][1]);
+      c.addSpan(wx, wz, sp[sp.length - 1][0], Math.min(world.Hs[k], CEIL));
 
       const f = world.FLG[k];
-      if (f & 2) c.setLiquidAt(x, z, LIQUID.MAGMA, world.Hs[k]);
-      else if (f & 1) c.setLiquidAt(x, z, LIQUID.WATER, cell.wl);
+      if (f & 2) c.setLiquidAt(wx, wz, LIQUID.MAGMA, world.Hs[k]);
+      else if (f & 1) c.setLiquidAt(wx, wz, LIQUID.WATER, cell.wl);
     }
   }
 
@@ -238,8 +314,8 @@ export function colliderForWorld(world) {
      height is usually capped. */
   const propStart = world.propStart === undefined ? world.pos.length / 3 : world.propStart;
   for (let q = 0; q < world.pos.length / 3; q++) {
-    if (q >= propStart && SOFT[world.mat[q]]) continue;
-    c.addVoxel(world.pos[q * 3], world.pos[q * 3 + 1], world.pos[q * 3 + 2]);
+    if (softProp(world.mat[q], q, propStart)) continue;
+    c.addVoxel(world.pos[q * 3] + ox, world.pos[q * 3 + 1], world.pos[q * 3 + 2] + oz);
   }
 
   return c.finish();

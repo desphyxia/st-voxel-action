@@ -25,6 +25,7 @@ anything.
 | `src/sim/` | Collision, the character controller, the isometric camera, the input table, combat, the first enemy, the socket lattice and what is lying on the ground — all written against the movement budget and all free of the DOM and three.js, which is why they can be asserted in node. |
 | `src/net/` | The wire: a three-method transport interface, a loopback double with latency and loss, and the host/guest sessions. No DOM either. |
 | `src/mesh/` | Greedy meshing with baked per-face AO, and the edit layer a carve writes into. Reads the generator's spans, not its voxels. No DOM either. |
+| `src/gen/chunk.mjs`, `src/sim/chunks.mjs`, `src/sim/stream.mjs` | Chunk streaming (#13), in three layers: what to generate, what is solid across what is loaded, and which chunk next. Open the build with **`?stream=1`** to play a world with no edge — see below. |
 | `docs/play/index.html` | **The playable build.** Open it in a browser and walk around; *Host a game* opens a second window and puts another character in the same world. Carries an inlined copy of `src/gen`, `src/mesh`, `src/sim` and `src/net`. |
 | `src/sim/lattice.mjs` | The spine of progression. Read it before touching combat numbers: every constant in `combat.mjs` is now a *base*, and `statsOf(a)` is what an actor actually plays with. |
 | `docs/concept/index.html` | The concept plate: the design document, the renderer, and an inlined copy of `src/gen` it draws. |
@@ -81,7 +82,10 @@ nobody had touched — every one of them an empty line. That looks exactly like 
 typed into the page, which is the one thing the check exists to rule out.
 
 If no commit matches, loop over the last twenty: `git log --format=%H -20 -- docs/play/index.html`
-and diff each. The last-published sha is rarely the one you remember.
+and diff each. The last-published sha is rarely the one you remember — this note said
+`487222d` and the live pages were actually at **`5113762`** (play) and **`77d6278`** (concept)
+when the loop was run on 2026-09-19. Both pages are now published from **`378ec0f`**:
+play **version 10**, concept **version 13**, both checked clean before forcing.
 
 Identical means nobody has typed into the page and forcing loses nothing. On 2026-09-18 both
 pages came back identical to `487222d`. **Force is still the user's call, not yours** — show
@@ -145,6 +149,44 @@ everything into one scope:
 
 Edit the modules, run the bundler, commit both. The smoke test fails if they have drifted, and
 also fails if the plate's worlds stop matching the ones node generates from `src/gen`.
+
+## Streaming is an option below the view, off by default
+
+**Streaming** in the control row under the stage replaces the one 64 m window
+with a field of 32 m chunks that load and unload around the players.
+`?stream=1` still works when the page is opened from disk, but it is not the
+way in: **published as an artifact the page runs inside an iframe whose own
+URL carries no query**, so the flag never reached it and the feature was
+unreachable there for as long as it was the only switch. The button is
+asserted by the browser half; the flag cannot be. It is measured — ten node
+assertions across `CHUNK`, `FIELD`, `STREAM` and `SEAM`, plus four in the
+browser half — and it is still not the default, for one reason:
+
+**A chunk does not fit in a frame.** Generating one 40 m window costs 86–290 ms
+cold and a 60 Hz frame is 16.7 ms, so a chunk arriving on the main thread is a
+freeze a dozen frames long. Generation *and meshing* now both go to a worker
+built from the page's own inlined bundle — measured off-thread over HTTP, since
+a `blob:` worker is refused from a `file:` origin and the local gate can only
+ever report that refusal. What this thread still pays is **67 ms**: 18 ms to
+take the transferred buffers back in, and 49 ms to build the chunk's collider
+and put it in the scene. Four frames rather than fifteen, and the collider is
+what is left. The readout shows every figure, so it has numbers on it rather
+than an opinion — which is also why the option is offered rather than made the
+default.
+
+Two things the worker cost a session to learn, both worth not relearning:
+**a world cannot be structured-cloned** — it carries its generator on `w.G`,
+nine closures, and `postMessage` refuses the whole object over them, so the
+worker is sent no generator and the main thread reattaches one with `makeGen`;
+and **readiness cannot be a wall-clock timeout**, because the reply is
+delivered on a main thread that is blocked by construction, so a healthy pool
+reads as a refused one.
+
+**A streamed world is a different world from the same seed.** The generator is
+not size-invariant — a 40 m window and a 64 m window centred on the same point
+disagree on 87% of the cells they share — so `?stream=1` is not a rendering
+option, it is another world. `src/gen/chunk.mjs` measures that and explains why
+every streamed window is therefore one fixed size forever.
 
 One rule across **all of `src/`**: **no `Math.sin`, `cos`, `exp`, `pow` or `hypot`.** The spec
 only approximates them and engines disagree — node 22 and Chromium 141 already return different

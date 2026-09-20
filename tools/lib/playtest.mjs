@@ -12,7 +12,10 @@
  * and the controller hold together, not whether an idiot can kill itself. The
  * ways to die are pinned by the budget suite instead, where they can be exact.
  */
-import { V, MOVE, CEIL } from '../../src/gen/constants.mjs';
+import { V, MOVE, CEIL, CHUNK as CHUNK_M } from '../../src/gen/constants.mjs';
+import { chunkWorld, WINDOW, SKIRT } from '../../src/gen/chunk.mjs';
+import { makeChunkField, chunkAt } from '../../src/sim/chunks.mjs';
+import { makeStream } from '../../src/sim/stream.mjs';
 import { sin, cos, hyp } from '../../src/gen/exact.mjs';
 import { mulberry32, xmur3 } from '../../src/gen/rng.mjs';
 import { makeCollider, colliderForWorld, LIQUID, EPS } from '../../src/sim/collider.mjs';
@@ -28,7 +31,9 @@ import { makeLoopback } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache } from '../../src/gen/region.mjs';
-import { meshChunk, surfaceAt, isCut } from '../../src/mesh/greedy.mjs';
+import { meshChunk, surfaceAt, isCut, innerChunk } from '../../src/mesh/greedy.mjs';
+import { meshProps } from '../../src/mesh/propmesh.mjs';
+import { palR, palG, palB } from '../../src/gen/palette.mjs';
 import { carve, clearEdits, chunkGrid } from '../../src/mesh/carve.mjs';
 import { MATERIALS, MAT } from '../../src/gen/materials.mjs';
 import { GOLDEN_SEEDS } from './harness.mjs';
@@ -1758,5 +1763,784 @@ export function trailSuite() {
       walled.where.length === 1 && walled.where[0] === ci + ',' + cj,
       walled.where.length ? `slab over ${ci},${cj} found at ${walled.where.join(' ')}`
                           : `SLAB OVER ${ci},${cj} NOT SEEN — the check is blind`);
+  return out;
+}
+
+/* ----------------------------------------------------------------- chunk ---- */
+
+/**
+ * Issue #13: a chunk generated alone is the same ground its neighbour thinks
+ * is there.
+ *
+ * Streaming needs every chunk generated at any time, in any order, on any
+ * thread, and the seams to disappear. Two facts decide whether that is
+ * possible, and the second one was not recorded anywhere before this:
+ *
+ *   - same-size windows at different offsets agree (the #41 skirt result);
+ *   - **windows of different sizes do not.** 32 m against 64 m on the same
+ *     centre disagree on 87% of what they share, 15.75 m deep.
+ *
+ * So these assert the rule rather than the hope: every window is `WINDOW`
+ * metres, chunks differ by offset alone, and neighbours are identical on every
+ * cell they share.
+ */
+export function chunkSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  /* Absolute voxel index -> value, for the arrays a seam would show up in. */
+  function sheet(w) {
+    const m = new Map(), vx0 = Math.round(w.OX / V), vz0 = Math.round(w.OZ / V);
+    for (let i = 0; i < w.NX; i++) {
+      for (let j = 0; j < w.NZ; j++) {
+        const k = i * w.NZ + j;
+        m.set((i + vx0) + ':' + (j + vz0), w.Hs[k] + '|' + w.FLG[k]);
+      }
+    }
+    return m;
+  }
+
+  /* How far a neighbour's window must reach into this chunk. The mesher shades
+     a seam by reading one voxel past its own edge (src/mesh/greedy.mjs, pad 1),
+     so anything less than that and a chunk cannot be meshed without its
+     neighbour being loaded too. SKIRT is 4 m, which is margin over this by a
+     factor of sixteen — the margin is deliberate and is not derived from
+     anything, which is why the requirement is written down separately from it. */
+  const NEED = V;
+  let minReach = Infinity;
+  let shared = 0, differ = 0, worstRim = -1, pairs = 0;
+  for (const s of GOLDEN_SEEDS) {
+    const a = chunkWorld(s.seed, 0, 0, s.force);
+    const A = sheet(a), avx = Math.round(a.OX / V), avz = Math.round(a.OZ / V);
+    for (const [cx, cz] of [[1, 0], [0, 1], [1, 1], [-1, 0], [-1, -1]]) {
+      const b = chunkWorld(s.seed, cx, cz, s.force);
+      const B = sheet(b), bvx = Math.round(b.OX / V), bvz = Math.round(b.OZ / V);
+      pairs++;
+      /* How far B's window reaches into A's chunk proper, in metres. */
+      const pad = Math.round(SKIRT / V);
+      let reach = 0;
+      for (let i = pad; i < a.NX - pad; i++) {
+        for (let j = pad; j < a.NZ - pad; j++) {
+          if (!B.has((i + avx) + ':' + (j + avz))) continue;
+          const into = Math.min(i - pad, a.NX - pad - 1 - i, j - pad, a.NZ - pad - 1 - j);
+          if ((into + 1) * V > reach) reach = (into + 1) * V;
+        }
+      }
+      if (reach < minReach) minReach = reach;
+
+      for (const [k, v] of A) {
+        if (!B.has(k)) continue;
+        shared++;
+        if (B.get(k) === v) continue;
+        differ++;
+        const [i, j] = k.split(':').map(Number);
+        const rim = Math.min(
+          Math.min(i - avx, a.NX - 1 - (i - avx), j - avz, a.NZ - 1 - (j - avz)),
+          Math.min(i - bvx, b.NX - 1 - (i - bvx), j - bvz, b.NZ - 1 - (j - bvz))) * V;
+        if (rim > worstRim) worstRim = rim;
+      }
+    }
+  }
+  /* `shared > 0` is not a formality. With SKIRT at 0 the windows touch without
+     overlapping, nothing is compared, and both this and the reach check below
+     would pass on an empty set — the same vacuity that cost four attempts at
+     the trail measurement. */
+  say('a chunk and its neighbour agree on every cell they share',
+      differ === 0 && shared > 0,
+      differ ? `${differ} of ${shared} cells differ over ${pairs} pairs, deepest ${worstRim.toFixed(2)} m from a rim`
+             : (shared ? `${shared} shared cells over ${pairs} neighbour pairs, six seeds, identical`
+                       : 'NOTHING WAS COMPARED — the windows do not overlap'));
+
+  /* Agreement alone does not say the skirt is wide enough: a thinner skirt
+     shares less ground and agrees just as well on the little it shares. Cutting
+     SKIRT from 4 m to 1 m leaves the check above perfectly green, which is why
+     this one exists — what must hold is that a neighbour reaches far enough
+     into this chunk to shade its seam. */
+  const reached = Number.isFinite(minReach) ? minReach : 0;
+  say('and a neighbour reaches far enough in to shade the seam',
+      reached >= NEED,
+      `a neighbour's window reaches ${reached.toFixed(2)} m into this chunk, `
+      + `the mesher needs ${NEED.toFixed(2)} m`);
+
+  /* The rule that makes the above true, asserted rather than assumed. If the
+     generator ever becomes size-invariant this check is the one that should be
+     deleted on purpose — until then, a chunk cut from a differently sized
+     window is a different world and nothing else here holds. */
+  const w40 = buildWorld({ seed: 'QUARTERSTONE', size: WINDOW, force: null, ox: 0, oz: 0 });
+  const w64 = buildWorld({ seed: 'QUARTERSTONE', size: 64, force: null, ox: 0, oz: 0 });
+  const S40 = sheet(w40), S64 = sheet(w64);
+  let n = 0, d = 0;
+  for (const [k, v] of S40) { if (!S64.has(k)) continue; n++; if (S64.get(k) !== v) d++; }
+  say('and the generator is size-dependent, which is why every window is one size',
+      d > n * 0.5,
+      `${WINDOW} m against 64 m on one centre: ${d} of ${n} shared cells differ `
+      + `(${(100 * d / n).toFixed(0)}%) — chunks may differ by offset and nothing else`);
+
+  /* The skirt has to be wide enough that the chunk proper is never in it. */
+  const w = chunkWorld('QUARTERSTONE', 0, 0, null);
+  const pad = Math.round(SKIRT / (2 * w.half / w.NX));
+  const side = w.NX - 2 * pad;
+  say('and the chunk inside the skirt is exactly one chunk across',
+      side * (2 * w.half / w.NX) === CHUNK_M,
+      `${w.NX} cells of window, ${pad} of skirt a side, ${side} of chunk `
+      + `= ${(side * (2 * w.half / w.NX)).toFixed(0)} m against CHUNK ${CHUNK_M}`);
+  return out;
+}
+
+/**
+ * Issue #13: the loaded chunks answer as one world.
+ *
+ * `colliderForWorld` builds one bounded grid whose edge is a wall. A chunk's
+ * edge is where the ground continues, so each chunk keeps its own unwalled
+ * collider and `makeChunkField` routes a query to every chunk its footprint
+ * touches. These hold that the stitching is faithful and that the seams are not
+ * visible from inside the simulation.
+ */
+export function fieldSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const R = ACTOR.radius;
+
+  /* Faithfulness: well inside a chunk, the field must answer exactly what the
+     ordinary collider on that chunk's own window answers. Sampled a metre in
+     from the chunk edge so neither that collider's wall nor the skirt is in
+     the way — the seam itself is the next check's business. */
+  let n = 0, bad = 0, worst = 0;
+  for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+    const f = makeChunkField(s.seed, s.force);
+    f.keep([{ x: 0, z: 0 }], 1);
+    for (const [cx, cz] of [[0, 0], [1, 0], [0, 1], [-1, -1]]) {
+      const w = chunkWorld(s.seed, cx, cz, s.force);
+      const one = colliderForWorld(w);
+      const c0x = cx * CHUNK_M, c0z = cz * CHUNK_M;
+      for (let a = -14; a <= 14; a += 2) {
+        for (let b = -14; b <= 14; b += 2) {
+          const x = c0x + a, z = c0z + b;
+          n++;
+          const gf = f.supportUnder(x, z, R, Infinity);
+          const g1 = one.supportUnder(a, b, R, Infinity);
+          if (Math.abs(gf - g1) > 1e-9) { bad++; worst = Math.max(worst, Math.abs(gf - g1)); }
+        }
+      }
+    }
+  }
+  say('the field answers what the ordinary collider answers, inside a chunk',
+      bad === 0 && n > 500,
+      bad ? `${bad} of ${n} sample points differ, worst ${worst.toFixed(3)} m`
+          : `${n} points over four chunks and three seeds, identical`);
+
+  /* The seam. The first version of this forbade any step over MOVE.step across
+     a boundary, which is not a property of a seam at all — a 3.63 m cliff that
+     happens to lie on a chunk edge is a cliff, and the check called it a break.
+     What has to hold is that the field says the same thing across the seam as a
+     single window does over the same ground, cliffs included. Sampled every
+     12.5 cm through each boundary of the centre chunk; the window's own wall is
+     4 m further out and never in reach of a 0.35 m footprint. */
+  const f = makeChunkField('QUARTERSTONE', null);
+  f.keep([{ x: 0, z: 0 }], 1);
+  const one = colliderForWorld(chunkWorld('QUARTERSTONE', 0, 0, null));
+  let holes = 0, differ = 0, crossed = 0, worstSeam = 0;
+  for (const along of [-12, -6, 0, 6, 12]) {
+    for (const edge of [CHUNK_M / 2, -CHUNK_M / 2]) {
+      for (const axis of [0, 1]) {
+        for (let d = -1; d <= 1.0001; d += 0.125) {
+          const x = axis ? along : edge + d, z = axis ? edge + d : along;
+          const gf = f.supportUnder(x, z, R, Infinity);
+          const g1 = one.supportUnder(x, z, R, Infinity);
+          crossed++;
+          if (!Number.isFinite(gf)) { holes++; continue; }
+          if (Math.abs(gf - g1) > 1e-9) { differ++; worstSeam = Math.max(worstSeam, Math.abs(gf - g1)); }
+        }
+      }
+    }
+  }
+  say('and a chunk boundary is not visible from inside the simulation',
+      holes === 0 && differ === 0,
+      holes || differ
+        ? `${holes} holes and ${differ} disagreements of ${crossed} samples, worst ${worstSeam.toFixed(2)} m`
+        : `${crossed} samples through every boundary of a chunk, identical to one window over the same ground`);
+
+  /* Unloaded ground is a wall, not a hole. A body may not walk into ground
+     nothing has decided yet; the load radius is what stops it ever meeting
+     this, and meeting it should read as a wall rather than a fall. */
+  const far = { x: 40 * CHUNK_M, z: 0 };
+  say('and ground that is not loaded is a wall rather than a hole',
+      f.overlaps(far.x, far.z, R, 0, 2) === true
+      && f.supportUnder(far.x, far.z, R, Infinity) === -Infinity,
+      'a footprint in an unloaded chunk is solid, and offers no support to stand on');
+
+  /* Streaming proper: what is loaded follows the centres, and two players far
+     apart cost two radii rather than the ground between them. */
+  const g = makeChunkField('QUARTERSTONE', null);
+  const oneCentre = g.keep([{ x: 0, z: 0 }], 1);
+  const moved = g.keep([{ x: 8 * CHUNK_M, z: 0 }], 1);
+  const twoApart = g.keep([{ x: 0, z: 0 }, { x: 8 * CHUNK_M, z: 0 }], 1);
+  say('and what is loaded follows the players, and two of them cost two radii',
+      oneCentre === 9 && moved === 9 && twoApart === 18 && g.dropped >= 9,
+      `one centre ${oneCentre} chunks, moved eight chunks away ${moved} (not ${oneCentre + 9}), `
+      + `two centres ${twoApart}, ${g.dropped} let go`);
+
+  /* The issue's own bar: walk across several chunks. The wanderer from the soak
+     drives it, over the field rather than one window, with the load radius
+     following it — which is the whole arrangement working at once. */
+  const wf = makeChunkField('QUARTERSTONE', null);
+  wf.keep([{ x: 0, z: 0 }], 1);
+  const wa = placeOnGround(wf, 0, 0);
+  const rnd = mulberry32(xmur3('chunkwalk')());
+  let hx = 1, hz = 0, hold = 0, inside = 0, minY = wa.y, seen = new Set(), fell = false;
+  for (let t = 0; t < SOAK_TICKS; t++) {
+    if (--hold <= 0) { const ang = rnd() * 6.283185307179586; hx = cos(ang); hz = sin(ang); hold = 60 + ((rnd() * 120) | 0); }
+    else if (wa.blocked) { const ang = 2.094 + rnd() * 2.094; const c2 = cos(ang), s2 = sin(ang);
+      const nx = hx * c2 - hz * s2; hz = hx * s2 + hz * c2; hx = nx; hold = 40; }
+    step(wf, wa, { mx: hx, mz: hz, jump: false });
+    wf.keep([{ x: wa.x, z: wa.z }], 1);
+    const c = chunkAt(wa.x, wa.z);
+    seen.add(c.cx + ',' + c.cz);
+    if (embedded(wf, wa)) inside++;
+    if (wa.y < minY) minY = wa.y;
+    if (wa.y < -2) fell = true;
+  }
+  say('and a body walks across several chunks without falling through or sticking',
+      seen.size >= 3 && !fell && inside === 0,
+      `${seen.size} chunks visited in five minutes, ${inside} ticks inside the ground, `
+      + `lowest y ${minY.toFixed(2)}, ${wf.built} chunks built and ${wf.dropped} let go`);
+
+  /* ---- the sample grid that found nothing, and the one that did ----
+
+     The check above walks a chunk on two-metre steps and reports 2,700 points
+     identical, and it was identical, and it was not enough. A box's footprint
+     is decided by which columns `x - r` and `x + r` fall in, and on that grid
+     those edges never land *on* a column boundary — so the one case where two
+     colliders can disagree was never generated.
+
+     They can disagree because the column index was `floor((p + half) / v)`,
+     which depends on `half`: a chunk collider's 16 and a window collider's 20
+     round `p + half` to different doubles, and when `p` sits exactly on a
+     boundary the two land on opposite sides of it. One column of footprint,
+     and it cost a body the support under its foot.
+
+     So this samples the positions that produce it on purpose: `m * V - r`,
+     where the near edge of the box lands exactly on a column line. */
+  {
+    let n2 = 0, bad2 = 0, worst2 = 0, at = null;
+    for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+      const g2 = makeChunkField(s.seed, s.force);
+      g2.keep([{ x: 0, z: 0 }], 1);
+      for (const [cx, cz] of [[0, 0], [1, -1]]) {
+        const w = chunkWorld(s.seed, cx, cz, s.force);
+        /* Placed in the world, so both sides are asked about the *same world
+           coordinate*. Reconstructing a local one from it is a different real
+           number once doubles are involved, and a check that does the
+           conversion measures its own arithmetic as much as the code's. */
+        const at0 = { x: cx * CHUNK_M, z: cz * CHUNK_M };
+        const one = colliderForWorld(w, at0);
+        for (let m = -56; m <= 56; m += 3) {
+          for (const dx of [-R, R]) {
+            for (const dz of [-R, R]) {
+              const a = m * V - dx, b = (m % 37) * V - dz;
+              if (Math.abs(a) > 15 || Math.abs(b) > 15) continue;
+              const x = at0.x + a, z = at0.z + b;
+              n2++;
+              const d = Math.abs(g2.supportUnder(x, z, R, Infinity)
+                              - one.supportUnder(x, z, R, Infinity));
+              if (d > 1e-9) { bad2++; if (d > worst2) { worst2 = d; at = [a, b]; } }
+            }
+          }
+        }
+      }
+    }
+    say('and it still answers it where the box edge lands exactly on a column line',
+        bad2 === 0,
+        bad2 ? `${bad2} of ${n2} differ, worst ${worst2.toFixed(3)} m at `
+               + `${at[0].toFixed(3)}, ${at[1].toFixed(3)}`
+             : `${n2} points whose footprint edge falls on a column boundary, identical`);
+  }
+
+  /* And a chunk let go and loaded again is the same chunk. */
+  const before = g.supportUnder(0, 0, R, Infinity);
+  g.keep([{ x: 40 * CHUNK_M, z: 0 }], 1);
+  g.keep([{ x: 0, z: 0 }], 1);
+  say('and a chunk dropped and loaded again is the same ground',
+      g.supportUnder(0, 0, R, Infinity) === before,
+      `support at the origin ${before.toFixed(2)} m before, ${g.supportUnder(0, 0, R, Infinity).toFixed(2)} m after`);
+  return out;
+}
+
+/**
+ * The scheduler — issue #13, step three.
+ *
+ * ## The measurement this exists to make, and why it is not a timing assertion
+ *
+ * The question #13 poses is "a frame budget that holds while chunks arrive".
+ * The answer turns out to be settled before any scheduling: **one chunk does
+ * not fit in a frame**, by a factor of three at the best case measured and
+ * twenty-five at the worst. So the first check here times real generation and
+ * asserts the *inequality*, with a margin big enough that it is a statement
+ * about the generator rather than about how busy the machine is. A bar of
+ * "faster than X ms" would be a flake; "a 40 m window costs more than a 16.7 ms
+ * frame" has never been close.
+ *
+ * ## Why the soak uses a stub field
+ *
+ * Whether the loader keeps up with a running body is a question about geometry
+ * and arrival times, not about terrain: the answer does not depend on what is
+ * in the chunk, only on when it shows up. Generating two hundred real windows
+ * to ask it would add a minute to the node half and measure nothing extra. So
+ * the soak drives a stub of the four methods the stream uses, on a timeline
+ * where **every chunk is charged the slowest one measured** — not the median,
+ * so the result is a worst case rather than an average.
+ *
+ * That the stream drives a *real* field to the right state is a separate check
+ * below, against `keep`, which is the path the FIELD suite already pins.
+ */
+export function streamSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const FRAME = 1000 / 60;
+
+  /* ---- what a chunk costs ----
+     Cold, and deliberately. `regionAt` caches per 64 m region, so a chunk
+     generated next to one the gate has already made is several times cheaper
+     than one arriving in ground nobody has been to — and the first version of
+     this check timed whatever the suites above happened to leave warm. It
+     passed alone and failed inside the gate, which is the only kind of timing
+     assertion worth having and the only kind worth being embarrassed by.
+
+     Streaming's cost is the cold one: a chunk arrives because someone walked
+     somewhere new. So the cache is cleared before each, and the chunks are far
+     enough apart to be in different regions anyway. */
+  const costs = [];
+  for (let i = 0; i < 4; i++) chunkWorld('warm', i * 4, 0);        /* warm the jit */
+  for (let i = 0; i < 8; i++) {
+    clearRegionCache();
+    const t0 = performance.now();
+    chunkWorld('stream-cost-probe', i * 4, i * 4);
+    costs.push(performance.now() - t0);
+  }
+  clearRegionCache();
+  costs.sort((a, b) => a - b);
+  const median = costs[costs.length >> 1], slowest = costs[costs.length - 1];
+  say('one chunk does not fit in a frame, which is why generation leaves the main thread',
+      costs[0] > FRAME * 2,
+      `${costs.length} cold windows: fastest ${costs[0].toFixed(0)} ms, median ${median.toFixed(0)} ms, `
+      + `slowest ${slowest.toFixed(0)} ms, against a ${FRAME.toFixed(1)} ms frame`);
+
+  /* And the shape of that: a pump given a frame's budget cannot spend less than
+     a chunk, so it reports the overrun rather than pretending to have obeyed. */
+  {
+    const f = makeChunkField('hero');
+    const st = makeStream(f, { loadR: 1, keepR: 2, flight: 2 });
+    st.want([{ x: 0, z: 0 }]);
+    clearRegionCache();
+    const r = st.pump((cx, cz) => chunkWorld('hero', cx, cz), FRAME);
+    say('and a pump asked for a frame builds one chunk and says how far over it went',
+        r.built === 1 && r.over > 0,
+        `built ${r.built} in ${r.ms.toFixed(0)} ms, ${r.over.toFixed(0)} ms over a frame `
+        + `— ${(r.ms / FRAME).toFixed(1)} frames for one chunk`);
+  }
+
+  /* ---- ordering: the ground under your feet before the ground at the rim ---- */
+  {
+    const seen = [];
+    const stub = stubField(seen);
+    const st = makeStream(stub, { loadR: 3, keepR: 4, flight: 64 });
+    st.want([{ x: 0, z: 0 }]);
+    const order = [];
+    for (;;) { const j = st.next(); if (!j) break; order.push(j); stub.adopt(j.cx, j.cz, 1); }
+    let sorted = true, prev = -1;
+    for (const j of order) {
+      const d2 = j.cx * j.cx + j.cz * j.cz;
+      if (d2 < prev) sorted = false;
+      prev = Math.max(prev, d2);
+    }
+    say('and the nearest missing chunk is always the next one built',
+        sorted && order.length === 49 && order[0].cx === 0 && order[0].cz === 0,
+        `${order.length} chunks handed out at radius 3, nearest first, starting at the centre`);
+  }
+
+  /* ---- the cap on work in flight ---- */
+  {
+    const stub = stubField([]);
+    const st = makeStream(stub, { loadR: 3, keepR: 4, flight: 2 });
+    st.want([{ x: 0, z: 0 }]);
+    let handed = 0;
+    for (let i = 0; i < 10; i++) if (st.next()) handed++;
+    say('and no more work is in flight than the pool can take',
+        handed === 2 && st.inFlight === 2,
+        `asked ten times with a pool of two, handed out ${handed}`);
+  }
+
+  /* ---- hysteresis, with the control that makes it mean something ---- */
+  {
+    /* A body pacing across one chunk boundary: twenty steps back and forth over
+       the seam at x = 16. With one radius this drops and rebuilds a column every
+       crossing; with two it does nothing after the first. */
+    const pace = (loadR, keepR) => {
+      const stub = stubField([]);
+      const st = makeStream(stub, { loadR, keepR, flight: 64 });
+      let built = 0;
+      for (let i = 0; i < 20; i++) {
+        st.want([{ x: i % 2 ? 17 : 15, z: 0 }]);
+        for (;;) { const j = st.next(); if (!j) break; stub.adopt(j.cx, j.cz, 1); built++; }
+      }
+      return built;
+    };
+    const tight = pace(1, 1), loose = pace(1, 2);
+    say('and a body pacing over a chunk boundary does not rebuild the world each step',
+        loose < tight / 3 && tight > 20,
+        `20 crossings: ${loose} chunks built with a keep radius one wider, ${tight} without`);
+  }
+
+  /* ---- the stream settles on exactly what keep() holds ---- */
+  {
+    const a = makeChunkField('fen'), b = makeChunkField('fen');
+    const st = makeStream(a, { loadR: 1, keepR: 2, flight: 2 });
+    st.want([{ x: 5, z: -40 }]);
+    let guard = 0;
+    while (!st.settled && guard++ < 200) st.pump((cx, cz) => chunkWorld('fen', cx, cz), FRAME);
+    b.keep([{ x: 5, z: -40 }], 1);
+    const la = a.live().map((e) => e.cx + ',' + e.cz).sort().join(' ');
+    const lb = b.live().map((e) => e.cx + ',' + e.cz).sort().join(' ');
+    const same = la === lb && a.supportUnder(5, -40, ACTOR.radius, Infinity)
+                           === b.supportUnder(5, -40, ACTOR.radius, Infinity);
+    say('and what the scheduler settles on is what the synchronous path holds',
+        same && a.loaded === 9,
+        `${a.loaded} chunks either way, same ids, same ground underfoot`);
+  }
+
+  /* ---- does a running body outrun the loader? ---- */
+  {
+    const run = (workers, cost) => {
+      const stub = stubField([]);
+      const st = makeStream(stub, { loadR: 1, keepR: 2, flight: workers });
+      const busy = new Array(workers).fill(null);       /* {cx, cz, due} */
+      let t = 0, x = 0, margin = Infinity, blocked = 0;
+      /* Spawn with the world already there. A game shows a loading screen for
+         this; counting it as outrunning the loader would mean every run failed
+         on its first tick for having nothing loaded yet, which is not the
+         question. The question starts once the body is standing somewhere. */
+      st.want([{ x: 0, z: 0 }]);
+      for (;;) { const j = st.next(); if (!j) break; st.deliver(j.cx, j.cz, 1); }
+      for (let k = 0; k < SOAK_TICKS; k++) {
+        t += TICK * 1000;
+        x += RUN * TICK;
+        st.want([{ x, z: 0 }]);
+        for (let i = 0; i < workers; i++) {
+          const w = busy[i];
+          if (w && t >= w.due) { st.deliver(w.cx, w.cz, 1); busy[i] = null; }
+        }
+        for (let i = 0; i < workers; i++) {
+          if (busy[i]) continue;
+          const j = st.next();
+          if (!j) break;
+          busy[i] = { cx: j.cx, cz: j.cz, due: t + cost };
+        }
+        /* How far ahead the decided ground reaches: the near edge of the first
+           chunk in front that is not loaded. */
+        const here = chunkAt(x, 0).cx;
+        let cx = here;
+        while (stub.has(cx, 0) && cx < here + 8) cx++;
+        const front = (cx - 0.5) * CHUNK_M - x;
+        if (front < margin) margin = front;
+        if (front <= 0) blocked++;
+      }
+      return { margin, blocked, x };
+    };
+    /* Charge the slower of what was measured and 300 ms. Taking the larger only
+       makes the case harder, and it keeps the positive check from getting
+       easier on a fast machine — which is the direction a timing-derived bar
+       fails silently in. The control's cost is fixed outright: its job is to
+       show the check can fail, and that should not depend on the machine at
+       all. */
+    const charge = Math.max(slowest, 300);
+    const good = run(2, charge);
+    const starved = run(1, 3000);
+    say('and a body at a full run never reaches ground that has not been decided',
+        good.blocked === 0 && good.margin > CHUNK_M / 2,
+        `five minutes and ${good.x.toFixed(0)} m at ${RUN} m/s, every chunk charged `
+        + `${charge.toFixed(0)} ms on two workers: decided ground stayed `
+        + `${good.margin.toFixed(1)} m ahead at the closest`);
+    say('and the same check fails when the loader cannot keep up, which is how it is known to ask anything',
+        starved.blocked > 0,
+        `one worker at 3 s a chunk: blocked on ${starved.blocked} of ${SOAK_TICKS} ticks, `
+        + `front ${starved.margin.toFixed(1)} m`);
+  }
+
+  return out;
+}
+
+/** The four methods `makeStream` asks of a field, over a bare set of ids. */
+function stubField(log) {
+  const held = new Set();
+  return {
+    has: (cx, cz) => held.has(cx + ',' + cz),
+    adopt(cx, cz) { held.add(cx + ',' + cz); log.push([cx, cz]); },
+    drop(cx, cz) { return held.delete(cx + ',' + cz); },
+    live() { return [...held].map((k) => { const [cx, cz] = k.split(',').map(Number); return { cx, cz }; }); },
+  };
+}
+
+/**
+ * Drawing a streamed world without a visible join — issue #13, step four.
+ *
+ * A chunk's window is 40 m and the chunk it owns is the middle 32 m. Two things
+ * have to be true for that to be drawable, and neither is obvious:
+ *
+ * **The mesh must cover the chunk and not the window**, or every seam's
+ * geometry goes in twice and the overlap z-fights.
+ *
+ * **Neither side may wall off the seam.** A greedy mesher emits a face wherever
+ * solid meets air, and at the edge of what it can see everything is air — so a
+ * chunk meshed in isolation is a 32 m cube with walls. The skirt is what stops
+ * that: the mesher's AO ring reads one cell past the chunk, into ground the
+ * window generated and does not keep, and since the neighbour's window agrees
+ * with it voxel for voxel (the CHUNK checks) both sides make the same decision
+ * about the same face.
+ *
+ * The second check is the one that matters, and it is stated as a contrast
+ * rather than a threshold: the same mesher, on the same window, at a boundary
+ * with a skirt behind it and at one with nothing behind it.
+ */
+export function seamSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  /** Every 25 cm cell a mesh walls off on plane `p` of axis `ax`, facing `nx`. */
+  function walled(m, ax, p, nx) {
+    const cells = new Set();
+    for (let q = 0; q < m.nor.length / 3; q += 4) {
+      if (Math.abs(m.nor[q * 3 + ax] - nx) > 1e-6) continue;
+      let c = 0;
+      for (let k = 0; k < 4; k++) c += m.pos[(q + k) * 3 + ax];
+      if (Math.abs(c / 4 - p) > 1e-6) continue;
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (let k = 0; k < 4; k++) {
+        for (let d = 0; d < 3; d++) {
+          const v = m.pos[(q + k) * 3 + d];
+          if (v < lo[d]) lo[d] = v;
+          if (v > hi[d]) hi[d] = v;
+        }
+      }
+      const u = ax === 0 ? 1 : 0, v2 = ax === 2 ? 1 : 2;
+      for (let a = lo[u]; a < hi[u] - 1e-9; a += V) {
+        for (let b = lo[v2]; b < hi[v2] - 1e-9; b += V) cells.add(a.toFixed(2) + ',' + b.toFixed(2));
+      }
+    }
+    return cells;
+  }
+
+  const H = CHUNK_M / 2;
+  const meshOwn = (w) => meshChunk(w, 0, 0, innerChunk(w));
+
+  /* The mesh covers the chunk, not the window. */
+  {
+    const w = chunkWorld('hero', 0, 0);
+    const m = meshOwn(w);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < m.pos.length; i += 3) {
+      if (m.pos[i] < lo) lo = m.pos[i];
+      if (m.pos[i] > hi) hi = m.pos[i];
+    }
+    say('a chunk draws the chunk it owns, not the window it was generated in',
+        lo === -H && hi === H,
+        `mesh spans ${lo.toFixed(2)} to ${hi.toFixed(2)} m of a ${w.size} m window — `
+        + `the middle ${CHUNK_M} m`);
+  }
+
+  /* Neither side of a seam walls it off, and neither draws the other's faces. */
+  {
+    let pairs = 0, both = 0, emitted = 0;
+    for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+      const mid = meshOwn(chunkWorld(s.seed, 0, 0, s.force));
+      for (const [ax, dx, dz] of [[0, 1, 0], [0, -1, 0], [2, 0, 1], [2, 0, -1]]) {
+        const nb = meshOwn(chunkWorld(s.seed, dx, dz, s.force));
+        const sign = dx || dz;
+        const mine = walled(mid, ax, sign * H, sign);
+        const theirs = walled(nb, ax, -sign * H, -sign);
+        pairs++;
+        emitted += mine.size + theirs.size;
+        for (const k of mine) if (theirs.has(k)) both++;
+      }
+    }
+    say('and neither side of a seam draws a face the other also draws',
+        both === 0,
+        `${pairs} seams over three seeds, ${emitted} faces on them in all, ${both} drawn twice`);
+  }
+
+  /* The contrast that says what the skirt is for. */
+  {
+    let withSkirt = 0, without = 0;
+    for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+      const w = chunkWorld(s.seed, 0, 0, s.force);
+      withSkirt += walled(meshOwn(w), 0, -H, -1).size;
+      /* The same mesher on the same window, addressed from the window's own
+         corner instead: past that edge there is nothing to read, so everything
+         beyond it is air and the chunk is meshed as a box. */
+      without += walled(meshChunk(w, 0, 0), 0, -w.half, -1).size;
+    }
+    say('and the skirt is what keeps a chunk from being meshed as a closed box',
+        without > withSkirt * 50 && withSkirt < 200,
+        `-x boundary over three seeds: ${withSkirt} cells walled with a skirt behind it, `
+        + `${without} with nothing behind it`);
+  }
+
+  return out;
+}
+
+/**
+ * Props without the faces nobody can see — issue #51.
+ *
+ * The claim is narrow and worth stating exactly: **the same surfaces, minus
+ * the ones inside solid**. Not a simplification, not a merge, not a re-light.
+ * So the checks are about what is *kept*, not about how much is dropped —
+ * dropping is easy and dropping too much is the failure mode.
+ */
+export function propSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const key = (x, y, z) => Math.round(x / V) + ',' + Math.round(y / V) + ',' + Math.round(z / V);
+  const DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+
+  /* Every face kept is exposed, and every face dropped is not. Checked against
+     an independent walk of the voxel list rather than against the mesher's own
+     bookkeeping, which would only prove it agrees with itself. */
+  {
+    let kept = 0, dropped = 0, wrongKept = 0, wrongDropped = 0;
+    for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+      const w = chunkWorld(s.seed, 0, 0, s.force);
+      const m = meshProps(w);
+      const n = w.pos.length / 3, start = w.propStart === undefined ? n : w.propStart;
+      const solid = new Set();
+      for (let q = 0; q < n; q++) solid.add(key(w.pos[q * 3], w.pos[q * 3 + 1], w.pos[q * 3 + 2]));
+      /* what the mesher emitted, as a set of (voxel, normal) pairs */
+      const emitted = new Set();
+      for (let f = 0; f < m.faces; f++) {
+        const v = f * 4;
+        let cx = 0, cy = 0, cz = 0;
+        for (let k = 0; k < 4; k++) {
+          cx += m.pos[(v + k) * 3]; cy += m.pos[(v + k) * 3 + 1]; cz += m.pos[(v + k) * 3 + 2];
+        }
+        const nx = m.nor[v * 3], ny = m.nor[v * 3 + 1], nz = m.nor[v * 3 + 2];
+        /* the face centre, stepped back half a voxel along its normal, is the
+           centre of the voxel it belongs to */
+        emitted.add(key(cx / 4 - nx * V / 2, cy / 4 - ny * V / 2, cz / 4 - nz * V / 2)
+                    + '|' + nx + ',' + ny + ',' + nz);
+      }
+      for (let q = start; q < n; q++) {
+        const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+        for (const d of DIRS) {
+          const hidden = solid.has(key(x + d[0] * V, y + d[1] * V, z + d[2] * V));
+          const has = emitted.has(key(x, y, z) + '|' + d[0] + ',' + d[1] + ',' + d[2]);
+          if (hidden) { dropped++; if (has) wrongKept++; }
+          else { kept++; if (!has) wrongDropped++; }
+        }
+      }
+    }
+    say('every prop face that can be seen is drawn, and every one that cannot is not',
+        wrongKept === 0 && wrongDropped === 0,
+        `${(kept + dropped).toLocaleString()} faces over three chunks: ${kept.toLocaleString()} exposed `
+        + `and all drawn, ${dropped.toLocaleString()} buried and none drawn `
+        + `(${(100 * dropped / (kept + dropped)).toFixed(1)}% of a prop is inside itself or the ground)`);
+  }
+
+  /* The control: terrain has to count as solid. Hiding a face only behind
+     another *prop* leaves the sunk half of every boulder on screen, and the
+     check above would still pass because it would be measuring the same wrong
+     rule twice — so the rule is measured against the world instead. */
+  {
+    let bothWays = 0, propsOnly = 0;
+    for (const s of GOLDEN_SEEDS.slice(0, 3)) {
+      const w = chunkWorld(s.seed, 0, 0, s.force);
+      const n = w.pos.length / 3, start = w.propStart === undefined ? n : w.propStart;
+      const all = new Set(), props = new Set();
+      for (let q = 0; q < n; q++) {
+        const k = key(w.pos[q * 3], w.pos[q * 3 + 1], w.pos[q * 3 + 2]);
+        all.add(k);
+        if (q >= start) props.add(k);
+      }
+      for (let q = start; q < n; q++) {
+        const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+        for (const d of DIRS) {
+          const k = key(x + d[0] * V, y + d[1] * V, z + d[2] * V);
+          if (all.has(k)) bothWays++;
+          if (props.has(k)) propsOnly++;
+        }
+      }
+    }
+    /* The margin is small and the bar is set where the measurement put it, not
+       where it felt like it should be: a prop is mostly buried in *itself*,
+       and only 1.9% of its hidden faces are against terrain. That is still the
+       difference between a boulder with a sunk half and one without, and
+       dropping terrain from the occupancy is caught by it. A bar of "5% more"
+       was invented rather than measured, and failed on correct code. */
+    say('and the ground counts as solid, not just the prop itself',
+        bothWays > propsOnly,
+        `${bothWays.toLocaleString()} faces hidden by anything solid against `
+        + `${propsOnly.toLocaleString()} hidden by another prop alone — `
+        + `${(bothWays - propsOnly).toLocaleString()} more, `
+        + `${(100 * (bothWays - propsOnly) / bothWays).toFixed(1)}%, are buried in the ground`);
+  }
+
+  /* A face keeps its own voxel's colour: this is a cull, not a restyle. */
+  {
+    let checked = 0, wrong = 0;
+    const w = chunkWorld('hero', 0, 0);
+    const m = meshProps(w);
+    const n = w.pos.length / 3, start = w.propStart === undefined ? n : w.propStart;
+    /* A cell can hold more than one prop voxel — 4-8% of them are coincident,
+       either doubled or sitting in a terrain cell — so a face there belongs to
+       whichever of them emitted it, and a lookup that keeps one answer is
+       ambiguous rather than wrong. The check accepts any voxel in the cell.
+       (That coincidence is itself worth fixing and is not this change's
+       business: the instanced renderer draws both too, and deciding which wins
+       changes what is on screen. Recorded in #51.) */
+    const byKey = new Map();
+    for (let q = start; q < n; q++) {
+      const k = key(w.pos[q * 3], w.pos[q * 3 + 1], w.pos[q * 3 + 2]);
+      if (!byKey.has(k)) byKey.set(k, []);
+      byKey.get(k).push(q);
+    }
+    for (let f = 0; f < m.faces; f += 37) {
+      const v = f * 4;
+      let cx = 0, cy = 0, cz = 0;
+      for (let k = 0; k < 4; k++) {
+        cx += m.pos[(v + k) * 3]; cy += m.pos[(v + k) * 3 + 1]; cz += m.pos[(v + k) * 3 + 2];
+      }
+      const nx = m.nor[v * 3], ny = m.nor[v * 3 + 1], nz = m.nor[v * 3 + 2];
+      const qs = byKey.get(key(cx / 4 - nx * V / 2, cy / 4 - ny * V / 2, cz / 4 - nz * V / 2));
+      if (!qs) { wrong++; continue; }
+      checked++;
+      let any = false;
+      for (const q of qs) {
+        const want = [palR(w.pal[q], w.shd[q]), palG(w.pal[q], w.shd[q]), palB(w.pal[q], w.shd[q])];
+        let ok = true;
+        for (let c = 0; c < 3; c++) if (Math.abs(m.col[v * 3 + c] - want[c]) > 1e-9) { ok = false; break; }
+        if (ok) { any = true; break; }
+      }
+      if (!any) wrong++;
+    }
+    say('and a face carries the colour the box carried, so this is a cull and not a restyle',
+        wrong === 0 && checked > 100,
+        `${checked} faces sampled across a chunk, every one the palette index and shade `
+        + 'of the voxel it belongs to');
+  }
+
+  /* The clip a streamed chunk uses must not open a seam: a neighbour's prop is
+     not drawn here, but it still hides what it is standing against. */
+  {
+    const w = chunkWorld('fen', 0, 0);
+    const inner = meshProps(w, CHUNK_M / 2), whole = meshProps(w);
+    let outside = 0;
+    for (let f = 0; f < inner.faces; f++) {
+      const v = f * 4;
+      const x = inner.pos[v * 3], z = inner.pos[v * 3 + 2];
+      if (Math.abs(x) > CHUNK_M / 2 + V || Math.abs(z) > CHUNK_M / 2 + V) outside++;
+    }
+    say('and a streamed chunk draws its own props only, while the neighbour\'s still hide faces',
+        outside === 0 && inner.faces > 0 && inner.faces < whole.faces,
+        `${inner.faces.toLocaleString()} faces inside the chunk against `
+        + `${whole.faces.toLocaleString()} across the whole window, none beyond the boundary`);
+  }
+
   return out;
 }
