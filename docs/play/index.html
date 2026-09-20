@@ -111,6 +111,13 @@
   button.ctl:focus-visible{outline:2px solid var(--magic);outline-offset:2px}
   button.ctl:disabled{opacity:.4;cursor:default}
   button.ctl:disabled:hover{color:var(--muted);border-color:var(--line)}
+  .gctl{display:inline-flex;flex-direction:column;gap:3px;min-width:150px}
+  .gctl label{font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;
+              text-transform:uppercase;color:var(--dim);display:flex;
+              justify-content:space-between;gap:8px}
+  .gctl label b{color:var(--magic);font-weight:500;font-variant-numeric:tabular-nums}
+  .gctl input[type=range]{width:100%;accent-color:var(--magic);margin:0;cursor:pointer}
+  .gctl input[type=range]:focus-visible{outline:2px solid var(--magic);outline-offset:3px}
   .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:18px;align-items:start}
   .card{border:1px solid var(--line);background:var(--ink2);padding:15px 16px;
         display:flex;flex-direction:column;gap:10px}
@@ -243,6 +250,9 @@
         replaces the one 64 m window with 32 m chunks that load and unload as you walk, so the
         world has no edge. It is off by default, and it grows a <i>different</i> world from the
         same seed, because a 40 m window and a 64 m one disagree about the ground between them.
+        <b>Grass density</b> and <b>Grass length</b> tune the field: length is a uniform and follows
+        the slider live, density is how many blades the generator makes and so regrows the world from
+        the same seed when you let go of it.
         <b>On a phone</b>, hold it sideways: your left thumb is a stick wherever you put it, and the
         buttons on the right cut, dodge and jump.
         Click the view first to give it the keyboard.</p>
@@ -253,6 +263,16 @@
       <button class="ctl" id="meshbtn" type="button" title="Swap the terrain renderer: a greedy mesh with baked occlusion, or instanced boxes">Boxes</button>
       <button class="ctl" id="streambtn" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window. A world with no edge, from the same seed — and a different world, because the generator is not size-invariant.">Streaming: off</button>
       <button class="ctl" id="fullbtn" type="button">Fullscreen</button>
+      <span class="gctl">
+        <label for="gdens">Grass density <b id="gdensv">60 / m&sup2;</b></label>
+        <input type="range" id="gdens" min="2" max="160" step="2" value="60"
+               title="How many blades the generator makes, averaged over the whole window. Regrows the world from the same seed, so the character goes back to the spawn.">
+      </span>
+      <span class="gctl">
+        <label for="glen">Grass length <b id="glenv">50 cm</b></label>
+        <input type="range" id="glen" min="5" max="120" step="1" value="50"
+               title="How tall a meadow blade is drawn. Every other biome is taller or shorter than this by its own row in the table. Live — nothing is regenerated.">
+      </span>
     </div>
     <p class="netstat" id="netstat">Playing alone. <b>Host a game</b> opens a second window on
       this machine and puts another character in the same world — the host decides what happened,
@@ -781,23 +801,23 @@ const BIOMES = [
  {k:'meadow',nm:'Meadowlands',t:0.58,m:0.66,c:'#6b9a45',ds:'Broadleaf stands, meandering rivers, boulder fields. The tutorial biome and the one the palette is calibrated against.',mt:'base 3 m · hills 1–3 m · rivers common',
   surf:PAL.MEADOW_SURF,soil:PAL.MEADOW_SOIL,rock:PAL.MEADOW_ROCK,bed:PAL.MEADOW_BED,
   mat:{surf:MAT.GRASS,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
-  gr:{d:3.4,c:0x86ab4f,dry:0xb6a35a,h:[0.17,0.14]},tree:{t:'broad',d:0.9},base:3,hill:3,canyon:0.1,col:0.05},
+  gr:{d:7.8,c:0x86ab4f,dry:0xb6a35a,h:[0.35,0.30]},tree:{t:'broad',d:0.9},base:3,hill:3,canyon:0.1,col:0.05},
  {k:'mesa',nm:'Redrock Mesa',t:0.82,m:0.20,c:'#c08a52',ds:'Stacked sandstone, dry washes, hoodoos. Canyons and arcs are generated here more than anywhere else.',mt:'base 6 m · hills 1–2 m · canyons 3–5 m',
   surf:PAL.MESA_SURF,soil:PAL.MESA_SOIL,rock:PAL.MESA_ROCK,bed:PAL.MESA_BED,
   mat:{surf:MAT.SAND,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
-  gr:{d:1.3,c:0xc0a760,dry:0xd8c07a,h:[0.15,0.12]},tree:{t:'scrub',d:0.25},base:6,hill:2,canyon:0.85,col:0.5},
+  gr:{d:3.0,c:0xc0a760,dry:0xd8c07a,h:[0.30,0.25]},tree:{t:'scrub',d:0.25},base:6,hill:2,canyon:0.85,col:0.5},
  {k:'fen',nm:'Boreal Fen',t:0.40,m:0.90,c:'#4a7a4e',ds:'Peat shelves, standing water, black conifers and reed beds. Wide slow water, poor footing.',mt:'base 2 m · hills 1 m · water 4–8 m wide',
   surf:PAL.FEN_SURF,soil:PAL.FEN_SOIL,rock:PAL.FEN_ROCK,bed:PAL.FEN_BED,
   mat:{surf:MAT.GRASS,soil:MAT.PEAT,rock:MAT.ROCK,bed:MAT.PEAT},
-  gr:{d:3.8,c:0x5f8a48,dry:0x7d8a3e,h:[0.22,0.17]},tree:{t:'conifer',d:0.8},base:2,hill:1,canyon:0,col:0},
+  gr:{d:8.7,c:0x5f8a48,dry:0x7d8a3e,h:[0.40,0.28]},tree:{t:'conifer',d:0.8},base:2,hill:1,canyon:0,col:0},
  {k:'ash',nm:'Ashfall Barrens',t:0.90,m:0.48,c:'#5a504a',ds:'Basalt columns, fissures and magma seams under a grey crust. Vertical cover everywhere, nothing to eat.',mt:'base 4 m · columns 2–4 m · magma seams',
   surf:PAL.ASH_SURF,soil:PAL.ASH_SOIL,rock:PAL.ASH_ROCK,bed:PAL.ASH_BED,
   mat:{surf:MAT.ASH,soil:MAT.ASH,rock:MAT.BASALT,bed:MAT.BASALT},
-  gr:{d:1.1,c:0x6b5a50,dry:0xd2642a,h:[0.13,0.11]},tree:{t:'snag',d:0.3},base:4,hill:2,canyon:0.3,col:0.9},
+  gr:{d:2.5,c:0x6b5a50,dry:0xd2642a,h:[0.26,0.22]},tree:{t:'snag',d:0.3},base:4,hill:2,canyon:0.3,col:0.9},
  {k:'frost',nm:'Frostmoor',t:0.12,m:0.44,c:'#cfd9e2',ds:'Snow over hard rock, frozen shelves, wind-stripped ridges. Tracks show, and so do you.',mt:'base 5 m · hills 2–3 m · ice shelves',
   surf:PAL.FROST_SURF,soil:PAL.FROST_SOIL,rock:PAL.FROST_ROCK,bed:PAL.FROST_BED,
   mat:{surf:MAT.SNOW,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.ICE},
-  gr:{d:1.7,c:0xc8d6de,dry:0x9fb4bf,h:[0.14,0.11]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
+  gr:{d:3.9,c:0xc8d6de,dry:0x9fb4bf,h:[0.28,0.23]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
 ];
 
 /** Picks one biome out of a blend, sharpened so blends still read as somewhere. */
@@ -2245,6 +2265,14 @@ function placeLandmark(w, kit) {
  *
  * Draws are positional (issue #41): a blade cloud belongs to the patch of
  * ground under it, not to the point in the pass where the walk reached it.
+ *
+ * `cfg.gdens` scales every biome's density at once, so a page can offer the
+ * knob without editing the table. It is a *generator* input rather than a
+ * rendering one, because how many blades exist is decided here — the renderer
+ * can only choose how tall to draw the ones it is given, which is why the two
+ * controls in the build behave differently: length is live, density rebuilds.
+ * It does not travel on the wire; two players can disagree about how thick
+ * their grass is, the way they can disagree about a shadow setting.
  */
 
 
@@ -2254,6 +2282,7 @@ function buildGrass(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, FLG = w.FLG, half = w.half,
       cellAt = w.cellAt, G = w.G, i, j, k, x, z;
   var vx0 = Math.round(w.OX / V), vz0 = Math.round(w.OZ / V);
+  var dmul = w.gdens === undefined ? 1 : w.gdens;
   var gpos=[],gph=[],gtint=[],gsc=[],gyaw=[],gcol=[],gdry=[];
   for(i=0;i<NX;i+=2)for(j=0;j<NZ;j+=2){
     k=i*NZ+j; if(FLG[k]) continue;
@@ -2267,7 +2296,8 @@ function buildGrass(w) {
       dr+=w2b*shadeR(B2.gr.dry,1); dg+=w2b*shadeG(B2.gr.dry,1); db+=w2b*shadeB(B2.gr.dry,1);
     }
     var R=G.pstream(PASS.GRASS,i+vx0,j+vz0);
-    var nb=Math.floor(dsum*3.2); if(R()<dsum*3.2-nb) nb++;
+    var want=dsum*3.2*dmul;
+    var nb=Math.floor(want); if(R()<want-nb) nb++;
     for(var g2=0;g2<nb;g2++){
       gpos.push(x+(R()-0.5)*0.5,Hs[k],z+(R()-0.5)*0.5);
       gph.push(R()*6.28); gtint.push(R()<0.15?1:0);
@@ -2422,6 +2452,10 @@ function seedCells(cfg) {
 
 function buildWorld(cfg) {
   var w = seedCells(cfg);
+  /* Visual only, and only grass reads it. Kept on the world rather than passed
+     down, because buildGrass is the one pass that wants it and threading an
+     argument through nine that do not would be worse. */
+  w.gdens = cfg.gdens === undefined ? 1 : cfg.gdens;
   erode(w);                    /* talus at the cliff feet, banks cut back */
   layRoutes(w);                /* sites, A* routes, grading, crossings */
   cutSpans(w);                 /* caves cut, then rims undercut over them */
@@ -2531,9 +2565,10 @@ function chunkCentre(cx, cz) {
  * must not do is *keep* anything from the skirt: that ground belongs to the
  * neighbouring chunk, which will generate it identically.
  */
-function chunkWorld(seed, cx, cz, force) {
+function chunkWorld(seed, cx, cz, force, gdens) {
   const { ox, oz } = chunkCentre(cx, cz);
-  return buildWorld({ seed, size: WINDOW, force: force === undefined ? null : force, ox, oz });
+  return buildWorld({ seed, size: WINDOW, force: force === undefined ? null : force, ox, oz,
+                      gdens: gdens === undefined ? 1 : gdens });
 }
 
 /**
@@ -3535,8 +3570,9 @@ function colliderForChunk(w, cx, cz) {
  * A field of loaded chunks. `keep(centres, radius)` decides which chunks exist;
  * everything else is a wall.
  */
-function makeChunkField(seed, force) {
+function makeChunkField(seed, force, gdens) {
   const live = new Map();
+  const dens = gdens === undefined ? 1 : gdens;
   let built = 0, dropped = 0;
 
   /** Take a generated window as this chunk's ground. Where a streamed chunk
@@ -3556,7 +3592,7 @@ function makeChunkField(seed, force) {
 
   function ensure(cx, cz) {
     const e = live.get(key(cx, cz));
-    return e || adopt(cx, cz, chunkWorld(seed, cx, cz, force));
+    return e || adopt(cx, cz, chunkWorld(seed, cx, cz, force, dens));
   }
 
   /** Every chunk a footprint touches, loaded or not. */
@@ -3583,8 +3619,10 @@ function makeChunkField(seed, force) {
       return live.size;
     },
 
-    /** The seed this field is of, so a scheduler can generate for it. */
-    seed, force,
+    /** The seed this field is of, so a scheduler can generate for it — and the
+        grass density it was grown at, so a worker generates the same field the
+        main thread would have. */
+    seed, force, gdens: dens,
     adopt, drop,
 
     get loaded() { return live.size; },
@@ -6081,7 +6119,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   /* How wide a patch of grass is culled as one, and how far outside its own
      bounds a blade of it can be pushed. Smaller tiles reject more and cost more
      draw calls; 8 m is a quarter of a chunk. */
-  var GRASS_TILE=8, GRASS_SWAY=0.6;
+  var GRASS_TILE=8;
   /* How wide a blade is at its base, in metres, and how many of the four push
      slots the shader carries. The old blade was 11 cm on a 25 cm voxel grid and
      against a 1.8 m character: at that width a flat strip reads as a leaf, not
@@ -6089,6 +6127,35 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      density that replaces the coverage it loses is the generator's business,
      not the renderer's. */
   var GRASS_W=0.060, GRASS_PUSH=4;
+  /* What the two controls under the view default to, and what those defaults
+     mean. Density is a *generator* number — how many blades exist — so moving
+     it regrows the world; length is a multiplier the vertex shader applies to
+     the height the generator rolled, so moving it is a uniform and a frame.
+     GRASS_LEN_REF is the length at which the biome table plays as authored:
+     the meadow's blade is 50 cm there, and every other biome is taller or
+     shorter than that by its own row. */
+  var GRASS_DENS_REF=60, GRASS_LEN_REF=0.50;
+  var grassDens=GRASS_DENS_REF, grassLen=GRASS_LEN_REF;
+
+  /**
+   * Fit one grass tile's bounding sphere to the blades in it at the length the
+   * controls are currently set to.
+   *
+   * The clump hash in the vertex shader stretches a blade to 1.30x what the
+   * generator rolled, and the lean and the push move its tip sideways by about
+   * as much again, so the sphere is the roots' box grown by the tallest blade
+   * and padded for both. It is deliberately loose: a tile drawn when it did not
+   * need to be costs a few thousand triangles, and a tile culled when it should
+   * not have been is a visible hole.
+   */
+  function fitGrass(mesh){
+    var b=mesh.userData.gb; if(!b) return;
+    var hm=grassLen/GRASS_LEN_REF, top=b.y1+b.h*1.30*hm;
+    var cx=(b.x0+b.x1)/2, cy=(b.y0+top)/2, cz=(b.z0+b.z1)/2;
+    var r=Math.sqrt((b.x1-cx)*(b.x1-cx)+(top-cy)*(top-cy)+(b.z1-cz)*(b.z1-cz))
+          +b.h*1.30*hm*1.6;
+    mesh.geometry.boundingSphere=new THREE.Sphere(new THREE.Vector3(cx,cy,cz),r);
+  }
   /* Five vertices, three triangles. The blade used to be seven and five, which
      is the right count for a 0.55 m stalk and overkill for the 0.2 m one the
      biome rows now ask for — at that height the middle pair of the old strip
@@ -6128,7 +6195,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      and its third column is the yaw. Nothing on the JS side had to change. */
   var GRASS_VS=[
     'attribute float aPhase; attribute float aTint; attribute vec3 aCol; attribute vec3 aDry;',
-    'uniform float uTime; uniform float uW; uniform vec2 uWind;',
+    'uniform float uTime; uniform float uW; uniform float uHeight; uniform vec2 uWind;',
     'uniform vec3 uPush['+GRASS_PUSH+'];',
     'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD; varying vec3 vN;',
     'float h11(vec2 q){ return fract(sin(dot(q,vec2(127.1,311.7)))*43758.545); }',
@@ -6140,7 +6207,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     ' return v*cos(a)+cross(ax,v)*sin(a)+ax*dot(ax,v)*(1.0-cos(a)); }',
     'void main(){ float t=position.y; vH=t; vT=aTint; vC=aCol; vD=aDry;',
     ' vec3 base=(modelMatrix*instanceMatrix*vec4(0.0,0.0,0.0,1.0)).xyz;',
-    ' float hh=length(instanceMatrix[1].xyz);',
+    ' float hh=length(instanceMatrix[1].xyz)*uHeight;',
     ' vec3 own=normalize(instanceMatrix[2].xyz+vec3(1e-5));',
     /* the tuft this blade belongs to: one lean and one height for all of it */
     ' vec2 cid=floor(base.xz*2.0); float ca=h11(cid)*6.2831;',
@@ -6487,28 +6554,28 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       var gsrc=tiles[tk], gn=gsrc.length, geo=bladeGeo.clone();
       var grass=new THREE.InstancedMesh(geo,mats.grass,gn);
       var ph=new Float32Array(gn),ti=new Float32Array(gn),cl=new Float32Array(gn*3),dl=new Float32Array(gn*3);
-      var bx0=1e9,bx1=-1e9,by0=1e9,by1=-1e9,bz0=1e9,bz1=-1e9;
+      var bx0=1e9,bx1=-1e9,by0=1e9,by1=-1e9,bz0=1e9,bz1=-1e9,bhm=0;
       for(i=0;i<gn;i++){ var gk=gsrc[i], px=gd.p[gk*3], py=gd.p[gk*3+1], pz=gd.p[gk*3+2];
         tv.set(px,py,pz); eu.set(0,gd.yw[gk],0); qq.setFromEuler(eu);
         sv.set(1,gd.sc[gk],1); m4.compose(tv,qq,sv); grass.setMatrixAt(i,m4);
         ph[i]=gd.ph[gk]; ti[i]=gd.ti[gk]; cl[i*3]=gd.c[gk*3]; cl[i*3+1]=gd.c[gk*3+1]; cl[i*3+2]=gd.c[gk*3+2];
         dl[i*3]=gd.dc[gk*3]; dl[i*3+1]=gd.dc[gk*3+1]; dl[i*3+2]=gd.dc[gk*3+2];
         if(px<bx0)bx0=px; if(px>bx1)bx1=px; if(pz<bz0)bz0=pz; if(pz>bz1)bz1=pz;
-        if(py<by0)by0=py; if(py+gd.sc[gk]>by1)by1=py+gd.sc[gk];
+        if(py<by0)by0=py; if(py>by1)by1=py; if(gd.sc[gk]>bhm)bhm=gd.sc[gk];
       }
       grass.instanceMatrix.needsUpdate=true;
       geo.setAttribute('aPhase',new THREE.InstancedBufferAttribute(ph,1));
       geo.setAttribute('aTint',new THREE.InstancedBufferAttribute(ti,1));
       geo.setAttribute('aCol',new THREE.InstancedBufferAttribute(cl,3));
       geo.setAttribute('aDry',new THREE.InstancedBufferAttribute(dl,3));
-      /* The sphere the frustum test will use. Instances do not move a
-         geometry's bounds in three, so it is set from the tile's own extent,
-         widened by how far the wind and a passing body can push a blade — a
-         tile culled while a blade of it is still on screen is a hole. */
-      var cxg=(bx0+bx1)/2, cyg=(by0+by1)/2, czg=(bz0+bz1)/2;
-      var rg=Math.sqrt((bx1-cxg)*(bx1-cxg)+(by1-cyg)*(by1-cyg)+(bz1-czg)*(bz1-czg))+GRASS_SWAY;
-      geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(cxg,cyg,czg),rg);
-      grass.userData.kind='grass'; grass.frustumCulled=true; g.add(grass);
+      /* Where the tile's blades are rooted, and the tallest of them. The sphere
+         the frustum test uses is derived from these rather than stored, because
+         the length control scales every blade at once and a sphere that did not
+         follow would cull a tile while part of it was still on screen — which
+         is a hole in the ground, not a saving. */
+      grass.userData.gb={x0:bx0,x1:bx1,y0:by0,y1:by1,z0:bz0,z1:bz1,h:bhm};
+      grass.userData.kind='grass'; grass.frustumCulled=true;
+      fitGrass(grass); g.add(grass);
     }
 
     if(data.water.v.length){
@@ -6553,6 +6620,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          ShaderMaterial and nothing injects them. */
       grass:new THREE.ShaderMaterial({side:THREE.DoubleSide,
         uniforms:{uTime:{value:0},uW:{value:GRASS_W},
+                  uHeight:{value:grassLen/GRASS_LEN_REF},
                   uWind:{value:new THREE.Vector2(0.72,0.69)},
                   uSun:{value:new THREE.Vector3(-16,26,12).normalize()},
                   uPush:{value:(function(){var a=[],q;
@@ -7188,7 +7256,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       +'var AO_STEP=['+AO_STEP.join(',')+'];\n'
       +'var PAL_N=(function(){var t=new Uint8Array(QS.PALETTE.length);\n'
       +'  for(var k in QS.PAL) t[QS.PAL[k].at]=QS.PAL[k].n; return t;})();\n'
-      +'  var t0=_now(), w=QS.chunkWorld(d.seed,d.cx,d.cz,d.force);\n'
+      +'  var t0=_now(), w=QS.chunkWorld(d.seed,d.cx,d.cz,d.force,d.gd);\n'
       /* A world carries its generator on `w.G`, and a generator is nine
          closures. structuredClone refuses the whole object over them — "function
          cell(x,z){...} could not be cloned" — so the worker could never post
@@ -7289,7 +7357,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       if(!j) break;
       pool.busy[k]=j;
       pool.sentAt[k]=performance.now(); pool.sent++;
-      pool.ws[k].postMessage({seed:field.seed,force:field.force,cx:j.cx,cz:j.cz});
+      pool.ws[k].postMessage({seed:field.seed,force:field.force,gd:field.gdens,cx:j.cx,cz:j.cz});
       any=true;
     }
     return any;
@@ -7322,7 +7390,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       var j=stream.next();
       if(j){
         var t0=performance.now();
-        stream.deliver(j.cx,j.cz,QS.chunkWorld(field.seed,j.cx,j.cz,field.force));
+        stream.deliver(j.cx,j.cz,QS.chunkWorld(field.seed,j.cx,j.cz,field.force,field.gdens));
         streamMs=performance.now()-t0; streamBuilt++;
         if(live) pool.waited=0;
       }
@@ -7341,6 +7409,51 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     built.sun.position.set(a.x-16,a.y+26,a.z+12);
     built.sun.target.position.set(a.x,a.y,a.z);
     built.sun.target.updateMatrixWorld();
+  }
+
+  /* ---------- the two grass controls ----------
+     They sit under the view rather than in it, because they are for tuning the
+     world rather than for playing it, and they behave differently for a reason
+     that is not arbitrary:
+
+     **Length** is a number the vertex shader multiplies the generator's blade
+     height by. Nothing is regenerated and nothing is rebuilt — one uniform and
+     the next frame is drawn at the new length — so it is safe on `input` and
+     you can drag it and watch the field move. The tiles' bounding spheres are
+     refitted, because a taller blade reaches further out of its tile.
+
+     **Density** is how many blades exist, which only the generator can decide.
+     Moving it regrows the world from the same seed, which takes a second or
+     two and puts the character back at the spawn — so it fires on `change`,
+     when the slider is let go, and not on every pixel of the drag. */
+  function setGrassLength(m,quiet){
+    grassLen=Math.max(0.05,Math.min(1.2,m));
+    if(built&&built.gmat&&built.gmat.uniforms.uHeight)
+      built.gmat.uniforms.uHeight.value=grassLen/GRASS_LEN_REF;
+    eachGrass(fitGrass);
+    if(!quiet) syncGrassCtl();
+    return grassLen;
+  }
+  function setGrassDensity(n,quiet){
+    grassDens=Math.max(2,Math.min(160,n));
+    if(!quiet) syncGrassCtl();
+    /* Regrow at the new density, keeping the seed and whatever the renderer
+       and the stream switch are currently set to. */
+    if(built&&!session) regen(built.cfg&&built.cfg.seed?built.cfg.seed:(seedin.value||'QUARTERSTONE'));
+    return grassDens;
+  }
+  /** Every grass tile in whatever world is standing — one window, or a field. */
+  function eachGrass(fn){
+    if(!built||!built.scene) return 0;
+    var n=0; built.scene.traverse(function(o){ if(o.userData.kind==='grass'){ fn(o); n++; } });
+    return n;
+  }
+  function syncGrassCtl(){
+    var d=document.getElementById('gdens'), l=document.getElementById('glen');
+    if(d){ d.value=String(Math.round(grassDens));
+      document.getElementById('gdensv').textContent=Math.round(grassDens)+' / m\u00b2'; }
+    if(l){ l.value=String(Math.round(grassLen*100));
+      document.getElementById('glenv').textContent=Math.round(grassLen*100)+' cm'; }
   }
 
   /* ---------- who is standing in the grass ----------
@@ -7375,7 +7488,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   function buildStreamFor(cfg){
     disposeWorld();
     var mats=worldMaterials(), shell=sceneShell(52);
-    field=QS.makeChunkField(cfg.seed,cfg.force===undefined?null:cfg.force);
+    field=QS.makeChunkField(cfg.seed,cfg.force===undefined?null:cfg.force,
+                            cfg.gdens===undefined?grassDens/GRASS_DENS_REF:cfg.gdens);
     stream=QS.makeStream(field,{loadR:1,keepR:STREAM_KEEP,flight:POOL_N});
     nodes={}; voxIndex=null; hidden.length=0; streamBuilt=0; streamMs=0;
     built={scene:shell.scene,sun:shell.sun,mats:mats,gmat:mats.grass,wmat:mats.water,
@@ -7387,7 +7501,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        stretch. The wider radius fills in as you play, a window per frame. */
     stream.want([{x:0,z:0}]);
     for(;;){ var j=stream.next(); if(!j) break;
-      stream.deliver(j.cx,j.cz,QS.chunkWorld(cfg.seed,j.cx,j.cz,field.force)); }
+      stream.deliver(j.cx,j.cz,QS.chunkWorld(cfg.seed,j.cx,j.cz,field.force,field.gdens)); }
     stream.radius(STREAM_LOAD,STREAM_KEEP);
     /* Ask for workers once, after there is ground to stand on. If they never
        answer, the pump stays on this thread and nothing else changes. */
@@ -7399,8 +7513,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
 
   function regen(seedStr){
     if(session){ says('leave the game first'); return; }
-    if(streaming) buildStreamFor({seed:seedStr,force:null});
-    else buildFor({seed:seedStr,size:64,force:null,ox:0,oz:0});
+    var gd=grassDens/GRASS_DENS_REF;
+    if(streaming) buildStreamFor({seed:seedStr,force:null,gdens:gd});
+    else buildFor({seed:seedStr,size:64,force:null,ox:0,oz:0,gdens:gd});
     solo=null; spawn();
   }
 
@@ -7603,6 +7718,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     stage.focus();
   }
   document.getElementById('streambtn').addEventListener('click',function(){ toggleStream(false); });
+  /* Length on `input` — it is a uniform, so it can follow the drag. Density on
+     `change` — it regrows the world, so it waits for the slider to be let go. */
+  document.getElementById('glen').addEventListener('input',function(){
+    setGrassLength(Number(this.value)/100); });
+  document.getElementById('gdens').addEventListener('change',function(){
+    setGrassDensity(Number(this.value)); });
   fullBtn.addEventListener('click',function(){ toggleFull(); });
 
   /* ---------- the view's own controls ----------
@@ -8234,7 +8355,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        and the feature was unreachable there. The control below the view is. */
     if(/[?&]stream=1\b/.test(location.search)) streaming=true;
     regen(seedin.value||'QUARTERSTONE');
-    syncStreamBtn();
+    syncStreamBtn(); syncGrassCtl();
   }
   stage.focus();
   requestAnimationFrame(frame);
@@ -8355,6 +8476,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     },
     get streaming(){ return streaming; },
     setStream:setStreaming,
+    /* The two grass controls, for the gate and for a console. `grassLength` is
+       in metres and is what the shader multiplies the generator's blade height
+       by; the check that walks the tiles' bounding spheres needs it, because a
+       sphere that fits at 50 cm does not fit at a metre. */
+    get grassDensity(){ return grassDens; },
+    get grassLength(){ return grassLen; },
+    setGrassDensity:setGrassDensity,
+    setGrassLength:setGrassLength,
     get chunks(){ return streaming?{loaded:field.loaded,built:field.built,dropped:field.dropped,
                                     pending:stream.pending,ms:streamMs,nodes:Object.keys(nodes).length,
                                     workers:pool&&pool.ready&&!pool.failed?pool.ws.length:0,

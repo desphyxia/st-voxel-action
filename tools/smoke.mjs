@@ -893,6 +893,7 @@ if (BROWSER_HALF) {
            does not is a tile culled while part of it is still on screen, which
            is a hole in the ground rather than a saving. */
         const m = new window.THREE.Matrix4();
+        const hm = P.grassLength / 0.50;
         let blades = 0, outside = 0;
         for (const o of tiles) {
           const bs = o.geometry.boundingSphere;
@@ -901,7 +902,7 @@ if (BROWSER_HALF) {
           for (let i = 0; i < o.count; i++) {
             o.getMatrixAt(i, m); blades++;
             const e = m.elements, dx = e[12] - bs.center.x, dz = e[14] - bs.center.z;
-            const dy = e[13] - bs.center.y, ty = e[13] + e[5] * 1.3 - bs.center.y;
+            const dy = e[13] - bs.center.y, ty = e[13] + e[5] * 1.3 * hm - bs.center.y;
             if (dx * dx + dy * dy + dz * dz > r2) outside++;
             else if (dx * dx + ty * ty + dz * dz > r2) outside++;
           }
@@ -921,6 +922,64 @@ if (BROWSER_HALF) {
             `${gcull.scene.toLocaleString()} grass triangles in the scene, `
             + `${(gcull.all - gcull.culled).toLocaleString()} of them never submitted `
             + `— ${(100 * (gcull.all - gcull.culled) / gcull.scene).toFixed(0)}%`);
+
+      /* ---------- BUILD: the two grass controls under the view ----------
+         They are the page's only tuning knobs, and they work by different
+         means on purpose: length is a uniform the shader multiplies the
+         generator's blade height by, density is how many blades the generator
+         makes at all. So the gate holds the difference rather than just that
+         each one moved something — length must change what is drawn *without*
+         changing how many blades exist, and density must change the count.
+
+         The tiles' bounding spheres are the trap here. One fitted at 50 cm
+         does not hold a blade at 110, and the tile would be culled with part
+         of it still on screen, so the length check re-walks every blade
+         against the refitted spheres at the new length. */
+      const gtune = await bp.evaluate(async () => {
+        const P = window.QSPLAY;
+        const count = () => { let n = 0; P.scene.traverse((o) => {
+          if (o.userData.kind === 'grass') n += o.count; }); return n; };
+        const loose = () => { const m = new window.THREE.Matrix4(); let out = 0;
+          const hm = P.grassLength / 0.50;
+          P.scene.traverse((o) => { if (o.userData.kind !== 'grass') return;
+            const bs = o.geometry.boundingSphere;
+            if (!bs) { out += o.count; return; }
+            const r2 = bs.radius * bs.radius;
+            for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); const e = m.elements;
+              const dx = e[12] - bs.center.x, dz = e[14] - bs.center.z;
+              const ty = e[13] + e[5] * 1.3 * hm - bs.center.y;
+              if (dx * dx + ty * ty + dz * dz > r2) out++; } });
+          return out; };
+        const len0 = P.grassLength, den0 = P.grassDensity;
+        const blades0 = count();
+        const el = document.getElementById('glen');
+        el.value = '110'; el.dispatchEvent(new Event('input', { bubbles: true }));
+        const out = { len0, den0, blades0, lenNow: P.grassLength,
+                      bladesAfterLen: count(), looseAtLong: loose(),
+                      readout: document.getElementById('glenv').textContent };
+        P.setGrassLength(len0);
+        /* Density regrows the world, so it is driven through the API and put
+           back afterwards; the slider's own listener is the same call. */
+        P.setGrassDensity(den0 * 2);
+        await new Promise((r) => setTimeout(r, 200));
+        out.denNow = P.grassDensity; out.bladesAfterDen = count();
+        P.setGrassDensity(den0);
+        await new Promise((r) => setTimeout(r, 200));
+        out.bladesBack = count();
+        return out;
+      });
+      check(gtune.lenNow > 1.0 && gtune.bladesAfterLen === gtune.blades0
+            && gtune.looseAtLong === 0,
+            'BUILD: the length control redraws the grass without regrowing it',
+            `${(gtune.len0 * 100).toFixed(0)} cm -> ${gtune.readout}, `
+            + `${gtune.blades0.toLocaleString()} blades either way, `
+            + `${gtune.looseAtLong} of them outside a refitted sphere`);
+      check(gtune.bladesAfterDen > gtune.blades0 * 1.6
+            && Math.abs(gtune.bladesBack - gtune.blades0) < gtune.blades0 * 0.01,
+            'BUILD: and the density control grows more of them, and fewer again',
+            `${gtune.den0} /m2 is ${gtune.blades0.toLocaleString()} blades, `
+            + `${gtune.denNow} /m2 is ${gtune.bladesAfterDen.toLocaleString()}, `
+            + `back to ${gtune.bladesBack.toLocaleString()}`);
 
       /* ---------- BUILD: the mesh follows an edit (#12) ----------
          The node half asserts that meshChunk answers differently once a voxel

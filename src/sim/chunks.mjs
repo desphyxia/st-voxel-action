@@ -95,8 +95,9 @@ function colliderForChunk(w, cx, cz) {
  * A field of loaded chunks. `keep(centres, radius)` decides which chunks exist;
  * everything else is a wall.
  */
-export function makeChunkField(seed, force) {
+export function makeChunkField(seed, force, gdens) {
   const live = new Map();
+  const dens = gdens === undefined ? 1 : gdens;
   let built = 0, dropped = 0;
 
   /** Take a generated window as this chunk's ground. Where a streamed chunk
@@ -116,7 +117,7 @@ export function makeChunkField(seed, force) {
 
   function ensure(cx, cz) {
     const e = live.get(key(cx, cz));
-    return e || adopt(cx, cz, chunkWorld(seed, cx, cz, force));
+    return e || adopt(cx, cz, chunkWorld(seed, cx, cz, force, dens));
   }
 
   /** Every chunk a footprint touches, loaded or not. */
@@ -143,8 +144,10 @@ export function makeChunkField(seed, force) {
       return live.size;
     },
 
-    /** The seed this field is of, so a scheduler can generate for it. */
-    seed, force,
+    /** The seed this field is of, so a scheduler can generate for it — and the
+        grass density it was grown at, so a worker generates the same field the
+        main thread would have. */
+    seed, force, gdens: dens,
     adopt, drop,
 
     get loaded() { return live.size; },

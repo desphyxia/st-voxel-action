@@ -52,6 +52,10 @@ function seedCells(cfg) {
 
 export function buildWorld(cfg) {
   var w = seedCells(cfg);
+  /* Visual only, and only grass reads it. Kept on the world rather than passed
+     down, because buildGrass is the one pass that wants it and threading an
+     argument through nine that do not would be worse. */
+  w.gdens = cfg.gdens === undefined ? 1 : cfg.gdens;
   erode(w);                    /* talus at the cliff feet, banks cut back */
   layRoutes(w);                /* sites, A* routes, grading, crossings */
   cutSpans(w);                 /* caves cut, then rims undercut over them */

@@ -774,23 +774,23 @@ const BIOMES = [
  {k:'meadow',nm:'Meadowlands',t:0.58,m:0.66,c:'#6b9a45',ds:'Broadleaf stands, meandering rivers, boulder fields. The tutorial biome and the one the palette is calibrated against.',mt:'base 3 m · hills 1–3 m · rivers common',
   surf:PAL.MEADOW_SURF,soil:PAL.MEADOW_SOIL,rock:PAL.MEADOW_ROCK,bed:PAL.MEADOW_BED,
   mat:{surf:MAT.GRASS,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
-  gr:{d:3.4,c:0x86ab4f,dry:0xb6a35a,h:[0.17,0.14]},tree:{t:'broad',d:0.9},base:3,hill:3,canyon:0.1,col:0.05},
+  gr:{d:7.8,c:0x86ab4f,dry:0xb6a35a,h:[0.35,0.30]},tree:{t:'broad',d:0.9},base:3,hill:3,canyon:0.1,col:0.05},
  {k:'mesa',nm:'Redrock Mesa',t:0.82,m:0.20,c:'#c08a52',ds:'Stacked sandstone, dry washes, hoodoos. Canyons and arcs are generated here more than anywhere else.',mt:'base 6 m · hills 1–2 m · canyons 3–5 m',
   surf:PAL.MESA_SURF,soil:PAL.MESA_SOIL,rock:PAL.MESA_ROCK,bed:PAL.MESA_BED,
   mat:{surf:MAT.SAND,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
-  gr:{d:1.3,c:0xc0a760,dry:0xd8c07a,h:[0.15,0.12]},tree:{t:'scrub',d:0.25},base:6,hill:2,canyon:0.85,col:0.5},
+  gr:{d:3.0,c:0xc0a760,dry:0xd8c07a,h:[0.30,0.25]},tree:{t:'scrub',d:0.25},base:6,hill:2,canyon:0.85,col:0.5},
  {k:'fen',nm:'Boreal Fen',t:0.40,m:0.90,c:'#4a7a4e',ds:'Peat shelves, standing water, black conifers and reed beds. Wide slow water, poor footing.',mt:'base 2 m · hills 1 m · water 4–8 m wide',
   surf:PAL.FEN_SURF,soil:PAL.FEN_SOIL,rock:PAL.FEN_ROCK,bed:PAL.FEN_BED,
   mat:{surf:MAT.GRASS,soil:MAT.PEAT,rock:MAT.ROCK,bed:MAT.PEAT},
-  gr:{d:3.8,c:0x5f8a48,dry:0x7d8a3e,h:[0.22,0.17]},tree:{t:'conifer',d:0.8},base:2,hill:1,canyon:0,col:0},
+  gr:{d:8.7,c:0x5f8a48,dry:0x7d8a3e,h:[0.40,0.28]},tree:{t:'conifer',d:0.8},base:2,hill:1,canyon:0,col:0},
  {k:'ash',nm:'Ashfall Barrens',t:0.90,m:0.48,c:'#5a504a',ds:'Basalt columns, fissures and magma seams under a grey crust. Vertical cover everywhere, nothing to eat.',mt:'base 4 m · columns 2–4 m · magma seams',
   surf:PAL.ASH_SURF,soil:PAL.ASH_SOIL,rock:PAL.ASH_ROCK,bed:PAL.ASH_BED,
   mat:{surf:MAT.ASH,soil:MAT.ASH,rock:MAT.BASALT,bed:MAT.BASALT},
-  gr:{d:1.1,c:0x6b5a50,dry:0xd2642a,h:[0.13,0.11]},tree:{t:'snag',d:0.3},base:4,hill:2,canyon:0.3,col:0.9},
+  gr:{d:2.5,c:0x6b5a50,dry:0xd2642a,h:[0.26,0.22]},tree:{t:'snag',d:0.3},base:4,hill:2,canyon:0.3,col:0.9},
  {k:'frost',nm:'Frostmoor',t:0.12,m:0.44,c:'#cfd9e2',ds:'Snow over hard rock, frozen shelves, wind-stripped ridges. Tracks show, and so do you.',mt:'base 5 m · hills 2–3 m · ice shelves',
   surf:PAL.FROST_SURF,soil:PAL.FROST_SOIL,rock:PAL.FROST_ROCK,bed:PAL.FROST_BED,
   mat:{surf:MAT.SNOW,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.ICE},
-  gr:{d:1.7,c:0xc8d6de,dry:0x9fb4bf,h:[0.14,0.11]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
+  gr:{d:3.9,c:0xc8d6de,dry:0x9fb4bf,h:[0.28,0.23]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
 ];
 
 /** Picks one biome out of a blend, sharpened so blends still read as somewhere. */
@@ -2238,6 +2238,14 @@ function placeLandmark(w, kit) {
  *
  * Draws are positional (issue #41): a blade cloud belongs to the patch of
  * ground under it, not to the point in the pass where the walk reached it.
+ *
+ * `cfg.gdens` scales every biome's density at once, so a page can offer the
+ * knob without editing the table. It is a *generator* input rather than a
+ * rendering one, because how many blades exist is decided here — the renderer
+ * can only choose how tall to draw the ones it is given, which is why the two
+ * controls in the build behave differently: length is live, density rebuilds.
+ * It does not travel on the wire; two players can disagree about how thick
+ * their grass is, the way they can disagree about a shadow setting.
  */
 
 
@@ -2247,6 +2255,7 @@ function buildGrass(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, FLG = w.FLG, half = w.half,
       cellAt = w.cellAt, G = w.G, i, j, k, x, z;
   var vx0 = Math.round(w.OX / V), vz0 = Math.round(w.OZ / V);
+  var dmul = w.gdens === undefined ? 1 : w.gdens;
   var gpos=[],gph=[],gtint=[],gsc=[],gyaw=[],gcol=[],gdry=[];
   for(i=0;i<NX;i+=2)for(j=0;j<NZ;j+=2){
     k=i*NZ+j; if(FLG[k]) continue;
@@ -2260,7 +2269,8 @@ function buildGrass(w) {
       dr+=w2b*shadeR(B2.gr.dry,1); dg+=w2b*shadeG(B2.gr.dry,1); db+=w2b*shadeB(B2.gr.dry,1);
     }
     var R=G.pstream(PASS.GRASS,i+vx0,j+vz0);
-    var nb=Math.floor(dsum*3.2); if(R()<dsum*3.2-nb) nb++;
+    var want=dsum*3.2*dmul;
+    var nb=Math.floor(want); if(R()<want-nb) nb++;
     for(var g2=0;g2<nb;g2++){
       gpos.push(x+(R()-0.5)*0.5,Hs[k],z+(R()-0.5)*0.5);
       gph.push(R()*6.28); gtint.push(R()<0.15?1:0);
@@ -2415,6 +2425,10 @@ function seedCells(cfg) {
 
 function buildWorld(cfg) {
   var w = seedCells(cfg);
+  /* Visual only, and only grass reads it. Kept on the world rather than passed
+     down, because buildGrass is the one pass that wants it and threading an
+     argument through nine that do not would be worse. */
+  w.gdens = cfg.gdens === undefined ? 1 : cfg.gdens;
   erode(w);                    /* talus at the cliff feet, banks cut back */
   layRoutes(w);                /* sites, A* routes, grading, crossings */
   cutSpans(w);                 /* caves cut, then rims undercut over them */
@@ -2524,9 +2538,10 @@ function chunkCentre(cx, cz) {
  * must not do is *keep* anything from the skirt: that ground belongs to the
  * neighbouring chunk, which will generate it identically.
  */
-function chunkWorld(seed, cx, cz, force) {
+function chunkWorld(seed, cx, cz, force, gdens) {
   const { ox, oz } = chunkCentre(cx, cz);
-  return buildWorld({ seed, size: WINDOW, force: force === undefined ? null : force, ox, oz });
+  return buildWorld({ seed, size: WINDOW, force: force === undefined ? null : force, ox, oz,
+                      gdens: gdens === undefined ? 1 : gdens });
 }
 
 /**
@@ -2883,7 +2898,8 @@ function mixHex(h1,h2,t){
   })();
   var GRASS_VS=[
     'attribute float aPhase; attribute float aTint; attribute vec3 aCol; attribute vec3 aDry;',
-    'uniform float uTime; uniform vec3 uP0; uniform vec3 uP1; uniform float uW;',
+    'uniform float uTime; uniform vec3 uP0; uniform vec3 uP1;',
+    'uniform float uW; uniform float uHeight;',
     'uniform vec2 uWind; uniform float uGust;',
     'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD; varying vec3 vN;',
     'float h11(vec2 q){ return fract(sin(dot(q,vec2(127.1,311.7)))*43758.545); }',
@@ -2895,7 +2911,7 @@ function mixHex(h1,h2,t){
     ' return v*cos(a)+cross(ax,v)*sin(a)+ax*dot(ax,v)*(1.0-cos(a)); }',
     'void main(){ float t=position.y; vH=t; vT=aTint; vC=aCol; vD=aDry;',
     ' vec3 base=(modelMatrix*instanceMatrix*vec4(0.0,0.0,0.0,1.0)).xyz;',
-    ' float hh=length(instanceMatrix[1].xyz);',
+    ' float hh=length(instanceMatrix[1].xyz)*uHeight;',
     ' vec3 own=normalize(instanceMatrix[2].xyz+vec3(1e-5));',
     /* the tuft this blade is part of: one lean and one height for all of it */
     ' vec2 cid=floor(base.xz*2.0); float ca=h11(cid)*6.2831;',
@@ -2999,6 +3015,7 @@ function mixHex(h1,h2,t){
       gmat=new THREE.ShaderMaterial({side:THREE.DoubleSide,
         uniforms:{uTime:{value:0},uP0:{value:new THREE.Vector3(1e5,0,1e5)},uP1:{value:new THREE.Vector3(1e5,0,1e5)},
                   uWind:{value:new THREE.Vector2(0.72,0.69)},uGust:{value:0.6},uW:{value:GRASS_W},
+                  uHeight:{value:1},
                   uSun:{value:new THREE.Vector3(-16,26,12).normalize()}},
         vertexShader:GRASS_VS,fragmentShader:GRASS_FS});
       grass=new THREE.InstancedMesh(geo,gmat,gn);

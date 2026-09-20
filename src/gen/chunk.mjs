@@ -64,9 +64,10 @@ export function chunkCentre(cx, cz) {
  * must not do is *keep* anything from the skirt: that ground belongs to the
  * neighbouring chunk, which will generate it identically.
  */
-export function chunkWorld(seed, cx, cz, force) {
+export function chunkWorld(seed, cx, cz, force, gdens) {
   const { ox, oz } = chunkCentre(cx, cz);
-  return buildWorld({ seed, size: WINDOW, force: force === undefined ? null : force, ox, oz });
+  return buildWorld({ seed, size: WINDOW, force: force === undefined ? null : force, ox, oz,
+                      gdens: gdens === undefined ? 1 : gdens });
 }
 
 /**
