@@ -6109,6 +6109,68 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
   renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 
+  /**
+   * Give one mesh a bounding sphere the frustum test can trust, then turn the
+   * test on.
+   *
+   * Everything a chunk holds used to be drawn with `frustumCulled=false`, which
+   * is why a streamed world submitted six times the terrain and props of a
+   * windowed one for the same view: twenty-five chunks of ground, all of it
+   * sent every frame whether or not the camera was pointed at it. The reason it
+   * was off is real but it only applies to the instanced meshes — three takes
+   * an InstancedMesh's bounds from its *geometry*, one 25 cm box, so the whole
+   * chunk would vanish the moment that box left the view. Turning the test off
+   * everywhere was the blunt fix.
+   *
+   * Two cases, because the two failures are different:
+   *
+   *   an ordinary mesh — the greedy terrain chunk, the prop mesh, the water
+   *   surface — already has every vertex in its buffer, so three's own
+   *   computeBoundingSphere is right and all this adds is the call and a pad;
+   *
+   *   an InstancedMesh shares `boxGeo` with every other chunk in the world, so
+   *   a sphere written onto it would be the last chunk's for all of them. Each
+   *   one gets its own copy of those 24 vertices — a few hundred bytes — and a
+   *   sphere measured over the instances that are actually in it.
+   *
+   * This is safe for shadows. three tests `frustumCulled` again in the shadow
+   * pass, but against the *light's* frustum rather than the camera's, so a
+   * chunk behind the camera still casts into the view.
+   */
+  function fitBounds(obj,pad){
+    if(!obj) return obj;
+    if(obj.isInstancedMesh){
+      if(!obj.count){ obj.frustumCulled=false; return obj; }
+      var geo=obj.geometry.clone(); obj.geometry=geo;
+      /* Read straight out of the instance buffer rather than through
+         getMatrixAt: a chunk can hold thirty thousand voxel boxes and this runs
+         on the main thread while a chunk is arriving, where the budget is
+         already 67 ms. Three packs each matrix column-major, so 12, 13 and 14
+         of every sixteen are the translation. */
+      var arr=obj.instanceMatrix.array, o;
+      var x0=1e30,x1=-1e30,y0=1e30,y1=-1e30,z0=1e30,z1=-1e30,q;
+      for(q=0;q<obj.count;q++){ o=q*16;
+        if(arr[o+12]<x0)x0=arr[o+12]; if(arr[o+12]>x1)x1=arr[o+12];
+        if(arr[o+13]<y0)y0=arr[o+13]; if(arr[o+13]>y1)y1=arr[o+13];
+        if(arr[o+14]<z0)z0=arr[o+14]; if(arr[o+14]>z1)z1=arr[o+14]; }
+      var cx=(x0+x1)/2, cy=(y0+y1)/2, cz=(z0+z1)/2;
+      geo.boundingSphere=new THREE.Sphere(new THREE.Vector3(cx,cy,cz),
+        Math.sqrt((x1-cx)*(x1-cx)+(y1-cy)*(y1-cy)+(z1-cz)*(z1-cz))+(pad||0));
+    } else {
+      var pa=obj.geometry.attributes.position;
+      /* An empty buffer would leave three a NaN centre, which fails every
+         comparison and is therefore culled — right, but by accident. Say it. */
+      if(!pa||!pa.count){ obj.frustumCulled=false; return obj; }
+      obj.geometry.computeBoundingSphere();
+      if(pad) obj.geometry.boundingSphere.radius+=pad;
+    }
+    obj.frustumCulled=true;
+    return obj;
+  }
+  /* Half the diagonal of one voxel box, which is how far an instance's corner
+     reaches past the point its matrix puts it at. */
+  var VOX_PAD=V*0.8661;
+
   var boxGeo=new THREE.BoxGeometry(V,V,V);
   (function(){var w=new Float32Array(boxGeo.attributes.position.count*3);w.fill(1);
     boxGeo.setAttribute('color',new THREE.BufferAttribute(w,3));})();
@@ -6406,8 +6468,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var n=org?1:QS.chunkGrid(data), grp=new THREE.Group(), quads=0;
     for(var cx=0;cx<n;cx++)for(var cz=0;cz<n;cz++){
       var g=chunkGeometry(data,cx,cz,org,pre), mesh=new THREE.Mesh(g,mat);
-      mesh.castShadow=true; mesh.receiveShadow=true; mesh.frustumCulled=false;
-      mesh.userData.chunk=[cx,cz]; mesh.userData.kind='terrain';
+      mesh.castShadow=true; mesh.receiveShadow=true;
+      mesh.userData.chunk=[cx,cz]; mesh.userData.kind='terrain'; fitBounds(mesh);
       grp.add(mesh); quads+=g.userData.quads;
     }
     grp.userData={quads:quads,grid:n,mat:mat,org:org,
@@ -6417,6 +6479,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         var before=child.geometry.userData.quads;
         child.geometry.dispose();
         child.geometry=chunkGeometry(data2,org?0:cx,org?0:cz,org);
+        /* A carve changes the chunk's shape, so the sphere it is culled
+           against is refitted rather than inherited from the old geometry. */
+        fitBounds(child);
         grp.userData.quads+=child.geometry.userData.quads-before;
         return child.geometry.userData.quads;
       }};
@@ -6467,7 +6532,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         col.setRGB(QS.palR(data.pal[k2],data.shd[k2]),QS.palG(data.pal[k2],data.shd[k2]),
                   QS.palB(data.pal[k2],data.shd[k2])); im.setColorAt(q2,col); }
       im.instanceMatrix.needsUpdate=true; if(im.instanceColor) im.instanceColor.needsUpdate=true;
-      im.castShadow=true; im.receiveShadow=true; im.frustumCulled=false;
+      im.castShadow=true; im.receiveShadow=true; fitBounds(im,VOX_PAD);
       im.userData.src=src; im.userData.kind=(lo===0?'boxes':'props'); g.add(im);
       return im;
     }
@@ -6501,7 +6566,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       pg.setIndex(ArrayBuffer.isView(pm.idx)?new THREE.BufferAttribute(pm.idx,1):pm.idx);
       pg.userData={faces:pm.faces,culled:pm.culled};
       propMesh=new THREE.Mesh(pg,mats.prop);
-      propMesh.castShadow=true; propMesh.receiveShadow=true; propMesh.frustumCulled=false;
+      propMesh.castShadow=true; propMesh.receiveShadow=true; fitBounds(propMesh);
       propMesh.userData.kind='props';
       g.add(propMesh);
     }
@@ -6525,7 +6590,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
           col.setRGB(QS.palR(data.mpal[mk],data.mshd[mk]),QS.palG(data.mpal[mk],data.mshd[mk]),
                     QS.palB(data.mpal[mk],data.mshd[mk])); em.setColorAt(i,col); }
         em.instanceMatrix.needsUpdate=true; if(em.instanceColor) em.instanceColor.needsUpdate=true;
-        em.userData.kind='emissive'; em.frustumCulled=false; g.add(em);
+        em.userData.kind='emissive'; fitBounds(em,VOX_PAD); g.add(em);
       }
     }
 
@@ -6597,7 +6662,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         wg.setAttribute('aFlow',new THREE.BufferAttribute(new Float32Array(data.water.fl),2));
         wg.setIndex(wid);
         var wm=new THREE.Mesh(wg,mats.water); wm.userData.kind='water';
-        wm.frustumCulled=false; g.add(wm);
+        /* The water shader lifts a vertex by up to 3.4 cm, which the buffer
+           does not know about; the pad is that, doubled and rounded up. */
+        fitBounds(wm,0.08); g.add(wm);
       }
     }
     (data.lamps||[]).filter(function(l){ return keep(l[0],l[2]); }).slice(0,3).forEach(function(l){

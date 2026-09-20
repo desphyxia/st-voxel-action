@@ -981,6 +981,63 @@ if (BROWSER_HALF) {
             + `${gtune.denNow} /m2 is ${gtune.bladesAfterDen.toLocaleString()}, `
             + `back to ${gtune.bladesBack.toLocaleString()}`);
 
+      /* ---------- BUILD: a chunk the camera cannot see is not drawn ----------
+         Grass was the only thing in a world node that was frustum-culled;
+         terrain, props, water and the emissive record were all pinned visible
+         with frustumCulled=false. That is why a streamed world submitted six
+         times the terrain and props of a windowed one for the same view — the
+         field holds 25 chunks of ground and every one of them was sent.
+
+         Measured the way the grass cull is, by taking it away: count what a
+         frame submits, turn the test off on everything in the scene, count
+         again, and require the second number to be materially higher. A check
+         that read only the first number would pass against the old build. The
+         bounds themselves are checked too — every mesh that claims to be
+         culled must carry a finite sphere, because three leaves a NaN centre
+         on an empty buffer and a NaN is culled for the wrong reason. */
+      const ccull = await bp.evaluate(() => {
+        const P = window.QSPLAY, all = [];
+        P.scene.traverse((o) => { if (o.isMesh || o.isInstancedMesh) all.push(o); });
+        /* Only what a world node builds. The characters, the practice posts
+           and the loot are three's own defaults with a sphere it computes the
+           first time it needs one, and asserting against a null there would be
+           checking three rather than this build. */
+        const OURS = ['terrain', 'props', 'boxes', 'emissive', 'water', 'grass'];
+        const kinds = {}, bad = [];
+        for (const o of all) {
+          const k = o.userData.kind || 'other';
+          if (!kinds[k]) kinds[k] = { culled: 0, pinned: 0 };
+          kinds[k][o.frustumCulled ? 'culled' : 'pinned']++;
+          if (!o.frustumCulled || OURS.indexOf(k) < 0) continue;
+          const bs = o.geometry.boundingSphere;
+          if (!bs || !isFinite(bs.radius) || !isFinite(bs.center.x)
+              || !isFinite(bs.center.y) || !isFinite(bs.center.z)) bad.push(k);
+        }
+        P.draw();
+        const culled = P.draws.triangles;
+        const was = all.map((o) => o.frustumCulled);
+        for (const o of all) o.frustumCulled = false;
+        P.draw();
+        const open = P.draws.triangles;
+        all.forEach((o, i) => { o.frustumCulled = was[i]; });
+        return { kinds, bad, culled, open, meshes: all.length };
+      });
+      check(ccull.bad.length === 0 && (ccull.kinds.terrain || {}).pinned === 0
+            && (ccull.kinds.props || {}).pinned === 0
+            && (ccull.kinds.water || {}).pinned === 0,
+            'BUILD: terrain, props and water are culled against real bounds',
+            Object.entries(ccull.kinds).map(([k, v]) =>
+              `${k} ${v.culled}/${v.culled + v.pinned}`).join(', ')
+            + (ccull.bad.length ? ` — BAD BOUNDS on ${[...new Set(ccull.bad)].join(', ')}` : ''));
+      /* Not asserted here that the cull *saves* anything: one 64 m window is
+         roughly what the camera holds at the default zoom, and measured, it
+         rejects no terrain at all. The saving is a streamed world's, and so is
+         the risk, so both are asserted over there. */
+      check(ccull.open >= ccull.culled,
+            'BUILD: and turning the test off cannot draw less',
+            `${ccull.culled.toLocaleString()} triangles with the test on, `
+            + `${ccull.open.toLocaleString()} with it off across ${ccull.meshes} meshes`);
+
       /* ---------- BUILD: the mesh follows an edit (#12) ----------
          The node half asserts that meshChunk answers differently once a voxel
          is gone. What only the page can answer is whether the *scene* followed:
@@ -1551,6 +1608,68 @@ if (BROWSER_HALF) {
             + `${streamed.chunks.nodes} of them`);
       check(sErrors.length === 0, 'STREAM: and no errors while it streams',
             sErrors.slice(0, 3).join(' | '));
+
+      /* ---------- STREAM: the chunks the camera cannot see are not drawn ----------
+         A field of 25 chunks is 25,600 m2 of ground and the camera holds about
+         one 64 m window of it, so a streamed frame should cost about what a
+         windowed one does. It did not: everything in a world node except the
+         grass carried frustumCulled=false, so all six times the terrain and
+         props went to the GPU every frame.
+
+         Two things have to hold, and the second is the one that matters.
+
+         The cull has to *save* something — otherwise the bounds are wrong in
+         the loose direction and this is all cost and no benefit.
+
+         And it has to be **lossless**, which is checked exactly rather than
+         argued: draw one frame with the test on and read the framebuffer, draw
+         the same frame with it off and read again, and require the two to be
+         the same pixels. One page, one camera, one pose, nothing between the
+         reads. A chunk rejected while any part of it was on screen changes
+         pixels, and so does a shadow that stopped being cast — three tests
+         frustumCulled again in the shadow pass, against the light's frustum
+         rather than the camera's, and this is what holds it to that.
+
+         How hard does it bite? Measured, by shrinking every sphere fitBounds
+         computes and seeing where the pixels move: x0.6 is still lossless,
+         x0.4 loses 9,342 pixels, x0.25 loses 57,499, x0.1 loses 315,832. So it
+         catches a sphere under about 40% of the right size and not a mildly
+         tight one — the spheres carry roughly that much slack, because a
+         sphere around a square chunk is a diagonal wider than the chunk and
+         three has no box test for frustumCulled. That slack is also what the
+         saving is losing: at x0.6 the same frame submits 738k against 897k. */
+      const scull = await sp.evaluate(() => {
+        const P = window.QSPLAY;
+        P.pause(true);
+        const c = document.querySelector('#cv');
+        const gl = c.getContext('webgl') || c.getContext('webgl2');
+        const w = c.width, h = c.height;
+        const snap = () => { P.draw(); const px = new Uint8Array(w * h * 4);
+          gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px); return px; };
+        const meshes = []; P.scene.traverse((o) => {
+          if (o.isMesh || o.isInstancedMesh) meshes.push(o); });
+        const on = snap(), tOn = P.draws.triangles, cOn = P.draws.calls;
+        const was = meshes.map((o) => o.frustumCulled);
+        for (const o of meshes) o.frustumCulled = false;
+        const off = snap(), tOff = P.draws.triangles, cOff = P.draws.calls;
+        meshes.forEach((o, i) => { o.frustumCulled = was[i]; });
+        let diff = 0;
+        for (let i = 0; i < on.length; i += 4) {
+          if (on[i] !== off[i] || on[i + 1] !== off[i + 1] || on[i + 2] !== off[i + 2]) diff++;
+        }
+        P.pause(false);
+        return { px: w * h, diff, tOn, tOff, cOn, cOff, meshes: meshes.length,
+                 pinned: was.filter((v) => !v).length };
+      });
+      check(scull.pinned === 0 && scull.tOff > scull.tOn * 2,
+            'STREAM: and a frame is charged for the chunks the camera holds, not the field',
+            `${scull.tOn.toLocaleString()} triangles of ${scull.tOff.toLocaleString()} `
+            + `in ${scull.meshes} meshes, ${scull.cOn} draw calls of ${scull.cOff} `
+            + `— ${(100 * (scull.tOff - scull.tOn) / scull.tOff).toFixed(0)}% never submitted`);
+      check(scull.diff === 0,
+            'STREAM: and rejecting them changes not one pixel',
+            scull.diff === 0 ? `identical over ${scull.px.toLocaleString()} pixels`
+                             : `${scull.diff} pixels differ — the cull is dropping something visible`);
 
       /* ---------- WORKER: generation off the main thread, issue #13 ----------
          The hitch #13 asks to be rid of is a 86-290 ms freeze every time a
