@@ -8127,6 +8127,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* Whatever is answering "what is solid" — one grid over one window, or a
        field of loaded chunks. The gate asks it the same question either way. */
     get collider(){ return col; },
+    /* The scene itself, for a measurement that has to reach past the API —
+       telling the two prop renderers apart means changing one property on
+       exactly the meshes in question. */
+    get scene(){ return built?built.scene:null; },
     /**
      * What a frame actually submits, and where it comes from.
      *
