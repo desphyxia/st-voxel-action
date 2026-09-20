@@ -1228,60 +1228,45 @@ if (BROWSER_HALF) {
       check(world.restored === 'QUARTERSTONE', 'BUILD: and the world the rest of the gate needs is back',
             `seed ${world.restored}`);
 
-      /* ---------- BUILD: the frame rate, on screen and off the display's clock ----------
-         Nothing ever capped the frame rate — requestAnimationFrame is paced by
-         the panel, so the build ran at whatever it refreshes at and the readout
-         could not tell 4 ms a frame from 16. Two things follow: the number is
-         worth seeing without opening the whole readout, and there is a switch
-         that takes the pacing off vsync so the number measures the renderer.
+      /* ---------- BUILD: the frame rate, on screen without the readout ----------
+         The number is worth seeing while playing rather than while debugging,
+         so it is up whenever the full readout is shut and stands down when it
+         opens, because that already carries it.
 
-         The third check is the one that matters. Scheduling a fresh pump inside
-         the toggle, rather than letting the frame in flight pick the new
-         scheduler up, leaves the pending one running too — and two pumps that
-         each schedule a successor become four, then eight. So the switch is
-         thrown four times over and the frames drawn are counted against a
-         single throw: a multiplying loop shows up as a ratio, whatever the
-         absolute speed of a software renderer in a sandbox. */
+         Beside it is what a frame costs this thread in milliseconds, which is
+         the honest form of a question an "uncapped" switch briefly tried and
+         failed to answer here. That switch drove the loop off vsync from a
+         MessageChannel: it raised the count of frames *submitted*, presented
+         nothing extra, and starved touch and compositing. On an iPhone it read
+         200 fps while the world ran in slow motion — once the GPU queue backs
+         up a frame takes hundreds of milliseconds, the fixed-step guard below
+         can only run eight ticks of it, and in-world time falls behind the
+         wall clock. There is no swapInterval(0) on the web. Timing the frame
+         answers "is there headroom" without breaking the game to ask. */
       const pace = await bp.evaluate(async () => {
         const P = window.QSPLAY;
-        const el = document.getElementById('fpsr');
         const press = (id) => document.getElementById(id).click();
-        const out = {};
-        /* The readout is shut by default, so the standalone number is up. */
+        const out = { el: !!document.getElementById('fpsr') };
         out.shownClosed = P.fpsShown; out.textClosed = P.fpsText;
         press('hudbtn');  out.shownOpen = P.fpsShown;
         press('hudbtn');  out.shownAgain = P.fpsShown;
-        out.capped0 = P.uncapped;
-        const span = async (ms) => { const a = P.framesDrawn;
-          await new Promise((r) => setTimeout(r, ms)); return P.framesDrawn - a; };
-        press('fpstog');
-        out.uncapped = P.uncapped;
-        out.lit = document.getElementById('fpstog').getAttribute('aria-pressed');
-        out.saysUncapped = /uncapped/.test(P.fpsText);
-        const once = await span(400);
-        /* Three more throws of a switch that is already on. */
-        for (let i = 0; i < 3; i++) { press('fpstog'); press('fpstog'); }
-        out.stillOn = P.uncapped;
-        const after = await span(400);
-        press('fpstog');
-        out.backToVsync = P.uncapped;
-        return Object.assign(out, { once, after, ratio: once ? after / once : 0,
-                                    el: !!el });
+        /* Drawn by hand, because the loop does not run here: requestAnimationFrame
+           does not fire in a page this harness never puts on screen. The cost is
+           timed inside draw itself, so these count. */
+        for (let i = 0; i < 20; i++) P.draw();
+        out.cost = P.frameCost;
+        out.noUncap = !document.getElementById('fpstog') && P.uncapped === undefined;
+        return out;
       });
       check(pace.el && pace.shownClosed && !pace.shownOpen && pace.shownAgain
-            && /\d+\s*fps/.test(pace.textClosed),
-            'BUILD: the frame rate is on screen without opening the readout',
+            && /\d+\s*fps/.test(pace.textClosed) && /\d+(\.\d+)?\s*ms/.test(pace.textClosed),
+            'BUILD: the frame rate and what a frame costs are on screen without the readout',
             `"${pace.textClosed.trim()}" with the readout shut, `
             + `${pace.shownOpen ? 'STILL SHOWN' : 'hidden'} with it open, back when it closes`);
-      check(pace.capped0 === false && pace.uncapped === true && pace.lit === 'true'
-            && pace.saysUncapped && pace.backToVsync === false,
-            'BUILD: and Uncap takes it off the display\'s clock and back',
-            `vsync -> ${pace.uncapped ? 'uncapped' : 'STILL CAPPED'}, button lit ${pace.lit}, `
-            + `readout ${pace.saysUncapped ? 'says so' : 'DOES NOT SAY SO'}, and back to vsync`);
-      check(pace.stillOn && pace.once > 0 && pace.ratio < 1.6,
-            'BUILD: and throwing it again does not start a second loop',
-            `${pace.once} frames in 400 ms after one throw, ${pace.after} after four `
-            + `— ${pace.ratio.toFixed(2)}x, and a second loop would be 2x`);
+      check(pace.noUncap && Number.isFinite(pace.cost) && pace.cost > 0,
+            'BUILD: and nothing offers to outrun the display',
+            'no Uncap button and no uncapped state; frame cost reads '
+            + (Number.isFinite(pace.cost) ? pace.cost.toFixed(2) + ' ms' : 'NOT A NUMBER'));
 
       /* The toolbar spans the view so its middle button can be centred by the
          layout. That makes it a full-width strip across the top, and a strip
