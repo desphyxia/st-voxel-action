@@ -1192,12 +1192,18 @@ if (BROWSER_HALF) {
         press('newworld');
         out.seed2 = P.seed;
 
-        /* One state, two buttons: the overlay twin and the one on the page. */
-        const lbl = () => [document.getElementById('meshtog').textContent,
-                           document.getElementById('meshbtn').textContent].join('/');
-        out.meshAt0 = P.mesh; out.lblAt0 = lbl();
-        press('meshtog'); out.meshAt1 = P.mesh; out.lblAt1 = lbl();
-        press('meshtog'); out.meshAt2 = P.mesh; out.lblAt2 = lbl();
+        /* One state, two buttons: the overlay twin and the one on the page.
+           Both name the renderer and light up when it is on, rather than being
+           labelled with what they switch *to* — which had the build opening on
+           the mesh with a button reading "Boxes". */
+        const lit = () => [document.getElementById('meshtog').getAttribute('aria-pressed'),
+                           document.getElementById('meshbtn').getAttribute('aria-pressed')].join('/');
+        out.meshAt0 = P.mesh; out.lblAt0 = lit();
+        out.pageText0 = document.getElementById('meshbtn').textContent;
+        out.viewText = document.getElementById('meshtog').textContent;
+        press('meshtog'); out.meshAt1 = P.mesh; out.lblAt1 = lit();
+        out.pageText1 = document.getElementById('meshbtn').textContent;
+        press('meshtog'); out.meshAt2 = P.mesh; out.lblAt2 = lit();
 
         box.value = 'QUARTERSTONE';
         press('regen');
@@ -1210,14 +1216,72 @@ if (BROWSER_HALF) {
             `${world.seed0} -> ${world.seed1} -> ${world.seed2}, `
             + `seed box ${world.box1 === world.seed1 ? 'agrees' : 'DISAGREES'}, `
             + `${world.vox0} voxels -> ${world.vox1}`);
-      check(world.meshAt1 !== world.meshAt0 && world.meshAt2 === world.meshAt0
-            && world.lblAt0 === 'Boxes/Boxes' && world.lblAt1 === 'Mesh/Mesh'
-            && world.lblAt2 === 'Boxes/Boxes',
-            'BUILD: the renderer toggle in the view agrees with the one on the page',
-            `${world.lblAt0} -> ${world.lblAt1} -> ${world.lblAt2}, `
+      check(world.meshAt0 === true && world.meshAt1 === false && world.meshAt2 === true
+            && world.lblAt0 === 'true/true' && world.lblAt1 === 'false/false'
+            && world.lblAt2 === 'true/true'
+            && world.viewText === 'Mesh' && world.pageText0 === 'Mesh: on'
+            && world.pageText1 === 'Mesh: off',
+            'BUILD: the build opens on the mesh, and both buttons say so and light up',
+            `"${world.viewText}" and "${world.pageText0}" -> "${world.pageText1}", `
+            + `lit ${world.lblAt0} -> ${world.lblAt1} -> ${world.lblAt2}, `
             + `mesh ${world.meshAt0} -> ${world.meshAt1} -> ${world.meshAt2}`);
       check(world.restored === 'QUARTERSTONE', 'BUILD: and the world the rest of the gate needs is back',
             `seed ${world.restored}`);
+
+      /* ---------- BUILD: the frame rate, on screen and off the display's clock ----------
+         Nothing ever capped the frame rate — requestAnimationFrame is paced by
+         the panel, so the build ran at whatever it refreshes at and the readout
+         could not tell 4 ms a frame from 16. Two things follow: the number is
+         worth seeing without opening the whole readout, and there is a switch
+         that takes the pacing off vsync so the number measures the renderer.
+
+         The third check is the one that matters. Scheduling a fresh pump inside
+         the toggle, rather than letting the frame in flight pick the new
+         scheduler up, leaves the pending one running too — and two pumps that
+         each schedule a successor become four, then eight. So the switch is
+         thrown four times over and the frames drawn are counted against a
+         single throw: a multiplying loop shows up as a ratio, whatever the
+         absolute speed of a software renderer in a sandbox. */
+      const pace = await bp.evaluate(async () => {
+        const P = window.QSPLAY;
+        const el = document.getElementById('fpsr');
+        const press = (id) => document.getElementById(id).click();
+        const out = {};
+        /* The readout is shut by default, so the standalone number is up. */
+        out.shownClosed = P.fpsShown; out.textClosed = P.fpsText;
+        press('hudbtn');  out.shownOpen = P.fpsShown;
+        press('hudbtn');  out.shownAgain = P.fpsShown;
+        out.capped0 = P.uncapped;
+        const span = async (ms) => { const a = P.framesDrawn;
+          await new Promise((r) => setTimeout(r, ms)); return P.framesDrawn - a; };
+        press('fpstog');
+        out.uncapped = P.uncapped;
+        out.lit = document.getElementById('fpstog').getAttribute('aria-pressed');
+        out.saysUncapped = /uncapped/.test(P.fpsText);
+        const once = await span(400);
+        /* Three more throws of a switch that is already on. */
+        for (let i = 0; i < 3; i++) { press('fpstog'); press('fpstog'); }
+        out.stillOn = P.uncapped;
+        const after = await span(400);
+        press('fpstog');
+        out.backToVsync = P.uncapped;
+        return Object.assign(out, { once, after, ratio: once ? after / once : 0,
+                                    el: !!el });
+      });
+      check(pace.el && pace.shownClosed && !pace.shownOpen && pace.shownAgain
+            && /\d+\s*fps/.test(pace.textClosed),
+            'BUILD: the frame rate is on screen without opening the readout',
+            `"${pace.textClosed.trim()}" with the readout shut, `
+            + `${pace.shownOpen ? 'STILL SHOWN' : 'hidden'} with it open, back when it closes`);
+      check(pace.capped0 === false && pace.uncapped === true && pace.lit === 'true'
+            && pace.saysUncapped && pace.backToVsync === false,
+            'BUILD: and Uncap takes it off the display\'s clock and back',
+            `vsync -> ${pace.uncapped ? 'uncapped' : 'STILL CAPPED'}, button lit ${pace.lit}, `
+            + `readout ${pace.saysUncapped ? 'says so' : 'DOES NOT SAY SO'}, and back to vsync`);
+      check(pace.stillOn && pace.once > 0 && pace.ratio < 1.6,
+            'BUILD: and throwing it again does not start a second loop',
+            `${pace.once} frames in 400 ms after one throw, ${pace.after} after four `
+            + `— ${pace.ratio.toFixed(2)}x, and a second loop would be 2x`);
 
       /* The toolbar spans the view so its middle button can be centred by the
          layout. That makes it a full-width strip across the top, and a strip

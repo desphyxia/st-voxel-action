@@ -55,6 +55,16 @@
        padding:8px 11px;pointer-events:none;white-space:pre;max-width:calc(100% - 20px);overflow:hidden;
        display:none}
   .hud.on{display:block}
+  /* The frame rate on its own, for when the readout is shut. It is the one
+     number worth watching while playing rather than while debugging, and
+     opening the whole panel to see it covered the corner of the view. Hidden
+     while the readout is open, because that already carries it. */
+  .fpsr{position:absolute;right:12px;bottom:12px;font-family:var(--mono);font-size:11px;
+        letter-spacing:.06em;color:var(--muted);background:rgba(10,13,17,.55);
+        border:1px solid var(--line);padding:3px 7px;pointer-events:none;
+        font-variant-numeric:tabular-nums}
+  .fpsr.off{display:none}
+  .fpsr b{color:var(--sand);font-weight:500}
   .hud b{color:var(--text);font-weight:500}
   .hud .warn{color:var(--sand)}
   /* Everything that belongs to the view rather than to the page: the readout
@@ -111,6 +121,7 @@
   button.ctl:focus-visible{outline:2px solid var(--magic);outline-offset:2px}
   button.ctl:disabled{opacity:.4;cursor:default}
   button.ctl:disabled:hover{color:var(--muted);border-color:var(--line)}
+  button.ctl[aria-pressed="true"]{color:var(--sand);border-color:var(--sand)}
   .gctl{display:inline-flex;flex-direction:column;gap:3px;min-width:150px}
   .gctl label{font-family:var(--mono);font-size:9.5px;letter-spacing:.09em;
               text-transform:uppercase;color:var(--dim);display:flex;
@@ -208,6 +219,7 @@
     <div class="stage" id="stage" tabindex="0">
       <canvas id="cv"></canvas>
       <div class="hud" id="hud"></div>
+      <div class="fpsr" id="fpsr"></div>
       <div class="tools" id="tools">
         <span class="tgrp l">
           <button id="newworld" type="button" title="Grow a new world from a random seed">New</button>
@@ -216,7 +228,8 @@
         <button id="hudbtn" type="button" aria-pressed="false" title="Show the readout: position, stamina, machines, frame rate">Info</button>
         <span class="tgrp r">
           <button id="zoomin" type="button" title="Zoom in" aria-label="zoom in">+</button>
-          <button id="meshtog" type="button" title="Swap the terrain renderer: a greedy mesh with baked occlusion, or instanced boxes">Boxes</button>
+          <button id="meshtog" type="button" aria-pressed="true" title="Draw the terrain as a greedy mesh with baked occlusion. Off is the instanced boxes it replaced, kept so the two can be compared.">Mesh</button>
+          <button id="fpstog" type="button" aria-pressed="false" title="Draw as fast as the machine can instead of once per screen refresh. A diagnostic: it shows what the renderer is capable of, and it will make the fans work.">Uncap</button>
           <button id="streamtog" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window — a world with no edge, and a different world from the same seed">Stream</button>
         </span>
       </div>
@@ -260,7 +273,7 @@
       <button class="ctl" id="regen" type="button">Generate</button>
       <button class="ctl" id="respawn" type="button">Respawn</button>
       <button class="ctl" id="hostbtn" type="button">Host a game</button>
-      <button class="ctl" id="meshbtn" type="button" title="Swap the terrain renderer: a greedy mesh with baked occlusion, or instanced boxes">Boxes</button>
+      <button class="ctl" id="meshbtn" type="button" aria-pressed="true" title="Draw the terrain as a greedy mesh with baked occlusion. Off is the instanced boxes it replaced, kept so the two can be compared.">Mesh: on</button>
       <button class="ctl" id="streambtn" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window. A world with no edge, from the same seed — and a different world, because the generator is not size-invariant.">Streaming: off</button>
       <button class="ctl" id="fullbtn" type="button">Fullscreen</button>
       <span class="gctl">
@@ -7099,12 +7112,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       if(nd.mesh) nd.mesh.visible=useMesh; if(nd.vox) nd.vox.visible=!useMesh;
       if(nd.propMesh) nd.propMesh.visible=useMesh;
       if(nd.props) nd.props.visible=!useMesh||!nd.propMesh; }
-    /* Two buttons, one state: the one on the page and the one in the view. Each
-       is labelled with what it switches *to*, so they read the same either way
-       and neither can be left saying the opposite of the other. */
-    var lbl=useMesh?'Boxes':'Mesh';
-    var b2=document.getElementById('meshbtn'); if(b2) b2.textContent=lbl;
-    var b3=document.getElementById('meshtog'); if(b3) b3.textContent=lbl;
+    /* Two buttons, one state: the one on the page and the one in the view.
+       They used to be labelled with what they switched *to*, so the build
+       opened on the mesh with a button reading "Boxes" — which reads as though
+       boxes were what you were looking at. They name the thing now and light up
+       when it is on, the way Stream does. */
+    var b2=document.getElementById('meshbtn');
+    if(b2){ b2.textContent='Mesh: '+(useMesh?'on':'off');
+            b2.setAttribute('aria-pressed',useMesh?'true':'false'); }
+    var b3=document.getElementById('meshtog');
+    if(b3) b3.setAttribute('aria-pressed',useMesh?'true':'false');
   }
 
   /** Swap between the culled prop mesh and the instanced boxes. */
@@ -7939,10 +7956,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      Each one stops its own pointerdown: the stage swallows pointerdown to take
      the keyboard and to swing, so without this every click here would also cut
      the air in front of the character. */
+  var fpsEl=document.getElementById('fpsr');
+  function drawFps(){
+    if(!fpsEl) return;
+    fpsEl.classList.toggle('off',hudOn);
+    if(hudOn) return;
+    fpsEl.innerHTML='<b>'+fps.toFixed(0)+'</b> fps'+(uncapped?' \u00b7 uncapped':'');
+  }
   var hudOn=false, hudBtn=document.getElementById('hudbtn');
   function setHud(on){
     hudOn=!!on;
     hud.classList.toggle('on',hudOn);
+    drawFps();
     hudBtn.setAttribute('aria-pressed',String(hudOn));
   }
   /* The whole of the range `QS.setView` allows, in roughly even steps — each
@@ -8017,7 +8042,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return sd;
   }
 
-  [[hudBtn,function(){ setHud(!hudOn); }],
+  [[document.getElementById('fpstog'),function(){ setUncapped(!uncapped); drawFps(); }],
+   [hudBtn,function(){ setHud(!hudOn); }],
    [zoomInBtn,function(){ zoomBy(-1); }],
    [zoomOutBtn,function(){ zoomBy(1); }],
    [newBtn,function(){ newWorld(); }],
@@ -8443,8 +8469,53 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   }
 
   var acc=0, last=0, frames=0, fpsAt=0, wasConnected=false, paused=false;
+  /* ---------- how often a frame is drawn ----------
+     Nothing here caps the frame rate: requestAnimationFrame is paced by the
+     display, so the build runs at whatever the panel refreshes at — 60 on a
+     60 Hz screen, 144 on a 144 Hz one. What that hides is headroom. A frame
+     that takes 4 ms and a frame that takes 16 ms both read 60 fps, so the
+     readout cannot tell you whether a change cost anything until it costs
+     everything.
+
+     Uncapped drops the vsync pacing and draws again as soon as the last frame
+     is done, which turns the readout into a measurement of the renderer rather
+     than of the monitor. A MessageChannel is what does it: setTimeout(0) is
+     clamped to 4 ms once callbacks nest, which would quietly cap this at about
+     250 fps and look like a result.
+
+     The simulation does not move with it. Ticks are a fixed step drained from
+     an accumulator, which is why the gate can assert a trajectory at all, so
+     drawing more often draws the same world more often and nothing else. */
+  var uncapped=false, drawn=0, scheduled=false;
+  var fastChan=(typeof MessageChannel!=='undefined')?new MessageChannel():null;
+  if(fastChan) fastChan.port1.onmessage=function(){ frame(performance.now()); };
+  /* At most one frame is ever queued. The flag is what makes that true no
+     matter who asks: the running loop queues its successor, and so may the
+     switch, and the second of those is a no-op. Without it the switch had to
+     assume a frame was already in flight and do nothing — which is right in a
+     visible tab and wrong everywhere else, because requestAnimationFrame stops
+     firing when a page is not being drawn, and then there is nothing in flight
+     to notice the switch was thrown. */
+  function schedule(){
+    if(scheduled) return;
+    scheduled=true;
+    if(!uncapped) { requestAnimationFrame(frame); return; }
+    if(fastChan) fastChan.port2.postMessage(0);
+    else setTimeout(function(){ frame(performance.now()); },0);
+  }
+  function setUncapped(on){
+    uncapped=on!==false;
+    var b=document.getElementById('fpstog');
+    if(b) b.setAttribute('aria-pressed',uncapped?'true':'false');
+    /* Safe to call however many times the switch is thrown: schedule() keeps
+       at most one frame queued, so this starts a loop when none is running and
+       does nothing when one is. */
+    schedule();
+    return uncapped;
+  }
   function frame(now){
-    requestAnimationFrame(frame);
+    scheduled=false;
+    schedule();
     /* In plate mode the gate owns the clock, the camera and when a frame is
        drawn. The loop must not touch any of them — `tm` advances here even
        when the simulation is paused, and it drives grass, water and the wind
@@ -8471,8 +8542,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(!built) return;
     if(streaming) followSun();
 
-    frames++;
-    if(now-fpsAt>500){ fps=frames*1000/(now-fpsAt); frames=0; fpsAt=now; }
+    frames++; drawn++;
+    if(now-fpsAt>500){ fps=frames*1000/(now-fpsAt); frames=0; fpsAt=now; drawFps(); }
 
     var a=player();
     var wa=0.6+Math.sin(tm*0.06)*0.7;
@@ -8560,10 +8631,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        and the feature was unreachable there. The control below the view is. */
     if(/[?&]stream=1\b/.test(location.search)) streaming=true;
     regen(seedin.value||'QUARTERSTONE');
-    syncStreamBtn(); syncGrassCtl();
+    syncStreamBtn(); syncGrassCtl(); drawFps();
   }
   stage.focus();
-  requestAnimationFrame(frame);
+  schedule();   /* through schedule, so the one-queued-frame flag is honest from the first */
   /* A handle for the smoke test, and for anyone poking at this in a console.
      `run` steps the simulation the same fixed way the loop does, which is what
      lets the gate assert the wiring exactly instead of waiting on wall clock. */
@@ -8605,6 +8676,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     setPropMesh:setPropMesh,
     /* The view's own controls, driven through the real buttons by the gate. */
     get hudShown(){ return hudOn; },
+    /* The frame pacing, for the gate: whether vsync is in charge, and what the
+       standalone readout is currently saying. */
+    get uncapped(){ return uncapped; },
+    setUncapped:setUncapped,
+    get fps(){ return fps; },
+    /* Every frame this loop has drawn. The gate counts it over a window to
+       check there is one pump and not several — the bug that a restart inside
+       setUncapped would have left behind, where two pumps each schedule a
+       successor and become four. */
+    get framesDrawn(){ return drawn; },
+    get fpsShown(){ return !!fpsEl&&!fpsEl.classList.contains('off'); },
+    get fpsText(){ return fpsEl?fpsEl.textContent:''; },
     get view(){ return cam.view; },
     get seed(){ return built?built.cfg.seed:null; },
     /* Issue #29: the fixed pose the look baseline is made of. */
