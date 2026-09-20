@@ -6717,6 +6717,20 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var b3=document.getElementById('meshtog'); if(b3) b3.textContent=lbl;
   }
 
+  /** Swap between the culled prop mesh and the instanced boxes. */
+  var propCulled=true;
+  function setPropMesh(on){
+    propCulled=!!on;
+    function apply(nd){
+      if(!nd) return;
+      if(nd.propMesh) nd.propMesh.visible=useMesh&&propCulled;
+      if(nd.props) nd.props.visible=!useMesh||!nd.propMesh||!propCulled;
+    }
+    if(built&&built.node) apply(built.node);
+    if(nodes) for(var k in nodes) apply(nodes[k]);
+    return propCulled;
+  }
+
   /* ---------- taking a bite out of it ----------
      #12's third clause is that the mesh follows an edit. src/mesh/carve.mjs
      decides what comes away and which chunks that makes stale; this rebuilds
@@ -8078,6 +8092,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* Issue #12: the gate drives the swap so the side-by-side is two
        screenshots of one camera, not two runs that might differ. */
     setMesh:setMesh,
+    /* The same, for the two prop renderers (#51): instanced boxes that draw
+       every face, or a mesh of only the faces that can be seen. The gate
+       needs to be able to put them side by side for the same reason. */
+    setPropMesh:setPropMesh,
     /* The view's own controls, driven through the real buttons by the gate. */
     get hudShown(){ return hudOn; },
     get view(){ return cam.view; },
