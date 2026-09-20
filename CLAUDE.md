@@ -88,8 +88,9 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Both pages are now published from **`9c26036`**: play **version 14**, concept **version 14**,
-both checked clean (zero differing lines) before forcing.
+Both pages are now published from **`7d9d37b`**: play **version 15**, concept **version 15**.
+`9c26036` was version 14 of each, forced after the loop found both clean; the publishes since
+have gone through with no argument, which is the once-per-session rule above working as described.
 
 Identical means nobody has typed into the page and forcing loses nothing. On 2026-09-18 both
 pages came back identical to `487222d`. **Force is still the user's call, not yours** — show
