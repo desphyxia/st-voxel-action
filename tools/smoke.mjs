@@ -1293,6 +1293,39 @@ if (BROWSER_HALF) {
       cp.on('pageerror', (e) => cErrors.push(e.message));
       await cp.goto(`file://${bfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
       await cp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      /* The in-view button, first and on its own, because it is the only one
+         reachable in the state the build opens in: the stage fills the
+         viewport and the page furniture is behind it. A control that is only
+         below the stage is not a control, which is how the first version of
+         this shipped. */
+      const inView = await cp.evaluate(async () => {
+        const P = window.QSPLAY;
+        const t = document.getElementById('streamtog');
+        const st = document.querySelector('#stage');
+        const covered = st.classList.contains('maxed') || document.fullscreenElement === st;
+        const r = t.getBoundingClientRect();
+        const onScreen = r.width > 0 && r.height > 0 && r.top >= 0
+          && r.bottom <= (window.innerHeight || 1e9);
+        t.click();
+        await new Promise((x) => setTimeout(x, 50));
+        const on = { streaming: P.streaming, pressed: t.getAttribute('aria-pressed'),
+                     chunks: P.chunks, grounded: P.actor.grounded };
+        t.click();
+        await new Promise((x) => setTimeout(x, 50));
+        return { covered, onScreen, on, off: { streaming: P.streaming,
+                 pressed: t.getAttribute('aria-pressed') } };
+      });
+      check(inView.covered && inView.onScreen,
+            'STREAM: the switch is reachable in the view the build opens in',
+            inView.covered ? 'stage fills the viewport, and the Stream button is on screen inside it'
+                           : 'stage was not filling the viewport, so this proved nothing');
+      check(inView.on.streaming === true && inView.on.pressed === 'true'
+            && inView.on.chunks && inView.on.chunks.loaded > 1 && inView.on.grounded
+            && inView.off.streaming === false && inView.off.pressed === 'false',
+            'STREAM: and pressing it there turns streaming on and off again',
+            `${inView.on.chunks ? inView.on.chunks.loaded : 0} chunks loaded while on, `
+            + 'standing, and back to one window after');
+
       const toggled = await cp.evaluate(async () => {
         const P = window.QSPLAY;
         const b = document.getElementById('streambtn');
@@ -1309,7 +1342,7 @@ if (BROWSER_HALF) {
       check(toggled.before.on === false && /off/.test(toggled.before.label)
             && toggled.before.pressed === 'false',
             'STREAM: the build opens on one window, with streaming offered and off',
-            `button reads "${toggled.before.label}"`);
+            `the page button reads "${toggled.before.label}"`);
       check(toggled.after.on === true && /on/.test(toggled.after.label)
             && toggled.after.pressed === 'true' && toggled.after.chunks
             && toggled.after.chunks.loaded > 1 && toggled.after.grounded,

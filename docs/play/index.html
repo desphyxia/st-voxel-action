@@ -210,6 +210,7 @@
         <span class="tgrp r">
           <button id="zoomin" type="button" title="Zoom in" aria-label="zoom in">+</button>
           <button id="meshtog" type="button" title="Swap the terrain renderer: a greedy mesh with baked occlusion, or instanced boxes">Boxes</button>
+          <button id="streamtog" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window — a world with no edge, and a different world from the same seed">Stream</button>
         </span>
       </div>
       <div class="vitals" id="vitals">
@@ -238,10 +239,10 @@
         the lattice below. It opens filling the window; <b>Esc</b> or <b>Exit</b> drops back to
         the page and the lattice, and <b>Fullscreen</b> goes to the real thing. <b>New</b> at the top of
         the view grows a fresh world from a random seed, and <b>Boxes</b>/<b>Mesh</b> swaps the terrain
-        renderer. <b>Streaming</b> below the view replaces the one 64 m window with 32 m chunks that
-        load and unload as you walk, so the world has no edge &mdash; it is off by default, and it
-        grows a <i>different</i> world from the same seed, because a 40 m window and a 64 m one
-        disagree about the ground between them.
+        renderer. <b>Stream</b> at the top of the view &mdash; and <b>Streaming</b> below it &mdash;
+        replaces the one 64 m window with 32 m chunks that load and unload as you walk, so the
+        world has no edge. It is off by default, and it grows a <i>different</i> world from the
+        same seed, because a 40 m window and a 64 m one disagree about the ground between them.
         <b>On a phone</b>, hold it sideways: your left thumb is a stick wherever you put it, and the
         buttons on the right cut, dodge and jump.
         Click the view first to give it the keyboard.</p>
@@ -7292,10 +7293,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      option that is off by default and changes the world it grows should say so
      plainly. */
   function syncStreamBtn(){
+    /* Two buttons, one state, for exactly the reason `Boxes` has two: the
+       build opens with the stage filling the viewport, so everything on the
+       page below it is behind that. A control that lives only down there is
+       not reachable without leaving the game first — which is what shipped,
+       and the first thing anyone asked was where the button was. */
     var b=document.getElementById('streambtn');
-    if(!b) return;
-    b.textContent='Streaming: '+(streaming?'on':'off');
-    b.setAttribute('aria-pressed',streaming?'true':'false');
+    if(b){
+      b.textContent='Streaming: '+(streaming?'on':'off');
+      b.setAttribute('aria-pressed',streaming?'true':'false');
+    }
+    var t=document.getElementById('streamtog');
+    if(t) t.setAttribute('aria-pressed',streaming?'true':'false');
   }
 
   /* ---------- a pose the gate can come back to (issue #29) ----------
@@ -7445,13 +7454,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   document.getElementById('meshbtn').addEventListener('click',function(){
     setMesh(!useMesh); stage.focus();
   });
-  document.getElementById('streambtn').addEventListener('click',function(){
+  function toggleStream(inView){
     var was=streaming, now=setStreaming(!streaming);
-    if(now!==was) says2(now
+    if(now!==was) (inView?says:says2)(now
       ? 'streaming on \u2014 32 m chunks around you, and a different world from the same seed'
       : 'streaming off \u2014 back to one 64 m window');
     stage.focus();
-  });
+  }
+  document.getElementById('streambtn').addEventListener('click',function(){ toggleStream(false); });
   fullBtn.addEventListener('click',function(){ toggleFull(); });
 
   /* ---------- the view's own controls ----------
@@ -7528,6 +7538,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return a+'-'+b+'-'+(1+(Math.random()*98)|0);
   }
   var newBtn=document.getElementById('newworld'), meshTog=document.getElementById('meshtog');
+  var streamTog=document.getElementById('streamtog');
   function newWorld(){
     /* The host owns which world everyone is in. A guest growing its own would
        be a different world with the same characters walking around in it. */
@@ -7543,7 +7554,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
    [zoomInBtn,function(){ zoomBy(-1); }],
    [zoomOutBtn,function(){ zoomBy(1); }],
    [newBtn,function(){ newWorld(); }],
-   [meshTog,function(){ setMesh(!useMesh); }]].forEach(function(pair){
+   [meshTog,function(){ setMesh(!useMesh); }],
+   [streamTog,function(){ toggleStream(true); }]].forEach(function(pair){
     pair[0].addEventListener('pointerdown',function(e){ e.stopPropagation(); });
     pair[0].addEventListener('click',function(e){ e.stopPropagation(); pair[1](); stage.focus(); });
   });
