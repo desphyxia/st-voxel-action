@@ -88,7 +88,8 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Both pages are published from **`7434073`**: play **version 18**, concept **version 17**.
+Play is published from **`0c44799`** at **version 19**; concept from **`7434073`** at
+**version 17**, since nothing has touched that filesince.
 `9c26036` was version 14 of each, forced after the loop found both clean; the publishes since
 have gone through with no argument, which is the once-per-session rule above working as described.
 
