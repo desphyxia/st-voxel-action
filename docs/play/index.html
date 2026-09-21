@@ -7964,8 +7964,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(!fpsEl) return;
     fpsEl.classList.toggle('off',hudOn);
     if(hudOn) return;
+    /* "ms cpu", not "ms": this is main-thread time, and without the label the
+       obvious reading is that it should be 1000/fps. */
     fpsEl.innerHTML='<b>'+fps.toFixed(0)+'</b> fps \u00b7 <b>'
-      +costMs.toFixed(1)+'</b> ms';
+      +costMs.toFixed(1)+'</b> ms cpu';
   }
   var hudOn=false, hudBtn=document.getElementById('hudbtn');
   function setHud(on){
@@ -8432,15 +8434,6 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      That is how the smoke test checks the build draws at all. */
   function draw(){
     if(!built) return;
-    /* Main-thread cost of building and submitting the frame, smoothed. Not GPU
-       time: WebGL hands work to the driver and returns, so this is what a frame
-       costs *this thread* and says nothing about what the GPU then does with
-       it. It is still the number that answers "is there room for more" — at
-       2 ms there is, at 14 ms the thread is the ceiling. Timed here rather than
-       around the call in the loop so it measures the work whoever asks for it,
-       which is also what lets the gate read a real figure from a page whose
-       requestAnimationFrame never fires. */
-    var t0=performance.now();
     var a=player();
     avatar.g.visible=!!a;
     if(a) poseAvatar(avatar,a);
@@ -8478,7 +8471,6 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     camera.left=-cam.view*aspect; camera.right=cam.view*aspect;
     camera.top=cam.view; camera.bottom=-cam.view; camera.updateProjectionMatrix();
     renderer.render(built.scene,camera);
-    costMs+=((performance.now()-t0)-costMs)*0.1;
   }
 
   var acc=0, last=0, frames=0, fpsAt=0, wasConnected=false, paused=false;
@@ -8501,13 +8493,39 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
 
      What that switch was for — is there headroom? — is answered honestly by
      timing the frame instead, which is what `costMs` below is. */
-  function frame(now){
-    requestAnimationFrame(frame);
+  /**
+   * One frame, timed.
+   *
+   * `costMs` is every millisecond this thread spends on a frame — the ticks,
+   * the stream pump inside them, posing the actors, building the readout and
+   * submitting the draw. It used to time `draw` alone, which made it read far
+   * lower than the frame interval and invited the obvious reading that the two
+   * numbers disagreed: 40 fps is a 25 ms frame, so what was the 4.2 ms? Two
+   * answers, and neither was visible. Half the work was outside the span —
+   * `tick` is, and `pumpStream` runs inside `tick`, so in a streamed world a
+   * 67 ms chunk arrival did not appear in the cost at all. And what is left of
+   * the gap is not this thread's: WebGL hands work to the driver and returns
+   * long before the GPU is done.
+   *
+   * So the number is main-thread time, and the gap between it and 1000/fps is
+   * the GPU and the browser. Read them together: at 40 fps and 24 ms this
+   * thread is the ceiling; at 40 fps and 6 ms it is not, and the GPU is.
+   */
+  function timedFrame(now){
     /* In plate mode the gate owns the clock, the camera and when a frame is
        drawn. The loop must not touch any of them — `tm` advances here even
        when the simulation is paused, and it drives grass, water and the wind
        vector, which is exactly the drift a look baseline cannot tolerate. */
     if(plateMode) return;
+    var t0=performance.now();
+    frameBody(now);
+    costMs+=((performance.now()-t0)-costMs)*0.1;
+  }
+  function frame(now){
+    requestAnimationFrame(frame);
+    timedFrame(now);
+  }
+  function frameBody(now){
     if(!last){ last=now; fpsAt=now; }
     var dt=Math.min((now-last)/1000,0.25); last=now;
     tm+=dt; acc+=dt;
@@ -8665,8 +8683,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     get hudShown(){ return hudOn; },
     /* What the standalone readout is saying, for the gate. */
     get fps(){ return fps; },
-    /* Main-thread milliseconds a frame costs, smoothed. Not GPU time. */
+    /* Main-thread milliseconds a frame costs, smoothed. Not GPU time: the gap
+       between this and 1000/fps is the GPU and the browser. */
     get frameCost(){ return costMs; },
+    /* One timed frame, for a page whose requestAnimationFrame never fires. */
+    frameOnce:function(){ timedFrame(performance.now()); return costMs; },
     get fpsShown(){ return !!fpsEl&&!fpsEl.classList.contains('off'); },
     get fpsText(){ return fpsEl?fpsEl.textContent:''; },
     get view(){ return cam.view; },

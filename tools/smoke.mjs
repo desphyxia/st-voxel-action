@@ -1233,8 +1233,12 @@ if (BROWSER_HALF) {
          so it is up whenever the full readout is shut and stands down when it
          opens, because that already carries it.
 
-         Beside it is what a frame costs this thread in milliseconds, which is
-         the honest form of a question an "uncapped" switch briefly tried and
+         Beside it is what a frame costs this thread in milliseconds — every
+         one of them, the ticks and the stream pump inside them included, not
+         just the draw. It is labelled "ms cpu" because the number is smaller
+         than 1000/fps and should be: the gap is the GPU, which WebGL hands work
+         to and returns from long before it is done. That is the honest form of
+         a question an "uncapped" switch briefly tried and
          failed to answer here. That switch drove the loop off vsync from a
          MessageChannel: it raised the count of frames *submitted*, presented
          nothing extra, and starved touch and compositing. On an iPhone it read
@@ -1250,16 +1254,20 @@ if (BROWSER_HALF) {
         out.shownClosed = P.fpsShown; out.textClosed = P.fpsText;
         press('hudbtn');  out.shownOpen = P.fpsShown;
         press('hudbtn');  out.shownAgain = P.fpsShown;
-        /* Drawn by hand, because the loop does not run here: requestAnimationFrame
-           does not fire in a page this harness never puts on screen. The cost is
-           timed inside draw itself, so these count. */
-        for (let i = 0; i < 20; i++) P.draw();
+        /* Frames driven by hand, because the loop does not run here:
+           requestAnimationFrame does not fire in a page this harness never puts
+           on screen. Paused first, so these cost a draw and a readout and do
+           not walk the character somewhere the later checks did not put it. */
+        P.pause(true);
+        for (let i = 0; i < 5; i++) P.frameOnce();
+        P.pause(false);
         out.cost = P.frameCost;
         out.noUncap = !document.getElementById('fpstog') && P.uncapped === undefined;
         return out;
       });
       check(pace.el && pace.shownClosed && !pace.shownOpen && pace.shownAgain
-            && /\d+\s*fps/.test(pace.textClosed) && /\d+(\.\d+)?\s*ms/.test(pace.textClosed),
+            && /\d+\s*fps/.test(pace.textClosed)
+            && /\d+(\.\d+)?\s*ms cpu/.test(pace.textClosed),
             'BUILD: the frame rate and what a frame costs are on screen without the readout',
             `"${pace.textClosed.trim()}" with the readout shut, `
             + `${pace.shownOpen ? 'STILL SHOWN' : 'hidden'} with it open, back when it closes`);
