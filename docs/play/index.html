@@ -6615,6 +6615,27 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   renderer.setClearColor(0x0b0f14,1);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
   renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  /* Issue #60. The shadow map covered the whole window at 2048 and was redrawn
+     every frame, which drew every terrain and prop triangle a second time, on
+     screen or not — for a world that only changes when it is built, carved,
+     streamed or re-rendered another way. It is drawn when one of those happens
+     and not otherwise. Everything that moves — the characters and the machines
+     — casts a blob instead, which from 45 degrees is what reads anyway.
+
+     `worldChanged()` is the one door: every place that changes what casts calls
+     it, and draw() compares a key built from it with the one the map was last
+     drawn for. A place that forgets to call it can only leave a shadow stale;
+     it cannot put the redraw back into every frame. */
+  renderer.shadowMap.autoUpdate=false; renderer.shadowMap.needsUpdate=true;
+  var worldRev=0, shadowKey='', shadowRenders=0, grassView=-1, grassRev=-1;
+  function worldChanged(){ worldRev++; }
+  (function(sm){
+    var drawShadows=sm.render;
+    sm.render=function(){
+      if(sm.enabled&&(sm.autoUpdate||sm.needsUpdate)) shadowRenders++;
+      return drawShadows.apply(sm,arguments);
+    };
+  })(renderer.shadowMap);
 
   /**
    * Give one mesh a bounding sphere the frustum test can trust, then turn the
@@ -6689,6 +6710,21 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      bounds a blade of it can be pushed. Smaller tiles reject more and cost more
      draw calls; 8 m is a quarter of a chunk. */
   var GRASS_TILE=8;
+  /* Issue #61. The camera is orthographic, so a blade two chunks away is as big
+     as one underfoot — but zooming out shrinks all of them, and at the widest
+     step a 6 cm blade is under a pixel. Grass was two thirds of every frame's
+     triangles regardless. Up to GRASS_FULL_VIEW every blade is drawn, which
+     covers the default view and the first step out; past it the share falls
+     as the view widens, so the blades per pixel stay put, down to GRASS_MIN. */
+  var GRASS_FULL_VIEW=13, GRASS_MIN=0.25;
+  function grassShare(view){ return view<=GRASS_FULL_VIEW?1:Math.max(GRASS_MIN,GRASS_FULL_VIEW/view); }
+  function grassCount(full,view){ return Math.max(1,Math.round(full*grassShare(view))); }
+  /* An integer mix of a blade's index: deterministic, and even enough that any
+     prefix of a sorted tile is a fair sample of it. */
+  function bladeMix(i){
+    var h=Math.imul(i^0x9e3779b9,0x85ebca6b); h^=h>>>13; h=Math.imul(h,0xc2b2ae35); h^=h>>>16;
+    return h>>>0;
+  }
   /* How wide a blade is at its base, in metres, and how many of the four push
      slots the shader carries. The old blade was 11 cm on a 25 cm voxel grid and
      against a 1.8 m character: at that width a flat strip reads as a leaf, not
@@ -7123,7 +7159,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     }
     var qq=new THREE.Quaternion(),eu=new THREE.Euler(),sv=new THREE.Vector3(),tv=new THREE.Vector3();
     for(tk in tiles){
-      var gsrc=tiles[tk], gn=gsrc.length, geo=bladeGeo.clone();
+      /* Shuffled, by a hash of each blade's own index, so that the first n of a
+         tile are an even sample of all of it: zooming out draws fewer blades by
+         lowering the tile's count (#61), and a tile in scan order would lose
+         whole rows instead of thinning. Order does not change what an opaque
+         blade looks like, so at full density nothing on screen moves. */
+      var gsrc=tiles[tk].slice().sort(function(p,q){ return bladeMix(p)-bladeMix(q)||p-q; }),
+          gn=gsrc.length, geo=bladeGeo.clone();
       var grass=new THREE.InstancedMesh(geo,mats.grass,gn);
       var ph=new Float32Array(gn),ti=new Float32Array(gn),cl=new Float32Array(gn*3),dl=new Float32Array(gn*3);
       var bx0=1e9,bx1=-1e9,by0=1e9,by1=-1e9,bz0=1e9,bz1=-1e9,bhm=0;
@@ -7146,7 +7188,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          follow would cull a tile while part of it was still on screen — which
          is a hole in the ground, not a saving. */
       grass.userData.gb={x0:bx0,x1:bx1,y0:by0,y1:by1,z0:bz0,z1:bz1,h:bhm};
-      grass.userData.kind='grass'; grass.frustumCulled=true;
+      grass.userData.kind='grass'; grass.frustumCulled=true; grass.userData.full=gn;
+      grass.count=grassCount(gn,cam.view);
       fitGrass(grass); g.add(grass);
     }
 
@@ -7231,6 +7274,32 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   }
 
   /* ---------- the character ---------- */
+  /* A soft dark disc on the ground under something that moves (#60). The
+     shadow map is static now, and a character that cast into it would leave
+     its shadow behind at the last place the world changed. */
+  var blobGeo=null, blobTex=null;
+  function makeBlob(r){
+    if(!blobGeo){
+      blobGeo=new THREE.CircleGeometry(1,20); blobGeo.rotateX(-Math.PI/2);
+      var bc=document.createElement('canvas'); bc.width=bc.height=64;
+      var bx=bc.getContext('2d'), gr=bx.createRadialGradient(32,32,4,32,32,32);
+      gr.addColorStop(0,'rgba(0,0,0,1)'); gr.addColorStop(1,'rgba(0,0,0,0)');
+      bx.fillStyle=gr; bx.fillRect(0,0,64,64);
+      blobTex=new THREE.CanvasTexture(bc);
+    }
+    var m=new THREE.Mesh(blobGeo,new THREE.MeshBasicMaterial({map:blobTex,transparent:true,
+      opacity:0.42,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}));
+    m.scale.set(r,1,r); m.userData.r=r; m.userData.blob=true; m.renderOrder=1;
+    return m;
+  }
+  /** Seat a blob on the ground under an actor at (x, y, z); hidden if there is none. */
+  function seatBlob(blob,x,y,z){
+    var gy=col?col.supportUnder(x,z,0.2,y+0.05):-Infinity;
+    if(!(gy>-Infinity)||y-gy>8){ blob.visible=false; return; }
+    var lift=Math.max(0,y-gy), k=Math.max(0.45,1-lift*0.18), r=blob.userData.r;
+    blob.visible=true; blob.position.y=gy-y+0.03;
+    blob.scale.set(r*k,1,r*k); blob.material.opacity=0.42*k;
+  }
   function makeAvatar(cloth,skin){
     function box(w,h,d,c){return new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
       new THREE.MeshLambertMaterial({color:c}));}
@@ -7266,9 +7335,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        widened the hitbox and not the arc would be a lie drawn on the floor. */
     blade.scale.z=1;
 
-    g.traverse(function(o){ if(o.isMesh){ o.castShadow=true; o.userData.keep=true; } });
-    sweep.castShadow=false;
-    return {g:g,arm:arm,blade:blade,sweep:sweep,fade:0,reach:-1,arc:-1};
+    g.traverse(function(o){ if(o.isMesh){ o.castShadow=false; o.userData.keep=true; } });
+    var blob=makeBlob(r*1.35); g.add(blob);
+    return {g:g,arm:arm,blade:blade,sweep:sweep,fade:0,reach:-1,arc:-1,blob:blob};
   }
   /**
    * A sentry automaton. Squat and wide, because from 45 degrees you mostly see
@@ -7294,9 +7363,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var bar=new THREE.Mesh(new THREE.PlaneGeometry(1.2,0.12),
       new THREE.MeshBasicMaterial({color:0xc9563a,side:THREE.DoubleSide,depthWrite:false}));
     bar.position.y=1.7; g.add(bar);
+    var blob=makeBlob(0.95); g.add(blob);
     g.traverse(function(o){ if(o.isMesh){ o.userData.keep=true; } });
-    skirt.castShadow=true; body.castShadow=true;
-    return {g:g,skirt:skirt,body:body,plate:plate,wedge:wedge,bar:bar};
+    return {g:g,skirt:skirt,body:body,plate:plate,wedge:wedge,bar:bar,blob:blob};
   }
   var foeMeshes=[];
 
@@ -7320,7 +7389,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(isCache){
       plinth=new THREE.Mesh(new THREE.CylinderGeometry(0.34,0.44,0.55,6),
         new THREE.MeshLambertMaterial({color:0x4a443e}));
-      plinth.position.y=0.28; plinth.castShadow=true; g.add(plinth);
+      plinth.position.y=0.28; g.add(plinth);
       halo=new THREE.Mesh(new THREE.RingGeometry(0.78,0.96,24),
         new THREE.MeshBasicMaterial({color:0xe8e3d7,transparent:true,opacity:0.30,
                                      side:THREE.DoubleSide,depthWrite:false}));
@@ -7363,6 +7432,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var EST=QS.EST, dead=m.s===EST.DEAD;
     f.g.position.set(m.x,m.y,m.z);
     f.g.rotation.z=dead?0.9:0;                 /* toppled, and it stays toppled */
+    if(dead) f.blob.visible=false; else seatBlob(f.blob,m.x,m.y,m.z);
     f.g.rotation.y=Math.atan2(m.fx,m.fz);
     var rise=dead?0:(m.s===EST.DORMANT?0.72:(m.s===EST.TELEGRAPH?1.12:1));
     f.body.scale.y=rise; f.body.position.y=0.62*rise;
@@ -7420,6 +7490,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     tuneSweep(av,a);
     av.g.position.set(a.x,a.y,a.z);
     av.g.rotation.y=Math.atan2(a.faceX,a.faceZ);
+    seatBlob(av.blob,a.x,a.y,a.z);
     av.arm.rotation.y=bladeAngle(a);
     /* The trail outlives the hitbox on purpose. The active window is seven
        ticks — an eighth of a second — and at this zoom that is one frame of
@@ -7461,7 +7532,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      both — tools/compare-renderers.mjs and tools/compare-plates.mjs. */
   var useMesh=true, streaming=false;
   function setMesh(on){
-    useMesh=!!on;
+    useMesh=!!on; worldChanged();
     if(built&&built.mesh){ built.mesh.visible=useMesh; if(built.vox) built.vox.visible=!useMesh; }
     /* A streamed world has one of each per chunk, and chunks that arrive later
        read `useMesh` when they are made. */
@@ -7487,7 +7558,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   /** Swap between the culled prop mesh and the instanced boxes. */
   var propCulled=true;
   function setPropMesh(on){
-    propCulled=!!on;
+    propCulled=!!on; worldChanged();
     function apply(nd){
       if(!nd) return;
       if(nd.propMesh) nd.propMesh.visible=useMesh&&propCulled;
@@ -7543,6 +7614,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
    */
   function carveAt(x,y,z,opts){
     if(!built) return null;
+    worldChanged();
     /* Which window owns this ground, which index finds a voxel in it, and
        which list remembers what has been hidden. Picking the last two off the
        *world* rather than off `streaming` was the first version, and the
@@ -7718,6 +7790,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   }
 
   function buildFor(cfg){
+    worldChanged();
     var data=QS.buildWorld(cfg);
     disposeWorld();
     field=null; stream=null; nodes=null;
@@ -7759,7 +7832,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         o.material.dispose();
     });
     built.scene.remove(nd.g);
-    delete nodes[k];
+    delete nodes[k]; worldChanged();
   }
 
   /** Make the scene hold exactly the chunks the field holds. */
@@ -7773,7 +7846,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       var nd=worldNode(e.w,built.mats,QS.innerChunk(e.w),pre);
       nd.g.position.set(e.cx*QS.CHUNK,0,e.cz*QS.CHUNK);
       nd.cx=e.cx; nd.cz=e.cz; nd.ix=null; nd.hidden=[];
-      built.scene.add(nd.g); nodes[k]=nd;
+      built.scene.add(nd.g); nodes[k]=nd; worldChanged();
     }
     for(var k2 in nodes) if(!want[k2]) dropNode(k2);
     /* A mesh whose chunk never became a node, because the players moved on
@@ -7985,11 +8058,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
 
   /* The sun's shadow box is a fixed span around the player rather than the
      whole world, because a streamed world does not have a whole. */
+  var SUN_STEP=4;
   function followSun(){
     var a=player();
     if(!a||!built||!built.sun) return;
-    built.sun.position.set(a.x-16,a.y+26,a.z+12);
-    built.sun.target.position.set(a.x,a.y,a.z);
+    /* In 4 m steps rather than continuously: the shadow map is drawn again
+       whenever the sun moves (#60), and ±52 m of shadow camera covers the view
+       from anywhere inside a step. */
+    var sx=Math.round(a.x/SUN_STEP)*SUN_STEP, sz=Math.round(a.z/SUN_STEP)*SUN_STEP;
+    var sy=Math.round(a.y/SUN_STEP)*SUN_STEP;
+    built.sun.position.set(sx-16,sy+26,sz+12);
+    built.sun.target.position.set(sx,sy,sz);
     built.sun.target.updateMatrixWorld();
   }
 
@@ -8068,6 +8147,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   }
 
   function buildStreamFor(cfg){
+    worldChanged();
     disposeWorld();
     var mats=worldMaterials(), shell=sceneShell(52);
     field=QS.makeChunkField(cfg.seed,cfg.force===undefined?null:cfg.force,
@@ -8827,6 +8907,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var aspect=vp.w/vp.h;
     camera.left=-cam.view*aspect; camera.right=cam.view*aspect;
     camera.top=cam.view; camera.bottom=-cam.view; camera.updateProjectionMatrix();
+    if(cam.view!==grassView||worldRev!==grassRev){
+      grassView=cam.view; grassRev=worldRev;
+      built.scene.traverse(function(o){
+        if(o.userData.kind==='grass'&&o.userData.full) o.count=grassCount(o.userData.full,cam.view);
+      });
+    }
+    var sk=worldRev+'|'+plateMode+'|'+(built.sun?built.sun.position.x+','+built.sun.position.z:'');
+    if(sk!==shadowKey){ shadowKey=sk; renderer.shadowMap.needsUpdate=true; }
     renderer.render(built.scene,camera);
   }
 
@@ -9021,6 +9109,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* The swing arc's visibility is the thing #23 is actually about, so the
        gate gets to assert it rather than infer it from a screenshot. */
     get sweeping(){return avatar.sweep.visible;},
+    /* How many times the shadow map has actually been drawn (#60). */
+    get shadowRenders(){ return shadowRenders; },
+    /* The player's blob, and every mesh in the scene that casts. */
+    get blob(){ var b=avatar.blob; return {visible:b.visible,x:b.getWorldPosition(new THREE.Vector3()).x,
+                  y:b.getWorldPosition(new THREE.Vector3()).y,z:b.getWorldPosition(new THREE.Vector3()).z}; },
+    get casters(){ var out=[]; if(built) built.scene.traverse(function(o){
+                     if(o.castShadow&&(o.isMesh||o.isInstancedMesh)&&o.visible)
+                       out.push(o.userData.kind||(o.userData.keep?'actor':'post')); }); return out; },
     /* Put out what the last swing left lit. The sweep's fade and a post's hit
        flash decay per rendered frame, on the wall clock, and under software
        rendering how many frames run between two checks is anyone's guess — so
@@ -9062,6 +9158,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     carve:carveAt,
     clearEdits:function(){
       if(!built) return 0;
+      worldChanged();
       function restore(data,mesh,vox,bin){
         var n=QS.clearEdits(data), g=mesh.userData.org?1:QS.chunkGrid(data);
         for(var a=0;a<g;a++)for(var b=0;b<g;b++) mesh.userData.remesh(data,a,b);

@@ -1049,6 +1049,65 @@ if (BROWSER_HALF) {
             + `${gtune.denNow} /m2 is ${gtune.bladesAfterDen.toLocaleString()}, `
             + `back to ${gtune.bladesBack.toLocaleString()}`);
 
+      /* ---------- BUILD: grass thins as the view widens, issue #61 ----------
+         Grass was two thirds of a frame's triangles at every zoom, and at the
+         widest a blade is under a pixel. What is asserted: the default view
+         draws every blade, the widest draws a quarter to a third of them, the
+         blades it keeps still cover the ground rather than a strip of it, and
+         coming back draws every blade again. */
+      const zg = await bp.evaluate(() => {
+        const P = window.QSPLAY, cam = P.cam, v0 = cam.view;
+        const tiles = () => { const t = []; P.scene.traverse((o) => { if (o.userData.kind === 'grass') t.push(o); }); return t; };
+        const sum = (f) => tiles().reduce((n, o) => n + f(o), 0);
+        P.frameOnce();
+        const full = sum((o) => o.userData.full), atDefault = sum((o) => o.count);
+        cam.view = 40; P.frameOnce();
+        const wide = sum((o) => o.count);
+        /* Coverage: the metre cells of the fullest tile that still hold a blade. */
+        const big = tiles().sort((p, q) => q.userData.full - p.userData.full)[0], m = new window.THREE.Matrix4(), v = new window.THREE.Vector3();
+        const cells = (n) => { const c = new Set(); for (let i = 0; i < n; i++) { big.getMatrixAt(i, m); v.setFromMatrixPosition(m); c.add(Math.floor(v.x) + ',' + Math.floor(v.z)); } return c.size; };
+        const covFull = cells(big.userData.full), covWide = cells(big.count);
+        cam.view = v0; P.frameOnce();
+        const back = sum((o) => o.count);
+        return { v0, full, atDefault, wide, back, covFull, covWide };
+      });
+      check(zg.atDefault === zg.full && zg.back === zg.full
+            && zg.wide <= zg.full * 0.35 && zg.wide >= zg.full * 0.2 && zg.covWide >= zg.covFull * 0.9,
+            'BUILD: grass thins as the view widens, and covers the ground when it does',
+            `${zg.full.toLocaleString()} blades at view ${zg.v0}, ${zg.wide.toLocaleString()} at view 40 `
+            + `(${(100 * zg.wide / zg.full).toFixed(0)}%), ${zg.back.toLocaleString()} back at ${zg.v0}; `
+            + `the fullest tile keeps a blade in ${zg.covWide} of its ${zg.covFull} metre cells`);
+
+      /* ---------- BUILD: the shadow map is drawn when the world changes, issue #60 ----------
+         It was drawn every frame, which drew every terrain and prop triangle
+         twice. Asserted by counting the times it is actually drawn: none while
+         the world stands still and the character moves, one for a carve. And
+         nothing that moves casts into it — the character sits on a blob. */
+      const sh = await bp.evaluate(() => {
+        const P = window.QSPLAY, a = P.actor;
+        P.pause(true); P.frameOnce(); P.frameOnce();
+        const s0 = P.shadowRenders;
+        P.input.press('KeyW');
+        for (let i = 0; i < 6; i++) { P.run(8); P.frameOnce(); }
+        P.input.release('KeyW');
+        const idle = P.shadowRenders - s0;
+        P.carve(a.x + 2.5, a.y - 0.3, a.z, { radius: 0.6, bite: 99 });
+        P.frameOnce(); P.frameOnce();
+        const carved = P.shadowRenders - s0 - idle;
+        P.clearEdits(); P.frameOnce();
+        const kinds = {}; for (const k of P.casters) kinds[k] = (kinds[k] || 0) + 1;
+        const b = P.blob, out = { idle, carved, kinds, blob: b, ay: P.actor.y, grounded: P.actor.grounded };
+        P.pause(false);
+        return out;
+      });
+      check(sh.idle === 0 && sh.carved === 1,
+            'BUILD: the shadow map is drawn when the world changes, not every frame',
+            `${sh.idle} redraws over six frames of walking, ${sh.carved} for one carve`);
+      check(!sh.kinds.actor && sh.blob.visible && (!sh.grounded || Math.abs(sh.blob.y - sh.ay) < 0.1),
+            'BUILD: and what moves sits on a blob rather than casting into it',
+            `casting: ${Object.entries(sh.kinds).map(([k, n]) => k + ' ' + n).join(', ')}; `
+            + `blob ${sh.blob.visible ? 'shown' : 'HIDDEN'} at y ${sh.blob.y.toFixed(2)} under a character at ${sh.ay.toFixed(2)}`);
+
       /* ---------- BUILD: a chunk the camera cannot see is not drawn ----------
          Grass was the only thing in a world node that was frustum-culled;
          terrain, props, water and the emissive record were all pinned visible
