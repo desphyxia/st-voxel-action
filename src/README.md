@@ -82,6 +82,34 @@ Two decisions that were window-scoped and had no business being:
 - **Lamps** are spaced along the *region's* route, not picked three-per-window out
   of whatever slice of trail the window holds.
 
+### What two regions agree on
+
+Regions decide independently, which is what makes two windows agree — and which
+left no two *regions* agreeing about anything, so until #53 the trail network was
+one island per region, forty metres apart. A trail now crosses between regions at a
+**port**: one cell on each shared edge, chosen by hashing the *edge* (the lower
+region's coordinates and an axis), from ground both sides can compute alone.
+Neither region ever evaluates its neighbour; if one had to, region evaluation would
+recurse and the cache would stop terminating.
+
+Three rules keep the two sides of a port the same trail:
+
+- **A port is pinned.** Nothing grades it, so each side ramps its approach to the
+  same height — and that ramp is held directly, not left to the levelling pass: a
+  trail cell *d* steps from a port is clamped to within *d* steps of it.
+- **A region writes only ground it owns.** Its grid reads a cell of padding past
+  every edge, but only the owner marks or grades a cell. Before ports no route came
+  near an edge; after them, two regions writing one cell would each be right in
+  their own grid and a window would keep whichever it read last.
+- **A route keeps to owned ground** and leaves it only to step onto its goal, so a
+  route to a port crosses the line instead of running along the neighbour's edge.
+
+The first site is the region's hub: the second site and every port are routed from
+it, and a region with no site uses a port instead. A ford is built only when its far
+bank reaches another site or port, so no trail ends in open ground. Magma blocks
+routing, so ash's network is still in pieces where a magma channel splits it. The
+NETWORK checks in `tools/smoke.mjs` assert all of this over a 3 × 3 block of regions.
+
 A window is still not perfect at its own edge, and cannot be: a stamp is placed from
 an anchor cell and reaches past it, and reads the surface through a lookup that
 clamps at the window edge. Measured across seven seeds and six offsets, **4 m** is

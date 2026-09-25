@@ -30,7 +30,8 @@ import * as LO from '../../src/sim/loot.mjs';
 import { makeLoopback } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import { buildWorld, makeGen } from '../../src/gen/index.mjs';
-import { regionAt, clearRegionCache } from '../../src/gen/region.mjs';
+import { regionAt, clearRegionCache, portsOf, regionOf, REGION } from '../../src/gen/region.mjs';
+import { erodeAt } from '../../src/gen/erosion.mjs';
 import { meshChunk, surfaceAt, isCut, innerChunk } from '../../src/mesh/greedy.mjs';
 import { meshProps } from '../../src/mesh/propmesh.mjs';
 import { palR, palG, palB } from '../../src/gen/palette.mjs';
@@ -1422,6 +1423,178 @@ export function regionSuite() {
         `${r1.trail.size} trail cells, ${r1.grade.size} graded, ${r1.bridges.length} crossings`);
   }
 
+  return out;
+}
+
+/* --------------------------------------------------------------- network ----
+ * Issue #53. REGION proves two windows agree about a region; it says nothing
+ * about whether two *regions* agree with each other, and they did not: every
+ * one routed between its own sites from its own centre and stopped, so the
+ * trail network was nine islands forty metres apart, each with an end in open
+ * ground. These are asserted over a 3 x 3 block of regions on two seeds,
+ * because one seed can be continuous by luck.
+ *
+ * A dead end is judged by shape, not by neighbour count. The trail is two
+ * cells wide and its shoulder pokes out at every corner, so "a cell with one
+ * trail neighbour" counts nubs as ends. At a real end, everything within four
+ * metres lies in one direction — inside a 60 degree cone — and beside a nub,
+ * the trail runs off both ways. An end at a site, a port or a crossing is an
+ * end that goes somewhere.
+ * ------------------------------------------------------------------------- */
+
+function trailNet(G, cx, cz) {
+  const T = new Set(), goals = [], bridges = [], lens = [], regions = [];
+  for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+    const r = regionAt(G, cx + a, cz + b);
+    regions.push(r); lens.push(r.order.length);
+    r.trail.forEach((k) => T.add(k));
+    goals.push(...r.sites, ...r.ports);
+    bridges.push(...r.bridges);
+  }
+  const h = REGION / 2;
+  return { T, goals, bridges, lens, regions,
+           x0: (cx - 1) * REGION - h, x1: (cx + 1) * REGION + h - 1,
+           z0: (cz - 1) * REGION - h, z1: (cz + 1) * REGION + h - 1 };
+}
+
+function netShape(n) {
+  const { T, goals, bridges, x0, x1, z0, z1 } = n;
+  const inBox = (x, z) => x >= x0 && x <= x1 && z >= z0 && z <= z1;
+  const cells = [...T].map((k) => k.split(',').map(Number)).filter(([x, z]) => inBox(x, z));
+  const S = new Set(cells.map(([x, z]) => x + ',' + z));
+  const nbs = (x, z) => DIRS4_N.map(([dx, dz]) => [x + dx, z + dz]).filter(([a, b]) => S.has(a + ',' + b));
+
+  const seen = new Set();
+  let pieces = 0;
+  for (const [x, z] of cells) {
+    const k = x + ',' + z;
+    if (seen.has(k)) continue;
+    pieces++; seen.add(k);
+    const st = [[x, z]];
+    while (st.length) {
+      const [px, pz] = st.pop();
+      for (const [qx, qz] of nbs(px, pz)) {
+        const qk = qx + ',' + qz;
+        if (!seen.has(qk)) { seen.add(qk); st.push([qx, qz]); }
+      }
+    }
+  }
+
+  const dead = [];
+  for (const [x, z] of cells) {
+    if (nbs(x, z).length !== 1) continue;
+    if (x <= x0 + 1 || x >= x1 - 1 || z <= z0 + 1 || z >= z1 - 1) continue;
+    if (goals.some(([gx, gz]) => Math.abs(gx - x) + Math.abs(gz - z) <= 3)) continue;
+    if (bridges.some((b) => Math.max(Math.abs(b[0] - x), Math.abs(b[1] - z)) <= b[4] / 2 + 1)) continue;
+    const vs = [];
+    for (let dx = -4; dx <= 4; dx++) for (let dz = -4; dz <= 4; dz++) {
+      if ((dx || dz) && S.has((x + dx) + ',' + (z + dz))) vs.push([dx, dz]);
+    }
+    let mx = 0, mz = 0;
+    for (const [a, b] of vs) { const l = Math.sqrt(a * a + b * b); mx += a / l; mz += b / l; }
+    const ml = Math.sqrt(mx * mx + mz * mz) || 1;
+    const worst = Math.min(...vs.map(([a, b]) => (a * mx + b * mz) / ml / Math.sqrt(a * a + b * b)));
+    if (worst > 0.5) dead.push(x + ',' + z);
+  }
+  return { cells: cells.length, pieces, dead };
+}
+
+const DIRS4_N = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+/** A cell's height as the region pass leaves it: eroded, then graded by the
+    region that owns it — which is what every window reads, from any side. */
+function baseH(G, x, z) { return Math.max(0, Math.min(CEIL, erodeAt(G, x, z, G.cell(x, z)))); }
+function finalH(G, x, z) {
+  const g = regionAt(G, regionOf(x), regionOf(z)).grade.get(x + ',' + z);
+  return g === undefined ? baseH(G, x, z) : g;
+}
+
+export function networkSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const SEEDS = GOLDEN_SEEDS.filter((s) => s.nm === 'meadow' || s.nm === 'hero');
+
+  const pieces = [], dead = [], medians = [], portBad = [], ownBad = [];
+  let ports = 0, first = null;
+  for (const s of SEEDS) {
+    const G = makeGen(s.seed, s.force);
+    const cx = regionOf(s.ox), cz = regionOf(s.oz);
+    const n = trailNet(G, cx, cz), sh = netShape(n);
+    if (!first) first = n;
+    pieces.push(`${s.nm} ${sh.pieces}`);
+    for (const d of sh.dead) dead.push(`${s.nm} ${d}`);
+    const lens = n.lens.slice().sort((p, q) => p - q);
+    medians.push([s.nm, lens[lens.length >> 1]]);
+
+    /* Every interior edge: both sides name the same port, and the trail
+       reaches it from both — the cell on the line is the upper region's, the
+       cell before it the lower's. */
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+      const rx = cx + a, rz = cz + b, mine = portsOf(G, rx, rz).map(String);
+      for (const [ux, uz, axis] of [[rx + 1, rz, 0], [rx, rz + 1, 1]]) {
+        if (ux > cx + 1 || uz > cz + 1) continue;
+        const theirs = portsOf(G, ux, uz).map(String);
+        const shared = mine.filter((p) => theirs.includes(p));
+        if (shared.length !== 1) { portBad.push(`${s.nm} ${rx},${rz}|${ux},${uz} share ${shared.length}`); continue; }
+        ports++;
+        const [px, pz] = shared[0].split(',').map(Number);
+        const before = axis ? px + ',' + (pz - 1) : (px - 1) + ',' + pz;
+        if (!n.T.has(shared[0]) || !n.T.has(before)) portBad.push(`${s.nm} ${shared[0]}`);
+        /* And at one height: the port is where two regions' grading meets, so
+           it has to be the height both of them graded towards — its own. */
+        const [bx, bz] = before.split(',').map(Number), ax2 = axis ? px : px + 1, az2 = axis ? pz + 1 : pz;
+        const hp = finalH(G, px, pz), hb = finalH(G, bx, bz), ha = finalH(G, ax2, az2);
+        if (hp !== baseH(G, px, pz)) portBad.push(`${s.nm} ${shared[0]} moved ${baseH(G, px, pz)} -> ${hp}`);
+        else if (Math.abs(hp - hb) > MOVE.step || Math.abs(hp - ha) > MOVE.step) {
+          portBad.push(`${s.nm} ${shared[0]} steps ${hb} | ${hp} | ${ha}`);
+        }
+      }
+    }
+
+    /* Only the owner writes. Two regions both grading a cell would each be
+       right in their own grid, and a window would take whichever it read last. */
+    for (const r of n.regions) {
+      const owns = (k) => { const [x, z] = k.split(',').map(Number); return regionOf(x) === r.rx && regionOf(z) === r.rz; };
+      r.grade.forEach((v, k) => { if (!owns(k)) ownBad.push(`${s.nm} grade ${k} by ${r.rx},${r.rz}`); });
+      r.trail.forEach((k) => { if (!owns(k)) ownBad.push(`${s.nm} trail ${k} by ${r.rx},${r.rz}`); });
+    }
+  }
+
+  say('the trail is one network across a 3x3 block of regions, not nine islands',
+      pieces.every((p) => p.endsWith(' 1')), pieces.join(', ') + ' piece(s)');
+  say('both regions on an edge name the same port, and the trail reaches it from each side at its height',
+      portBad.length === 0 && ports > 0,
+      portBad.length ? portBad.slice(0, 5).join('; ') : `${ports} interior edges, every one crossed`);
+  say('a region marks and grades only ground it owns',
+      ownBad.length === 0, ownBad.length ? ownBad.slice(0, 5).join('; ') : 'no cell written by two regions');
+  say('no trail ends in open ground — only at a site, a port or a crossing',
+      dead.length === 0, dead.length ? dead.slice(0, 5).join(', ') : 'every end goes somewhere');
+  say('a region carries a real length of trail',
+      medians.every(([, m]) => m >= 200),
+      medians.map(([nm, m]) => `${nm} median ${m} cells`).join(', ') + ' (was ~120)');
+
+  /* The self-test, the same shape as WALK's: plant a six-metre spur into open
+     ground and require the dead-end check to find it. A check that reports
+     zero is only evidence if it can report one. */
+  const { T, goals, bridges, x0, z0 } = first;
+  let spur = null;
+  outer: for (let x = x0 + 12; x < x0 + REGION * 2; x++) for (let z = z0 + 12; z < z0 + REGION * 2; z++) {
+    if (!T.has(x + ',' + z)) continue;
+    let clear = true;
+    for (let d = 1; d <= 10 && clear; d++) for (let w = -5; w <= 5 && clear; w++) {
+      if (T.has((x + d) + ',' + (z + w))) clear = false;
+    }
+    if (clear && !goals.some(([gx, gz]) => Math.abs(gx - x) + Math.abs(gz - z) < 16)
+        && !bridges.some((b) => Math.abs(b[0] - x) + Math.abs(b[1] - z) < 16)) { spur = [x, z]; break outer; }
+  }
+  const planted = { ...first, T: new Set(T) };
+  if (spur) for (let d = 1; d <= 6; d++) planted.T.add((spur[0] + d) + ',' + spur[1]);
+  const pd = netShape(planted).dead;
+  const tip = spur ? (spur[0] + 6) + ',' + spur[1] : null;
+  say('and the dead-end check can see one when there is one',
+      !!spur && pd.includes(tip),
+      spur ? (pd.includes(tip) ? `six-metre spur planted to ${tip}, found` : `SPUR TO ${tip} NOT SEEN — the check is blind`)
+           : 'nowhere to plant a spur');
   return out;
 }
 
