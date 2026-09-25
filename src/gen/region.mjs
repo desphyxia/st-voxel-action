@@ -617,8 +617,74 @@ function buildRegion(G, rx, rz) {
     lm = { x: x0 + bi.i, z: z0 + bi.j, h: bi.h, kind: kind, dom: bi.dom };
   }
 
+  /* ---- encounter affordances (#42) ----
+     What the pass already knows about its ground, written down for whatever
+     places a fight or a set-piece: where a route is forced through a gap,
+     where there is room to fight, where the high ground is, and where there
+     is something to get behind. Owned ground only, so a cell is annotated by
+     exactly one region, and in world coordinates like everything else here.
+     Each entry is { k, x, z, h, s }: kind, place, height, and a score that
+     means "how much of this it is" — how narrow, how big, how covered. */
+  var aff = [];
+  if (lm) aff.push({ k: 'vantage', x: lm.x, z: lm.z, h: lm.h, s: 1 });
+  var blocks = function (cp, cq) {
+    return !cq || cq.magma || (cq.water && (cq.wl - cq.H) > MOVE.wade) || Math.abs(cq.H - cp.H) > MOVE.step;
+  };
+  /* Chokepoints: every crossing, and trail ground walled in on both sides —
+     the one cell either way across the route is water, magma or a step the
+     budget will not take. One per 6 m block, the narrowest. */
+  bridges.forEach(function (b) { aff.push({ k: 'choke', x: b[0], z: b[1], h: b[5], s: 2 }); });
+  var best = new Map();
+  for (var t = 0; t < order.length; t++) {
+    var ti = order[t][0] - x0, tj = order[t][1] - z0;
+    if (!own(ti, tj) || ti < 1 || tj < 1 || ti >= N - 1 || tj >= N - 1) continue;
+    var tc = at(ti, tj);
+    if (tc.water || tc.magma) continue;
+    var walled = (blocks(tc, at(ti - 1, tj)) && blocks(tc, at(ti + 1, tj)) ? 1 : 0)
+               + (blocks(tc, at(ti, tj - 1)) && blocks(tc, at(ti, tj + 1)) ? 1 : 0);
+    if (!walled) continue;
+    var bk = Math.floor(ti / 6) * 1000 + Math.floor(tj / 6), cur = best.get(bk);
+    if (!cur || walled > cur.s) best.set(bk, { k: 'choke', x: x0 + ti, z: z0 + tj, h: tc.H, s: walled });
+  }
+  best.forEach(function (v) { aff.push(v); });
+  /* Arenas: flat ground grown outwards from a 4 m lattice until it is not flat
+     any more, biggest first, and never inside one already taken. */
+  var arenas = [];
+  for (i = lo; i < hi; i += 4) for (j = lo; j < hi; j += 4) {
+    if (!own(i, j) || !flatAt(i, j, 3)) continue;
+    var r = 3;
+    while (r < 7 && flatAt(i, j, r + 1)) r++;
+    arenas.push({ k: 'arena', x: x0 + i, z: z0 + j, h: at(i, j).H, s: r });
+  }
+  arenas.sort(function (a, b) { return b.s - a.s || a.x - b.x || a.z - b.z; });
+  var taken = [];
+  arenas.forEach(function (a) {
+    for (var q = 0; q < taken.length; q++) {
+      var o = taken[q];
+      if (Math.max(Math.abs(a.x - o.x), Math.abs(a.z - o.z)) < a.s + o.s) return;
+    }
+    taken.push(a); aff.push(a);
+  });
+  /* Cover: walkable ground with a rise beside it too tall to see over — the
+     vault height, which is also where a machine loses sight of you. Scored by
+     how many sides it covers; one per 8 m block, the most covered. */
+  var coverBest = new Map();
+  for (i = lo; i < hi; i += 2) for (j = lo; j < hi; j += 2) {
+    if (!own(i, j) || !flatAt(i, j, 1)) continue;
+    var cc = at(i, j), sides = 0;
+    for (var d = 0; d < 4; d++) {
+      var n1 = at(i + DIRS4[d][0], j + DIRS4[d][1]), n2 = at(i + 2 * DIRS4[d][0], j + 2 * DIRS4[d][1]);
+      if ((n1 && !n1.water && n1.H - cc.H >= MOVE.vault) || (n2 && !n2.water && n2.H - cc.H >= MOVE.vault)) sides++;
+    }
+    if (!sides) continue;
+    var ck = Math.floor(i / 8) * 1000 + Math.floor(j / 8), cv = coverBest.get(ck);
+    if (!cv || sides > cv.s) coverBest.set(ck, { k: 'cover', x: x0 + i, z: z0 + j, h: cc.H, s: sides });
+  }
+  coverBest.forEach(function (v) { aff.push(v); });
+  aff.sort(function (a, b) { return a.k < b.k ? -1 : (a.k > b.k ? 1 : (a.x - b.x || a.z - b.z)); });
+
   return {
-    rx: rx, rz: rz, x0: x0, z0: z0,
+    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff,
     /* World-coordinate keys, every one of them. A window converts on the way in
        and on the way out; nothing in here knows a window exists. */
     trail: trail, order: order, grade: grade, bridges: bridges, landmark: lm,

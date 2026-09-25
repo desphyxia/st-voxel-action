@@ -19,12 +19,13 @@ import { makeStream } from '../../src/sim/stream.mjs';
 import { sin, cos, hyp } from '../../src/gen/exact.mjs';
 import { mulberry32, xmur3 } from '../../src/gen/rng.mjs';
 import { makeCollider, colliderForWorld, colliderFromPacked, LIQUID, EPS } from '../../src/sim/collider.mjs';
-import { placeOnGround, step, embedded, snapshot, restore, ACTOR, TICK, RUN } from '../../src/sim/actor.mjs';
+import { placeOnGround, step, embedded, snapshot, restore, ACTOR, TICK, RUN, JUMP_V, jumpVFor } from '../../src/sim/actor.mjs';
 import { makeCamera, moveFrom, project, aimFromStick, aimFromPointer,
          START_YAW, QUARTER, snap } from '../../src/sim/camera.mjs';
 import { makeInput, defaultBindings, ACTIONS } from '../../src/sim/input.mjs';
 import * as CB from '../../src/sim/combat.mjs';
 import * as EN from '../../src/sim/enemy.mjs';
+import { findPath, navGraph, NAV_STEP } from '../../src/sim/nav.mjs';
 import * as LT from '../../src/sim/lattice.mjs';
 import * as LO from '../../src/sim/loot.mjs';
 import { makeLoopback } from '../../src/net/transport.mjs';
@@ -896,6 +897,61 @@ export function enemySuite() {
         `y ${d.e.y.toFixed(2)}, ${d.e.hp} hp`);
   }
 
+  /* 1b. It collides as wide as it is drawn (#37). Two walls a metre apart: a
+         player (0.7 m) walks through, a sentry (1.35 m) cannot, and the player's
+         jump is exactly the one the budget was solved for. */
+  {
+    const c = makeCollider(20, V);
+    c.addBox(-19.9, 19.9, -19.9, 19.9, -2, 0);
+    c.addBox(-0.4, 0.4, -19.9, -0.5, 0, 3);
+    c.addBox(-0.4, 0.4, 0.5, 19.9, 0, 3);
+    c.finish();
+    const through = (a) => {
+      for (let t = 0; t < 180; t++) step(c, a, { mx: 1, mz: 0 });
+      return a.x > 1;
+    };
+    const p = through(placeOnGround(c, -3, 0));
+    const e = EN.makeSentry(c, -3, 0), es = through(e);
+    say('a sentry collides as wide as it is drawn, and a player as a player',
+        p && !es && e.rad === EN.SENTRY.rad && jumpVFor(ACTOR.radius) === JUMP_V,
+        `a 1 m gap: player ${p ? 'through' : 'STUCK'}, sentry (rad ${e.rad}) ${es ? 'THROUGH' : 'held'}; player jump ${JUMP_V.toFixed(4)} m/s unchanged`);
+  }
+  /* 1c. It goes round what it cannot climb (#15), and it gives up past its
+         leash and walks home (#6). A wall between it and a player that holds
+         still: straight at them is a wall, so it has to find the end of it. */
+  {
+    const c = makeCollider(20, V);
+    c.addBox(-19.9, 19.9, -19.9, 19.9, -2, 0);
+    c.addBox(2.5, 3.5, -19.9, 6, 0, 3);
+    c.finish();
+    const p = placeOnGround(c, 0, 0), e = EN.makeSentry(c, 7, 0);
+    let reached = -1, detoured = 0;
+    for (let t = 0; t < ticks(25) && reached < 0; t++) {
+      EN.stepSentry(c, e, [p]);
+      if (e.z > detoured) detoured = e.z;
+      if (hyp(e.x - p.x, e.z - p.z) <= EN.SENTRY.range + 0.2) reached = t;
+    }
+    say('a sentry finds its way round a wall to reach you',
+        reached > 0 && detoured > 6,
+        reached > 0 ? `reached in ${(reached * TICK).toFixed(1)} s, round the wall's end at z ${detoured.toFixed(1)}`
+                    : `NOT reached; got as far as ${e.x.toFixed(1)},${e.z.toFixed(1)}`);
+
+    /* Now run: straight away from its post, faster than it walks. */
+    const post = e.ai.post;
+    let gaveUp = -1, home = -1;
+    for (let t = 0; t < ticks(60) && home < 0; t++) {
+      step(c, p, { mx: -1, mz: 0 });
+      EN.stepSentry(c, e, [p]);
+      if (gaveUp < 0 && e.ai.state === EN.EST.RETURN) gaveUp = t;
+      if (gaveUp >= 0 && e.ai.state === EN.EST.DORMANT) home = t;
+    }
+    const off = hyp(e.x - post.x, e.z - post.z);
+    say('and past its leash it gives up and walks back to its post',
+        gaveUp > 0 && home > gaveUp && off < 1,
+        `gave up after ${(gaveUp * TICK).toFixed(1)} s, home ${(home * TICK).toFixed(1)} s, ${off.toFixed(2)} m from its post`);
+  }
+
+
   /* 2. It notices, closes, and gets into range under its own steam. */
   {
     const d = duel(9);
@@ -1297,7 +1353,7 @@ export function regionSuite() {
   /* Three offsets, so the overlap is not always the same shape: one chunk
      apart, two chunks apart, and a diagonal that crosses a region corner. */
   const pairs = [[[0, 0], [32, 0]], [[0, 0], [64, 0]], [[0, 0], [32, 32]]];
-  let compared = 0, hBad = 0, tBad = 0;
+  let compared = 0, hBad = 0, tBad = 0, affShared = 0;
   const featureBad = [];
 
   for (const [[ax, az], [bx, bz]] of pairs) {
@@ -1329,6 +1385,16 @@ export function regionSuite() {
     const bA = shared(bridgesOf(A, ax, az), B, bx, bz), bB = shared(bridgesOf(B, bx, bz), A, ax, az);
     if (bA.join('|') !== bB.join('|')) featureBad.push(`crossings ${ax},${az} vs ${bx},${bz}`);
 
+    /* And the encounter affordances (#42): every chokepoint, arena, vantage
+       point and piece of cover both can see, identical in kind, height and
+       score, not just in place. */
+    const affOf = (w, other, oox, ooz) => w.affordances
+      .filter((a) => seen(other, oox, ooz, a.wx, a.wz))
+      .map((a) => [a.k, a.wx, a.wz, a.h, a.s].join(',')).sort();
+    const aA = affOf(A, B, bx, bz), aB = affOf(B, A, ax, az);
+    affShared += aA.length;
+    if (aA.join('|') !== aB.join('|')) featureBad.push(`affordances ${ax},${az} vs ${bx},${bz}: ${aA.length} vs ${aB.length}`);
+
     /* A landmark both windows can see must be the same landmark. */
     const lmOf = (w, ox, oz) => (w.lmPos ? [w.lmPos[0] + ox, w.lmPos[1], w.lmPos[2] + oz] : null);
     const la = lmOf(A, ax, az), lb = lmOf(B, bx, bz);
@@ -1344,9 +1410,9 @@ export function regionSuite() {
       hBad === 0, `${compared} cells compared, ${hBad} height mismatches`);
   say('and on where the trail runs across it',
       tBad === 0, `${tBad} trail mismatches over ${compared} cells`);
-  say('and on the sites, crossings and landmarks they can both see',
-      featureBad.length === 0,
-      featureBad.length ? featureBad.join('; ') : 'every shared feature identical');
+  say('and on the sites, crossings, landmarks and encounter affordances they can both see',
+      featureBad.length === 0 && affShared > 0,
+      featureBad.length ? featureBad.join('; ') : `every shared feature identical, ${affShared} affordances among them`);
 
   /* ---- the voxels themselves (issue #41) ----------------------------------
      Agreeing on heights and on where the trail runs is the region pass. This
@@ -3101,5 +3167,81 @@ export function skySuite() {
   say('rain wets the ground, and it dries after',
       spell > 0 && during > 0.5 && after > 0 && after < during && dry === 0,
       `spell ${spell}: wetness ${during.toFixed(2)} in the rain, ${after.toFixed(2)} a spell later, ${dry.toFixed(2)} four on`);
+  return out;
+}
+
+/* ------------------------------------------------------------------ nav ---- */
+
+/**
+ * The navigation graph (#15): the verbs of the movement budget, per radius
+ * (#37), asked ahead of time. Built on small hand-made colliders so each edge
+ * kind is tested on its own, then the machines on real ground.
+ */
+export function navSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const floor = () => { const c = makeCollider(20, V); c.addBox(-19.9, 19.9, -19.9, 19.9, -2, 0); return c; };
+  const P = { rad: ACTOR.radius }, S = { rad: EN.SENTRY.rad, canVault: false, canJump: false };
+
+  /* A wall across the arena with a 1 m door, and a long way round. */
+  {
+    const c = floor();
+    c.addBox(-0.5, 0.5, -19.9, -0.5, 0, 3);
+    c.addBox(-0.5, 0.5, 0.5, 12, 0, 3);
+    c.finish();
+    const a = { x: -4, y: 0, z: 0 }, b = { x: 4, z: 0 };
+    const pp = findPath(c, a, b, P), sp = findPath(c, a, b, Object.assign({ maxNodes: 20000 }, S));
+    const lenOf = (p) => p.reduce((s, q, i) => s + (i ? hyp(q.x - p[i - 1].x, q.z - p[i - 1].z) : 0), 0);
+    const aroundZ = sp && Math.max(...sp.map((q) => q.z));
+    say('a player paths through a door a sentry has to go round',
+        pp && !pp.partial && sp && !sp.partial && lenOf(pp) < 10 && lenOf(sp) > 20 && aroundZ > 12,
+        `player ${pp ? lenOf(pp).toFixed(1) : '-'} m through the door; sentry ${sp ? lenOf(sp).toFixed(1) : '-'} m, round the end at z ${aroundZ ? aroundZ.toFixed(1) : '-'}`);
+  }
+
+  /* A 1.5 m ledge: a vault for a body that vaults, nothing for one that does not. */
+  {
+    const c = floor();
+    c.addBox(2, 19.9, -19.9, 19.9, 0, 1.5);
+    c.finish();
+    const pv = findPath(c, { x: 0, y: 0, z: 0 }, { x: 4, z: 0 }, P);
+    const sv = findPath(c, { x: 0, y: 0, z: 0 }, { x: 4, z: 0 }, S);
+    say('a ledge above a step is a vault for a player and not for a sentry',
+        pv && !pv.partial && pv.some((q) => q.kind === 'vault') && sv && sv.partial,
+        `player ${pv && pv.some((q) => q.kind === 'vault') ? 'vaults' : 'NO VAULT'}; sentry ${sv && sv.partial ? 'stops short' : 'CLIMBED'}`);
+  }
+
+  /* A gap: 2 m is a jump link, 3 m is not — the budget is 2.5 m. */
+  {
+    const gap = (w) => {
+      const c = makeCollider(20, V);
+      c.addBox(-19.9, 0, -19.9, 19.9, -2, 0);
+      c.addBox(w, 19.9, -19.9, 19.9, -2, 0);
+      c.finish();
+      const g = navGraph(c, { x0: -3, x1: w + 3, z0: -1, z1: 1 }, P);
+      return g.links.filter((l) => l.kind === 'jump').length;
+    };
+    const j2 = gap(2), j3 = gap(3);
+    say('a gap inside the jump budget is a jump link, and one past it is not',
+        j2 > 0 && j3 === 0, `2 m gap: ${j2} jump links; 3 m gap: ${j3}`);
+  }
+
+  /* On real ground: the machines' posts, and a machine reaching a player on
+     the far side of something it cannot climb. */
+  {
+    let placed = 0, fromGround = 0, bad = [];
+    for (const s of GOLDEN_SEEDS) {
+      const w = buildWorld(s), col = colliderForWorld(w), posts = EN.postsFor(col, w);
+      placed += posts.length;
+      posts.forEach((p, i) => {
+        if (w.affordances.some((a) => a.x === p[0] && a.z === p[1])) fromGround++;
+        const d = hyp(p[0] - w.spawn[0], p[1] - w.spawn[2]);
+        if (d < EN.SENTRY.sight) bad.push(`${s.nm} post ${i} ${d.toFixed(1)} m from spawn`);
+        for (let q = 0; q < i; q++) if (hyp(p[0] - posts[q][0], p[1] - posts[q][1]) < 10) bad.push(`${s.nm} posts ${q},${i} close`);
+      });
+    }
+    say('machines hold posts the ground offers, out of sight of the spawn and apart',
+        bad.length === 0 && placed >= GOLDEN_SEEDS.length * 2 && fromGround >= placed * 0.8,
+        bad.length ? bad.join('; ') : `${placed} posts over ${GOLDEN_SEEDS.length} seeds, ${fromGround} from the region's affordances`);
+  }
   return out;
 }

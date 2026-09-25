@@ -93,6 +93,9 @@ export function buildWorld(cfg) {
        holding stand on them (props.mjs), which makes them the places worth
        putting something in — see src/sim/loot.mjs. */
     sites: w.sites,
+    /* Chokepoints, arenas, vantage points and cover, as the region pass found
+       them (#42) — what places an encounter or a set-piece reads. */
+    affordances: w.affordances,
     Hs: w.Hs, FLG: w.FLG, NX: w.NX, NZ: w.NZ, half: w.half,
     /* The water surface per voxel column, so a check can ask whether a bank
        holds what is beside it (#57). */

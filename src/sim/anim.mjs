@@ -220,7 +220,7 @@ export function poseSentry(m, look) {
     p.body.sy = 0.72; p.armL.ry = 0.5; p.armR.ry = -0.5; p.armL.pz = -0.12; p.armR.pz = -0.12;
     return p;
   }
-  if (m.s === EST.WAKE || m.s === EST.CLOSE) {
+  if (m.s === EST.WAKE || m.s === EST.CLOSE || m.s === EST.RETURN) {
     const s = sin(walk);
     p.body.py = (s < 0 ? -s : s) * 0.035;
     p.body.rz = s * 0.05;

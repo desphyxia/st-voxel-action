@@ -1734,8 +1734,74 @@ function buildRegion(G, rx, rz) {
     lm = { x: x0 + bi.i, z: z0 + bi.j, h: bi.h, kind: kind, dom: bi.dom };
   }
 
+  /* ---- encounter affordances (#42) ----
+     What the pass already knows about its ground, written down for whatever
+     places a fight or a set-piece: where a route is forced through a gap,
+     where there is room to fight, where the high ground is, and where there
+     is something to get behind. Owned ground only, so a cell is annotated by
+     exactly one region, and in world coordinates like everything else here.
+     Each entry is { k, x, z, h, s }: kind, place, height, and a score that
+     means "how much of this it is" — how narrow, how big, how covered. */
+  var aff = [];
+  if (lm) aff.push({ k: 'vantage', x: lm.x, z: lm.z, h: lm.h, s: 1 });
+  var blocks = function (cp, cq) {
+    return !cq || cq.magma || (cq.water && (cq.wl - cq.H) > MOVE.wade) || Math.abs(cq.H - cp.H) > MOVE.step;
+  };
+  /* Chokepoints: every crossing, and trail ground walled in on both sides —
+     the one cell either way across the route is water, magma or a step the
+     budget will not take. One per 6 m block, the narrowest. */
+  bridges.forEach(function (b) { aff.push({ k: 'choke', x: b[0], z: b[1], h: b[5], s: 2 }); });
+  var best = new Map();
+  for (var t = 0; t < order.length; t++) {
+    var ti = order[t][0] - x0, tj = order[t][1] - z0;
+    if (!own(ti, tj) || ti < 1 || tj < 1 || ti >= N - 1 || tj >= N - 1) continue;
+    var tc = at(ti, tj);
+    if (tc.water || tc.magma) continue;
+    var walled = (blocks(tc, at(ti - 1, tj)) && blocks(tc, at(ti + 1, tj)) ? 1 : 0)
+               + (blocks(tc, at(ti, tj - 1)) && blocks(tc, at(ti, tj + 1)) ? 1 : 0);
+    if (!walled) continue;
+    var bk = Math.floor(ti / 6) * 1000 + Math.floor(tj / 6), cur = best.get(bk);
+    if (!cur || walled > cur.s) best.set(bk, { k: 'choke', x: x0 + ti, z: z0 + tj, h: tc.H, s: walled });
+  }
+  best.forEach(function (v) { aff.push(v); });
+  /* Arenas: flat ground grown outwards from a 4 m lattice until it is not flat
+     any more, biggest first, and never inside one already taken. */
+  var arenas = [];
+  for (i = lo; i < hi; i += 4) for (j = lo; j < hi; j += 4) {
+    if (!own(i, j) || !flatAt(i, j, 3)) continue;
+    var r = 3;
+    while (r < 7 && flatAt(i, j, r + 1)) r++;
+    arenas.push({ k: 'arena', x: x0 + i, z: z0 + j, h: at(i, j).H, s: r });
+  }
+  arenas.sort(function (a, b) { return b.s - a.s || a.x - b.x || a.z - b.z; });
+  var taken = [];
+  arenas.forEach(function (a) {
+    for (var q = 0; q < taken.length; q++) {
+      var o = taken[q];
+      if (Math.max(Math.abs(a.x - o.x), Math.abs(a.z - o.z)) < a.s + o.s) return;
+    }
+    taken.push(a); aff.push(a);
+  });
+  /* Cover: walkable ground with a rise beside it too tall to see over — the
+     vault height, which is also where a machine loses sight of you. Scored by
+     how many sides it covers; one per 8 m block, the most covered. */
+  var coverBest = new Map();
+  for (i = lo; i < hi; i += 2) for (j = lo; j < hi; j += 2) {
+    if (!own(i, j) || !flatAt(i, j, 1)) continue;
+    var cc = at(i, j), sides = 0;
+    for (var d = 0; d < 4; d++) {
+      var n1 = at(i + DIRS4[d][0], j + DIRS4[d][1]), n2 = at(i + 2 * DIRS4[d][0], j + 2 * DIRS4[d][1]);
+      if ((n1 && !n1.water && n1.H - cc.H >= MOVE.vault) || (n2 && !n2.water && n2.H - cc.H >= MOVE.vault)) sides++;
+    }
+    if (!sides) continue;
+    var ck = Math.floor(i / 8) * 1000 + Math.floor(j / 8), cv = coverBest.get(ck);
+    if (!cv || sides > cv.s) coverBest.set(ck, { k: 'cover', x: x0 + i, z: z0 + j, h: cc.H, s: sides });
+  }
+  coverBest.forEach(function (v) { aff.push(v); });
+  aff.sort(function (a, b) { return a.k < b.k ? -1 : (a.k > b.k ? 1 : (a.x - b.x || a.z - b.z)); });
+
   return {
-    rx: rx, rz: rz, x0: x0, z0: z0,
+    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff,
     /* World-coordinate keys, every one of them. A window converts on the way in
        and on the way out; nothing in here knows a window exists. */
     trail: trail, order: order, grade: grade, bridges: bridges, landmark: lm,
@@ -1903,6 +1969,19 @@ function layRoutes(w) {
     }
   }
 
+  /* 4. Encounter affordances (#42), clipped to the window like everything else
+        here. x and z are metres from the window's middle, as a crossing's are;
+        wx and wz keep the world place, which is what two windows agree on. */
+  var affordances = [];
+  for (q = 0; q < regions.length; q++) {
+    var ra = regions[q].affordances || [];
+    for (k = 0; k < ra.length; k++) {
+      var af = ra[k];
+      if (!inside(af.x, af.z)) continue;
+      affordances.push({ k: af.k, x: af.x - OX, z: af.z - OZ, wx: af.x, wz: af.z, h: af.h, s: af.s });
+    }
+  }
+  w.affordances = affordances;
   w.TRAIL = TRAIL; w.sites = sites; w.bridges = bridges; w.trailPath = trailPath;
   /* The regions this window is a view onto, so later passes can read the
      landmark without deciding one of their own. */
@@ -3060,6 +3139,9 @@ function buildWorld(cfg) {
        holding stand on them (props.mjs), which makes them the places worth
        putting something in — see src/sim/loot.mjs. */
     sites: w.sites,
+    /* Chokepoints, arenas, vantage points and cover, as the region pass found
+       them (#42) — what places an encounter or a set-piece reads. */
+    affordances: w.affordances,
     Hs: w.Hs, FLG: w.FLG, NX: w.NX, NZ: w.NZ, half: w.half,
     /* The water surface per voxel column, so a check can ask whether a bank
        holds what is beside it (#57). */
@@ -5438,7 +5520,15 @@ const RUN = 4.0;
  * top so that a jump timed within a frame of the lip still clears MOVE.jump;
  * any more than that and a 3 m canyon would stop being a canyon.
  */
-const FLIGHT = MOVE.jump - 2 * ACTOR.radius + RUN * TICK;
+/**
+ * The jump solved for a box of half-width `rad` (#37). Wider bodies cross more
+ * of a gap by standing on its lips, so they need less flight — the same
+ * arithmetic as the player's, with the player's radius swapped out. The nav
+ * graph (#15) is handed this too: a jump link is only meaningful per radius.
+ */
+function flightFor(rad) { return MOVE.jump - 2 * rad + RUN * TICK; }
+function jumpVFor(rad) { return (GRAVITY * (flightFor(rad) / RUN)) / 2; }
+const FLIGHT = flightFor(ACTOR.radius);
 const AIRTIME = FLIGHT / RUN;
 const JUMP_V = (GRAVITY * AIRTIME) / 2;
 const JUMP_APEX = (JUMP_V * JUMP_V) / (2 * GRAVITY);
@@ -5452,7 +5542,7 @@ const VAULT_TIME = 0.35;
 /** Terminal velocity, low enough that no fall tunnels a floor in one tick. */
 const TERMINAL = 45;
 
-function makeActor(x, y, z) {
+function makeActor(x, y, z, rad) {
   /* Every actor carries a frame, machines included. An empty lattice computes
      exactly the constants in combat.mjs, so a sentry plays the game it always
      played; giving it one anyway means there is no actor anywhere whose rules
@@ -5461,6 +5551,9 @@ function makeActor(x, y, z) {
   const st = gear.st;
   return {
     x, y, z, vx: 0, vy: 0, vz: 0,
+    /** Half-width of the collision box (#37). A body's width, not a reach:
+        combat's `r` on a target is a separate thing and is not this. */
+    rad: rad === undefined ? ACTOR.radius : rad,
     grounded: false,
     /** Highest point since the feet last left the ground: what a drop measures from. */
     apex: y,
@@ -5504,10 +5597,11 @@ function makeActor(x, y, z) {
 }
 
 /** Drop an actor onto whatever holds it at (x, z). How spawning works. */
-function placeOnGround(col, x, z, fromY) {
+function placeOnGround(col, x, z, fromY, rad) {
+  const r = rad === undefined ? ACTOR.radius : rad;
   const ceil = (fromY === undefined ? Infinity : fromY) + EPS;
-  const g = col.supportUnder(x, z, ACTOR.radius, ceil);
-  const a = makeActor(x, g === -Infinity ? 0 : g, z);
+  const g = col.supportUnder(x, z, r, ceil);
+  const a = makeActor(x, g === -Infinity ? 0 : g, z, r);
   a.grounded = g !== -Infinity;
   a.apex = a.y;
   return a;
@@ -5598,7 +5692,7 @@ function applyDisplay(a, m) {
 
 /** Is the actor's box inside solid ground? Must never be true after a tick. */
 function embedded(col, a) {
-  return col.overlaps(a.x, a.z, ACTOR.radius, a.y + EPS, a.y + ACTOR.height - EPS);
+  return col.overlaps(a.x, a.z, a.rad, a.y + EPS, a.y + ACTOR.height - EPS);
 }
 
 /**
@@ -5607,7 +5701,7 @@ function embedded(col, a) {
  * through the air where the body is now, or rise onto the thing blocking it.
  */
 function slide(col, a, nx, nz) {
-  const r = ACTOR.radius, h = ACTOR.height;
+  const r = a.rad, h = ACTOR.height;
   if (!col.overlaps(nx, nz, r, a.y + EPS, a.y + h - EPS)) {
     a.travelled += Math.abs(nx - a.x) + Math.abs(nz - a.z);
     a.x = nx; a.z = nz;
@@ -5624,7 +5718,7 @@ function slide(col, a, nx, nz) {
 
 /** A ledge too tall to step onto but not too tall to climb. Starts the vault. */
 function tryVault(col, a, dx, dz) {
-  const r = ACTOR.radius, h = ACTOR.height;
+  const r = a.rad, h = ACTOR.height;
   if (!a.grounded || (dx === 0 && dz === 0)) return false;
   if (a.swing || a.dodge) return false;        /* committed means committed */
   if (a.canVault === false) return false;
@@ -5656,7 +5750,7 @@ function step(col, a, input, targets, dt = TICK) {
   if (a.dead) return a;
   a.ticks++;
   a.blocked = false;
-  const r = ACTOR.radius, h = ACTOR.height;
+  const r = a.rad, h = ACTOR.height;
 
   /* A vault owns the actor until it finishes: all the way up, and only then
      across. Overlapping the two looks better and puts the box inside the ledge
@@ -5717,7 +5811,8 @@ function step(col, a, input, targets, dt = TICK) {
   }
 
   if (input.jump && !a.swing && !a.dodge && (a.grounded || a.swimming)) {
-    a.vy = a.swimming ? JUMP_V * 0.35 : JUMP_V;
+    const jv = a.rad === ACTOR.radius ? JUMP_V : jumpVFor(a.rad);
+    a.vy = a.swimming ? jv * 0.35 : jv;
     a.grounded = false;
     a.apex = a.y;
   }
@@ -5778,6 +5873,258 @@ function step(col, a, input, targets, dt = TICK) {
   if (targets) sweep(a, targets);
   return a;
 }
+/* ---------- src/sim/nav.mjs ---------- */
+/**
+ * Navigation: where a body of a given width can go, and how to get there
+ * (issue #15).
+ *
+ * A graph over the collider itself, not over the generator's cells — so it is
+ * the same question the controller answers every tick, asked ahead of time,
+ * and it works unchanged over one window's collider or a streamed field of
+ * chunks. Nodes are places a box can stand, on a NAV_STEP lattice; edges are
+ * the verbs of the movement budget (docs/DECISIONS.md §3):
+ *
+ *   walk    to a neighbour no more than a step up, or down by less than a
+ *           fall that would hurt
+ *   vault   onto a ledge above a step and within the vault height — only for
+ *           a body that vaults (a sentry does not; it goes around)
+ *   jump    across a gap to ground at about the same height, no wider than the
+ *           jump budget — a link, not a neighbour
+ *
+ * Every edge is per radius (#37): a wide machine does not fit through a gap a
+ * player does, and `2 * radius` of any jump is crossed by standing on the
+ * lips. The search is lazy — nodes are evaluated as A* reaches them, inside a
+ * bound — because a streamed world has no whole to build a graph over;
+ * `navGraph` builds the explicit one for a box, for tools and tests.
+ *
+ * Deterministic: the open set breaks ties by node order, never by insertion
+ * luck, because both machines in a co-op session must agree on where a
+ * machine walked. No Math.sin and friends, like the rest of src/.
+ */
+
+
+
+
+
+/** Metres between lattice points. Half a metre: finer than any gap that matters. */
+const NAV_STEP = 0.5;
+/** A drop a path will take on purpose: short of one that hurts. */
+const SAFE_DROP = MOVE.fall - 1;
+const DIRS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+
+function opts0(o) {
+  o = o || {};
+  return {
+    rad: o.rad === undefined ? ACTOR.radius : o.rad,
+    height: o.height === undefined ? ACTOR.height : o.height,
+    canVault: o.canVault !== false,
+    canJump: o.canJump !== false,
+    maxNodes: o.maxNodes || 6000,
+  };
+}
+
+/**
+ * Where a box stands at (x, z), reached from a body at height `fromY`: the
+ * highest surface no more than `reach` above it. null if there is none, if the
+ * box would not fit there, if it is magma, or if the water is over its head.
+ */
+function standAt(col, x, z, fromY, reach, o) {
+  const y = col.supportUnder(x, z, o.rad, fromY + reach + EPS);
+  if (y === -Infinity) return null;
+  if (col.overlaps(x, z, o.rad, y + EPS, y + o.height - EPS)) return null;
+  const liq = col.liquidAt(x, z);
+  if (liq.kind === LIQUID.MAGMA && y <= liq.level + 0.35) return null;
+  if (liq.kind === LIQUID.WATER && liq.level - y > MOVE.wade) return null;
+  return y;
+}
+
+/**
+ * standAt, remembered for one search. The same lattice point is asked about
+ * from each of its neighbours — eight times over, and twice more for every
+ * diagonal — and the answer depends only on where, from what height and how
+ * far up it may reach. Measured: a sentry's search on ash went from 30 ms
+ * median to a fraction of that once the repeats were not recomputed.
+ */
+function memoStand(col, o) {
+  const seen = new Map();
+  return (i, j, fromY, reach) => {
+    const k = i + ',' + j + ',' + Math.round(fromY * 4) + ',' + reach;
+    let v = seen.get(k);
+    if (v === undefined) { v = standAt(col, posOf(i), posOf(j), fromY, reach, o); seen.set(k, v); }
+    return v;
+  };
+}
+
+/** Lattice index for a world coordinate, and back. */
+const cellOf = (p) => Math.round(p / NAV_STEP);
+const posOf = (i) => i * NAV_STEP;
+
+/** The edges out of a node, as { i, j, y, cost, kind }. */
+function edges(col, n, o, st) {
+  const out = [];
+  const x = posOf(n.i), z = posOf(n.j);
+  for (let d = 0; d < 8; d++) {
+    const di = DIRS8[d][0], dj = DIRS8[d][1], diag = di && dj;
+    const ni = n.i + di, nj = n.j + dj, nx = posOf(ni), nz = posOf(nj);
+    const len = diag ? NAV_STEP * 1.4142135623730951 : NAV_STEP;
+    /* Diagonals only where both straight neighbours are open: a corner cut
+       through a wall is not a move the controller can make. */
+    if (diag) {
+      if (st(n.i + di, n.j, n.y, MOVE.step) === null) continue;
+      if (st(n.i, n.j + dj, n.y, MOVE.step) === null) continue;
+    }
+    const w = st(ni, nj, n.y, MOVE.step);
+    if (w !== null && n.y - w <= SAFE_DROP + EPS) {
+      const up = Math.max(0, w - n.y), down = Math.max(0, n.y - w);
+      out.push({ i: ni, j: nj, y: w, cost: len + up * 1.5 + (down > MOVE.step ? down * 0.5 : 0), kind: 'walk' });
+      continue;
+    }
+    if (diag) continue;
+    /* Blocked by something above a step: a vault, if this body vaults. */
+    if (o.canVault) {
+      const v = st(ni, nj, n.y, MOVE.vault);
+      if (v !== null && v - n.y > MOVE.step + EPS && v - n.y <= MOVE.vault + EPS
+          && !col.overlaps(x, z, o.rad, n.y + EPS, v + o.height - EPS)) {
+        out.push({ i: ni, j: nj, y: v, cost: len + 2.5, kind: 'vault' });
+        continue;
+      }
+    }
+    /* A gap: nothing within a safe drop straight ahead. Look across it for
+       ground at about this height, no further than the jump budget. */
+    if (o.canJump && w === null) {
+      const gapBelow = col.supportUnder(nx, nz, o.rad, n.y + EPS);
+      if (gapBelow !== -Infinity && n.y - gapBelow <= SAFE_DROP) continue;
+      for (let k = 2; k * NAV_STEP <= MOVE.jump + EPS; k++) {
+        const li = n.i + di * k, lj = n.j + dj * k;
+        const l = st(li, lj, n.y, MOVE.step);
+        if (l === null) continue;
+        if (Math.abs(l - n.y) > MOVE.step + EPS) break;
+        if (col.overlaps(posOf(n.i + di * (k >> 1)), posOf(n.j + dj * (k >> 1)), o.rad, n.y + 0.5, n.y + o.height)) break;
+        out.push({ i: li, j: lj, y: l, cost: k * NAV_STEP + 2, kind: 'jump' });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+const keyOf = (i, j, y) => i + ',' + j + ',' + Math.round(y * 4);
+
+/** A binary heap on (f, order), so equal costs pop in a fixed order. */
+function heap() {
+  const a = [];
+  const less = (p, q) => p.f < q.f || (p.f === q.f && p.o < q.o);
+  return {
+    get size() { return a.length; },
+    push(v) {
+      a.push(v);
+      for (let c = a.length - 1; c > 0;) {
+        const p = (c - 1) >> 1;
+        if (!less(a[c], a[p])) break;
+        [a[c], a[p]] = [a[p], a[c]]; c = p;
+      }
+    },
+    pop() {
+      const top = a[0], last = a.pop();
+      if (a.length) {
+        a[0] = last;
+        for (let p = 0; ;) {
+          const l = 2 * p + 1, r = l + 1;
+          let m = p;
+          if (l < a.length && less(a[l], a[m])) m = l;
+          if (r < a.length && less(a[r], a[m])) m = r;
+          if (m === p) break;
+          [a[p], a[m]] = [a[m], a[p]]; p = m;
+        }
+      }
+      return top;
+    },
+  };
+}
+
+/**
+ * The cheapest way for a body to get from `from` ({x, y, z}) to near `to`
+ * ({x, z}), as waypoints { x, y, z, kind } ending at the goal's lattice point
+ * — or the way to the closest point it could reach, flagged `partial`, when
+ * the goal cannot be reached inside the node budget. null if it cannot move.
+ */
+function findPath(col, from, to, options) {
+  const o = opts0(options);
+  /* The lattice point nearest the body, or — when that one is inside a wall
+     for a body this wide, which is exactly where a machine pressed against a
+     wall stands — the nearest one within a metre that it can stand on. */
+  let si = cellOf(from.x), sj = cellOf(from.z);
+  let sy = standAt(col, posOf(si), posOf(sj), from.y, MOVE.step, o);
+  if (sy === null) {
+    const near = [];
+    for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) {
+      if (a || b) near.push([si + a, sj + b, hyp(posOf(si + a) - from.x, posOf(sj + b) - from.z)]);
+    }
+    near.sort((p, q) => p[2] - q[2] || p[0] - q[0] || p[1] - q[1]);
+    for (const [ni, nj] of near) {
+      const y = standAt(col, posOf(ni), posOf(nj), from.y, MOVE.step, o);
+      if (y !== null) { si = ni; sj = nj; sy = y; break; }
+    }
+  }
+  if (sy === null) return null;
+  const gi = cellOf(to.x), gj = cellOf(to.z);
+  const h = (i, j) => hyp(i - gi, j - gj) * NAV_STEP;
+  const st = memoStand(col, o);
+  const start = { i: si, j: sj, y: sy, g: 0, prev: null, kind: 'start' };
+  const open = heap(), best = new Map();
+  let order = 0, closest = start, closestH = h(si, sj), expanded = 0;
+  best.set(keyOf(si, sj, sy), start);
+  open.push({ f: closestH, o: order++, n: start });
+  let goal = null;
+  while (open.size && expanded < o.maxNodes) {
+    const { n } = open.pop();
+    if (n.closed) continue;
+    n.closed = true; expanded++;
+    const hn = h(n.i, n.j);
+    if (hn < closestH) { closest = n; closestH = hn; }
+    if (n.i === gi && n.j === gj) { goal = n; break; }
+    for (const e of edges(col, n, o, st)) {
+      const k = keyOf(e.i, e.j, e.y), g = n.g + e.cost, old = best.get(k);
+      if (old && (old.closed || old.g <= g)) continue;
+      const m = { i: e.i, j: e.j, y: e.y, g, prev: n, kind: e.kind };
+      best.set(k, m);
+      open.push({ f: g + h(e.i, e.j), o: order++, n: m });
+    }
+  }
+  const end = goal || closest;
+  const path = [];
+  for (let n = end; n; n = n.prev) path.push({ x: posOf(n.i), y: n.y, z: posOf(n.j), kind: n.kind });
+  path.reverse();
+  path.partial = !goal;
+  path.expanded = expanded;
+  return path;
+}
+
+/**
+ * The explicit graph over a box: every node a body can stand on and every
+ * edge out of it, jump links included. What #15 asks to be exported, and what
+ * a tool or the hookline frame can read without running a search.
+ */
+function navGraph(col, box, options) {
+  const o = opts0(options);
+  const nodes = [], index = new Map(), links = [];
+  for (let i = cellOf(box.x0); i <= cellOf(box.x1); i++) {
+    for (let j = cellOf(box.z0); j <= cellOf(box.z1); j++) {
+      const y = standAt(col, posOf(i), posOf(j), Infinity, 0, o);
+      if (y === null) continue;
+      index.set(keyOf(i, j, y), nodes.length);
+      nodes.push({ i, j, x: posOf(i), y, z: posOf(j) });
+    }
+  }
+  const st = memoStand(col, o);
+  for (let a = 0; a < nodes.length; a++) {
+    for (const e of edges(col, nodes[a], o, st)) {
+      const b = index.get(keyOf(e.i, e.j, e.y));
+      if (b !== undefined) links.push({ a, b, cost: e.cost, kind: e.kind });
+    }
+  }
+  return { nodes, links, step: NAV_STEP, rad: o.rad };
+}
 /* ---------- src/sim/enemy.mjs ---------- */
 /**
  * One enemy: a **sentry automaton**, a tech war machine still holding a
@@ -5815,6 +6162,7 @@ function step(col, a, input, targets, dt = TICK) {
 
 
 
+
 const SENTRY = {
   hp: 60,
   /** How far it notices you. Deliberately short: it holds a position. */
@@ -5828,11 +6176,19 @@ const SENTRY = {
   damage: 18,
   /** Fraction of the player's run speed. It should never simply outrun you. */
   speed: 0.58,
+  /** Half its drawn width (1.35 m): it collides as wide as it looks (#37),
+      not as a 0.7 m human. A doorway a player fits through, it does not. */
+  rad: 0.675,
+  /** How far from its post it will follow you (#6). Past this it gives up and
+      walks back: these things hold a position, they do not hunt. */
+  leash: 16,
 };
 const COS_HALF = cos(SENTRY.arc / 2);
 
 const EST = {
   DORMANT: 0, WAKE: 1, CLOSE: 2, TELEGRAPH: 3, STRIKE: 4, RECOVER: 5, STAGGER: 6, DEAD: 7,
+  /** Walking back to its post, having lost you or been drawn too far (#6). */
+  RETURN: 8,
 };
 
 const WAKE_TIME = 0.45;
@@ -5844,13 +6200,19 @@ const RECOVER_TIME = 0.90;
 const STAGGER_TIME = 0.28;
 /** How long it commits to going around something before trying forward again. */
 const SIDESTEP_TIME = 0.5;
+/** How often a path is worked out again while it is being followed (#15). */
+const REPATH_TIME = 0.5;
+/** Nodes a single search may open: bounded, because the host pays for it. */
+const PATH_NODES = 900;
 
 function makeSentry(col, x, z) {
-  const e = placeOnGround(col, x, z);
+  const e = placeOnGround(col, x, z, undefined, SENTRY.rad);
   e.hp = SENTRY.hp; e.maxHp = SENTRY.hp;
   e.canVault = false;
   e.kind = 'sentry';
-  e.ai = { state: EST.DORMANT, t: 0, side: 0, sideT: 0 };
+  e.ai = { state: EST.DORMANT, t: 0, side: 0, sideT: 0,
+           /* Where it holds (#6), and the path it is following, if any (#15). */
+           post: { x: e.x, y: e.y, z: e.z }, path: null, wp: 0, pathT: 0 };
   return e;
 }
 
@@ -5860,16 +6222,31 @@ function staggerable(st) {
 }
 
 /**
- * Where to walk. Straight at the target, unless that is a wall or a drop —
- * then sideways for a while. A machine that walks off a ledge to reach you is
- * not menacing, and one that hovers over the gap is worse.
+ * Where to walk. Straight at the target while nothing is in the way; once a
+ * wall or a drop is, along a path round it (#15) — worked out for its own
+ * width, without vaults or jumps, because it does neither — and only when no
+ * path exists, sideways for a while. A machine that walks off a ledge to reach
+ * you is not menacing, and one that hovers over the gap is worse.
  */
-function steer(col, e, tx, tz) {
+function steer(col, e, tx, tz, budget) {
   const ai = e.ai;
   let dx = tx - e.x, dz = tz - e.z;
   const l = hyp(dx, dz);
   if (l < 1e-6) return { mx: 0, mz: 0 };
   dx /= l; dz /= l;
+
+  /* A path that has run its time is worked out again, not dropped: dropping
+     it sent the machine straight back at the wall it was going round. */
+  if (ai.path) {
+    ai.pathT -= TICK;
+    if (ai.pathT <= 0 && plan(budget)) {
+      const p = findPath(col, e, { x: tx, z: tz },
+                         { rad: e.rad, canVault: false, canJump: false, maxNodes: PATH_NODES });
+      ai.path = p && p.length > 1 ? p : null; ai.wp = 1; ai.pathT = REPATH_TIME;
+    }
+  }
+  const along = followPath(e);
+  if (along) return along;
 
   if (ai.sideT > 0) {
     ai.sideT -= TICK;
@@ -5882,31 +6259,75 @@ function steer(col, e, tx, tz) {
 
   /* Look one step ahead: a drop it would not survive, or nothing at all. */
   const ax = e.x + dx * 0.9, az = e.z + dz * 0.9;
-  const g = col.supportUnder(ax, az, ACTOR.radius, e.y + MOVE.step + EPS);
+  const g = col.supportUnder(ax, az, e.rad, e.y + MOVE.step + EPS);
   const cliff = g === -Infinity || e.y - g > MOVE.fall - 1;
-  if (cliff || e.blocked) {
+  if ((cliff || e.blocked) && plan(budget)) {
+    const p = findPath(col, e, { x: tx, z: tz },
+                       { rad: e.rad, canVault: false, canJump: false, maxNodes: PATH_NODES });
+    if (p && p.length > 1) {
+      ai.path = p; ai.wp = 1; ai.pathT = REPATH_TIME;
+      const first = followPath(e);
+      if (first) return first;
+    }
     ai.side = ai.side === 0 ? 1 : -ai.side;      /* alternate, never random */
     ai.sideT = SIDESTEP_TIME;
   }
   return { mx: dx * SENTRY.speed, mz: dz * SENTRY.speed };
 }
 
-/** The nearest living player within sight, or null. */
+/**
+ * May this machine work out a path this tick? A search is a few milliseconds
+ * on rugged ground and three machines deciding to at once is a dropped frame,
+ * so an encounter hands out one per tick, first come first served in the
+ * order the machines are stepped — which is fixed, so the host and a replay
+ * agree. A machine stepped on its own (a test) has no budget and always may.
+ */
+function plan(budget) {
+  if (!budget) return true;
+  if (budget.left <= 0) return false;
+  budget.left--;
+  return true;
+}
+
+/** The next step along the path it is following, or null if it has none left. */
+function followPath(e) {
+  const ai = e.ai;
+  if (!ai.path) return null;
+  while (ai.wp < ai.path.length - 1 && hyp(ai.path[ai.wp].x - e.x, ai.path[ai.wp].z - e.z) < 0.35) ai.wp++;
+  const w = ai.path[ai.wp], wx = w.x - e.x, wz = w.z - e.z, wl = hyp(wx, wz);
+  if (wl < 0.35) { ai.path = null; return null; }
+  return { mx: (wx / wl) * SENTRY.speed, mz: (wz / wl) * SENTRY.speed };
+}
+
+/**
+ * The nearest living player within sight, or null — and only one it would be
+ * allowed to chase: someone standing further from its post than the leash is
+ * someone it has already given up on, and turning back for them would have it
+ * pace the edge of its leash for ever.
+ */
 function pick(e, players) {
   let best = null, bd = SENTRY.sight;
+  const post = e.ai.post;
   for (const p of players) {
     if (!p || p.dead) continue;
+    if (post && hyp(p.x - post.x, p.z - post.z) > SENTRY.leash + SENTRY.range) continue;
     const d = hyp(p.x - e.x, p.z - e.z);
     if (d < bd) { bd = d; best = p; }
   }
   return best;
 }
 
+/** Is it further from its post than the leash lets it go? */
+function strayed(e) {
+  const post = e.ai.post;
+  return !!post && hyp(e.x - post.x, e.z - post.z) > SENTRY.leash;
+}
+
 /**
  * One tick of one sentry. It produces an input and hands it to the same `step`
  * the player uses, which is what keeps it honest about the movement budget.
  */
-function stepSentry(col, e, players, dt = TICK) {
+function stepSentry(col, e, players, dt = TICK, budget) {
   const ai = e.ai;
 
   if (e.dead) {
@@ -5930,11 +6351,11 @@ function stepSentry(col, e, players, dt = TICK) {
       break;
 
     case EST.CLOSE: {
-      if (!target) { ai.state = EST.DORMANT; ai.t = 0; break; }
+      if (!target || strayed(e)) { ai.state = EST.RETURN; ai.t = 0; ai.path = null; break; }
       face = target;
       const d = hyp(target.x - e.x, target.z - e.z);
       if (d <= SENTRY.range) { ai.state = EST.TELEGRAPH; ai.t = 0; break; }
-      const s = steer(col, e, target.x, target.z);
+      const s = steer(col, e, target.x, target.z, budget);
       mx = s.mx; mz = s.mz;
       break;
     }
@@ -5952,12 +6373,23 @@ function stepSentry(col, e, players, dt = TICK) {
       break;
 
     case EST.RECOVER:
-      if (ai.t >= RECOVER_TIME) { ai.state = target ? EST.CLOSE : EST.DORMANT; ai.t = 0; }
+      if (ai.t >= RECOVER_TIME) { ai.state = target ? EST.CLOSE : EST.RETURN; ai.t = 0; }
       break;
 
     case EST.STAGGER:
-      if (ai.t >= STAGGER_TIME) { ai.state = target ? EST.CLOSE : EST.DORMANT; ai.t = 0; }
+      if (ai.t >= STAGGER_TIME) { ai.state = target ? EST.CLOSE : EST.RETURN; ai.t = 0; }
       break;
+
+    case EST.RETURN: {
+      /* Back to where it holds, the way round if it must. Someone walking
+         into sight on the way turns it round again — inside the leash. */
+      if (target && !strayed(e)) { ai.state = EST.CLOSE; ai.t = 0; ai.path = null; break; }
+      const post = ai.post, d = hyp(post.x - e.x, post.z - e.z);
+      if (d < 0.6) { ai.state = EST.DORMANT; ai.t = 0; ai.path = null; break; }
+      const s = steer(col, e, post.x, post.z, budget);
+      mx = s.mx; mz = s.mz;
+      break;
+    }
 
     default:
       break;
@@ -5988,6 +6420,47 @@ function jolt(e) {
   if (staggerable(e.ai.state)) { e.ai.state = EST.STAGGER; e.ai.t = 0; }
 }
 
+/* Posts: where the machines hold (#6, #42). Beyond sight from the spawn, so
+   they are found rather than met, and not so far that the window has none. */
+const POST_MIN = SENTRY.sight + 2, POST_MAX = 34, POST_APART = 10, POSTS = 3;
+const POST_RANK = { cover: 0, vantage: 1, arena: 2 };
+
+/**
+ * Where to put the machines, from the ground the region pass annotated (#42):
+ * cover first — something to hold behind — then the high ground, then open
+ * ground big enough to fight on. Never two within POST_APART of each other,
+ * and never where a machine this wide cannot stand. Only when the ground
+ * offers too few does it fall back to the fixed ring it used to use, which
+ * was offsets from the spawn chosen against nothing (noted on #6: one of them
+ * stood on a graded trail and walked down it to the practice posts).
+ */
+function postsFor(col, world) {
+  const spawn = world.spawn, out = [];
+  const stand = (x, z) => {
+    const y = col.supportUnder(x, z, SENTRY.rad, Infinity);
+    return y !== -Infinity && !col.overlaps(x, z, SENTRY.rad, y + EPS, y + 1.8 - EPS);
+  };
+  const ok = (x, z) => {
+    const d = hyp(x - spawn[0], z - spawn[2]);
+    if (d < POST_MIN || d > POST_MAX || !stand(x, z)) return false;
+    for (const p of out) if (hyp(p[0] - x, p[1] - z) < POST_APART) return false;
+    return true;
+  };
+  const cands = (world.affordances || []).filter((a) => a.k in POST_RANK).slice()
+    .sort((a, b) => POST_RANK[a.k] - POST_RANK[b.k] || b.s - a.s || a.x - b.x || a.z - b.z);
+  for (const a of cands) {
+    if (out.length >= POSTS) break;
+    if (ok(a.x, a.z)) out.push([a.x, a.z]);
+  }
+  for (const [dx, dz] of [[14, 3], [-11, -13], [5, 19]]) {
+    if (out.length >= POSTS) break;
+    const x = spawn[0] + dx, z = spawn[2] + dz;
+    const y = col.supportUnder(x, z, SENTRY.rad, spawn[1] + MOVE.vault);
+    if (y !== -Infinity && ok(x, z)) out.push([x, z]);
+  }
+  return out;
+}
+
 /**
  * Everything in the world that can be swung at, and the thing that steps it.
  *
@@ -5997,16 +6470,8 @@ function jolt(e) {
  */
 function makeEncounter(col, world, posts) {
   const spawn = world.spawn;
-  /* Beyond sight from the spawn, so they are found rather than met: these
-     things are holding positions, not patrolling. */
-  const ring = [[14, 3], [-11, -13], [5, 19]];
   const enemies = [];
-  for (const [dx, dz] of ring) {
-    const x = spawn[0] + dx, z = spawn[2] + dz;
-    const y = col.supportUnder(x, z, ACTOR.radius, spawn[1] + MOVE.vault);
-    if (y === -Infinity) continue;
-    enemies.push(makeSentry(col, x, z));
-  }
+  for (const p of postsFor(col, world)) enemies.push(makeSentry(col, p[0], p[1]));
   const targets = (posts || []).concat(enemies);
   const postCount = (posts || []).length;
   /* Derived from the same world the machines were placed in, and index-aligned
@@ -6018,7 +6483,8 @@ function makeEncounter(col, world, posts) {
 
     /** One tick: the machines act, then whatever the players cut takes it. */
     step(players, dt = TICK) {
-      for (const e of enemies) stepSentry(col, e, players, dt);
+      const budget = { left: 1 };
+      for (const e of enemies) stepSentry(col, e, players, dt, budget);
       for (const p of players) {
         if (!p || !p.hits) continue;
         const mask = p.hits;
@@ -6284,7 +6750,7 @@ function poseSentry(m, look) {
     p.body.sy = 0.72; p.armL.ry = 0.5; p.armR.ry = -0.5; p.armL.pz = -0.12; p.armR.pz = -0.12;
     return p;
   }
-  if (m.s === EST.WAKE || m.s === EST.CLOSE) {
+  if (m.s === EST.WAKE || m.s === EST.CLOSE || m.s === EST.RETURN) {
     const s = sin(walk);
     p.body.py = (s < 0 ? -s : s) * 0.035;
     p.body.rz = s * 0.05;

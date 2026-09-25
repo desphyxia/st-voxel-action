@@ -81,6 +81,19 @@ export function layRoutes(w) {
     }
   }
 
+  /* 4. Encounter affordances (#42), clipped to the window like everything else
+        here. x and z are metres from the window's middle, as a crossing's are;
+        wx and wz keep the world place, which is what two windows agree on. */
+  var affordances = [];
+  for (q = 0; q < regions.length; q++) {
+    var ra = regions[q].affordances || [];
+    for (k = 0; k < ra.length; k++) {
+      var af = ra[k];
+      if (!inside(af.x, af.z)) continue;
+      affordances.push({ k: af.k, x: af.x - OX, z: af.z - OZ, wx: af.x, wz: af.z, h: af.h, s: af.s });
+    }
+  }
+  w.affordances = affordances;
   w.TRAIL = TRAIL; w.sites = sites; w.bridges = bridges; w.trailPath = trailPath;
   /* The regions this window is a view onto, so later passes can read the
      landmark without deciding one of their own. */

@@ -43,7 +43,15 @@ export const RUN = 4.0;
  * top so that a jump timed within a frame of the lip still clears MOVE.jump;
  * any more than that and a 3 m canyon would stop being a canyon.
  */
-const FLIGHT = MOVE.jump - 2 * ACTOR.radius + RUN * TICK;
+/**
+ * The jump solved for a box of half-width `rad` (#37). Wider bodies cross more
+ * of a gap by standing on its lips, so they need less flight — the same
+ * arithmetic as the player's, with the player's radius swapped out. The nav
+ * graph (#15) is handed this too: a jump link is only meaningful per radius.
+ */
+export function flightFor(rad) { return MOVE.jump - 2 * rad + RUN * TICK; }
+export function jumpVFor(rad) { return (GRAVITY * (flightFor(rad) / RUN)) / 2; }
+const FLIGHT = flightFor(ACTOR.radius);
 export const AIRTIME = FLIGHT / RUN;
 export const JUMP_V = (GRAVITY * AIRTIME) / 2;
 export const JUMP_APEX = (JUMP_V * JUMP_V) / (2 * GRAVITY);
@@ -57,7 +65,7 @@ export const VAULT_TIME = 0.35;
 /** Terminal velocity, low enough that no fall tunnels a floor in one tick. */
 export const TERMINAL = 45;
 
-export function makeActor(x, y, z) {
+export function makeActor(x, y, z, rad) {
   /* Every actor carries a frame, machines included. An empty lattice computes
      exactly the constants in combat.mjs, so a sentry plays the game it always
      played; giving it one anyway means there is no actor anywhere whose rules
@@ -66,6 +74,9 @@ export function makeActor(x, y, z) {
   const st = gear.st;
   return {
     x, y, z, vx: 0, vy: 0, vz: 0,
+    /** Half-width of the collision box (#37). A body's width, not a reach:
+        combat's `r` on a target is a separate thing and is not this. */
+    rad: rad === undefined ? ACTOR.radius : rad,
     grounded: false,
     /** Highest point since the feet last left the ground: what a drop measures from. */
     apex: y,
@@ -109,10 +120,11 @@ export function makeActor(x, y, z) {
 }
 
 /** Drop an actor onto whatever holds it at (x, z). How spawning works. */
-export function placeOnGround(col, x, z, fromY) {
+export function placeOnGround(col, x, z, fromY, rad) {
+  const r = rad === undefined ? ACTOR.radius : rad;
   const ceil = (fromY === undefined ? Infinity : fromY) + EPS;
-  const g = col.supportUnder(x, z, ACTOR.radius, ceil);
-  const a = makeActor(x, g === -Infinity ? 0 : g, z);
+  const g = col.supportUnder(x, z, r, ceil);
+  const a = makeActor(x, g === -Infinity ? 0 : g, z, r);
   a.grounded = g !== -Infinity;
   a.apex = a.y;
   return a;
@@ -203,7 +215,7 @@ export function applyDisplay(a, m) {
 
 /** Is the actor's box inside solid ground? Must never be true after a tick. */
 export function embedded(col, a) {
-  return col.overlaps(a.x, a.z, ACTOR.radius, a.y + EPS, a.y + ACTOR.height - EPS);
+  return col.overlaps(a.x, a.z, a.rad, a.y + EPS, a.y + ACTOR.height - EPS);
 }
 
 /**
@@ -212,7 +224,7 @@ export function embedded(col, a) {
  * through the air where the body is now, or rise onto the thing blocking it.
  */
 function slide(col, a, nx, nz) {
-  const r = ACTOR.radius, h = ACTOR.height;
+  const r = a.rad, h = ACTOR.height;
   if (!col.overlaps(nx, nz, r, a.y + EPS, a.y + h - EPS)) {
     a.travelled += Math.abs(nx - a.x) + Math.abs(nz - a.z);
     a.x = nx; a.z = nz;
@@ -229,7 +241,7 @@ function slide(col, a, nx, nz) {
 
 /** A ledge too tall to step onto but not too tall to climb. Starts the vault. */
 function tryVault(col, a, dx, dz) {
-  const r = ACTOR.radius, h = ACTOR.height;
+  const r = a.rad, h = ACTOR.height;
   if (!a.grounded || (dx === 0 && dz === 0)) return false;
   if (a.swing || a.dodge) return false;        /* committed means committed */
   if (a.canVault === false) return false;
@@ -261,7 +273,7 @@ export function step(col, a, input, targets, dt = TICK) {
   if (a.dead) return a;
   a.ticks++;
   a.blocked = false;
-  const r = ACTOR.radius, h = ACTOR.height;
+  const r = a.rad, h = ACTOR.height;
 
   /* A vault owns the actor until it finishes: all the way up, and only then
      across. Overlapping the two looks better and puts the box inside the ledge
@@ -322,7 +334,8 @@ export function step(col, a, input, targets, dt = TICK) {
   }
 
   if (input.jump && !a.swing && !a.dodge && (a.grounded || a.swimming)) {
-    a.vy = a.swimming ? JUMP_V * 0.35 : JUMP_V;
+    const jv = a.rad === ACTOR.radius ? JUMP_V : jumpVFor(a.rad);
+    a.vy = a.swimming ? jv * 0.35 : jv;
     a.grounded = false;
     a.apex = a.y;
   }

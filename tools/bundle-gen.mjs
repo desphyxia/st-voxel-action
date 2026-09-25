@@ -29,7 +29,7 @@ const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'palette', 'rng', 'biomes', 'field', 'erosion', 'region', 'ground', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index', 'chunk'],
   'src/mesh': ['greedy', 'carve', 'propmesh'],
-  'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'loot', 'actor', 'enemy', 'anim', 'sky', 'camera', 'input'],
+  'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'loot', 'actor', 'nav', 'enemy', 'anim', 'sky', 'camera', 'input'],
   'src/net': ['transport', 'session'],
 };
 
