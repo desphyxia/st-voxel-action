@@ -2097,11 +2097,17 @@ function buildWaterGeometry(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, WL = w.WL, FLG = w.FLG, half = w.half,
       cellAt = w.cellAt, i, j, k, x, z, y;
   var wv=[],wi=[],wd=[],wf=[],wfl=[],wn=0;
+  /* `dep` is one depth for the whole quad, or four — one per corner. A fall
+     carries 0 at its lip and 1 at its base, so the shader knows how far the
+     water has dropped at every point of the sheet. */
   function wquad(q,dep,foam,fx,fz){
-    for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]); wd.push(dep); wf.push(foam); wfl.push(fx,fz); }
+    for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]);
+      wd.push(typeof dep==='number'?dep:dep[a]); wf.push(foam); wfl.push(fx,fz); }
     wi.push(wn,wn+2,wn+1, wn,wn+3,wn+2); wn+=4;
   }
   var WDIR=[[1,0],[-1,0],[0,1],[0,-1]];
+  /* A fall's four corners are laid lip, lip, base, base. */
+  var FALL_DEP=[0,0,1,1];
   for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
     k=i*NZ+j; if(!(FLG[k]&1)) continue;
     x=-half+i*V; z=-half+j*V; y=WL[k];
@@ -2148,7 +2154,7 @@ function buildWaterGeometry(w) {
          Under 0.4 m it is a riffle: shaded as surface foam (1), which the
          shader ripples exactly as it ripples the quads either side, so both
          edges stay sealed. From 0.4 m it is a fall (2), as it always was. */
-      wquad(q2,y-yl<0.4?dep:1,y-yl<0.4?1:2,di3,dj3);
+      wquad(q2,y-yl<0.4?dep:FALL_DEP,y-yl<0.4?1:2,di3,dj3);
     }
   }
   w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl };
@@ -7436,14 +7442,21 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
     '#include <fog_pars_vertex>',
     'void main(){ vec3 p=position; vD=aDepth; vF=aFoam; vFl=aFlow;',
-    ' float flat_=step(aFoam,1.5);',
-    ' p.y+=(sin(uTime*1.25+p.z*0.8+p.x*0.5)*0.022+sin(uTime*2.15-p.z*1.5+p.x*0.35)*0.012)*flat_;',
+    /* Everything ripples, falls included: the ripple is a function of where a
+       vertex is, so a fall's lip moves with the pool above it and its base
+       with the pool below, and neither edge can open. Falls used to hold still
+       while the pools either side moved, a 3 cm hairline at every lip. */
+    ' p.y+=(sin(uTime*1.25+p.z*0.8+p.x*0.5)*0.022+sin(uTime*2.15-p.z*1.5+p.x*0.35)*0.012);',
     ' vP=p; vec4 mvPosition=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;',
     ' #include <fog_vertex>',
     '}'].join('\n');
   var WATER_FS=['uniform float uTime; uniform vec2 uWind; uniform float uLight;',
     'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
     '#include <fog_pars_fragment>',
+    /* Value noise for the falls, sin-free like the terrain grain. */
+    'float fallH(vec2 p){ vec3 q=fract(vec3(p.xyx)*0.1031); q+=dot(q,q.yzx+33.33); return fract((q.x+q.y)*q.z); }',
+    'float fallN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);',
+    ' return mix(mix(fallH(i),fallH(i+vec2(1.0,0.0)),f.x),mix(fallH(i+vec2(0.0,1.0)),fallH(i+vec2(1.0,1.0)),f.x),f.y); }',
     'void main(){ vec3 c=mix(vec3(0.34,0.66,0.64),vec3(0.05,0.20,0.29),clamp(vD,0.0,1.0));',
     ' vec2 fl=normalize(vFl+uWind*0.45+vec2(0.0001));',
     ' float adv=dot(vP.xz,fl)*2.6-uTime*2.1;',
@@ -7451,8 +7464,29 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     ' float g=pow(max(sin(vP.x*2.13+adv*0.55)*sin(vP.z*1.77-adv*0.37),0.0),6.0);',
     ' c+=vec3(0.70,0.85,0.80)*g*0.30; float a=0.86;',
     ' if(vF>0.5&&vF<1.5){ c=mix(c,vec3(0.86,0.94,0.96),0.40); a=0.92; }',
-    ' if(vF>1.5){ float st=fract(vP.y*3.0-uTime*2.6);',
-    '   c=mix(vec3(0.48,0.72,0.78),vec3(0.93,0.98,1.0),smoothstep(0.25,0.95,st)); a=0.93; }',
+    /* ---------- a fall ----------
+       It was evenly spaced horizontal bands, and they rose: fract(y*3 - t*2.6)
+       holds a band's phase where y climbs with t. Water falling is the other
+       way round, and not in bands — it breaks into streaks along the drop, glassy
+       at the lip where it pours over, whiter the further it has fallen as it
+       tears up, and a churn of white where it lands. vD runs 0 at the lip to 1
+       at the base (src/gen/water.mjs). The streaks scroll down, faster lower,
+       as water does that is still accelerating. */
+    ' if(vF>1.5){',
+    '   float t=clamp(vD,0.0,1.0), u=(vP.x+vP.z)*9.0;',
+    '   float v=vP.y*1.1+uTime*(1.4+t*1.2);',
+    '   float n=fallN(vec2(u,v*0.45))*0.6+fallN(vec2(u*2.1+7.3,v*1.1))*0.4;',
+    '   float streak=smoothstep(0.42,0.82,n);',
+    '   float lip=1.0-smoothstep(0.0,0.22,t), base=smoothstep(0.70,1.0,t);',
+    '   vec3 sheet=mix(vec3(0.40,0.66,0.70),vec3(0.66,0.84,0.88),t);',
+    '   float froth=clamp(streak*(0.35+0.65*t)*(1.0-lip*0.7)+base*(0.65+0.35*n),0.0,1.0);',
+    '   c=mix(sheet,vec3(0.92,0.96,0.98),froth);',
+    /* Light caught on the smooth tongue of water where it pours over the lip. */
+    '   c+=vec3(0.16,0.20,0.20)*lip*smoothstep(0.5,0.9,fallN(vec2(u*0.7,uTime*0.8)));',
+    /* And the streaks between the white ones are darker, not missing: a sheet
+       is thicker in some places than others, not a curtain of holes. */
+    '   c*=0.90+0.10*n;',
+    '   a=mix(0.86,0.97,froth); }',
     ' gl_FragColor=vec4(c*uLight,a);',
     ' #include <tonemapping_fragment>',
     ' #include <fog_fragment>',
@@ -8043,7 +8077,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
                     for(q=0;q<GRASS_PUSH;q++) a.push(new THREE.Vector3(1e5,0,1e5));
                     return a;})()}},
         vertexShader:GRASS_VS,fragmentShader:GRASS_FS}),
+      /* Pulled a hair toward the camera in depth. A fall lies in exactly the
+         plane of the cliff it pours down — the rock face of the column it
+         falls from — and the two fought over every pixel: dark teeth through
+         the sheet, or on some faces the rock winning outright. The offset
+         decides it for the water without moving any geometry. */
       water:new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,fog:true,
+        polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-4,
         uniforms:{uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)},uLight:{value:1},
                   fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0}},
         vertexShader:WATER_VS,fragmentShader:WATER_FS}),

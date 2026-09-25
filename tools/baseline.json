@@ -15,12 +15,12 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0,
-  "digest": "1a8f57bb",
+  "digest": "331a27bb",
   "parts": {
    "vox": "980a52ef",
    "magma": "0b520214",
    "grass": "d5ddb9da",
-   "water": "33934c7d",
+   "water": "1951077d",
    "maps": "fc2d4e9e",
    "sites": "1e5c2e08",
    "cells": "76ba1a59"
@@ -42,12 +42,12 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0.3,
-  "digest": "da0a7ff2",
+  "digest": "2bc29072",
   "parts": {
    "vox": "c26afceb",
    "magma": "1291c3ee",
    "grass": "b15cd229",
-   "water": "5770f6ef",
+   "water": "efb20f6f",
    "maps": "e8b67531",
    "sites": "0bb1b655",
    "cells": "60c4a4ed"
@@ -96,12 +96,12 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 8.4,
-  "digest": "58be5900",
+  "digest": "64d47940",
   "parts": {
    "vox": "0c8a9d7b",
    "magma": "8233e625",
    "grass": "51e294e7",
-   "water": "d36ed888",
+   "water": "a47a1348",
    "maps": "7e23f375",
    "sites": "b8a76b5c",
    "cells": "d485430c"
@@ -123,12 +123,12 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0,
-  "digest": "584b4c24",
+  "digest": "1c7bdc24",
   "parts": {
    "vox": "e3b6989a",
    "magma": "4c80fc29",
    "grass": "728f08cc",
-   "water": "5e52e3da",
+   "water": "ec1b9e7a",
    "maps": "3e3f7945",
    "sites": "41c57627",
    "cells": "d1104a7b"
@@ -150,12 +150,12 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0,
-  "digest": "042147c4",
+  "digest": "8d089244",
   "parts": {
    "vox": "0225707c",
    "magma": "41c8e9c7",
    "grass": "dd36e456",
-   "water": "c2fc907b",
+   "water": "c0ea96fb",
    "maps": "80feef10",
    "sites": "7f9fd1b8",
    "cells": "5eb374c6"

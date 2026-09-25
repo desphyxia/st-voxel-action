@@ -137,11 +137,17 @@ export function buildWaterGeometry(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, WL = w.WL, FLG = w.FLG, half = w.half,
       cellAt = w.cellAt, i, j, k, x, z, y;
   var wv=[],wi=[],wd=[],wf=[],wfl=[],wn=0;
+  /* `dep` is one depth for the whole quad, or four — one per corner. A fall
+     carries 0 at its lip and 1 at its base, so the shader knows how far the
+     water has dropped at every point of the sheet. */
   function wquad(q,dep,foam,fx,fz){
-    for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]); wd.push(dep); wf.push(foam); wfl.push(fx,fz); }
+    for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]);
+      wd.push(typeof dep==='number'?dep:dep[a]); wf.push(foam); wfl.push(fx,fz); }
     wi.push(wn,wn+2,wn+1, wn,wn+3,wn+2); wn+=4;
   }
   var WDIR=[[1,0],[-1,0],[0,1],[0,-1]];
+  /* A fall's four corners are laid lip, lip, base, base. */
+  var FALL_DEP=[0,0,1,1];
   for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
     k=i*NZ+j; if(!(FLG[k]&1)) continue;
     x=-half+i*V; z=-half+j*V; y=WL[k];
@@ -188,7 +194,7 @@ export function buildWaterGeometry(w) {
          Under 0.4 m it is a riffle: shaded as surface foam (1), which the
          shader ripples exactly as it ripples the quads either side, so both
          edges stay sealed. From 0.4 m it is a fall (2), as it always was. */
-      wquad(q2,y-yl<0.4?dep:1,y-yl<0.4?1:2,di3,dj3);
+      wquad(q2,y-yl<0.4?dep:FALL_DEP,y-yl<0.4?1:2,di3,dj3);
     }
   }
   w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl };
