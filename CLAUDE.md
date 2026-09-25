@@ -88,9 +88,10 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`c49b24c`** (#64, #51, #31, #63 — batch 2, PR #66) at **version 28**, no force needed after the batch 1 publish in the same session; concept from
-**`bff9922`** (#63 moved its `src/gen` bundle) at **version 21**, forced on the user's word after
-the loop found the live page identical to **`0056e02`** — not `972b6e8`, as this line had said.
+Play is published from **`90490dc`** (the water-step fix, after batch 2) at **version 29**; concept
+from **`90490dc`** at **version 22** — neither needed force, both having been published earlier in
+the same session. Before that, concept version 21 was forced on the user's word after the loop found
+the live page identical to **`0056e02`**.
 On 2026-09-25 the loop found the live pages identical to `a3297ad` (play, version 21) and
 `7434073` (concept, version 17) — the shas recorded here, for once — and both were forced on
 the user's word. `9c26036` was version 14 of each, forced the same way.
