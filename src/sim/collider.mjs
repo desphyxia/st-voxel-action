@@ -55,9 +55,15 @@ export function makeCollider(half, v, bounded, origin) {
      centred at x 32 and z -32, and sharing one origin between the axes put
      every query of it a kilometre off its own grid. */
   const orgX = origin ? origin.x : 0, orgZ = origin ? origin.z : 0;
-  const cols = new Array(n * n);
-  const liq = new Uint8Array(n * n);
-  const lev = new Float32Array(n * n);
+  /* Built as a list per column, then packed by finish() into two flat arrays
+     — `off[k]..off[k+1]` are column k's spans, as lo/hi pairs in `sp` — which
+     is what every query reads. Flat for the queries' sake and for #64's: a
+     packed collider is four typed arrays, so a worker can build one and hand
+     it to the main thread by transfer rather than by clone. */
+  let cols = new Array(n * n);
+  let liq = new Uint8Array(n * n);
+  let lev = new Float32Array(n * n);
+  let off = null, sp = null;
   let sealed = false;
 
   /**
@@ -172,8 +178,9 @@ export function makeCollider(half, v, bounded, origin) {
       }
     },
 
-    /** Sort and merge every column. Queries assume this has run. */
+    /** Sort and merge every column, and pack them. Queries assume this has run. */
     finish() {
+      let total = 0;
       for (let k = 0; k < cols.length; k++) {
         const flat = cols[k];
         if (!flat) continue;
@@ -186,13 +193,37 @@ export function makeCollider(half, v, bounded, origin) {
           if (last && r[0] <= last[1] + EPS) { if (r[1] > last[1]) last[1] = r[1]; }
           else out.push([r[0], r[1]]);
         }
-        cols[k] = out;
+        cols[k] = out; total += out.length;
       }
+      off = new Int32Array(n * n + 1); sp = new Float64Array(total * 2);
+      let at = 0;
+      for (let k = 0; k < cols.length; k++) {
+        off[k] = at;
+        const c = cols[k];
+        if (c) for (const r of c) { sp[at * 2] = r[0]; sp[at * 2 + 1] = r[1]; at++; }
+      }
+      off[n * n] = at;
+      cols = null;
       sealed = true;
       return this;
     },
 
-    spansAt(x, z) { return cols[axc(x) * n + azc(z)] || null; },
+    /**
+     * The sealed collider as plain typed arrays, and back (#64). What a worker
+     * sends: `colliderFromPacked` on the other side answers every query as the
+     * original does, from the same doubles.
+     */
+    pack() { return { n, v, half, orgX, orgZ, bounded: walled, off, sp, liq, lev }; },
+    adopt(p) { off = p.off; sp = p.sp; liq = p.liq; lev = p.lev; cols = null; sealed = true; return this; },
+
+    /** One column's spans as [lo, hi] pairs, or null. For tests and tools. */
+    spansAt(x, z) {
+      const k = axc(x) * n + azc(z), a = off[k], b = off[k + 1];
+      if (a === b) return null;
+      const out = [];
+      for (let q = a; q < b; q++) out.push([sp[q * 2], sp[q * 2 + 1]]);
+      return out;
+    },
 
     liquidAt(x, z) {
       const k = axc(x) * n + azc(z);
@@ -213,10 +244,10 @@ export function makeCollider(half, v, bounded, origin) {
          past the edge of the world. */
       for (let i = i0; i <= i1; i++) {
         for (let j = j0; j <= j1; j++) {
-          const sp = cols[i * n + j];
-          if (!sp) continue;
-          for (let q = sp.length - 1; q >= 0; q--) {
-            if (sp[q][1] <= ceilY + EPS) { if (sp[q][1] > best) best = sp[q][1]; break; }
+          const k = i * n + j, a = off[k];
+          for (let q = off[k + 1] - 1; q >= a; q--) {
+            const hi = sp[q * 2 + 1];
+            if (hi <= ceilY + EPS) { if (hi > best) best = hi; break; }
           }
         }
       }
@@ -232,11 +263,10 @@ export function makeCollider(half, v, bounded, origin) {
       const i0 = axc(x - r), i1 = axc(x + r), j0 = azc(z - r), j1 = azc(z + r);
       for (let i = i0; i <= i1; i++) {
         for (let j = j0; j <= j1; j++) {
-          const sp = cols[i * n + j];
-          if (!sp) continue;
-          for (let q = 0; q < sp.length; q++) {
-            if (sp[q][0] >= hi - EPS) break;
-            if (sp[q][1] > lo + EPS) return true;
+          const k = i * n + j, b = off[k + 1];
+          for (let q = off[k]; q < b; q++) {
+            if (sp[q * 2] >= hi - EPS) break;
+            if (sp[q * 2 + 1] > lo + EPS) return true;
           }
         }
       }
@@ -249,10 +279,10 @@ export function makeCollider(half, v, bounded, origin) {
       const i0 = axc(x - r), i1 = axc(x + r), j0 = azc(z - r), j1 = azc(z + r);
       for (let i = i0; i <= i1; i++) {
         for (let j = j0; j <= j1; j++) {
-          const sp = cols[i * n + j];
-          if (!sp) continue;
-          for (let q = 0; q < sp.length; q++) {
-            if (sp[q][0] >= y - EPS) { if (sp[q][0] < best) best = sp[q][0]; break; }
+          const k = i * n + j, b = off[k + 1];
+          for (let q = off[k]; q < b; q++) {
+            const lo = sp[q * 2];
+            if (lo >= y - EPS) { if (lo < best) best = lo; break; }
           }
         }
       }
@@ -261,6 +291,11 @@ export function makeCollider(half, v, bounded, origin) {
 
     get ready() { return sealed; },
   };
+}
+
+/** A sealed collider again, from what `pack()` returned — on any thread. */
+export function colliderFromPacked(p) {
+  return makeCollider(p.half, p.v, p.bounded, { x: p.orgX, z: p.orgZ }).adopt(p);
 }
 
 /**

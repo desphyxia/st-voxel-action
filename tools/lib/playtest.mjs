@@ -14,11 +14,11 @@
  */
 import { V, MOVE, CEIL, CHUNK as CHUNK_M } from '../../src/gen/constants.mjs';
 import { chunkWorld, WINDOW, SKIRT } from '../../src/gen/chunk.mjs';
-import { makeChunkField, chunkAt } from '../../src/sim/chunks.mjs';
+import { makeChunkField, chunkAt, colliderForChunk } from '../../src/sim/chunks.mjs';
 import { makeStream } from '../../src/sim/stream.mjs';
 import { sin, cos, hyp } from '../../src/gen/exact.mjs';
 import { mulberry32, xmur3 } from '../../src/gen/rng.mjs';
-import { makeCollider, colliderForWorld, LIQUID, EPS } from '../../src/sim/collider.mjs';
+import { makeCollider, colliderForWorld, colliderFromPacked, LIQUID, EPS } from '../../src/sim/collider.mjs';
 import { placeOnGround, step, embedded, snapshot, restore, ACTOR, TICK, RUN } from '../../src/sim/actor.mjs';
 import { makeCamera, moveFrom, project, aimFromStick, aimFromPointer,
          START_YAW, QUARTER, snap } from '../../src/sim/camera.mjs';
@@ -30,7 +30,7 @@ import * as LO from '../../src/sim/loot.mjs';
 import { makeLoopback } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import { buildWorld, makeGen } from '../../src/gen/index.mjs';
-import { regionAt, clearRegionCache, portsOf, regionOf, REGION } from '../../src/gen/region.mjs';
+import { regionAt, clearRegionCache, portsOf, regionOf, REGION, cellKey, keyX, keyZ } from '../../src/gen/region.mjs';
 import { erodeAt } from '../../src/gen/erosion.mjs';
 import { HERO_RIG, SENTRY_RIG, poseHero, poseSentry, swingYaw, restPositions } from '../../src/sim/anim.mjs';
 import * as SKY from '../../src/sim/sky.mjs';
@@ -1461,7 +1461,9 @@ function trailNet(G, cx, cz) {
   for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
     const r = regionAt(G, cx + a, cz + b);
     regions.push(r); lens.push(r.order.length);
-    r.trail.forEach((k) => T.add(k));
+    /* Read back as "x,z": the region keys cells by integer (#63), and this
+       walk was written against coordinates it can split and print. */
+    r.trail.forEach((k) => T.add(keyX(k) + ',' + keyZ(k)));
     goals.push(...r.sites, ...r.ports);
     bridges.push(...r.bridges);
   }
@@ -1519,7 +1521,7 @@ const DIRS4_N = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     region that owns it — which is what every window reads, from any side. */
 function baseH(G, x, z) { return Math.max(0, Math.min(CEIL, erodeAt(G, x, z, G.cell(x, z)))); }
 function finalH(G, x, z) {
-  const g = regionAt(G, regionOf(x), regionOf(z)).grade.get(x + ',' + z);
+  const g = regionAt(G, regionOf(x), regionOf(z)).grade.get(cellKey(x, z));
   return g === undefined ? baseH(G, x, z) : g;
 }
 
@@ -1568,7 +1570,7 @@ export function networkSuite() {
     /* Only the owner writes. Two regions both grading a cell would each be
        right in their own grid, and a window would take whichever it read last. */
     for (const r of n.regions) {
-      const owns = (k) => { const [x, z] = k.split(',').map(Number); return regionOf(x) === r.rx && regionOf(z) === r.rz; };
+      const owns = (k) => regionOf(keyX(k)) === r.rx && regionOf(keyZ(k)) === r.rz;
       r.grade.forEach((v, k) => { if (!owns(k)) ownBad.push(`${s.nm} grade ${k} by ${r.rx},${r.rz}`); });
       r.trail.forEach((k) => { if (!owns(k)) ownBad.push(`${s.nm} trail ${k} by ${r.rx},${r.rz}`); });
     }
@@ -2358,6 +2360,32 @@ export function fieldSuite() {
   say('and a chunk dropped and loaded again is the same ground',
       g.supportUnder(0, 0, R, Infinity) === before,
       `support at the origin ${before.toFixed(2)} m before, ${g.supportUnder(0, 0, R, Infinity).toFixed(2)} m after`);
+
+  /* #64: a worker builds a chunk's collider and hands it over packed. After a
+     structured clone — which is what postMessage does to it — the unpacked
+     collider must answer every query exactly as the one that was built. */
+  {
+    const s0 = GOLDEN_SEEDS[0], w = chunkWorld(s0.seed, 1, -1, s0.force);
+    const built = colliderForChunk(w, 1, -1);
+    const back = colliderFromPacked(structuredClone(built.pack()));
+    let q = 0, diff = 0;
+    const c0x = CHUNK_M, c0z = -CHUNK_M;
+    for (let a = -16; a < 16; a += 0.37) {
+      for (let b = -16; b < 16; b += 0.41) {
+        const x = c0x + a, z = c0z + b; q++;
+        const y = back.supportUnder(x, z, 0.3, Infinity);
+        if (y !== built.supportUnder(x, z, 0.3, Infinity)
+            || back.ceilingOver(x, z, 0.3, y) !== built.ceilingOver(x, z, 0.3, y)
+            || back.overlaps(x, z, 0.3, y - 1, y + 0.5) !== built.overlaps(x, z, 0.3, y - 1, y + 0.5)
+            || back.liquidAt(x, z).level !== built.liquidAt(x, z).level) diff++;
+      }
+    }
+    const p = built.pack();
+    say('and a collider built in a worker answers what the one built here does',
+        q > 5000 && diff === 0,
+        `${q} points, ${diff} different after a structured clone; ${p.sp.length / 2} spans in `
+        + `${(p.sp.byteLength + p.off.byteLength + p.liq.byteLength + p.lev.byteLength) / 1024 | 0} KB of transferable arrays`);
+  }
   return out;
 }
 

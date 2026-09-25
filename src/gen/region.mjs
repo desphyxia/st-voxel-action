@@ -231,11 +231,11 @@ function buildRegion(G, rx, rz) {
      last. */
   var own = function (i, j) { return i >= PAD && j >= PAD && i < N - PAD - 1 && j < N - PAD - 1; };
   var mark = function (x, z) {
-    var k = x + ',' + z;
+    var k = cellKey(x, z);
     if (trail.has(k) || !own(x - x0, z - z0)) return;
     trail.add(k); order.push([x, z]);
   };
-  var key = function (x, z) { return x + ',' + z; };
+  var key = cellKey;
   var at = function (i, j) { return cells[i * N + j]; };
 
   /* The ports, in grid indices, and pinned: nothing here moves a port's
@@ -533,7 +533,7 @@ function buildRegion(G, rx, rz) {
   function levelTrail() {
     var pts = [];
     trail.forEach(function (k) {
-      var p = k.split(','), a = +p[0] - x0, b = +p[1] - z0;
+      var a = keyX(k) - x0, b = keyZ(k) - z0;
       if (a < 1 || b < 1 || a >= N - 1 || b >= N - 1) return;
       var c0 = at(a, b);
       if (!c0 || c0.water || c0.magma || fixed.has(a * N + b)) return;
@@ -626,6 +626,18 @@ function buildRegion(G, rx, rz) {
     ports: ports.map(function (p) { return [x0 + p[0], z0 + p[1]]; }),
   };
 }
+
+/* ---------- cell keys (#63) ----------
+   A world cell as one integer rather than the string "x,z". Every trail cell
+   and every graded cell used to be a string built, hashed and — for the
+   grades — split again; garbage collection was a tenth of generation. Offset
+   so negative coordinates pack too, and exact in a double for any world under
+   32 km a side. Insertion order is untouched, so every Set and Map walks in
+   the order it always did and nothing the generator emits moves. */
+const KEY_OFF = 32768, KEY_W = 65536;
+export function cellKey(x, z) { return (x + KEY_OFF) * KEY_W + (z + KEY_OFF); }
+export function keyX(k) { return Math.floor(k / KEY_W) - KEY_OFF; }
+export function keyZ(k) { return (k % KEY_W) - KEY_OFF; }
 
 /* ---------- cache ----------
    A 64 m window overlaps up to four regions and asks each the same questions;

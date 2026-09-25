@@ -15,7 +15,7 @@
  * A site is [i, j, role]: window cell indices, plus its index within the
  * region, which is what props.mjs builds a ruin or a holding from.
  */
-import { regionAt, regionsFor } from './region.mjs';
+import { regionAt, regionsFor, keyX, keyZ } from './region.mjs';
 
 export function layRoutes(w) {
   var M = w.M, cells = w.cells, half = w.half, OX = w.OX, OZ = w.OZ, G = w.G;
@@ -42,7 +42,7 @@ export function layRoutes(w) {
         hillside the region thinks was levelled. */
   for (q = 0; q < regions.length; q++) {
     regions[q].grade.forEach(function (h, key) {
-      var p = key.split(','), x = +p[0], z = +p[1], at = idx(x, z);
+      var x = keyX(key), z = keyZ(key), at = idx(x, z);
       if (at >= 0) cells[at].H = h;
     });
   }

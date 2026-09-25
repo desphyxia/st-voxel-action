@@ -38,7 +38,7 @@
  */
 import { V, CHUNK, CEIL } from '../gen/constants.mjs';
 import { chunkWorld, SKIRT } from '../gen/chunk.mjs';
-import { makeCollider, LIQUID, softProp } from './collider.mjs';
+import { makeCollider, colliderFromPacked, LIQUID, softProp } from './collider.mjs';
 
 /** Which chunk a world coordinate falls in. */
 export function chunkAt(x, z) {
@@ -54,7 +54,7 @@ const key = (cx, cz) => cx + ',' + cz;
  * One chunk's collider, in coordinates local to that chunk's centre, holding
  * only the ground the chunk owns.
  */
-function colliderForChunk(w, cx, cz) {
+export function colliderForChunk(w, cx, cz) {
   /* In world coordinates, not the chunk's own. A field used to convert a world
      coordinate to the owning chunk's local one before asking, and the round
      trip does not come back where it started: `(32 + -10.6) - 32` is
@@ -102,9 +102,15 @@ export function makeChunkField(seed, force, gdens) {
 
   /** Take a generated window as this chunk's ground. Where a streamed chunk
       arrives: whoever built it — this thread, a worker, a cache — hands it
-      here and the field starts answering from it on the next query. */
-  function adopt(cx, cz, w) {
-    const e = { cx, cz, w, col: colliderForChunk(w, cx, cz) };
+      here and the field starts answering from it on the next query.
+
+      `packed` is the chunk's collider already built, as `pack()` returns it:
+      a worker builds it beside the window and transfers it (#64), so the
+      main thread wraps four arrays instead of sorting sixteen thousand
+      columns. The same `colliderForChunk` ran on the other side. */
+  function adopt(cx, cz, w, packed) {
+    const col = packed ? colliderFromPacked(packed) : colliderForChunk(w, cx, cz);
+    const e = { cx, cz, w, col };
     live.set(key(cx, cz), e); built++;
     return e;
   }

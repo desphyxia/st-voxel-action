@@ -76,7 +76,8 @@
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
+import { createServer } from 'node:http';
+import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
@@ -2003,6 +2004,78 @@ if (BROWSER_HALF) {
       }
       await sp.screenshot({ path: join(OUT, 'play-streamed.png') });
       await sp.close();
+
+      /* ---------- WORKER: the off-thread path, over HTTP (#64) ----------
+         Everything above opens the page from disk, where a blob: worker is
+         refused — so the path streaming actually takes in a browser, the one
+         whose cost decides whether it can be the default, had no check at all.
+         Here the page is served, the pool starts, and what the worker hands
+         back is checked against what this thread would have built: the
+         collider it packed answers every probe the same, and the grass tiles
+         it composed hold the same blades. Timing is recorded, not asserted
+         tightly — the runner is software-rendered and shared — but a return
+         to the old 200 ms of main-thread work would still trip it. */
+      const html = readFileSync(PLAY_TARGET, 'utf8').replace(CDN, 'three.js');
+      const three = readFileSync(THREE_LOCAL);
+      const srv = createServer((req, res) => {
+        if (req.url.startsWith('/three.js')) { res.writeHead(200, { 'content-type': 'text/javascript' }); res.end(three); }
+        else { res.writeHead(200, { 'content-type': 'text/html' }); res.end(html); }
+      });
+      await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+      const wp = await browser.newPage({ viewport: { width: 320, height: 200 } });
+      wp.setDefaultTimeout(PATIENCE);
+      const wErrors = [];
+      wp.on('pageerror', (e) => wErrors.push(e.message));
+      wp.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) wErrors.push(m.text()); });
+      await wp.goto(`http://127.0.0.1:${srv.address().port}/?stream=1`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      await wp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      await wp.evaluate(() => { const P = window.QSPLAY; P.setSky('noon', 0, true); P.pause(true); P.input.press('KeyW'); });
+      const takes = [];
+      let wc = null, lastDone = 0;
+      for (let i = 0; i < 400 && lastDone < 12; i++) {
+        /* A few ticks, then back to the event loop so a worker's reply can be
+           delivered — a caller that never yields never receives one. */
+        wc = await wp.evaluate(() => { window.QSPLAY.run(6); return window.QSPLAY.chunks; });
+        if (wc.offThread > lastDone) { lastDone = wc.offThread; takes.push(wc.take); }
+        await new Promise((r) => setTimeout(r, 120));
+      }
+      const same = await wp.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS, f = P.field, out = { chunks: 0, probes: 0, diff: 0, blades: 0, bladesHere: 0 };
+        for (const e of f.live()) {
+          if (!e.col || !e.w) continue;
+          const here = QS.colliderForChunk(e.w, e.cx, e.cz);
+          out.chunks++;
+          for (let a = -15.5; a < 16; a += 1.3) for (let b = -15.5; b < 16; b += 1.7) {
+            const x = e.cx * QS.CHUNK + a, z = e.cz * QS.CHUNK + b; out.probes++;
+            if (here.supportUnder(x, z, 0.3, Infinity) !== e.col.supportUnder(x, z, 0.3, Infinity)) out.diff++;
+          }
+          const nd = P.node(e.cx, e.cz);
+          if (nd) {
+            let n = 0; nd.g.traverse((o) => { if (o.userData.kind === 'grass') n += o.userData.full; });
+            out.blades += n;
+            out.bladesHere += P.grassTiles(e.w.grass, QS.CHUNK / 2).reduce((s, t) => s + t.n, 0);
+          }
+        }
+        return out;
+      });
+      await wp.evaluate(() => { window.QSPLAY.input.release('KeyW'); window.QSPLAY.pause(false); });
+      await wp.close();
+      srv.close();
+      takes.sort((a, b) => a - b);
+      const med = takes.length ? takes[takes.length >> 1] : NaN;
+      check(wErrors.length === 0 && wc && wc.workers > 0 && !wc.poolFailed && lastDone >= 6,
+            'WORKER: served over HTTP, the pool starts and chunks arrive from it',
+            `${wc ? wc.workers : 0} workers, ${lastDone} chunks adopted off this thread`
+            + `${wc && wc.err ? `; error: ${wc.err}` : ''}${wErrors.length ? `; ${wErrors.slice(0, 2).join(' | ')}` : ''}`);
+      check(same.chunks >= 9 && same.probes > 0 && same.diff === 0 && same.blades > 0 && same.blades === same.bladesHere,
+            'WORKER: and what it builds is what this thread would have — the collider and the grass',
+            `${same.chunks} chunks, ${same.probes} collider probes, ${same.diff} different; `
+            + `${same.blades.toLocaleString()} blades drawn against ${same.bladesHere.toLocaleString()} rebuilt here`);
+      check(takes.length > 0 && med < 60,
+            'WORKER: and a chunk costs this thread a fraction of what it did',
+            `median ${med.toFixed(1)} ms to adopt a chunk on this thread over ${takes.length} chunks `
+            + `(was ~220 ms in this sandbox before #64; the frame is 16.7 ms), collider ${wc.col.toFixed(1)} ms, `
+            + `scene ${wc.node.toFixed(1)} ms of the last`);
     }
 
     /* ---------- LOOK: does the world still look like itself? (#29) ----------

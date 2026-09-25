@@ -1334,11 +1334,11 @@ function buildRegion(G, rx, rz) {
      last. */
   var own = function (i, j) { return i >= PAD && j >= PAD && i < N - PAD - 1 && j < N - PAD - 1; };
   var mark = function (x, z) {
-    var k = x + ',' + z;
+    var k = cellKey(x, z);
     if (trail.has(k) || !own(x - x0, z - z0)) return;
     trail.add(k); order.push([x, z]);
   };
-  var key = function (x, z) { return x + ',' + z; };
+  var key = cellKey;
   var at = function (i, j) { return cells[i * N + j]; };
 
   /* The ports, in grid indices, and pinned: nothing here moves a port's
@@ -1636,7 +1636,7 @@ function buildRegion(G, rx, rz) {
   function levelTrail() {
     var pts = [];
     trail.forEach(function (k) {
-      var p = k.split(','), a = +p[0] - x0, b = +p[1] - z0;
+      var a = keyX(k) - x0, b = keyZ(k) - z0;
       if (a < 1 || b < 1 || a >= N - 1 || b >= N - 1) return;
       var c0 = at(a, b);
       if (!c0 || c0.water || c0.magma || fixed.has(a * N + b)) return;
@@ -1730,6 +1730,18 @@ function buildRegion(G, rx, rz) {
   };
 }
 
+/* ---------- cell keys (#63) ----------
+   A world cell as one integer rather than the string "x,z". Every trail cell
+   and every graded cell used to be a string built, hashed and — for the
+   grades — split again; garbage collection was a tenth of generation. Offset
+   so negative coordinates pack too, and exact in a double for any world under
+   32 km a side. Insertion order is untouched, so every Set and Map walks in
+   the order it always did and nothing the generator emits moves. */
+const KEY_OFF = 32768, KEY_W = 65536;
+function cellKey(x, z) { return (x + KEY_OFF) * KEY_W + (z + KEY_OFF); }
+function keyX(k) { return Math.floor(k / KEY_W) - KEY_OFF; }
+function keyZ(k) { return (k % KEY_W) - KEY_OFF; }
+
 /* ---------- cache ----------
    A 64 m window overlaps up to four regions and asks each the same questions;
    a streamed world will ask far more often than that. Keyed by the seed word
@@ -1789,7 +1801,7 @@ function groundCellAt(w, x, z) {
   if (i >= 0 && j >= 0 && i < w.M && j < w.M) return w.cells[i * w.M + j];
   var c = w.G.cell(x, z);
   var H = clamp(erodeAt(w.G, x, z, c), 0, CEIL);
-  var g = regionAt(w.G, regionOf(x), regionOf(z)).grade.get(x + ',' + z);
+  var g = regionAt(w.G, regionOf(x), regionOf(z)).grade.get(cellKey(x, z));
   if (g !== undefined) H = g;
   return { H: H, water: c.water, magma: c.magma, dom: c.dom, w: c.w };
 }
@@ -1838,7 +1850,7 @@ function layRoutes(w) {
         hillside the region thinks was levelled. */
   for (q = 0; q < regions.length; q++) {
     regions[q].grade.forEach(function (h, key) {
-      var p = key.split(','), x = +p[0], z = +p[1], at = idx(x, z);
+      var x = keyX(key), z = keyZ(key), at = idx(x, z);
       if (at >= 0) cells[at].H = h;
     });
   }
@@ -3715,9 +3727,15 @@ function makeCollider(half, v, bounded, origin) {
      centred at x 32 and z -32, and sharing one origin between the axes put
      every query of it a kilometre off its own grid. */
   const orgX = origin ? origin.x : 0, orgZ = origin ? origin.z : 0;
-  const cols = new Array(n * n);
-  const liq = new Uint8Array(n * n);
-  const lev = new Float32Array(n * n);
+  /* Built as a list per column, then packed by finish() into two flat arrays
+     — `off[k]..off[k+1]` are column k's spans, as lo/hi pairs in `sp` — which
+     is what every query reads. Flat for the queries' sake and for #64's: a
+     packed collider is four typed arrays, so a worker can build one and hand
+     it to the main thread by transfer rather than by clone. */
+  let cols = new Array(n * n);
+  let liq = new Uint8Array(n * n);
+  let lev = new Float32Array(n * n);
+  let off = null, sp = null;
   let sealed = false;
 
   /**
@@ -3832,8 +3850,9 @@ function makeCollider(half, v, bounded, origin) {
       }
     },
 
-    /** Sort and merge every column. Queries assume this has run. */
+    /** Sort and merge every column, and pack them. Queries assume this has run. */
     finish() {
+      let total = 0;
       for (let k = 0; k < cols.length; k++) {
         const flat = cols[k];
         if (!flat) continue;
@@ -3846,13 +3865,37 @@ function makeCollider(half, v, bounded, origin) {
           if (last && r[0] <= last[1] + EPS) { if (r[1] > last[1]) last[1] = r[1]; }
           else out.push([r[0], r[1]]);
         }
-        cols[k] = out;
+        cols[k] = out; total += out.length;
       }
+      off = new Int32Array(n * n + 1); sp = new Float64Array(total * 2);
+      let at = 0;
+      for (let k = 0; k < cols.length; k++) {
+        off[k] = at;
+        const c = cols[k];
+        if (c) for (const r of c) { sp[at * 2] = r[0]; sp[at * 2 + 1] = r[1]; at++; }
+      }
+      off[n * n] = at;
+      cols = null;
       sealed = true;
       return this;
     },
 
-    spansAt(x, z) { return cols[axc(x) * n + azc(z)] || null; },
+    /**
+     * The sealed collider as plain typed arrays, and back (#64). What a worker
+     * sends: `colliderFromPacked` on the other side answers every query as the
+     * original does, from the same doubles.
+     */
+    pack() { return { n, v, half, orgX, orgZ, bounded: walled, off, sp, liq, lev }; },
+    adopt(p) { off = p.off; sp = p.sp; liq = p.liq; lev = p.lev; cols = null; sealed = true; return this; },
+
+    /** One column's spans as [lo, hi] pairs, or null. For tests and tools. */
+    spansAt(x, z) {
+      const k = axc(x) * n + azc(z), a = off[k], b = off[k + 1];
+      if (a === b) return null;
+      const out = [];
+      for (let q = a; q < b; q++) out.push([sp[q * 2], sp[q * 2 + 1]]);
+      return out;
+    },
 
     liquidAt(x, z) {
       const k = axc(x) * n + azc(z);
@@ -3873,10 +3916,10 @@ function makeCollider(half, v, bounded, origin) {
          past the edge of the world. */
       for (let i = i0; i <= i1; i++) {
         for (let j = j0; j <= j1; j++) {
-          const sp = cols[i * n + j];
-          if (!sp) continue;
-          for (let q = sp.length - 1; q >= 0; q--) {
-            if (sp[q][1] <= ceilY + EPS) { if (sp[q][1] > best) best = sp[q][1]; break; }
+          const k = i * n + j, a = off[k];
+          for (let q = off[k + 1] - 1; q >= a; q--) {
+            const hi = sp[q * 2 + 1];
+            if (hi <= ceilY + EPS) { if (hi > best) best = hi; break; }
           }
         }
       }
@@ -3892,11 +3935,10 @@ function makeCollider(half, v, bounded, origin) {
       const i0 = axc(x - r), i1 = axc(x + r), j0 = azc(z - r), j1 = azc(z + r);
       for (let i = i0; i <= i1; i++) {
         for (let j = j0; j <= j1; j++) {
-          const sp = cols[i * n + j];
-          if (!sp) continue;
-          for (let q = 0; q < sp.length; q++) {
-            if (sp[q][0] >= hi - EPS) break;
-            if (sp[q][1] > lo + EPS) return true;
+          const k = i * n + j, b = off[k + 1];
+          for (let q = off[k]; q < b; q++) {
+            if (sp[q * 2] >= hi - EPS) break;
+            if (sp[q * 2 + 1] > lo + EPS) return true;
           }
         }
       }
@@ -3909,10 +3951,10 @@ function makeCollider(half, v, bounded, origin) {
       const i0 = axc(x - r), i1 = axc(x + r), j0 = azc(z - r), j1 = azc(z + r);
       for (let i = i0; i <= i1; i++) {
         for (let j = j0; j <= j1; j++) {
-          const sp = cols[i * n + j];
-          if (!sp) continue;
-          for (let q = 0; q < sp.length; q++) {
-            if (sp[q][0] >= y - EPS) { if (sp[q][0] < best) best = sp[q][0]; break; }
+          const k = i * n + j, b = off[k + 1];
+          for (let q = off[k]; q < b; q++) {
+            const lo = sp[q * 2];
+            if (lo >= y - EPS) { if (lo < best) best = lo; break; }
           }
         }
       }
@@ -3921,6 +3963,11 @@ function makeCollider(half, v, bounded, origin) {
 
     get ready() { return sealed; },
   };
+}
+
+/** A sealed collider again, from what `pack()` returned — on any thread. */
+function colliderFromPacked(p) {
+  return makeCollider(p.half, p.v, p.bounded, { x: p.orgX, z: p.orgZ }).adopt(p);
 }
 
 /**
@@ -4085,9 +4132,15 @@ function makeChunkField(seed, force, gdens) {
 
   /** Take a generated window as this chunk's ground. Where a streamed chunk
       arrives: whoever built it — this thread, a worker, a cache — hands it
-      here and the field starts answering from it on the next query. */
-  function adopt(cx, cz, w) {
-    const e = { cx, cz, w, col: colliderForChunk(w, cx, cz) };
+      here and the field starts answering from it on the next query.
+
+      `packed` is the chunk's collider already built, as `pack()` returns it:
+      a worker builds it beside the window and transfers it (#64), so the
+      main thread wraps four arrays instead of sorting sixteen thousand
+      columns. The same `colliderForChunk` ran on the other side. */
+  function adopt(cx, cz, w, packed) {
+    const col = packed ? colliderFromPacked(packed) : colliderForChunk(w, cx, cz);
+    const e = { cx, cz, w, col };
     live.set(key(cx, cz), e); built++;
     return e;
   }
@@ -4344,11 +4397,12 @@ function makeStream(field, opts) {
     return { cx: best.cx, cz: best.cz };
   }
 
-  /** Ground that has been generated, from wherever. */
-  function deliver(cx, cz, w) {
+  /** Ground that has been generated, from wherever — with its collider, if
+      whoever generated it built that too (#64). */
+  function deliver(cx, cz, w, packed) {
     flight.delete(ckey(cx, cz));
     if (ring(cx, cz) > o.keepR) return false;
-    field.adopt(cx, cz, w);
+    field.adopt(cx, cz, w, packed);
     delivered++;
     return true;
   }
@@ -7010,7 +7064,7 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -7161,6 +7215,57 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   function bladeMix(i){
     var h=Math.imul(i^0x9e3779b9,0x85ebca6b); h^=h>>>13; h=Math.imul(h,0xc2b2ae35); h^=h>>>16;
     return h>>>0;
+  }
+  /**
+   * One chunk's grass as tiles, ready to draw: per tile, every blade's
+   * instance matrix and the four attributes the shader reads, as typed arrays,
+   * plus the roots' box its bounding sphere is fitted to (#51).
+   *
+   * Pure, and written to be sent: the worker runs this same function — its
+   * text is put into the worker's body — so a streamed chunk's grass arrives
+   * as buffers to wrap rather than 80,000 blades to compose on the main thread
+   * (#64). `lim` clips to the chunk a window is drawn for, or is null for a
+   * whole window. A blade's matrix is a turn about y, a stretch along it and a
+   * translation, written out rather than composed through a quaternion.
+   */
+  function grassTiles(gd,lim,tile){
+    var tiles={}, keys=[], i, tk;
+    for(i=0;i<gd.ph.length;i++){
+      var x=gd.p[i*3], z=gd.p[i*3+2];
+      if(lim!==null&&(x<-lim||x>=lim||z<-lim||z>=lim)) continue;
+      tk=Math.floor(x/tile)+','+Math.floor(z/tile);
+      if(!tiles[tk]){ tiles[tk]=[]; keys.push(tk); }
+      tiles[tk].push(i);
+    }
+    var out=[];
+    for(var t=0;t<keys.length;t++){
+      /* Shuffled, by a hash of each blade's own index, so that the first n of a
+         tile are an even sample of all of it: zooming out draws fewer blades by
+         lowering the tile's count (#61), and a tile in scan order would lose
+         whole rows instead of thinning. Order does not change what an opaque
+         blade looks like, so at full density nothing on screen moves. */
+      var src=tiles[keys[t]], gn=src.length, mix=new Uint32Array(gn);
+      for(i=0;i<gn;i++) mix[i]=bladeMix(src[i]);
+      var ord=new Uint32Array(gn); for(i=0;i<gn;i++) ord[i]=i;
+      ord.sort(function(a,b){ return mix[a]-mix[b]||src[a]-src[b]; });
+      var mat=new Float32Array(gn*16), ph=new Float32Array(gn), ti=new Float32Array(gn),
+          cl=new Float32Array(gn*3), dl=new Float32Array(gn*3);
+      var bx0=1e9,bx1=-1e9,by0=1e9,by1=-1e9,bz0=1e9,bz1=-1e9,bhm=0;
+      for(i=0;i<gn;i++){
+        var gk=src[ord[i]], px=gd.p[gk*3], py=gd.p[gk*3+1], pz=gd.p[gk*3+2];
+        var yw=gd.yw[gk], c=Math.cos(yw), s=Math.sin(yw), sc=gd.sc[gk], o=i*16;
+        mat[o]=c; mat[o+2]=-s; mat[o+5]=sc; mat[o+8]=s; mat[o+10]=c;
+        mat[o+12]=px; mat[o+13]=py; mat[o+14]=pz; mat[o+15]=1;
+        ph[i]=gd.ph[gk]; ti[i]=gd.ti[gk];
+        cl[i*3]=gd.c[gk*3]; cl[i*3+1]=gd.c[gk*3+1]; cl[i*3+2]=gd.c[gk*3+2];
+        dl[i*3]=gd.dc[gk*3]; dl[i*3+1]=gd.dc[gk*3+1]; dl[i*3+2]=gd.dc[gk*3+2];
+        if(px<bx0)bx0=px; if(px>bx1)bx1=px; if(pz<bz0)bz0=pz; if(pz>bz1)bz1=pz;
+        if(py<by0)by0=py; if(py>by1)by1=py; if(sc>bhm)bhm=sc;
+      }
+      out.push({n:gn,mat:mat,ph:ph,ti:ti,cl:cl,dl:dl,
+                gb:{x0:bx0,x1:bx1,y0:by0,y1:by1,z0:bz0,z1:bz1,h:bhm}});
+    }
+    return out;
   }
   /* How wide a blade is at its base, in metres, and how many of the four push
      slots the shader carries. The old blade was 11 cm on a 25 cm voxel grid and
@@ -7775,7 +7880,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       im.userData.src=src; im.userData.kind=(lo===0?'boxes':'props'); g.add(im);
       return im;
     }
-    var vox=boxesFor(0,pStart), props=boxesFor(pStart,n);
+    /* A streamed chunk builds its boxes only when something will draw them
+       (#64). They are the comparison renderer — shown with Mesh off — and
+       filling an instance matrix and colour per voxel for tens of thousands
+       of voxels was a sixth of adopting a chunk on the main thread, for boxes
+       nobody saw. `ensureBoxes` builds them the moment they are asked for. */
+    var lazy=!!org;
+    var vox=lazy&&useMesh?null:boxesFor(0,pStart);
+    var props=lazy&&useMesh&&propCulled?null:boxesFor(pStart,n);
 
     /* ---------- props without their insides (#51) ----------
        The instanced boxes above draw six faces per prop voxel whether or not
@@ -7813,8 +7925,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* Both terrain renderers are built; only one is visible. Props, water and
        grass are untouched by either — a felled tree must not remesh a chunk. */
     var terrainMesh=buildMesh(data,mats.mesh,org,pre&&pre.terrain?pre.terrain:pre);
+
     g.add(terrainMesh);
     terrainMesh.visible=useMesh; if(vox) vox.visible=!useMesh;
+    var boxes=lazy?function(which){ return which===0?boxesFor(0,pStart):boxesFor(pStart,n); }:null;
     /* One of the two prop renderers, never both. */
     if(propMesh) propMesh.visible=useMesh;
     if(props) props.visible=!useMesh||!propMesh;
@@ -7847,45 +7961,23 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        makes a density worth looking at affordable at all. The cost is draw
        calls, one per visible tile, and that is the trade: a few tens of calls
        against a few hundred thousand triangles. */
-    var gd=data.grass, tiles={}, tk;
-    for(i=0;i<gd.ph.length;i++){
-      if(!keep(gd.p[i*3],gd.p[i*3+2])) continue;
-      tk=Math.floor(gd.p[i*3]/GRASS_TILE)+','+Math.floor(gd.p[i*3+2]/GRASS_TILE);
-      (tiles[tk]||(tiles[tk]=[])).push(i);
-    }
-    var qq=new THREE.Quaternion(),eu=new THREE.Euler(),sv=new THREE.Vector3(),tv=new THREE.Vector3();
-    for(tk in tiles){
-      /* Shuffled, by a hash of each blade's own index, so that the first n of a
-         tile are an even sample of all of it: zooming out draws fewer blades by
-         lowering the tile's count (#61), and a tile in scan order would lose
-         whole rows instead of thinning. Order does not change what an opaque
-         blade looks like, so at full density nothing on screen moves. */
-      var gsrc=tiles[tk].slice().sort(function(p,q){ return bladeMix(p)-bladeMix(q)||p-q; }),
-          gn=gsrc.length, geo=bladeGeo.clone();
-      var grass=new THREE.InstancedMesh(geo,mats.grass,gn);
-      var ph=new Float32Array(gn),ti=new Float32Array(gn),cl=new Float32Array(gn*3),dl=new Float32Array(gn*3);
-      var bx0=1e9,bx1=-1e9,by0=1e9,by1=-1e9,bz0=1e9,bz1=-1e9,bhm=0;
-      for(i=0;i<gn;i++){ var gk=gsrc[i], px=gd.p[gk*3], py=gd.p[gk*3+1], pz=gd.p[gk*3+2];
-        tv.set(px,py,pz); eu.set(0,gd.yw[gk],0); qq.setFromEuler(eu);
-        sv.set(1,gd.sc[gk],1); m4.compose(tv,qq,sv); grass.setMatrixAt(i,m4);
-        ph[i]=gd.ph[gk]; ti[i]=gd.ti[gk]; cl[i*3]=gd.c[gk*3]; cl[i*3+1]=gd.c[gk*3+1]; cl[i*3+2]=gd.c[gk*3+2];
-        dl[i*3]=gd.dc[gk*3]; dl[i*3+1]=gd.dc[gk*3+1]; dl[i*3+2]=gd.dc[gk*3+2];
-        if(px<bx0)bx0=px; if(px>bx1)bx1=px; if(pz<bz0)bz0=pz; if(pz>bz1)bz1=pz;
-        if(py<by0)by0=py; if(py>by1)by1=py; if(gd.sc[gk]>bhm)bhm=gd.sc[gk];
-      }
-      grass.instanceMatrix.needsUpdate=true;
-      geo.setAttribute('aPhase',new THREE.InstancedBufferAttribute(ph,1));
-      geo.setAttribute('aTint',new THREE.InstancedBufferAttribute(ti,1));
-      geo.setAttribute('aCol',new THREE.InstancedBufferAttribute(cl,3));
-      geo.setAttribute('aDry',new THREE.InstancedBufferAttribute(dl,3));
+    var gts=pre&&pre.grass?pre.grass:grassTiles(data.grass,org?QS.CHUNK/2:null,GRASS_TILE);
+    for(i=0;i<gts.length;i++){
+      var gt=gts[i], geo=bladeGeo.clone();
+      var grass=new THREE.InstancedMesh(geo,mats.grass,gt.n);
+      grass.instanceMatrix=new THREE.InstancedBufferAttribute(gt.mat,16);
+      geo.setAttribute('aPhase',new THREE.InstancedBufferAttribute(gt.ph,1));
+      geo.setAttribute('aTint',new THREE.InstancedBufferAttribute(gt.ti,1));
+      geo.setAttribute('aCol',new THREE.InstancedBufferAttribute(gt.cl,3));
+      geo.setAttribute('aDry',new THREE.InstancedBufferAttribute(gt.dl,3));
       /* Where the tile's blades are rooted, and the tallest of them. The sphere
          the frustum test uses is derived from these rather than stored, because
          the length control scales every blade at once and a sphere that did not
          follow would cull a tile while part of it was still on screen — which
          is a hole in the ground, not a saving. */
-      grass.userData.gb={x0:bx0,x1:bx1,y0:by0,y1:by1,z0:bz0,z1:bz1,h:bhm};
-      grass.userData.kind='grass'; grass.frustumCulled=true; grass.userData.full=gn;
-      grass.count=grassCount(gn,cam.view);
+      grass.userData.gb=gt.gb;
+      grass.userData.kind='grass'; grass.frustumCulled=true; grass.userData.full=gt.n;
+      grass.count=grassCount(gt.n,cam.view);
       fitGrass(grass); g.add(grass);
     }
 
@@ -7917,7 +8009,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       var pl=new THREE.PointLight(0xffb066,0.9,9,2); pl.position.set(l[0],l[1]+0.1,l[2]); g.add(pl);
       pl.userData.lamp=0.9; pl.intensity=0.9*skyNow.lamps;
     });
-    return {g:g,vox:vox,props:props,propMesh:propMesh,mesh:terrainMesh,data:data,org:org};
+    return {g:g,vox:vox,props:props,propMesh:propMesh,mesh:terrainMesh,data:data,org:org,boxes:boxes};
   }
 
   /** The grass and water materials, shared across every chunk of one world. */
@@ -8310,6 +8402,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       if(b0.propMesh) b0.propMesh.visible=useMesh;
       if(b0.props) b0.props.visible=!useMesh||!b0.propMesh; }
     if(nodes) for(var k in nodes){ var nd=nodes[k];
+      if(!useMesh) ensureBoxes(nd);
       if(nd.mesh) nd.mesh.visible=useMesh; if(nd.vox) nd.vox.visible=!useMesh;
       if(nd.propMesh) nd.propMesh.visible=useMesh;
       if(nd.props) nd.props.visible=!useMesh||!nd.propMesh; }
@@ -8325,12 +8418,37 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(b3) b3.setAttribute('aria-pressed',useMesh?'true':'false');
   }
 
+  /**
+   * Build a streamed chunk's boxes if it has not got them (#64), hiding
+   * whatever has been carved since the chunk arrived — the carve found no
+   * boxes to hide then, and `w.edits` is the record of what it took.
+   */
+  function ensureBoxes(nd){
+    if(!nd||!nd.boxes) return;
+    if(!nd.props){ nd.props=nd.boxes(1); if(nd.props) nd.props.visible=false; }
+    if(nd.vox) return;
+    var v=nd.vox=nd.boxes(0);
+    if(!v) return;
+    v.visible=false;
+    var ed=nd.data.edits, keys=ed?Array.from(ed.keys()):[];
+    if(keys.length){
+      var ix=indexOfNode(nd), back=new Map(), sr=v.userData.src, t;
+      for(t=0;t<sr.length;t++) back.set(sr[t],t);
+      v.userData.back=back;
+      for(t=0;t<keys.length;t++){
+        var k=ix.get(keys[t]), slot=k===undefined?undefined:back.get(k);
+        if(slot!==undefined){ v.setMatrixAt(slot,zeroM); nd.hidden.push(slot); }
+      }
+      v.instanceMatrix.needsUpdate=true;
+    }
+  }
   /** Swap between the culled prop mesh and the instanced boxes. */
   var propCulled=true;
   function setPropMesh(on){
     propCulled=!!on; worldChanged();
     function apply(nd){
       if(!nd) return;
+      if(!propCulled) ensureBoxes(nd);
       if(nd.propMesh) nd.propMesh.visible=useMesh&&propCulled;
       if(nd.props) nd.props.visible=!useMesh||!nd.propMesh||!propCulled;
     }
@@ -8683,6 +8801,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          not state: the ramp is four numbers and the widths come straight off
          QS.PALETTE, which the worker has too. */
       +'var AO_STEP=['+AO_STEP.join(',')+'];\n'
+      +bladeMix.toString()+'\n'+grassTiles.toString()+'\n'
       +'var PAL_N=(function(){var t=new Uint8Array(QS.PALETTE.length);\n'
       +'  for(var k in QS.PAL) t[QS.PAL[k].at]=QS.PAL[k].n; return t;})();\n'
       +'  var t0=_now(), w=QS.chunkWorld(d.seed,d.cx,d.cz,d.force,d.gd);\n'
@@ -8694,6 +8813,20 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          main thread makes its own from the same seed, which is what `makeGen`
          is for and costs nothing but closures. */
       +'  var out={}; for(var k in w){ if(k!=="G") out[k]=w[k]; }\n'
+      /* Moved, not copied (#64). A world is ~1.5 million numbers in plain
+         arrays — voxel positions, palette and shade bytes, every blade's
+         root and colour — and a plain array crosses postMessage by structured
+         clone: 133 ms in node, paid again on this side as it arrives. As a
+         Float64Array it holds the same doubles exactly and is *transferred*,
+         which is a pointer handed over. Only arrays that are numbers all the
+         way through are converted; anything else is cloned as before. */
+      +'  var tx=[];\n'
+      +'  function typed(o){ for(var k in o){ var a=o[k];\n'
+      +'    if(Array.isArray(a)&&a.length>=64){ var ok=true;\n'
+      +'      for(var q=0;q<a.length;q++) if(typeof a[q]!=="number"){ ok=false; break; }\n'
+      +'      if(ok){ var f=new Float64Array(a); o[k]=f; tx.push(f.buffer); } } } }\n'
+      +'  typed(out); if(out.grass){ out.grass=Object.assign({},out.grass); typed(out.grass); }\n'
+      +'  if(out.water){ out.water=Object.assign({},out.water); typed(out.water); }\n'
       /* And mesh it here. This is the reason the worker exists at all: the
          greedy pass is 209 ms of the ~220 ms the main thread used to spend
          adopting a chunk, and everything else in that figure is rounding.
@@ -8714,10 +8847,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       +'  var props={pos:new Float32Array(pmr.pos),nor:new Float32Array(pmr.nor),\n'
       +'             col:new Float32Array(pmr.col),idx:new Uint32Array(pmr.idx),\n'
       +'             faces:pmr.faces,culled:pmr.culled};\n'
-      +'  self.postMessage({cx:d.cx,cz:d.cz,w:out,mesh:mesh,props:props,\n'
+      /* The chunk's collider, built and packed here: sorting and merging
+         sixteen thousand columns was the largest thing left on the main
+         thread once the rest had moved (#64). */
+      +'  var cp=QS.colliderForChunk(w,d.cx,d.cz).pack();\n'
+      /* And grass: the tiles, shuffled and composed, as buffers (#64). */
+      +'  var grass=grassTiles(w.grass,QS.CHUNK/2,'+GRASS_TILE+'), gbuf=[];\n'
+      +'  for(var gi=0;gi<grass.length;gi++){ var gt=grass[gi];\n'
+      +'    gbuf.push(gt.mat.buffer,gt.ph.buffer,gt.ti.buffer,gt.cl.buffer,gt.dl.buffer); }\n'
+      +'  self.postMessage({cx:d.cx,cz:d.cz,w:out,mesh:mesh,props:props,grass:grass,col:cp,\n'
       +'                    gen:_now()-t0,mesh_ms:_now()-t1},\n'
       +'    [mesh.pos.buffer,mesh.nor.buffer,mesh.col.buffer,mesh.grp.buffer,mesh.idx.buffer,\n'
-      +'     props.pos.buffer,props.nor.buffer,props.col.buffer,props.idx.buffer]);\n'
+      +'     props.pos.buffer,props.nor.buffer,props.col.buffer,props.idx.buffer].concat(gbuf,tx,[cp.off.buffer,cp.sp.buffer,cp.liq.buffer,cp.lev.buffer]));\n'
       +'  }catch(err){ self.postMessage({cx:d.cx,cz:d.cz,err:String((err&&err.message)||err)}); }\n'
       +'};\n';
     var url,ws=[];
@@ -8730,7 +8871,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     }
     var P={ws:ws,url:url,ready:false,busy:ws.map(function(){return null;}),
             sentAt:ws.map(function(){return 0;}),
-            gen:0,mesh_ms:0,deliver:0,take:0,done:0,sent:0,failed:false,waited:0,err:null};
+            gen:0,mesh_ms:0,deliver:0,take:0,col:0,node:0,gen0:0,done:0,sent:0,failed:false,waited:0,err:null};
     ws.forEach(function(w,k){
       w.onerror=function(e){ P.failed=true; P.ready=false;
         P.err=(e&&e.message)||'refused'; };
@@ -8763,12 +8904,24 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
              a voxel's shade, and the worker could not send one. Same seed, same
              closures, same answers. */
           d.w.G=QS.makeGen(field.seed,field.force===undefined?null:field.force);
-          if(d.mesh) premesh[d.cx+','+d.cz]={terrain:d.mesh,props:d.props};
+          if(d.mesh) premesh[d.cx+','+d.cz]={terrain:d.mesh,props:d.props,grass:d.grass};
           P.mesh_ms=d.mesh_ms||0;
-          stream.deliver(d.cx,d.cz,d.w);
+          var tc=performance.now();
+          stream.deliver(d.cx,d.cz,d.w,d.col);
+          var tn=performance.now();
           reconcileNodes();
-          P.take=performance.now()-t1;
-          streamMs=P.deliver+P.take; streamBuilt++;
+          var te=performance.now();
+          /* The two halves of `take`, kept apart because they have different
+             cures (#64): the collider is built from the window's spans, and
+             the node is the scene work — geometry uploads, grass, water. */
+          P.col=tn-tc; P.node=te-tn; P.gen0=tc-t1;
+          P.take=te-t1;
+          /* This thread's share, and only that (#64). `deliver` is a round
+             trip less the worker's own time, which is mostly a reply waiting
+             its turn behind whatever frame is being drawn — time this thread
+             spent on other work, not on the chunk. Adding it in reported a
+             chunk as costing the frames it happened to arrive during. */
+          streamMs=P.take; streamBuilt++;
         }
       };
       w.postMessage({ping:1});
@@ -9835,16 +9988,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          quarter never lands on an integer. */
       'view '+((Math.round((cam.yawTo-QS.START_YAW)/QS.QUARTER)%4+4)%4)+'/4   vaults '+a.vaults+
       '   deaths '+deaths+'\n'+
-      /* What streaming costs, where you can see it. The last window's
-         generation time is the number that says why this is behind a switch:
-         it is the length of the freeze, in one figure. */
+      /* What streaming costs, where you can see it. `last` is what the last
+         chunk cost this thread — the length of the hitch, in one figure, and
+         the number #64 holds under a frame. Transit is shown beside it and is
+         not part of it: it is the reply queuing behind other work. */
       (streaming&&field?('chunks '+field.loaded+' loaded, '+field.built+' built, '+field.dropped+
                   ' let go   last '+streamMs.toFixed(0)+' ms '+
                   (pool&&pool.ready&&!pool.failed?
                     '('+pool.ws.length+' workers: '+pool.gen.toFixed(0)+'+'+
                     pool.mesh_ms.toFixed(0)+' ms generating and meshing off this thread, '+
-                    pool.deliver.toFixed(0)+' ms delivering, '+
-                    pool.take.toFixed(0)+' ms adopting)':'generated on this thread')+
+                    pool.deliver.toFixed(0)+' ms in transit; here '+
+                    pool.col.toFixed(1)+' ms collider, '+pool.node.toFixed(1)+' ms scene)':'generated on this thread')+
                   (stream.pending?('   '+stream.pending+' queued'):'')+'\n'):'')+
       net+'   '+fps.toFixed(0)+' fps';
   }
@@ -10067,6 +10221,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     get grassLength(){ return grassLen; },
     setGrassDensity:setGrassDensity,
     setGrassLength:setGrassLength,
+    /* #64: the gate compares what a worker built against what this thread
+       would build, so it needs the field, a chunk's node and the grass tiler. */
+    get field(){ return streaming?field:null; },
+    node:function(cx,cz){ return nodeAt(cx,cz); },
+    grassTiles:function(gd,lim){ return grassTiles(gd,lim===undefined?null:lim,GRASS_TILE); },
     get chunks(){ return streaming?{loaded:field.loaded,built:field.built,dropped:field.dropped,
                                     pending:stream.pending,ms:streamMs,nodes:Object.keys(nodes).length,
                                     workers:pool&&pool.ready&&!pool.failed?pool.ws.length:0,
@@ -10074,7 +10233,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
                                     err:pool?pool.err:null,sent:pool?pool.sent:0,
                                     gen:pool?pool.gen:0,mesh:pool?pool.mesh_ms:0,
                                     deliver:pool?pool.deliver:0,
-                                    take:pool?pool.take:0}:null; },
+                                    take:pool?pool.take:0,col:pool?pool.col:0,node:pool?pool.node:0,
+                                    regen:pool?pool.gen0:0}:null; },
     get meshQuads(){
       if(streaming){ var q=0; for(var k in nodes) q+=nodes[k].mesh.userData.quads; return q; }
       return built&&built.mesh?built.mesh.userData.quads:0; },

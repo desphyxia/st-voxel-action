@@ -155,11 +155,12 @@ export function makeStream(field, opts) {
     return { cx: best.cx, cz: best.cz };
   }
 
-  /** Ground that has been generated, from wherever. */
-  function deliver(cx, cz, w) {
+  /** Ground that has been generated, from wherever — with its collider, if
+      whoever generated it built that too (#64). */
+  function deliver(cx, cz, w, packed) {
     flight.delete(ckey(cx, cz));
     if (ring(cx, cz) > o.keepR) return false;
-    field.adopt(cx, cz, w);
+    field.adopt(cx, cz, w, packed);
     delivered++;
     return true;
   }
