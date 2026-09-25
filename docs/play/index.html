@@ -7625,8 +7625,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     mesh.add(bones[0]); mesh.updateMatrixWorld(true);
     mesh.bind(new THREE.Skeleton(bones));
     /* A skinned mesh's bounds are its bind pose, not where the bones have put
-       it; a character is small and always near the camera's target. */
-    mesh.frustumCulled=false; mesh.castShadow=false;
+       it, so it gets a sphere that holds every pose the rig can reach: the
+       blade at full reach, a sentry's lunge, a body lying down. */
+    geo.computeBoundingSphere();
+    geo.boundingSphere.radius+=def===QS.HERO_RIG?1.6:1.0;
+    mesh.frustumCulled=true; mesh.castShadow=false;
     mesh.userData.keep=true; mesh.userData.kind='actor';
     return {mesh:mesh,bones:byName,def:def,ranges:ranges,tint:{},shown:null,at:-1};
   }
@@ -7718,7 +7721,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     function inst(geo,mat,n){
       var m=new THREE.InstancedMesh(geo,mat,Math.max(1,n)), c=new THREE.Color(0xffffff);
       for(var q=0;q<Math.max(1,n);q++) m.setColorAt(q,c);
-      m.count=0; m.frustumCulled=false; m.userData.keep=true; m.userData.kind='loot';
+      m.count=0; m.frustumCulled=true; m.userData.keep=true; m.userData.kind='loot';
       return m;
     }
     function flat(g){ g.rotateX(Math.PI/2); return g; }
@@ -7730,6 +7733,20 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       halo:inst(flat(new THREE.RingGeometry(0.78,0.96,24)),new THREE.MeshBasicMaterial({color:0xe8e3d7,
         transparent:true,opacity:0.30,side:THREE.DoubleSide,depthWrite:false}),nCache)
     };
+  }
+  /* An InstancedMesh is culled against its *base* geometry's sphere — one
+     cube at the origin — which is the trap the grass tiles fell into (#51). So
+     each gets a sphere, in the world frame its instances are placed in, around
+     where they actually are. */
+  function sphereAround(m,pts,pad){
+    var bs=m.geometry.boundingSphere||(m.geometry.boundingSphere=new THREE.Sphere());
+    if(!pts.length){ bs.center.set(0,-1e4,0); bs.radius=0.01; return; }
+    var x0=1e9,x1=-1e9,y0=1e9,y1=-1e9,z0=1e9,z1=-1e9;
+    for(var q=0;q<pts.length;q++){ var p=pts[q];
+      if(p[0]<x0)x0=p[0]; if(p[0]>x1)x1=p[0]; if(p[1]<y0)y0=p[1]; if(p[1]>y1)y1=p[1];
+      if(p[2]<z0)z0=p[2]; if(p[2]>z1)z1=p[2]; }
+    bs.center.set((x0+x1)/2,(y0+y1)/2,(z0+z1)/2);
+    bs.radius=Math.sqrt((x1-x0)*(x1-x0)+(y1-y0)*(y1-y0)+(z1-z0)*(z1-z0))/2+pad;
   }
   function eachLoot(fn){ if(loot) ['cube','ring','plinth','halo'].forEach(function(k){ fn(loot[k]); }); }
   /** One post, lit or not: a colour and a squash, rewritten only when it changes. */
@@ -7764,6 +7781,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       }
     }
     loot.cube.count=n; loot.ring.count=n; loot.plinth.count=nc; loot.halo.count=nc;
+    var where=items.map(function(o){ return [o.item.x,o.item.y,o.item.z]; });
+    eachLoot(function(m){ sphereAround(m,where,1.5); });
     eachLoot(function(m){ m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true; });
   }
   /** Everything the machine is about to do, said in a pose and a colour. */
@@ -8100,8 +8119,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(posts.length){
       postMesh=new THREE.InstancedMesh(new THREE.CylinderGeometry(posts[0].r,posts[0].r*1.15,1.5,8),
         new THREE.MeshLambertMaterial({color:0xffffff}),posts.length);
-      postMesh.castShadow=true; postMesh.frustumCulled=false; postMesh.userData.keep=false;
+      postMesh.castShadow=true; postMesh.frustumCulled=true; postMesh.userData.keep=false;
       postMesh.userData.posts=posts;
+      sphereAround(postMesh,posts.map(function(t){ return [t.x,t.y+0.75,t.z]; }),1.2);
       for(var pq=0;pq<posts.length;pq++) setPost(pq,false);
       built.scene.add(postMesh);
     }
