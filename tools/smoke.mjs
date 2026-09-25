@@ -1390,8 +1390,36 @@ if (BROWSER_HALF) {
            check is about whether analog magnitude survives the trip from thumb
            to actor, so it has to run somewhere there is room to walk. */
         P.respawn();
+        /* And from open ground, not the spawn itself. The spawn is the first
+           walkable cell of trail, and a trail is a cutting: after #53 the one
+           on hero put a 1.6 m bank 1.7 m along the stick's heading, and the
+           character vaulted it and came up 0.7 m short. The start is found
+           with the page's own actor and collider walking a scratch actor at
+           full deflection, before the thumb is involved at all, so the check
+           still measures the thumb and not the search. */
+        const head = QS.moveFrom(P.cam, far.ix, far.iy);
+        let start = null;
+        for (let ring = 0; ring <= 12 && !start; ring++) {
+          for (let k = 0; k < Math.max(1, ring * 8) && !start; k++) {
+            const t = (k / Math.max(1, ring * 8)) * Math.PI * 2;
+            const probe = QS.placeOnGround(P.col, P.actor.x + ring * Math.cos(t), P.actor.z + ring * Math.sin(t));
+            if (!probe) continue;
+            const px = probe.x, pz = probe.z;
+            let vaulted = false;
+            for (let q = 0; q < 60; q++) {
+              QS.step(P.col, probe, { mx: head.mx, mz: head.mz }, []);
+              if (probe.vault || probe.swimming || probe.dead) vaulted = true;
+            }
+            if (!vaulted && Math.sqrt((probe.x - px) ** 2 + (probe.z - pz) ** 2) > 3.9) start = [px, pz];
+          }
+        }
+        out.start = start;
         const a = P.actor;
-        a.dead = null; a.vx = 0; a.vz = 0;
+        if (start) {
+          const s0 = QS.placeOnGround(P.col, start[0], start[1]);
+          a.x = s0.x; a.y = s0.y; a.z = s0.z; a.grounded = s0.grounded; a.apex = s0.apex;
+        }
+        a.dead = null; a.vx = 0; a.vz = 0; a.vy = 0; a.vault = null;
         const x0 = a.x, z0 = a.z;
         P.run(60);
         out.walked = Math.sqrt((P.actor.x - x0) ** 2 + (P.actor.z - z0) ** 2);
@@ -1432,7 +1460,7 @@ if (BROWSER_HALF) {
       check(touch.walked > 3.5 && touch.walked < 4.5,
             'BUILD: and it walks the character at the speed it asks for',
             `${touch.walked.toFixed(2)} m in 60 ticks, RUN is ${touch.run}`
-            + `, from ${touch.from.join(',')}, ${touch.ended}`);
+            + `, from ${touch.from.join(',')}${touch.start ? '' : ' (no open ground found near the spawn)'}, ${touch.ended}`);
       check(touch.tapSwung === false && touch.buttonSwung === true && touch.cursorActive === false,
             'BUILD: a tap on open ground does not swing, the button does',
             `${touch.tapSwung ? 'TAP SWUNG' : 'tap quiet'}, `
