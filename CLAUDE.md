@@ -88,8 +88,8 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Both are published from **`46b443c`** (#56, #57): play at **version 23**, concept at
-**version 19** — no force needed, the same session having published 22 and 18 from `c4914f2`.
+Both are published from **`972b6e8`** (#58, #59): play at **version 24**, concept at
+**version 20** — no force needed, the same session having published 23 and 19 from `46b443c`.
 On 2026-09-25 the loop found the live pages identical to `a3297ad` (play, version 21) and
 `7434073` (concept, version 17) — the shas recorded here, for once — and both were forced on
 the user's word. `9c26036` was version 14 of each, forced the same way.
