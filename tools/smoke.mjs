@@ -83,6 +83,7 @@ import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
+import { chunkWorld } from '../src/gen/chunk.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
 import { captureLook, compare, breaches, describe } from './lib/look.mjs';
 import { audit, worldFields, EXEMPT, ONE_SIDED } from './lib/consume.mjs';
@@ -481,6 +482,51 @@ if (NODE_HALF) {
       if (y0 !== y2) { faces++; if (y0 - y2 < 0.4) riffles++; }
     }
   }
+  /* #67: no pool stands above all the water around it. A river used to ride
+     up every pillar, hill and canyon lip its noise band crossed, so pools sat
+     perched on rock with falls pouring out on two or more sides and nothing
+     flowing in. Counted over the golden seeds and a 3x3 block of streamed
+     chunks; a pool with one outlet and no inlet is a spring-fed pool and is
+     allowed. The self-test lifts one cell a metre above its neighbours and
+     requires the count to find it. */
+  const perched = (w) => {
+    const { M, cells } = w, seen = new Uint8Array(M * M), found = [];
+    for (let i = 1; i < M - 1; i++) for (let j = 1; j < M - 1; j++) {
+      const k0 = i * M + j; if (!cells[k0].water || seen[k0]) continue;
+      const q = [k0]; seen[k0] = 1; let higher = false, edge = false, dirs = 0, n = 0;
+      while (q.length) {
+        const a = q.pop(), ai = (a / M) | 0, aj = a % M, ca = cells[a]; n++;
+        for (let d = 0; d < 4; d++) {
+          const bi = ai + D4W[d][0], bj = aj + D4W[d][1];
+          if (bi < 1 || bj < 1 || bi >= M - 1 || bj >= M - 1) { edge = true; continue; }
+          const b = bi * M + bj, cb = cells[b]; if (!cb.water) continue;
+          const dy = cb.wl - ca.wl;
+          if (Math.abs(dy) < 0.4) { if (!seen[b]) { seen[b] = 1; q.push(b); } }
+          else if (dy < 0) dirs |= 1 << d; else higher = true;
+        }
+      }
+      const spill = (dirs & 1) + (dirs >> 1 & 1) + (dirs >> 2 & 1) + (dirs >> 3 & 1);
+      if (!edge && !higher && spill >= 2) found.push(`${n} cells at ${i},${j}`);
+    }
+    return found;
+  };
+  const perchedAt = [];
+  worlds.forEach((w, q) => perched(w).forEach((p) => perchedAt.push(`${GOLDEN_SEEDS[q].nm} ${p}`)));
+  for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) {
+    perched(chunkWorld('QUARTERSTONE', cx, cz, null, 1)).forEach((p) => perchedAt.push(`chunk ${cx},${cz} ${p}`));
+  }
+  const wp = worlds.find((w) => w.cells.some((c, k) => c.water)), probe = { ...wp, cells: wp.cells.map((c) => ({ ...c })) };
+  let lifted = false;
+  for (let k = 0; k < probe.cells.length && !lifted; k++) {
+    const i = (k / probe.M) | 0, j = k % probe.M;
+    if (i < 2 || j < 2 || i > probe.M - 3 || j > probe.M - 3 || !probe.cells[k].water) continue;
+    if (D4W.every(([di, dj]) => probe.cells[(i + di) * probe.M + j + dj].water)) { probe.cells[k].wl += 1; lifted = true; }
+  }
+  check(perchedAt.length === 0 && lifted && perched(probe).length === 1,
+        'WATER: and no pool stands above all the water around it (#67)',
+        perchedAt.length ? `${perchedAt.length} perched: ${perchedAt.slice(0, 3).join('; ')}`
+          : `none over ${worlds.length} seeds and 9 streamed chunks; a cell lifted a metre is found`);
+
   check(steps > 0 && faces === steps,
         'WATER: and every step down to lower water is closed, however small',
         `${steps} steps across ${worlds.length} seeds, ${faces} faces (${riffles} riffles under 0.4 m)`);

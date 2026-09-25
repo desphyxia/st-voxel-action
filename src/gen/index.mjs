@@ -22,7 +22,7 @@ import { makeGen } from './field.mjs';
 import { erode } from './erosion.mjs';
 import { layRoutes } from './routes.mjs';
 import { cutSpans } from './spans.mjs';
-import { containWater, fillWaterTable, flowField, buildWaterGeometry } from './water.mjs';
+import { drainPerched, containWater, fillWaterTable, flowField, buildWaterGeometry } from './water.mjs';
 import { sampleGrid, buildVoxels } from './surface.mjs';
 import { makeStamps, scatterProps, placeClutter, placeLandmark } from './props.mjs';
 import { buildGrass } from './grass.mjs';
@@ -58,6 +58,7 @@ export function buildWorld(cfg) {
   w.gdens = cfg.gdens === undefined ? 1 : cfg.gdens;
   erode(w);                    /* talus at the cliff feet, banks cut back */
   layRoutes(w);                /* sites, A* routes, grading, crossings */
+  drainPerched(w);             /* no pool above all the water around it */
   containWater(w);             /* no surface above the bank that holds it */
   cutSpans(w);                 /* caves cut, then rims undercut over them */
   fillWaterTable(w);           /* hollows flood until they spill */

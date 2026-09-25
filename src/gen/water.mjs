@@ -94,6 +94,67 @@ export function containWater(w) {
   w.contained = out.length;
 }
 
+/* ---------- a pool does not stand above all the water around it (#67) ----------
+   The river's level is capped at a smooth profile now (riverBed in field.mjs),
+   which takes it through pillars and hills instead of over them. What that
+   leaves is water that is still the highest thing on its stretch — a canyon
+   lip, an eroded bank — with falls pouring out of it on two or more sides and
+   nothing flowing in. Water cannot do that, so such a pool drains to the
+   highest of the levels it pours into, and its bed is cut to keep its depth.
+
+   A pool is the water joined to a cell at its own level (within STEP). One
+   that reaches further than PERCH_R from where it was asked about is not
+   decided at all: the answer has to be the same from every window that can see
+   the cell, and a flood that ran off the edge of what one of them reads would
+   not be. Every level is read through the same lookup containWater uses, and
+   nothing is written until every pool has been decided. Runs before
+   containWater, which then caps whatever it leaves under its banks. */
+const PERCH_R = 12;
+
+export function drainPerched(w) {
+  var M = w.M, cells = w.cells, half = w.half, OX = w.OX, OZ = w.OZ, G = w.G, i, j;
+  function lvl(x, z) {
+    var c = groundCellAt(w, x, z);
+    if (!c.water) return null;
+    return c.wl === undefined ? G.cell(x, z).wl : c.wl;
+  }
+  var decided = new Map(), out = [];
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    var c0 = cells[i * M + j];
+    if (!c0.water || c0.pond) continue;
+    var x0 = -half + i + OX, z0 = -half + j + OZ, k0 = x0 + ',' + z0;
+    var hit = decided.get(k0);
+    if (hit === undefined) {
+      var wl0 = lvl(x0, z0), seen = new Set([k0]), q = [[x0, z0]], mem = [k0];
+      var higher = false, dirs = 0, outWl = -Infinity, open = false;
+      while (q.length && !open) {
+        var p = q.pop(), pl = lvl(p[0], p[1]);
+        for (var d = 0; d < 4; d++) {
+          var nx = p[0] + DIRS4[d][0], nz = p[1] + DIRS4[d][1], nl = lvl(nx, nz);
+          if (nl === null) continue;
+          if (Math.abs(nl - wl0) < STEP) {
+            var nk = nx + ',' + nz;
+            if (seen.has(nk)) continue;
+            if (Math.max(Math.abs(nx - x0), Math.abs(nz - z0)) > PERCH_R) { open = true; break; }
+            seen.add(nk); mem.push(nk); q.push([nx, nz]);
+          } else if (nl > pl) higher = true;
+          else { dirs |= 1 << d; if (nl > outWl) outWl = nl; }
+        }
+      }
+      var spill = (dirs & 1) + (dirs >> 1 & 1) + (dirs >> 2 & 1) + (dirs >> 3 & 1);
+      hit = (!open && !higher && spill >= 2) ? outWl : null;
+      for (var m = 0; m < mem.length; m++) decided.set(mem[m], hit);
+    }
+    if (hit !== null && hit < c0.wl) out.push([c0, hit]);
+  }
+  for (var o = 0; o < out.length; o++) {
+    var cw = out[o][0], nl2 = out[o][1], depth = cw.wl - cw.H;
+    cw.wl = nl2;
+    cw.H = Math.min(cw.H, Math.floor(nl2 - depth + 1e-9));
+  }
+  w.drained = out.length;
+}
+
 export function fillWaterTable(w) {
   var M = w.M, cells = w.cells, i, j, d0;
   for(var it=0;it<4;it++){

@@ -55,6 +55,21 @@ export function makeGen(seedStr,force){
     var n=N.h.fbm(x*0.017,z*0.017,4), n2=N.h.fbm(x*0.055+9,z*0.055+9,2);
     return base+(n-0.38)*hill*1.9+(n2-0.5)*hill*0.55;
   }
+  /**
+   * The level a river runs at, in whole metres of bed (#67). A river is a band
+   * of noise that knows nothing about height, and its bed used to be the local
+   * ground less a metre — so it rode up every pillar, hill and canyon lip the
+   * band crossed, and fell off the far side: pools perched on rock with falls
+   * pouring out and nothing flowing in. This is the ground with the relief a
+   * river would have cut through taken out: the large-scale shape alone, no
+   * fine octave, no pillars, no canyons. A river is never higher than this, so
+   * where the land rises across it the river cuts a gorge instead of climbing.
+   */
+  function riverBed(x,z,w){
+    var base=wsum(w,'base'), hill=wsum(w,'hill');
+    var n=N.h.fbm(x*0.017,z*0.017,2);
+    return Math.round(base+(n-0.38)*hill*1.9)-1;
+  }
   function riverAt(x,z){
     var v=N.r.fbm(x*0.0105,z*0.0105,3), d=Math.abs(v-0.5)*155;
     var w=1+Math.floor(N.r.n2(x*0.03+13,z*0.03+13)*4); if(w>4)w=4;
@@ -117,8 +132,7 @@ export function makeGen(seedStr,force){
     }
     H+=pillarAt(x,z,colw);
     var r=riverAt(x,z), rw=r.w+Math.round(w[2]*3), water=false, pond=false, wl=0;
-    if(r.d<rw/2){ H-=1; water=true; }
-    else if(riverCorner(x,z,rw)){ H-=1; water=true; }
+    if(r.d<rw/2||riverCorner(x,z,rw)){ H=Math.min(H-1,riverBed(x,z,w)); water=true; }
     if(!water&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }

@@ -910,6 +910,21 @@ function makeGen(seedStr,force){
     var n=N.h.fbm(x*0.017,z*0.017,4), n2=N.h.fbm(x*0.055+9,z*0.055+9,2);
     return base+(n-0.38)*hill*1.9+(n2-0.5)*hill*0.55;
   }
+  /**
+   * The level a river runs at, in whole metres of bed (#67). A river is a band
+   * of noise that knows nothing about height, and its bed used to be the local
+   * ground less a metre — so it rode up every pillar, hill and canyon lip the
+   * band crossed, and fell off the far side: pools perched on rock with falls
+   * pouring out and nothing flowing in. This is the ground with the relief a
+   * river would have cut through taken out: the large-scale shape alone, no
+   * fine octave, no pillars, no canyons. A river is never higher than this, so
+   * where the land rises across it the river cuts a gorge instead of climbing.
+   */
+  function riverBed(x,z,w){
+    var base=wsum(w,'base'), hill=wsum(w,'hill');
+    var n=N.h.fbm(x*0.017,z*0.017,2);
+    return Math.round(base+(n-0.38)*hill*1.9)-1;
+  }
   function riverAt(x,z){
     var v=N.r.fbm(x*0.0105,z*0.0105,3), d=Math.abs(v-0.5)*155;
     var w=1+Math.floor(N.r.n2(x*0.03+13,z*0.03+13)*4); if(w>4)w=4;
@@ -972,8 +987,7 @@ function makeGen(seedStr,force){
     }
     H+=pillarAt(x,z,colw);
     var r=riverAt(x,z), rw=r.w+Math.round(w[2]*3), water=false, pond=false, wl=0;
-    if(r.d<rw/2){ H-=1; water=true; }
-    else if(riverCorner(x,z,rw)){ H-=1; water=true; }
+    if(r.d<rw/2||riverCorner(x,z,rw)){ H=Math.min(H-1,riverBed(x,z,w)); water=true; }
     if(!water&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
@@ -2054,6 +2068,67 @@ function containWater(w) {
   w.contained = out.length;
 }
 
+/* ---------- a pool does not stand above all the water around it (#67) ----------
+   The river's level is capped at a smooth profile now (riverBed in field.mjs),
+   which takes it through pillars and hills instead of over them. What that
+   leaves is water that is still the highest thing on its stretch — a canyon
+   lip, an eroded bank — with falls pouring out of it on two or more sides and
+   nothing flowing in. Water cannot do that, so such a pool drains to the
+   highest of the levels it pours into, and its bed is cut to keep its depth.
+
+   A pool is the water joined to a cell at its own level (within STEP). One
+   that reaches further than PERCH_R from where it was asked about is not
+   decided at all: the answer has to be the same from every window that can see
+   the cell, and a flood that ran off the edge of what one of them reads would
+   not be. Every level is read through the same lookup containWater uses, and
+   nothing is written until every pool has been decided. Runs before
+   containWater, which then caps whatever it leaves under its banks. */
+const PERCH_R = 12;
+
+function drainPerched(w) {
+  var M = w.M, cells = w.cells, half = w.half, OX = w.OX, OZ = w.OZ, G = w.G, i, j;
+  function lvl(x, z) {
+    var c = groundCellAt(w, x, z);
+    if (!c.water) return null;
+    return c.wl === undefined ? G.cell(x, z).wl : c.wl;
+  }
+  var decided = new Map(), out = [];
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    var c0 = cells[i * M + j];
+    if (!c0.water || c0.pond) continue;
+    var x0 = -half + i + OX, z0 = -half + j + OZ, k0 = x0 + ',' + z0;
+    var hit = decided.get(k0);
+    if (hit === undefined) {
+      var wl0 = lvl(x0, z0), seen = new Set([k0]), q = [[x0, z0]], mem = [k0];
+      var higher = false, dirs = 0, outWl = -Infinity, open = false;
+      while (q.length && !open) {
+        var p = q.pop(), pl = lvl(p[0], p[1]);
+        for (var d = 0; d < 4; d++) {
+          var nx = p[0] + DIRS4[d][0], nz = p[1] + DIRS4[d][1], nl = lvl(nx, nz);
+          if (nl === null) continue;
+          if (Math.abs(nl - wl0) < STEP) {
+            var nk = nx + ',' + nz;
+            if (seen.has(nk)) continue;
+            if (Math.max(Math.abs(nx - x0), Math.abs(nz - z0)) > PERCH_R) { open = true; break; }
+            seen.add(nk); mem.push(nk); q.push([nx, nz]);
+          } else if (nl > pl) higher = true;
+          else { dirs |= 1 << d; if (nl > outWl) outWl = nl; }
+        }
+      }
+      var spill = (dirs & 1) + (dirs >> 1 & 1) + (dirs >> 2 & 1) + (dirs >> 3 & 1);
+      hit = (!open && !higher && spill >= 2) ? outWl : null;
+      for (var m = 0; m < mem.length; m++) decided.set(mem[m], hit);
+    }
+    if (hit !== null && hit < c0.wl) out.push([c0, hit]);
+  }
+  for (var o = 0; o < out.length; o++) {
+    var cw = out[o][0], nl2 = out[o][1], depth = cw.wl - cw.H;
+    cw.wl = nl2;
+    cw.H = Math.min(cw.H, Math.floor(nl2 - depth + 1e-9));
+  }
+  w.drained = out.length;
+}
+
 function fillWaterTable(w) {
   var M = w.M, cells = w.cells, i, j, d0;
   for(var it=0;it<4;it++){
@@ -2950,6 +3025,7 @@ function buildWorld(cfg) {
   w.gdens = cfg.gdens === undefined ? 1 : cfg.gdens;
   erode(w);                    /* talus at the cliff feet, banks cut back */
   layRoutes(w);                /* sites, A* routes, grading, crossings */
+  drainPerched(w);             /* no pool above all the water around it */
   containWater(w);             /* no surface above the bank that holds it */
   cutSpans(w);                 /* caves cut, then rims undercut over them */
   fillWaterTable(w);           /* hollows flood until they spill */
