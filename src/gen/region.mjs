@@ -601,6 +601,85 @@ function buildRegion(G, rx, rz) {
   }
   holdPorts();
 
+  /* ---- reach repair (#15) ----
+     The reach pass used to report ground the movement budget cannot get onto
+     and leave it there. Most of what it reports is behind magma, which a ramp
+     cannot fix and is a design question; the rest is the top of a cliff over
+     ground you can walk — a terrace too tall to vault. That is repaired here:
+     a staircase of whole-metre steps is cut down into the cliff top from the
+     reachable ground at its foot, and recorded with the grading, so every
+     window cuts the same one. In the region pass and not the window's, for
+     the reason #16 moved everything here: a repair decided from a window's
+     own spawn would carve different ground depending on who asked.
+
+     Only ground this region owns, and only a cut-off patch that does not run
+     to the region's edge, whose way in might be in the neighbour. */
+  function repairReach() {
+    for (var pass = 0; pass < 3; pass++) {
+      var R = new Uint8Array(N * N), q = [], head = 0, t0;
+      for (t0 = 0; t0 < order.length; t0++) {
+        var oi = order[t0][0] - x0, oj = order[t0][1] - z0;
+        if (oi < 0 || oj < 0 || oi >= N || oj >= N) continue;
+        var oc = at(oi, oj);
+        if (oc.water || oc.magma) continue;
+        R[oi * N + oj] = 1; q.push(oi * N + oj);
+      }
+      while (head < q.length) {
+        var cu = q[head++], ci = (cu / N) | 0, cj = cu % N, cc = cells[cu];
+        for (var d = 0; d < 4; d++) {
+          var ni = ci + DIRS4[d][0], nj = cj + DIRS4[d][1];
+          if (ni < 0 || nj < 0 || ni >= N || nj >= N) continue;
+          var nk = ni * N + nj, nc = cells[nk];
+          if (R[nk] || nc.magma || (nc.water && (nc.wl - nc.H) > 1.5)) continue;
+          var dh = nc.H - cc.H;
+          if (dh > MOVE.vault || dh < -MOVE.fall) continue;
+          R[nk] = 1; q.push(nk);
+        }
+      }
+      var seen = new Uint8Array(N * N), cut = 0;
+      for (var i0 = PAD + 1; i0 < N - PAD - 2; i0++) for (var j0 = PAD + 1; j0 < N - PAD - 2; j0++) {
+        var k0 = i0 * N + j0, c0 = cells[k0];
+        if (R[k0] || seen[k0] || c0.water || c0.magma) continue;
+        /* One cut-off patch, and the foot of its lowest cliff edge. */
+        var comp = [k0], ch = 0, edge = false, foot = null;
+        seen[k0] = 1;
+        while (ch < comp.length) {
+          var a = comp[ch++], ai = (a / N) | 0, aj = a % N, ca = cells[a];
+          if (!own(ai, aj)) edge = true;
+          for (var e = 0; e < 4; e++) {
+            var bi = ai + DIRS4[e][0], bj = aj + DIRS4[e][1];
+            if (bi < 0 || bj < 0 || bi >= N || bj >= N) { edge = true; continue; }
+            var b = bi * N + bj, cb = cells[b];
+            if (cb.magma || cb.water) continue;
+            if (R[b]) {
+              var rise = ca.H - cb.H;
+              if (rise > MOVE.vault && (!foot || rise < foot.rise
+                  || (rise === foot.rise && (a < foot.top || (a === foot.top && b < foot.base))))) {
+                foot = { top: a, base: b, rise: rise, di: -DIRS4[e][0], dj: -DIRS4[e][1] };
+              }
+              continue;
+            }
+            if (!seen[b]) { seen[b] = 1; comp.push(b); }
+          }
+        }
+        if (edge || !foot) continue;
+        /* Walk up into the patch from the foot, one metre a cell, lowering
+           whatever stands higher than the step it should be. */
+        var h = cells[foot.base].H, si = (foot.top / N) | 0, sj = foot.top % N;
+        for (var stepN = 0; stepN < 8 && si > PAD && sj > PAD && si < N - PAD - 1 && sj < N - PAD - 1; stepN++) {
+          var sc = at(si, sj);
+          if (sc.water || sc.magma || fixed.has(si * N + sj)) break;
+          h += MOVE.step;
+          if (sc.H <= h) break;
+          sc.H = h; cut++;
+          si += foot.di; sj += foot.dj;
+        }
+      }
+      if (!cut) break;
+    }
+  }
+  repairReach();
+
   recordGrades();
 
   /* ---- one landmark, on the region's highest flat ground off the trail ---- */

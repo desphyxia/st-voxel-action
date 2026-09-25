@@ -485,6 +485,36 @@ if (NODE_HALF) {
       if (y0 !== y2) { faces++; if (y0 - y2 < 0.4) riffles++; }
     }
   }
+  /* #15: the reach pass repairs rather than reports. A cliff top the budget
+     cannot get onto has a staircase of whole-metre steps cut into it by the
+     region pass; what is left is ground behind magma, which a ramp cannot
+     cross and which is a design question, or a patch that runs to a region's
+     edge and may be reached from the neighbour. */
+  {
+    const rows = [];
+    let open = 0, magma = 0;
+    worlds.forEach((w, q) => {
+      const { M, cells, reach } = w;
+      let un = 0, mg = 0;
+      for (let i = 1; i < M - 1; i++) for (let j = 1; j < M - 1; j++) {
+        const k = i * M + j, c = cells[k];
+        if (reach[k] || c.water || c.magma) continue;
+        un++;
+        let near = false;
+        for (let a = -3; a <= 3 && !near; a++) for (let b = -3; b <= 3; b++) {
+          const k2 = (i + a) * M + (j + b);
+          if (k2 >= 0 && k2 < M * M && cells[k2].magma) { near = true; break; }
+        }
+        if (near) mg++;
+      }
+      if (un) rows.push(`${GOLDEN_SEEDS[q].nm} ${un} (${mg} behind magma)`);
+      open += un - mg; magma += mg;
+    });
+    check(open <= 20 && worlds.every((w, q) => GOLDEN_SEEDS[q].nm === 'ash' || !rows.some((r) => r.startsWith(GOLDEN_SEEDS[q].nm))),
+          'REACH: cliff tops the budget cannot reach get steps cut into them (#15)',
+          rows.length ? `unreachable dry ground: ${rows.join(', ')}; ${open} not behind magma` : 'every dry cell reachable on every seed');
+  }
+
   /* #67: no pool stands above all the water around it. A river used to ride
      up every pillar, hill and canyon lip its noise band crossed, so pools sat
      perched on rock with falls pouring out on two or more sides and nothing
@@ -965,8 +995,17 @@ if (BROWSER_HALF) {
         const live = P.machines[0];
         live.ai.state = QS.EST.DORMANT; live.ai.t = 0; live.ai.sideT = 0;
         live.hp = QS.SENTRY.hp; live.dead = null;
-        /* Just outside its reach, facing it. */
-        a.x = m.x - 3.0; a.z = m.z; a.y = m.y; a.faceX = 1; a.faceZ = 0;
+        /* Just outside its reach, facing it — on open ground level with it.
+           Machines hold posts beside cover now (#6, #42), so "3 m west" can be
+           inside the very rise it is holding behind; the first of eight
+           directions that is standable and level is used, in a fixed order. */
+        let ox = -3, oz = 0;
+        for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]]) {
+          const px = m.x + dx * 3, pz = m.z + dz * 3, g = QS.placeOnGround(P.collider, px, pz, m.y + 1.2);
+          if (g.grounded && Math.abs(g.y - m.y) < 0.6 && !QS.embedded(P.collider, g)) { ox = dx * 3; oz = dz * 3; break; }
+        }
+        a.x = m.x + ox; a.z = m.z + oz; a.y = QS.placeOnGround(P.collider, a.x, a.z, m.y + 1.2).y;
+        { const l = Math.hypot(ox, oz); a.faceX = -ox / l; a.faceZ = -oz / l; }
         a.vx = 0; a.vz = 0; a.hp = QS.PLAYER_HP; a.dead = null;
         QS.warpTo(P.cam, a.x, a.y, a.z);
         P.run(1);
