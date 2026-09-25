@@ -274,6 +274,7 @@
       <button class="ctl" id="hostbtn" type="button">Host a game</button>
       <button class="ctl" id="meshbtn" type="button" aria-pressed="true" title="Draw the terrain as a greedy mesh with baked occlusion. Off is the instanced boxes it replaced, kept so the two can be compared.">Mesh: on</button>
       <button class="ctl" id="streambtn" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window. A world with no edge, from the same seed — and a different world, because the generator is not size-invariant.">Streaming: off</button>
+      <button class="ctl" id="skybtn" type="button" title="Hold the sun at one hour, or let the day turn. The weather keeps moving either way.">Sky: auto</button>
       <button class="ctl" id="fullbtn" type="button">Fullscreen</button>
       <span class="gctl">
         <label for="gdens">Grass density <b id="gdensv">60 / m&sup2;</b></label>
@@ -6195,6 +6196,148 @@ function restPositions(rig) {
   }
   return at;
 }
+/* ---------- src/sim/sky.mjs ---------- */
+/**
+ * The sky: time of day and weather — issue #30.
+ *
+ * `docs/DECISIONS.md` §5 commits to "full day/night and weather; rain wets
+ * materials, snow accumulates, fog for distance". This is the half of it that
+ * is not three.js: given a time and a seed, where the sun is, what colour the
+ * light and the sky are, how cloudy it is, whether it is raining or snowing,
+ * and how wet the ground has got. The renderer draws from it; nothing here
+ * knows a renderer exists.
+ *
+ * Pure, and on purpose. The clock is simulation seconds, not the wall clock, so
+ * two players whose simulations agree see the same hour; and the weather is a
+ * hash of the seed and the hour, not a random draw, so it is the same on both
+ * machines without a byte crossing the wire (§8: "a seed and two characters").
+ * `wetness` is what material conduction will read when something does — today
+ * nothing in src/sim reads it, so the weather cannot yet change how the game
+ * plays, only how it looks.
+ *
+ * Trigonometry is src/gen/exact.mjs's, like everything in src/.
+ */
+
+
+/** Seconds of simulation time in one full day. */
+const DAY_SECONDS = 1200;
+/** Where a world's clock starts, as a fraction of a day: mid-morning, so the
+    first thing anyone sees is low, warm light with long shadows. */
+const DAWN_START = 0.34;
+/** Seconds one weather spell lasts before the next is rolled. */
+const SPELL_SECONDS = 150;
+
+/* The sun's path. Noon puts it where the build's fixed sun always stood,
+   (-16, 26, 12) normalised, so a noon frame reads like every frame before. */
+const NOON_AZ = 2.4865;            /* atan2(12, -16) */
+const MAX_EL = 0.9144;             /* asin(26 / |(-16, 26, 12)|) */
+
+function skyClamp(v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
+function skyMix(a, b, k) { return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]; }
+function skySmooth(e0, e1, x) { const t = skyClamp((x - e0) / (e1 - e0)); return t * t * (3 - 2 * t); }
+
+/* An integer hash, for the weather: a spell is decided by the seed word and
+   which spell it is, and nothing else. */
+function skyHash(seed, n, salt) {
+  let h = Math.imul((seed | 0) ^ Math.imul(n + 0x9e37 | 0, 0x85ebca6b), 0xc2b2ae35) ^ salt;
+  h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d); h ^= h >>> 12; h = Math.imul(h, 0x297a2d39); h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * A seed as the 32-bit word the weather hashes. Worlds are seeded with
+ * strings ('QUARTERSTONE'), and a number is taken as it is.
+ */
+function skyWord(seed) {
+  if (typeof seed === 'number') return seed | 0;
+  let h = 0x811c9dc5;
+  const t = String(seed == null ? '' : seed);
+  for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return h | 0;
+}
+
+/**
+ * One weather spell: how clouded it is, and whether it rains. A third of
+ * spells are clear, a third broken cloud, and a third overcast, of which half
+ * rain. `cold` (0..1, from the ground under the camera) turns rain into snow.
+ */
+function spellAt(seed, n) {
+  const r = skyHash(seed, n, 0x51);
+  if (r < 0.34) return { cloud: 0.1 * skyHash(seed, n, 0x52), rain: 0 };
+  if (r < 0.67) return { cloud: 0.35 + 0.25 * skyHash(seed, n, 0x53), rain: 0 };
+  const wet = skyHash(seed, n, 0x54) < 0.5;
+  return { cloud: 0.75 + 0.2 * skyHash(seed, n, 0x55), rain: wet ? 0.6 + 0.4 * skyHash(seed, n, 0x56) : 0 };
+}
+
+/**
+ * The weather at `seconds`, blended across the edge of a spell so it never
+ * changes in a frame. `wetness` builds while it rains and dries after, taken
+ * over the last few spells — so it is a pure function of the time too, not a
+ * running total anything has to remember.
+ */
+function weatherAt(seed, seconds) {
+  seed = skyWord(seed);
+  const s = seconds / SPELL_SECONDS, n = Math.floor(s), f = s - n;
+  const a = spellAt(seed, n), b = spellAt(seed, n + 1);
+  const k = skySmooth(0.8, 1.0, f);
+  const cloud = a.cloud + (b.cloud - a.cloud) * k, rain = a.rain + (b.rain - a.rain) * k;
+  /* Wet: each of the last four spells' rain, fading with how long ago it
+     stopped. Rain that is falling now counts in full. */
+  let wet = 0;
+  for (let q = 0; q < 4; q++) {
+    const sp = spellAt(seed, n - q);
+    if (!sp.rain) continue;
+    const since = q === 0 ? 0 : (s - (n - q + 1));        /* spells since it ended */
+    wet = Math.max(wet, sp.rain * skyClamp(1 - since / 2.5));
+  }
+  return { cloud, rain, wetness: skyClamp(wet) };
+}
+
+/**
+ * Where the sun is and what the light is at `seconds` after the world began.
+ * Everything a renderer needs to draw the sky, and nothing it would compute
+ * itself: directions are unit vectors toward the light, colours are linear
+ * 0..1 triples, intensities are what three's lights take.
+ *
+ * `wx`, if given, is the weather to use instead of the seed's — {cloud, rain,
+ * wetness} — which is how a look baseline gets a clear noon on any seed.
+ */
+function skyAt(seconds, seed, wx) {
+  const phase = ((DAWN_START + seconds / DAY_SECONDS) % 1 + 1) % 1;   /* 0 midnight, .5 noon */
+  const ang = (phase - 0.25) * TAU;                                    /* 0 at sunrise */
+  const up = sin(ang);                                                 /* -1 midnight .. 1 noon */
+  const el = MAX_EL * up;
+  const az = NOON_AZ + (phase - 0.5) * 2.2;                            /* east to west through the day */
+  const ce = cos(el);
+  const sunDir = [cos(az) * ce, sin(el), sin(az) * ce];
+  const moonDir = [-sunDir[0] * 0.6, 0.75, -sunDir[2] * 0.6];
+
+  const day = skySmooth(-0.08, 0.22, up);          /* 0 night .. 1 day */
+  const low = 1 - skySmooth(0.12, 0.5, up);        /* how golden: 1 near the horizon */
+  const w = wx || weatherAt(seed, seconds);
+  const dim = 1 - 0.45 * w.cloud;               /* cloud takes the edge off the sun */
+
+  const sunCol = skyMix([1.0, 0.94, 0.82], [1.0, 0.62, 0.34], low * day);
+  const sunI = 1.12 * day * dim * (1 - 0.15 * low);
+  const moonI = 0.22 * (1 - day);
+  const skyTop = skyMix(skyMix([0.03, 0.05, 0.11], [0.29, 0.52, 0.80], day), [0.46, 0.49, 0.54], w.cloud * 0.8);
+  const horizon = skyMix(skyMix([0.07, 0.09, 0.16], [0.72, 0.82, 0.90], day), [1.0, 0.64, 0.42], low * day * 0.8);
+  const skyHorizon = skyMix(horizon, [0.62, 0.64, 0.67], w.cloud * 0.7);
+  /* The golden hour is the sky's colour as much as the sun's: the fill warms
+     with it, or a low sun only reads as a dimmer one. */
+  const hemiSky = skyMix(skyMix([0.18, 0.24, 0.38], [0.62, 0.76, 0.91], day), [0.86, 0.66, 0.52], low * day * 0.55);
+  const hemiGround = skyMix([0.08, 0.07, 0.09], [0.29, 0.23, 0.17], day);
+  const hemiI = 0.34 + 0.34 * day;
+  return {
+    phase, day, low, up, sunDir, moonDir, sunCol, sunI, moonI,
+    moonCol: [0.55, 0.66, 0.95],
+    skyTop, skyHorizon, fogCol: skyHorizon,
+    hemiSky, hemiGround, hemiI,
+    /* Lamps come on before the sun is down and go off after it is up. */
+    lamps: 1 - skySmooth(0.02, 0.2, up),
+    cloud: w.cloud, rain: w.rain, wetness: w.wetness,
+  };
+}
 /* ---------- src/sim/camera.mjs ---------- */
 /**
  * The isometric camera, as maths rather than as a renderer.
@@ -6772,7 +6915,7 @@ function makeGuest(opts) {
   const { transport, build } = opts;
   let col = null, me = null, peer = null, cfg = null, encounter = null;
   let foes = null, lootBits = 0;
-  let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0;
+  let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0, hostTick = 0;
   const pending = [];
   let target = null;                       /* last authoritative host state */
   let lastYou = null;                      /* ...and the last word on us */
@@ -6801,6 +6944,7 @@ function makeGuest(opts) {
          what makes a corrected client feel like it is being dragged backwards. */
       restore(me, m.you);
       lastYou = m.you;
+      hostTick = m.tick;
       lastAck = m.ack;
       corrections++;
       while (pending.length && pending[0].seq <= m.ack) pending.shift();
@@ -6822,6 +6966,9 @@ function makeGuest(opts) {
     get peer() { return peer; },
     get cfg() { return cfg; },
     get connected() { return ready; },
+    /** The host's tick as of its last snapshot: the one clock both windows
+        can agree on, which is what the sky (#30) is read from. */
+    get tick() { return hostTick; },
     get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck }; },
     /** Whatever the host last said was in the world. Drawn, never stepped. */
     get foes() { return foes; },
@@ -6863,7 +7010,7 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -6891,6 +7038,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   try{ renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:false}); }
   catch(e){ fb.style.display='grid'; return; }
   renderer.setClearColor(0x0b0f14,1);
+  /* Batch 1 (#30, #31, #55): a filmic curve, so a sunlit snowfield keeps its
+     detail instead of clipping to flat white, and a night is dark without
+     crushing to black. Output stays linear: the palette was authored against
+     a linear framebuffer, and re-authoring every colour for sRGB is its own
+     change. */
+  renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=0.92;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
   renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
   /* Issue #60. The shadow map covered the whole window at 2048 and was redrawn
@@ -7082,11 +7235,28 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      The instance matrix is the only input: its translation is the blade's
      base, the length of its second column is the height the generator rolled,
      and its third column is the yaw. Nothing on the JS side had to change. */
+  /* ---------- the sky's reach into every lit surface (#30, #55) ----------
+     One set of uniforms, shared by every terrain, prop and box material, so
+     one update per sky step reaches all of them. Clouds shade the *direct*
+     sun only — the sky's own light is still there under a cloud, which is
+     what makes a cloud shadow read as a shadow and not as a hole. Wet ground
+     darkens; snow settles on what faces up. */
+  var SKY_U={uCloud:{value:0},uCloudOff:{value:new THREE.Vector2()},uWet:{value:0},uSnow:{value:0}};
+  var SKY_GLSL=['uniform float uCloud; uniform vec2 uCloudOff; uniform float uWet; uniform float uSnow;',
+    'float skyH(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }',
+    'float skyN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);',
+    ' return mix(mix(skyH(i),skyH(i+vec2(1.0,0.0)),f.x),mix(skyH(i+vec2(0.0,1.0)),skyH(i+vec2(1.0,1.0)),f.x),f.y); }',
+    'float skyCloud(vec2 xz){ vec2 p=xz*0.032+uCloudOff;',
+    ' float n=skyN(p)*0.65+skyN(p*2.3+vec2(7.0,3.0))*0.35;',
+    ' float cov=smoothstep(1.3-uCloud*0.9,1.5-uCloud*0.9,n+0.25);',
+    ' return 1.0-0.62*cov; }'].join('\n');
   var GRASS_VS=[
     'attribute float aPhase; attribute float aTint; attribute vec3 aCol; attribute vec3 aDry;',
     'uniform float uTime; uniform float uW; uniform float uHeight; uniform vec2 uWind;',
     'uniform vec3 uPush['+GRASS_PUSH+'];',
     'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD; varying vec3 vN;',
+    'varying vec2 vGW; varying float vGust;',
+    '#include <fog_pars_vertex>',
     'float h11(vec2 q){ return fract(sin(dot(q,vec2(127.1,311.7)))*43758.545); }',
     'vec3 bez(vec3 a,vec3 b,vec3 c,vec3 d,float t){ float u=1.0-t;',
     ' return u*u*u*a+3.0*u*u*t*b+3.0*u*t*t*c+t*t*t*d; }',
@@ -7103,8 +7273,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     ' vec3 dir=normalize(mix(own,vec3(cos(ca),0.0,sin(ca)),0.68)+vec3(1e-5));',
     ' hh*=0.70+h11(cid+11.3)*0.60;',
     /* the wind: the blade's own shiver over a gust that crosses the field */
-    ' float w=sin(uTime*1.5+dot(base.xz,uWind)*0.5+aPhase)*0.45',
-    '        +sin(dot(base.xz,uWind)*0.09-uTime*0.85)*0.40;',
+    ' float gust=sin(dot(base.xz,uWind)*0.09-uTime*0.85);',
+    ' float w=sin(uTime*1.5+dot(base.xz,uWind)*0.5+aPhase)*0.45+gust*0.40;',
+    ' vGW=base.xz; vGust=gust;',
     ' float tilt=clamp(0.24+w*0.18,0.0,0.72);',
     ' vec3 up=vec3(0.0,1.0,0.0);',
     ' vec3 lean=normalize(dir*0.55+vec3(uWind.x,0.0,uWind.y)*0.45+vec3(1e-5));',
@@ -7121,28 +7292,46 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     '   if(lq<1.05){ float f=(1.0-lq/1.05)*t*t;',
     '     p.xz+=normalize(dq+vec2(0.001))*(f*hh*1.20); p.y-=f*hh*0.70; } }',
     ' vN=normalize(rodr(normalize(cross(sv,tn)),tn,position.x*0.75));',
-    ' gl_Position=projectionMatrix*viewMatrix*vec4(p,1.0); }'].join('\n');
+    ' vec4 mvPosition=viewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;',
+    ' #include <fog_vertex>',
+    '}'].join('\n');
   /* buildGrass flags 15% of blades dry in every world. The plate has drawn
      them since it was written and this renderer, written fresh in #21, never
      carried the attribute across — so the build had no dry blades at all, and
      nothing said so (issue #39, and the gate hole is #40). */
-  var GRASS_FS=['uniform vec3 uSun;',
+  var GRASS_FS=['uniform vec3 uSun; uniform float uSunI; uniform vec3 uAmb;',
     'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD; varying vec3 vN;',
+    'varying vec2 vGW; varying float vGust;',
+    '#include <fog_pars_fragment>',
+    SKY_GLSL,
     'void main(){ vec3 c=mix(vC*0.42,vC,vH*0.80+0.20); c=mix(c,vD,vT*0.7);',
+    ' c*=1.0-0.2*uWet;',
     ' vec3 n=normalize(vN);',
     /* abs(), not max(): a blade is a surface with no inside, and the back of
        one is as lit as the front. */
-    ' vec3 lit=c*(0.60+abs(dot(n,uSun))*0.58);',
-    ' lit+=c*(max(0.0,dot(-n,uSun))*vH*0.55);',
-    ' gl_FragColor=vec4(lit,1.0); }'].join('\n');
+    /* Lit by hand, so it follows the sky by hand: uAmb is the hemisphere's
+       share, uSunI the sun's, and a cloud takes the sun's away. A gust that
+       crosses the field lays the blades over and shows their paler undersides. */
+    ' float sunK=uSunI*skyCloud(vGW);',
+    ' vec3 lit=c*(uAmb+abs(dot(n,uSun))*0.58*sunK);',
+    ' lit+=c*(max(0.0,dot(-n,uSun))*vH*0.55*sunK);',
+    ' lit*=1.0+0.10*max(0.0,vGust)*vH;',
+    ' gl_FragColor=vec4(lit,1.0);',
+    ' #include <tonemapping_fragment>',
+    ' #include <fog_fragment>',
+    '}'].join('\n');
   var WATER_VS=['uniform float uTime;','attribute float aDepth; attribute float aFoam; attribute vec2 aFlow;',
     'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
+    '#include <fog_pars_vertex>',
     'void main(){ vec3 p=position; vD=aDepth; vF=aFoam; vFl=aFlow;',
     ' float flat_=step(aFoam,1.5);',
     ' p.y+=(sin(uTime*1.25+p.z*0.8+p.x*0.5)*0.022+sin(uTime*2.15-p.z*1.5+p.x*0.35)*0.012)*flat_;',
-    ' vP=p; gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);}'].join('\n');
-  var WATER_FS=['uniform float uTime; uniform vec2 uWind;',
+    ' vP=p; vec4 mvPosition=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;',
+    ' #include <fog_vertex>',
+    '}'].join('\n');
+  var WATER_FS=['uniform float uTime; uniform vec2 uWind; uniform float uLight;',
     'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
+    '#include <fog_pars_fragment>',
     'void main(){ vec3 c=mix(vec3(0.34,0.66,0.64),vec3(0.05,0.20,0.29),clamp(vD,0.0,1.0));',
     ' vec2 fl=normalize(vFl+uWind*0.45+vec2(0.0001));',
     ' float adv=dot(vP.xz,fl)*2.6-uTime*2.1;',
@@ -7152,7 +7341,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     ' if(vF>0.5&&vF<1.5){ c=mix(c,vec3(0.86,0.94,0.96),0.40); a=0.92; }',
     ' if(vF>1.5){ float st=fract(vP.y*3.0-uTime*2.6);',
     '   c=mix(vec3(0.48,0.72,0.78),vec3(0.93,0.98,1.0),smoothstep(0.25,0.95,st)); a=0.93; }',
-    ' gl_FragColor=vec4(c,a);}'].join('\n');
+    ' gl_FragColor=vec4(c*uLight,a);',
+    ' #include <tonemapping_fragment>',
+    ' #include <fog_fragment>',
+    '}'].join('\n');
 
   /* ---------- the greedy mesh (issue #12) ----------
      Two renderers live here at once, on purpose. #12's bar is "parity or
@@ -7202,6 +7394,225 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return t;
   })();
 
+  function skyHook(sh){
+    for(var k in SKY_U) sh.uniforms[k]=SKY_U[k];
+    sh.vertexShader='varying vec3 vSkyW; varying vec3 vSkyN;\n'+sh.vertexShader.replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\n  vec4 skyWP=vec4(transformed,1.0);\n'
+      +'  #ifdef USE_INSTANCING\n  skyWP=instanceMatrix*skyWP;\n  #endif\n'
+      +'  vSkyW=(modelMatrix*skyWP).xyz; vSkyN=normalize(mat3(modelMatrix)*objectNormal);');
+    sh.fragmentShader='varying vec3 vSkyW; varying vec3 vSkyN;\n'+SKY_GLSL+'\n'+sh.fragmentShader
+      .replace('#include <emissivemap_fragment>',
+        '#include <emissivemap_fragment>\n'
+        +'  float skyUp=clamp(normalize(vSkyN).y,0.0,1.0);\n'
+        +'  diffuseColor.rgb*=1.0-0.28*uWet;\n'
+        +'  diffuseColor.rgb=mix(diffuseColor.rgb,vec3(0.93,0.95,0.98),uSnow*smoothstep(0.55,0.92,skyUp));')
+      .replace('#include <aomap_fragment>',
+        '  reflectedLight.directDiffuse*=skyCloud(vSkyW.xz);\n#include <aomap_fragment>');
+  }
+  /* The hour. `skySec` is simulation seconds since the world was built,
+     advanced by tick() and nothing else, so the sky is as paused as the game
+     is; `skyFix` is the control under the view pinning a time of day, or null
+     for the clock. `skyNow` is what src/sim/sky.mjs said at the last step. */
+  var skySec=0, skyFix=null, skyCalm=false, skyStepAt=-1, skyDirAt=-1, skySnow=0, skyMode='';
+  var skyNow=QS.skyAt(0,0), sunDirV=new THREE.Vector3(-16,26,12).normalize();
+  var SKY_FIXES=[null,0.27,0.5,0.73,0.02], SKY_NAMES=['auto','dawn','noon','dusk','night'];
+  var SKY_CLEAR={cloud:0,rain:0,wetness:0};
+  /* The background: a vertical gradient, one canvas shared by every scene and
+     repainted on each sky step. */
+  var skyCanvas=null, skyTex=null;
+  function skyTexture(){
+    if(!skyTex){
+      skyCanvas=document.createElement('canvas'); skyCanvas.width=2; skyCanvas.height=64;
+      skyTex=new THREE.CanvasTexture(skyCanvas); paintSky(skyNow);
+    }
+    return skyTex;
+  }
+  function css3(c){ return 'rgb('+(c[0]*255|0)+','+(c[1]*255|0)+','+(c[2]*255|0)+')'; }
+  function paintSky(s){
+    if(!skyCanvas) return;
+    var x=skyCanvas.getContext('2d'), gr=x.createLinearGradient(0,0,0,64);
+    gr.addColorStop(0,css3(s.skyTop)); gr.addColorStop(0.75,css3(s.skyHorizon)); gr.addColorStop(1,css3(s.skyHorizon));
+    x.fillStyle=gr; x.fillRect(0,0,2,64); skyTex.needsUpdate=true;
+  }
+
+  /* ---------- what is in the air (#55 item 6) ----------
+     One Points object, a box of motes around the view that wraps in world
+     space — so they drift with the wind past a walking character instead of
+     travelling with the camera. What they are depends on the ground under the
+     view and the weather: rain or snow when it falls, and otherwise pollen on
+     a meadow, dust on the mesa, embers over ash, spindrift on the frost and
+     fireflies over the fen at night. One shader for all of them; a mode is a
+     handful of uniforms and a draw range. */
+  var PART_N=900;
+  var PART_MODES={
+    rain:     {n:900,vel:[0,-15,0],wind:3.0,col:[0.74,0.80,0.92],dia:0.40,op:0.50,streak:1,wob:0.0,pulse:0,add:false},
+    snow:     {n:700,vel:[0,-1.5,0],wind:1.2,col:[0.96,0.97,1.00],dia:0.11,op:0.85,wob:0.6,pulse:0,add:false},
+    pollen:   {n:200,vel:[0,0.05,0],wind:0.8,col:[1.00,0.94,0.62],dia:0.07,op:0.55,wob:0.8,pulse:0,add:false},
+    dust:     {n:280,vel:[0,-0.1,0],wind:2.2,col:[0.86,0.70,0.50],dia:0.08,op:0.35,wob:0.5,pulse:0,add:false},
+    embers:   {n:240,vel:[0,1.1,0],wind:0.6,col:[1.00,0.46,0.14],dia:0.08,op:0.90,wob:0.6,pulse:0.6,add:true},
+    spindrift:{n:260,vel:[0,-0.3,0],wind:2.6,col:[0.94,0.96,1.00],dia:0.07,op:0.55,wob:0.4,pulse:0,add:false},
+    fireflies:{n:150,vel:[0,0.02,0],wind:0.1,col:[0.80,1.00,0.42],dia:0.10,op:0.90,wob:1.2,pulse:1,add:true},
+  };
+  var PART_VS=['uniform float uTime; uniform vec3 uCenter; uniform vec3 uBox; uniform vec3 uOff;',
+    'uniform float uWob; uniform float uSize; uniform float uPx; uniform float uPulse;',
+    'attribute float aSeed; varying float vA;',
+    'void main(){',
+    ' vec3 d=uOff+uWob*vec3(sin(uTime*0.7+aSeed*6.3),0.5*sin(uTime*0.9+aSeed*4.1),cos(uTime*0.6+aSeed*5.7));',
+    ' vec3 wp=position*uBox+d;',
+    ' wp=uCenter+mod(wp-uCenter+uBox*0.5,uBox)-uBox*0.5;',
+    ' gl_Position=projectionMatrix*(viewMatrix*vec4(wp,1.0));',
+    ' gl_PointSize=max(2.0,uSize*uPx);',
+    ' vec3 r=abs(wp-uCenter)/(uBox*0.5);',
+    ' vA=(1.0-smoothstep(0.7,1.0,max(r.x,max(r.y,r.z))))*mix(1.0,0.5+0.5*sin(uTime*2.3+aSeed*40.0),uPulse);',
+    '}'].join('\n');
+  var PART_FS=['uniform vec3 uCol; uniform float uOpacity; uniform float uStreak; varying float vA;',
+    /* A raindrop is a streak: the same sprite, squeezed to a sliver. */
+    'void main(){ vec2 q=gl_PointCoord-0.5; q.x/=mix(1.0,0.10,uStreak); float r=dot(q,q)*4.0; if(r>1.0) discard;',
+    ' gl_FragColor=vec4(uCol,uOpacity*vA*(1.0-r*r)); }'].join('\n');
+  function makeParticles(){
+    var g=new THREE.BufferGeometry(), pos=new Float32Array(PART_N*3), sd=new Float32Array(PART_N);
+    /* A fixed scatter, not Math.random: two runs of the gate draw the same motes. */
+    var h=0x9e3779b9;
+    function rn(){ h^=h<<13; h^=h>>>17; h^=h<<5; return (h>>>0)/4294967296; }
+    for(var i=0;i<PART_N;i++){ pos[i*3]=rn(); pos[i*3+1]=rn(); pos[i*3+2]=rn(); sd[i]=rn(); }
+    g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    g.setAttribute('aSeed',new THREE.BufferAttribute(sd,1));
+    var m=new THREE.ShaderMaterial({transparent:true,depthWrite:false,
+      uniforms:{uTime:{value:0},uCenter:{value:new THREE.Vector3()},uBox:{value:new THREE.Vector3(64,28,64)},
+                uOff:{value:new THREE.Vector3()},uWob:{value:0},uSize:{value:0.08},uPx:{value:20},
+                uPulse:{value:0},uStreak:{value:0},uCol:{value:new THREE.Color(1,1,1)},uOpacity:{value:0}},
+      vertexShader:PART_VS,fragmentShader:PART_FS});
+    var p=new THREE.Points(g,m);
+    p.frustumCulled=false; p.userData.kind='sky'; p.visible=false; p.renderOrder=2;
+    return p;
+  }
+  /** Which motes the air holds, from the biome under the view and the sky. */
+  function partMode(s,dom){
+    var cold=dom===4;
+    if(s.rain>0.2) return cold?'snow':'rain';
+    if(dom===3) return 'embers';
+    if(dom===1) return 'dust';
+    if(cold) return 'spindrift';
+    if(s.day<0.35&&(dom===2||dom===0)) return 'fireflies';
+    return dom===0||dom===2?'pollen':'';
+  }
+  function domUnderView(){
+    try{
+      var g=built&&built.data&&built.data.G;
+      return g?g.cell(Math.round(cam.tx),Math.round(cam.tz)).dom:0;
+    }catch(e){ return 0; }
+  }
+  function skySeconds(){
+    if(plateMode) return (0.5-QS.DAWN_START)*QS.DAY_SECONDS;
+    if(skyFix!==null) return (skyFix-QS.DAWN_START)*QS.DAY_SECONDS;
+    return skySec;
+  }
+  /**
+   * Put the sky into the scene. Stepped — every two simulation seconds for
+   * colour and weather, every eight for where the light comes from — because
+   * a sun that moves redraws the shadow map (#60), and a shadow map redrawn
+   * every frame is exactly what #60 took away. `force` is a world just built.
+   */
+  function applySky(force){
+    if(!built) return;
+    /* A pinned hour holds the sun still; the clock still turns the weather
+       over, so the step is always the clock's. */
+    var t=skySeconds(), fixed=plateMode||skyFix!==null;
+    var step=Math.floor(skySec/2), dstep=fixed?'at'+t:Math.floor(t/8);
+    if(!force&&step===skyStepAt) return;
+    skyStepAt=step;
+    var seed=built.cfg?built.cfg.seed:'';
+    var s=skyNow=QS.skyAt(t,seed,plateMode||skyCalm?SKY_CLEAR:QS.weatherAt(seed,skySec));
+    if(force||dstep!==skyDirAt){
+      skyDirAt=dstep;
+      var sd=fixed?s:QS.skyAt(dstep*8,seed,SKY_CLEAR);
+      var moon=sd.moonI>sd.sunI*1.5, dv=moon?sd.moonDir:sd.sunDir;
+      sunDirV.set(dv[0],dv[1],dv[2]).normalize();
+    }
+    var moonLit=s.moonI>s.sunI*1.5, sun=built.sun;
+    if(sun){
+      var c=moonLit?s.moonCol:s.sunCol;
+      sun.color.setRGB(c[0],c[1],c[2]); sun.intensity=moonLit?s.moonI:s.sunI;
+      if(!built.streamed){
+        sun.position.copy(sunDirV).multiplyScalar(80); sun.target.position.set(0,0,0);
+        sun.target.updateMatrixWorld();
+      }
+    }
+    if(built.hemi){
+      built.hemi.color.setRGB(s.hemiSky[0],s.hemiSky[1],s.hemiSky[2]);
+      built.hemi.groundColor.setRGB(s.hemiGround[0],s.hemiGround[1],s.hemiGround[2]);
+      built.hemi.intensity=s.hemiI;
+    }
+    paintSky(s);
+    if(built.scene.fog) built.scene.fog.color.setRGB(s.fogCol[0],s.fogCol[1],s.fogCol[2]);
+    if(built.gmat){
+      var gu=built.gmat.uniforms;
+      gu.uSun.value.copy(sunDirV);
+      gu.uSunI.value=(moonLit?s.moonI:s.sunI)/1.05;
+      /* The grass's ambient was 0.6 grey under the old hemisphere; it keeps
+         that at noon and takes the hemisphere's colour through the day. */
+      var k=0.6*s.hemiI/0.62;
+      gu.uAmb.value.setRGB(k*s.hemiSky[0]/0.62,k*s.hemiSky[1]/0.76,k*s.hemiSky[2]/0.91);
+    }
+    if(built.wmat) built.wmat.uniforms.uLight.value=(0.28+0.72*s.day)*(1-0.15*s.cloud);
+    built.scene.traverse(function(o){ if(o.userData.lamp) o.intensity=o.userData.lamp*s.lamps; });
+    SKY_U.uCloud.value=s.cloud; SKY_U.uWet.value=s.wetness;
+    var dom=plateMode?0:domUnderView();
+    var snowTo=dom===4?Math.min(1,s.wetness*1.3):0;
+    skySnow=force?snowTo:skySnow+(snowTo-skySnow)*0.25;
+    SKY_U.uSnow.value=skySnow;
+    var p=built.parts;
+    if(p){
+      var mode=plateMode?'':partMode(s,dom), md=PART_MODES[mode];
+      skyMode=mode; p.visible=!!md;
+      if(md){
+        var u=p.material.uniforms;
+        u.uCol.value.setRGB(md.col[0],md.col[1],md.col[2]);
+        u.uSize.value=md.dia; u.uStreak.value=md.streak||0; u.uWob.value=md.wob; u.uPulse.value=md.pulse;
+        u.uOpacity.value=md.op*(mode==='rain'||mode==='snow'?Math.min(1,0.4+s.rain):1)
+          *(mode==='fireflies'?(1-s.day):1)*(mode==='embers'||mode==='fireflies'?1:0.6+0.4*s.day);
+        p.userData.wind=md.wind;
+        p.material.blending=md.add?THREE.AdditiveBlending:THREE.NormalBlending;
+        var n=Math.round(md.n*(mode==='rain'||mode==='snow'?Math.min(1,0.3+s.rain):1));
+        p.geometry.setDrawRange(0,n); p.userData.n=n;
+      }
+    }
+  }
+  /** Per frame: fog that follows the zoom, drifting clouds, moving motes. */
+  function skyFrame(dt){
+    if(!built) return;
+    if(plateMode) SKY_U.uCloudOff.value.set(0,0);
+    else SKY_U.uCloudOff.value.addScaledVector(wind,-dt*0.09);
+    var p=built.parts;
+    if(p&&p.visible){
+      var u=p.material.uniforms, wv=p.userData.wind||0, md=PART_MODES[skyMode];
+      u.uTime.value=tm;
+      /* Integrated here rather than as velocity x time in the shader: the
+         wind turns, and a product with the whole elapsed time would swing
+         every mote across the box when it did. */
+      u.uOff.value.x+=(md.vel[0]+wind.x*wv)*dt; u.uOff.value.y+=md.vel[1]*dt;
+      u.uOff.value.z+=(md.vel[2]+wind.y*wv)*dt;
+    }
+  }
+  /** From draw(), once the camera is placed: fog that follows the zoom. */
+  function skyFog(){
+    var D=camera.position.distanceTo(camT), v=cam.view;
+    if(built.scene.fog){
+      built.scene.fog.near=D+0.15*v;
+      built.scene.fog.far=D+v*(3.6-1.6*Math.max(skyNow.rain,skyNow.cloud*0.6));
+    }
+    var p=built.parts;
+    if(p&&p.visible){
+      var u=p.material.uniforms;
+      u.uCenter.value.copy(camT); u.uBox.value.set(v*3.4,v*1.6,v*3.4);
+      u.uPx.value=vp.h/(2*v);
+    }
+  }
+  function skyLambert(){
+    var m=new THREE.MeshLambertMaterial({vertexColors:true});
+    m.onBeforeCompile=skyHook; return m;
+  }
   function meshMaterial(){
     var m=new THREE.MeshLambertMaterial({vertexColors:true});
     m.onBeforeCompile=function(sh){
@@ -7225,6 +7636,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
           +'  float qsShade=0.90+0.20*qsGrain(qsCell+vec3(19.0,7.0,3.0));\n'
           +'  vec3 qsCol=texture2D(uPal,vec2((vGroup.x+qsPick+0.5)/uPalN,0.5)).rgb;\n'
           +'  diffuseColor.rgb*=qsCol*qsShade;');
+      skyHook(sh);
     };
     return m;
   }
@@ -7353,7 +7765,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       var src=[];
       for(var q=lo;q<hi;q++) if(keep(data.pos[q*3],data.pos[q*3+2])) src.push(q);
       if(!src.length) return null;
-      var im=new THREE.InstancedMesh(boxGeo,new THREE.MeshLambertMaterial({vertexColors:true}),src.length);
+      var im=new THREE.InstancedMesh(boxGeo,skyLambert(),src.length);
       for(var q2=0;q2<src.length;q2++){ var k2=src[q2];
         m4.makeTranslation(data.pos[k2*3],data.pos[k2*3+1],data.pos[k2*3+2]); im.setMatrixAt(q2,m4);
         col.setRGB(QS.palR(data.pal[k2],data.shd[k2]),QS.palG(data.pal[k2],data.shd[k2]),
@@ -7503,6 +7915,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     }
     (data.lamps||[]).filter(function(l){ return keep(l[0],l[2]); }).slice(0,3).forEach(function(l){
       var pl=new THREE.PointLight(0xffb066,0.9,9,2); pl.position.set(l[0],l[1]+0.1,l[2]); g.add(pl);
+      pl.userData.lamp=0.9; pl.intensity=0.9*skyNow.lamps;
     });
     return {g:g,vox:vox,props:props,propMesh:propMesh,mesh:terrainMesh,data:data,org:org};
   }
@@ -7513,14 +7926,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       mesh:meshMaterial(),
       /* What the instanced prop boxes were drawn with, so culling their
          insides cannot change how the outsides are lit. */
-      prop:new THREE.MeshLambertMaterial({vertexColors:true}),
+      prop:skyLambert(),
       /* uPush is who is standing in the grass: both players and the two
          nearest machines, in world space, parked far away when there is
          nobody. uSun is the direction sceneShell puts the sun in — grass is
          lit by hand rather than by three's lights, because it is a
          ShaderMaterial and nothing injects them. */
-      grass:new THREE.ShaderMaterial({side:THREE.DoubleSide,
+      grass:new THREE.ShaderMaterial({side:THREE.DoubleSide,fog:true,
         uniforms:{uTime:{value:0},uW:{value:GRASS_W},
+                  uSunI:{value:1},uAmb:{value:new THREE.Color(0.60,0.60,0.60)},
+                  uCloud:SKY_U.uCloud,uCloudOff:SKY_U.uCloudOff,uWet:SKY_U.uWet,uSnow:SKY_U.uSnow,
+                  fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0},
                   uHeight:{value:grassLen/GRASS_LEN_REF},
                   uWind:{value:new THREE.Vector2(0.72,0.69)},
                   uSun:{value:new THREE.Vector3(-16,26,12).normalize()},
@@ -7528,8 +7944,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
                     for(q=0;q<GRASS_PUSH;q++) a.push(new THREE.Vector3(1e5,0,1e5));
                     return a;})()}},
         vertexShader:GRASS_VS,fragmentShader:GRASS_FS}),
-      water:new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,
-        uniforms:{uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)}},
+      water:new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,fog:true,
+        uniforms:{uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)},uLight:{value:1},
+                  fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0}},
         vertexShader:WATER_VS,fragmentShader:WATER_FS}),
     };
   }
@@ -7537,21 +7954,24 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   /** The sky, the lights and nothing that came out of a generator. */
   function sceneShell(reach){
     var scene=new THREE.Scene();
-    scene.add(new THREE.HemisphereLight(0x9fc3e8,0x4a3a2c,0.62));
+    var hemi=new THREE.HemisphereLight(0x9fc3e8,0x4a3a2c,0.62); scene.add(hemi);
+    scene.fog=new THREE.Fog(0x9fb8cc,60,400);
+    scene.background=skyTexture();
     var sun=new THREE.DirectionalLight(0xfff0d2,1.05);
     sun.position.set(-16,26,12); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
     var sc=sun.shadow.camera, e=reach;
     sc.left=-e;sc.right=e;sc.top=e;sc.bottom=-e;sc.near=1;sc.far=200;
     sun.shadow.bias=-0.0006; sun.shadow.normalBias=0.04;
     scene.add(sun); scene.add(sun.target);
-    return {scene:scene,sun:sun};
+    var parts=makeParticles(); scene.add(parts);
+    return {scene:scene,sun:sun,hemi:hemi,parts:parts};
   }
 
   function buildScene(data){
     var shell=sceneShell(data.half+4), mats=worldMaterials();
     var node=worldNode(data,mats,null);
     shell.scene.add(node.g);
-    return {scene:shell.scene,sun:shell.sun,mats:mats,
+    return {scene:shell.scene,sun:shell.sun,hemi:shell.hemi,parts:shell.parts,mats:mats,
             gmat:mats.grass,wmat:mats.water,
             vox:node.vox,props:node.props,propMesh:node.propMesh,
             mesh:node.mesh,node:node};
@@ -8145,6 +8565,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     disposeWorld();
     field=null; stream=null; nodes=null;
     built=buildScene(data); built.data=data; built.cfg=cfg; voxIndex=null; hidden.length=0;
+    skySec=0; applySky(true);
     built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
     col=QS.colliderForWorld(data);
     return populate(data);
@@ -8417,7 +8838,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        from anywhere inside a step. */
     var sx=Math.round(a.x/SUN_STEP)*SUN_STEP, sz=Math.round(a.z/SUN_STEP)*SUN_STEP;
     var sy=Math.round(a.y/SUN_STEP)*SUN_STEP;
-    built.sun.position.set(sx-16,sy+26,sz+12);
+    built.sun.position.set(sx+sunDirV.x*80,sy+sunDirV.y*80,sz+sunDirV.z*80);
     built.sun.target.position.set(sx,sy,sz);
     built.sun.target.updateMatrixWorld();
   }
@@ -8504,7 +8925,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
                             cfg.gdens===undefined?grassDens/GRASS_DENS_REF:cfg.gdens);
     stream=QS.makeStream(field,{loadR:1,keepR:STREAM_KEEP,flight:POOL_N});
     nodes={}; voxIndex=null; hidden.length=0; streamBuilt=0; streamMs=0;
-    built={scene:shell.scene,sun:shell.sun,mats:mats,gmat:mats.grass,wmat:mats.water,
+    built={scene:shell.scene,sun:shell.sun,hemi:shell.hemi,parts:shell.parts,mats:mats,gmat:mats.grass,wmat:mats.water,
            vox:null,props:null,mesh:null,cfg:cfg,streamed:true};
     built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
     col=field;
@@ -8520,6 +8941,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(!pool) pool=makePool(POOL_N);
     reconcileNodes();
     built.data=field.chunk(0,0).w;
+    skySec=0; applySky(true);
     return populate(built.data);
   }
 
@@ -8621,6 +9043,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     cam.yawTo=spec.yaw===undefined?QS.START_YAW:spec.yaw;
     QS.warpTo(cam,tx,g.y,tz);
     QS.setView(cam,spec.view===undefined?20:spec.view);
+    /* Noon, clear, and nothing in the air: the baseline is of the ground. */
+    applySky(true);
     draw();
     return {seed:built.cfg.seed,x:tx,z:tz,y:g.y,yaw:cam.yaw,view:cam.view,t:tm,
             w:vp.w,h:vp.h,quads:built.mesh?built.mesh.userData.quads:0};
@@ -8730,6 +9154,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     stage.focus();
   }
   document.getElementById('streambtn').addEventListener('click',function(){ toggleStream(false); });
+  function setSky(i){
+    var k=((i%SKY_FIXES.length)+SKY_FIXES.length)%SKY_FIXES.length;
+    skyFix=SKY_FIXES[k]; applySky(true);
+    var b=document.getElementById('skybtn'); if(b) b.textContent='Sky: '+SKY_NAMES[k];
+    return SKY_NAMES[k];
+  }
+  document.getElementById('skybtn').addEventListener('click',function(){
+    setSky(SKY_FIXES.indexOf(skyFix)+1);
+  });
   /* Length on `input` — it is a uniform, so it can follow the drag. Density on
      `change` — it regrows the world, so it waits for the slider to be let go. */
   document.getElementById('glen').addEventListener('input',function(){
@@ -9179,6 +9612,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        decided, and the load radius is what keeps it from ever meeting that
        boundary — see src/sim/chunks.mjs. */
     if(streaming) pumpStream();
+    /* In a session the hour is the host's tick, which the guest hears in
+       every snapshot — so two windows see one sky, not two that started when
+       each of them opened. */
+    skySec=session&&session.tick!==undefined?session.tick*TICK:skySec+TICK;
     if(input.took('rotateLeft')) QS.snap(cam,-1);
     if(input.took('rotateRight')) QS.snap(cam,1);
     if(input.took('respawn')) spawn();
@@ -9261,6 +9698,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         if(o.userData.kind==='grass'&&o.userData.full){ o.count=grassCount(o.userData.full,cam.view); fitGrass(o); }
       });
     }
+    skyFog();
     var sk=worldRev+'|'+plateMode+'|'+(built.sun?built.sun.position.x+','+built.sun.position.z:'');
     if(sk!==shadowKey){ shadowKey=sk; renderer.shadowMap.needsUpdate=true; }
     renderer.render(built.scene,camera);
@@ -9344,6 +9782,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         : '<b>Joined.</b> You are predicting locally and reconciling against the host.',true);
     }
     if(!built) return;
+    applySky(false); skyFrame(dt);
     if(streaming) followSun();
 
     frames++;
@@ -9527,6 +9966,21 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     get fpsText(){ return fpsEl?fpsEl.textContent:''; },
     get view(){ return cam.view; },
     get seed(){ return built?built.cfg.seed:null; },
+    /* Batch 1 (#30, #31, #55): the hour, the weather and what is in the air. */
+    get sky(){ return {sec:skySec,phase:skyNow.phase,day:skyNow.day,sunI:skyNow.sunI,lamps:skyNow.lamps,
+                       cloud:skyNow.cloud,rain:skyNow.rain,wet:skyNow.wetness,snow:skySnow,
+                       mode:skyMode,fix:skyFix,parts:built&&built.parts?(built.parts.visible?built.parts.userData.n:0):0,
+                       fogNear:built&&built.scene.fog?built.scene.fog.near:0,
+                       fogFar:built&&built.scene.fog?built.scene.fog.far:0,
+                       tone:renderer.toneMapping===THREE.ACESFilmicToneMapping,
+                       sun:sunDirV.toArray()}; },
+    /** Pin the hour by name ('auto','dawn','noon','dusk','night'), set the
+        clock, and — for a gate that counts pixels — hold the weather clear. */
+    setSky:function(name,sec,calm){
+      if(sec!==undefined&&sec!==null){ skySec=sec; skyStepAt=-1; }
+      skyCalm=!!calm;
+      return setSky(Math.max(0,SKY_NAMES.indexOf(name||'auto')));
+    },
     /* Issue #29: the fixed pose the look baseline is made of. */
     plate:plate,
     carve:carveAt,

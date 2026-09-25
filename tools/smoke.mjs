@@ -78,7 +78,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -237,6 +237,9 @@ if (NODE_HALF) for (const r of networkSuite()) check(r.ok, `NETWORK: ${r.label}`
 
 /* ---------- ANIM: poses read the simulation and never write it, issue #33 ---------- */
 if (NODE_HALF) for (const r of animSuite()) check(r.ok, `ANIM: ${r.label}`, r.detail);
+
+/* ---------- SKY: the hour and the weather are the seed's, issue #30 ---------- */
+if (NODE_HALF) for (const r of skySuite()) check(r.ok, `SKY: ${r.label}`, r.detail);
 
 /* ---------- MESH: the greedy mesher, issue #12 ---------- */
 if (NODE_HALF) for (const r of meshSuite()) check(r.ok, `MESH: ${r.label}`, r.detail);
@@ -555,6 +558,12 @@ if (BROWSER_HALF) {
       await bp.goto(`file://${bfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
       await bp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
       check(bErrors.length === 0, 'BUILD: boots with no page errors', bErrors.slice(0, 3).join(' | '));
+
+      /* The sky turns with the simulation (#30), and everything below that
+         counts pixels would be counting a different hour and different weather
+         depending on how long the checks before it ran. Noon and clear, until
+         the SKY checks let it go. */
+      await bp.evaluate(() => window.QSPLAY.setSky('noon', 0, true));
 
       /* ---------- BUILD: it opens in the view ----------
          The page is a design document with a game in the middle of it, and the
@@ -1140,6 +1149,59 @@ if (BROWSER_HALF) {
             `casting: ${Object.entries(sh.kinds).map(([k, n]) => k + ' ' + n).join(', ')}; `
             + `blob ${sh.blob.visible ? 'shown' : 'HIDDEN'} at y ${sh.blob.y.toFixed(2)} under a character at ${sh.ay.toFixed(2)}`);
 
+      /* ---------- SKY: the day turns, and the build draws it — #30, #31, #55 ----------
+         The hour and the weather are src/sim/sky.mjs's and asserted in node;
+         what is asserted here is that the page draws them. A night that is
+         darker than noon but still has a picture in it. A sun that moves in
+         steps, so the shadow map (#60) is redrawn a handful of times a minute
+         and not every frame. Rain that wets the ground and fills the air. Fog
+         on the hand-written shaders, which three does not give them. */
+      const sky = await bp.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS;
+        P.pause(true);
+        const c = document.querySelector('#cv'), gl = c.getContext('webgl') || c.getContext('webgl2');
+        const w = c.width, h = c.height;
+        const lum = () => {
+          P.frameOnce(); P.draw();
+          const px = new Uint8Array(w * h * 4); gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          let s = 0, n = 0;
+          for (let i = 0; i < px.length; i += 28) { s += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]; n++; }
+          return s / n;
+        };
+        P.setSky('noon', 0, true); const noon = lum(), atNoon = P.sky;
+        P.setSky('dusk', 0, true); const dusk = lum();
+        P.setSky('night', 0, true); const night = lum(), atNight = P.sky;
+        P.setSky('auto', 0);
+        const per = Math.round(1 / QS.TICK), s0 = P.shadowRenders;
+        for (let i = 0; i < 60; i++) { P.run(per); P.frameOnce(); }
+        const redraws = P.shadowRenders - s0, after = P.sky;
+        const S = QS.SPELL_SECONDS; let t = -1;
+        for (let k = 0; k < 400 && t < 0; k++) if (QS.weatherAt(P.seed, (k + 0.5) * S).rain > 0.5) t = (k + 0.5) * S;
+        P.setSky('auto', t); P.frameOnce(); const wet = P.sky;
+        const fog = [];
+        P.scene.traverse((o) => { const k = o.userData.kind;
+          if ((k === 'grass' || k === 'water') && o.material) fog.push(o.material.fog === true && 'fogNear' in o.material.uniforms); });
+        P.setSky('noon', 0, true); P.frameOnce();
+        P.pause(false);
+        return { noon, dusk, night, atNoon, atNight, redraws, after, wet, t,
+                 fogged: fog.filter(Boolean).length, fogMats: fog.length };
+      });
+      check(sky.atNoon.tone && sky.night < sky.noon * 0.55 && sky.night > 12 && sky.dusk < sky.noon && sky.dusk > sky.night,
+            'SKY: noon, dusk and night are three different lights, and night still has a picture in it',
+            `mean luma ${sky.noon.toFixed(1)} at noon, ${sky.dusk.toFixed(1)} at dusk, ${sky.night.toFixed(1)} at night; `
+            + `lamps ${sky.atNoon.lamps} / ${sky.atNight.lamps}; filmic tone mapping ${sky.atNoon.tone ? 'on' : 'OFF'}`);
+      check(sky.after.sec >= 59 && sky.redraws >= 4 && sky.redraws <= 9,
+            'SKY: the sun moves, in steps, and the shadow map follows it a few times a minute',
+            `${sky.redraws} shadow redraws over ${sky.after.sec.toFixed(0)} s of simulated time `
+            + `(sun now ${sky.after.sun.map((v) => v.toFixed(2)).join(',')})`);
+      check(sky.t > 0 && (sky.wet.mode === 'rain' || sky.wet.mode === 'snow') && sky.wet.parts > 0 && sky.wet.wet > 0.5 && sky.wet.fogFar > sky.wet.fogNear,
+            'SKY: rain falls, the ground darkens with it, and the fog comes in',
+            `at ${sky.t} s: ${sky.wet.mode} with ${sky.wet.parts} drops, wetness ${sky.wet.wet.toFixed(2)}, `
+            + `fog ${sky.wet.fogNear.toFixed(0)}–${sky.wet.fogFar.toFixed(0)}`);
+      check(sky.fogMats > 0 && sky.fogged === sky.fogMats,
+            'SKY: and the hand-written grass and water shaders are fogged like everything else',
+            `${sky.fogged} of ${sky.fogMats} grass and water meshes take the scene's fog`);
+
       /* ---------- BUILD: a chunk the camera cannot see is not drawn ----------
          Grass was the only thing in a world node that was frustum-culled;
          terrain, props, water and the emissive record were all pinned visible
@@ -1637,6 +1699,7 @@ if (BROWSER_HALF) {
       });
       await peerPage.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null,
                                      { timeout: PATIENCE });
+      await peerPage.evaluate(() => window.QSPLAY.setSky('noon', 0, true));
       await bp.waitForFunction(() => window.QSPLAY.connected, null, { timeout: PATIENCE });
       await peerPage.waitForFunction(() => window.QSPLAY.connected, null, { timeout: PATIENCE });
       const roles = [await bp.evaluate(() => window.QSPLAY.role),
@@ -1708,6 +1771,7 @@ if (BROWSER_HALF) {
       cp.on('pageerror', (e) => cErrors.push(e.message));
       await cp.goto(`file://${bfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
       await cp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      await cp.evaluate(() => window.QSPLAY.setSky('noon', 0, true));
       /* The in-view button, first and on its own, because it is the only one
          reachable in the state the build opens in: the stage fills the
          viewport and the page furniture is behind it. A control that is only
@@ -1779,6 +1843,7 @@ if (BROWSER_HALF) {
       sp.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) sErrors.push(m.text()); });
       await sp.goto(`file://${bfile}?stream=1`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
       await sp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      await sp.evaluate(() => window.QSPLAY.setSky('noon', 0, true));
       const streamed = await sp.evaluate(() => {
         const P = window.QSPLAY, QS = window.QS;
         const a0 = P.actor;

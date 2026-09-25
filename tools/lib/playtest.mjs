@@ -33,6 +33,7 @@ import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache, portsOf, regionOf, REGION } from '../../src/gen/region.mjs';
 import { erodeAt } from '../../src/gen/erosion.mjs';
 import { HERO_RIG, SENTRY_RIG, poseHero, poseSentry, swingYaw, restPositions } from '../../src/sim/anim.mjs';
+import * as SKY from '../../src/sim/sky.mjs';
 import { meshChunk, surfaceAt, isCut, innerChunk } from '../../src/mesh/greedy.mjs';
 import { meshProps } from '../../src/mesh/propmesh.mjs';
 import { palR, palG, palB } from '../../src/gen/palette.mjs';
@@ -460,6 +461,18 @@ export function netSuite() {
     run(p, 30, scripted(0), scripted(2));
     say('a guest joins from a seed alone', p.host.connected && p.guest.ready,
         `host ${p.host.connected ? 'joined' : 'alone'}, guest ${p.guest.ready ? 'ready' : 'waiting'}`);
+  }
+
+  /* 1b. One clock. The sky is read from the host's tick (#30), and a guest
+         learns it from the snapshots it already gets — so the two windows see
+         the same hour however late the second one opened. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 4 }));
+    run(p, 600, scripted(0), scripted(2));
+    const lag = p.host.tick - p.guest.tick;
+    say('and the guest keeps the host\'s clock, to within a snapshot and the wire',
+        p.guest.tick > 0 && lag >= 0 && lag <= 12,
+        `host tick ${p.host.tick}, guest hears ${p.guest.tick} (${lag} behind)`);
   }
 
   /* 2. What actually crosses. Terrain is a pure function of its seed, so the
@@ -2989,5 +3002,76 @@ export function propSuite() {
         + `${whole.faces.toLocaleString()} across the whole window, none beyond the boundary`);
   }
 
+  return out;
+}
+
+/**
+ * The sky (#30): a clock, a sun on it, and weather that is a function of the
+ * seed and the hour — so two players see the same sky without a byte of it
+ * crossing the wire.
+ */
+export function skySuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const D = SKY.DAY_SECONDS, at = (ph) => (ph - SKY.DAWN_START) * D;
+  const CLEAR = { cloud: 0, rain: 0, wetness: 0 };
+
+  const noon = SKY.skyAt(at(0.5), 'QUARTERSTONE', CLEAR), night = SKY.skyAt(at(1.0), 'QUARTERSTONE', CLEAR);
+  const L = Math.sqrt(16 * 16 + 26 * 26 + 12 * 12), old = [-16 / L, 26 / L, 12 / L];
+  const off = Math.sqrt(noon.sunDir.reduce((a, v, i) => a + (v - old[i]) * (v - old[i]), 0));
+  say('noon puts the sun where the fixed sun always stood, and midnight puts it under the ground',
+      off < 0.01 && night.sunDir[1] < -0.5 && noon.sunI > 1 && night.sunI === 0,
+      `noon ${noon.sunDir.map((v) => v.toFixed(3)).join(',')} (${off.toFixed(4)} from the old sun), midnight elevation ${night.sunDir[1].toFixed(2)}`);
+
+  const rise = [], set = [];
+  for (let ph = 0; ph < 1; ph += 1 / 480) {
+    const a = SKY.skyAt(at(ph), 1, CLEAR), b = SKY.skyAt(at(ph + 1 / 480), 1, CLEAR);
+    if (a.sunDir[1] <= 0 && b.sunDir[1] > 0) rise.push(ph * 24);
+    if (a.sunDir[1] > 0 && b.sunDir[1] <= 0) set.push(ph * 24);
+  }
+  say('the sun rises at six and sets at eighteen, once each a day',
+      rise.length === 1 && set.length === 1 && Math.abs(rise[0] - 6) < 0.1 && Math.abs(set[0] - 18) < 0.1,
+      `rise ${rise.map((h) => h.toFixed(2)).join(',')} h, set ${set.map((h) => h.toFixed(2)).join(',')} h`);
+
+  const dusk = SKY.skyAt(at(0.73), 1, CLEAR);
+  say('the golden hour is golden, and the lamps come on at night and off by day',
+      dusk.sunCol[2] < 0.6 * noon.sunCol[2] && dusk.low > 0.8 && noon.lamps === 0 && night.lamps === 1,
+      `dusk sun ${dusk.sunCol.map((v) => v.toFixed(2)).join(',')} against noon ${noon.sunCol.map((v) => v.toFixed(2)).join(',')}; lamps ${noon.lamps} at noon, ${night.lamps} at midnight`);
+
+  let same = 0, n = 0, differ = 0;
+  for (let t = 0; t < 4 * D; t += 37) {
+    n++;
+    if (JSON.stringify(SKY.skyAt(t, 'QUARTERSTONE')) === JSON.stringify(SKY.skyAt(t, 'QUARTERSTONE'))) same++;
+    if (SKY.weatherAt('QUARTERSTONE', t).cloud !== SKY.weatherAt('MEADOWLANDS', t).cloud) differ++;
+  }
+  say('the sky is a function of the seed and the hour and nothing else',
+      same === n && differ > n / 2 && SKY.skyWord('QUARTERSTONE') === SKY.skyWord('QUARTERSTONE'),
+      `${same}/${n} hours identical twice over; another seed has other weather at ${differ} of them`);
+
+  let rainy = 0, jump = 0;
+  for (let k = 0; k < 400; k++) if (SKY.spellAt(SKY.skyWord('X' + k), k).rain) rainy++;
+  let prev = SKY.weatherAt(7, 0);
+  for (let t = 1; t < 20 * SKY.SPELL_SECONDS; t++) {
+    const w = SKY.weatherAt(7, t);
+    jump = Math.max(jump, Math.abs(w.cloud - prev.cloud), Math.abs(w.rain - prev.rain));
+    prev = w;
+  }
+  say('about one spell in six rains, and weather never changes in a step',
+      rainy > 400 / 10 && rainy < 400 / 3.5 && jump < 0.05,
+      `${rainy} of 400 spells rain; largest change in one second ${jump.toFixed(3)}`);
+
+  /* Wetness: rises while it rains, still there just after, gone some spells on. */
+  let spell = -1;
+  for (let k = 1; k < 200 && spell < 0; k++) {
+    const a = SKY.spellAt(SKY.skyWord(3), k);
+    if (a.rain && !SKY.spellAt(SKY.skyWord(3), k + 1).rain && !SKY.spellAt(SKY.skyWord(3), k + 2).rain
+        && !SKY.spellAt(SKY.skyWord(3), k + 3).rain && !SKY.spellAt(SKY.skyWord(3), k + 4).rain) spell = k;
+  }
+  const S = SKY.SPELL_SECONDS;
+  const during = SKY.weatherAt(3, (spell + 0.5) * S).wetness, after = SKY.weatherAt(3, (spell + 1.5) * S).wetness,
+        dry = SKY.weatherAt(3, (spell + 4.5) * S).wetness;
+  say('rain wets the ground, and it dries after',
+      spell > 0 && during > 0.5 && after > 0 && after < during && dry === 0,
+      `spell ${spell}: wetness ${during.toFixed(2)} in the rain, ${after.toFixed(2)} a spell later, ${dry.toFixed(2)} four on`);
   return out;
 }

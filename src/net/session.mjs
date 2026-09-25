@@ -168,7 +168,7 @@ export function makeGuest(opts) {
   const { transport, build } = opts;
   let col = null, me = null, peer = null, cfg = null, encounter = null;
   let foes = null, lootBits = 0;
-  let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0;
+  let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0, hostTick = 0;
   const pending = [];
   let target = null;                       /* last authoritative host state */
   let lastYou = null;                      /* ...and the last word on us */
@@ -197,6 +197,7 @@ export function makeGuest(opts) {
          what makes a corrected client feel like it is being dragged backwards. */
       restore(me, m.you);
       lastYou = m.you;
+      hostTick = m.tick;
       lastAck = m.ack;
       corrections++;
       while (pending.length && pending[0].seq <= m.ack) pending.shift();
@@ -218,6 +219,9 @@ export function makeGuest(opts) {
     get peer() { return peer; },
     get cfg() { return cfg; },
     get connected() { return ready; },
+    /** The host's tick as of its last snapshot: the one clock both windows
+        can agree on, which is what the sky (#30) is read from. */
+    get tick() { return hostTick; },
     get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck }; },
     /** Whatever the host last said was in the world. Drawn, never stepped. */
     get foes() { return foes; },
