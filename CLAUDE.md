@@ -88,8 +88,8 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`4b90995`** (the waterfall rework, after the water-step fix) at
-**version 30**; concept from **`4b90995`** at **version 23** — neither needed force, both having been published earlier in
+Play is published from **`d1e7894`** (#67 and batch 3) at **version 31**; concept from
+**`d1e7894`** at **version 24** — neither needed force, both having been published earlier in
 the same session. Before that, concept version 21 was forced on the user's word after the loop found
 the live page identical to **`0056e02`**.
 On 2026-09-25 the loop found the live pages identical to `a3297ad` (play, version 21) and
