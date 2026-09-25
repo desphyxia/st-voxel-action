@@ -3201,6 +3201,17 @@ function chunkOccupancy(w, cx, cz, pad, org) {
   return { occ: occ, nx: nx, nz: nz, ny: ny, i0: i0, j0: j0, pad: pad };
 }
 
+/** One past the highest solid level anywhere in an occupancy grid; 0 if empty. */
+function topOf(g) {
+  if (g.top !== undefined) return g.top;
+  var occ = g.occ, ny = g.ny, n = occ.length, top = 0, y;
+  for (var k = 0; k < n; k += ny) {
+    for (y = ny - 1; y >= top; y--) if (occ[k + y]) { top = y + 1; break; }
+  }
+  g.top = top;
+  return top;
+}
+
 /**
  * Air reachable from outside the chunk box. Anything else is a sealed cave, and
  * its walls are not meshed — see the note at the top.
@@ -3214,9 +3225,21 @@ function openAir(g) {
     if (occ[k] || open[k]) return;
     open[k] = 1; q.push(k);
   }
-  var a, b, y;
-  for (a = 0; a < nx; a++) for (b = 0; b < nz; b++) push(a, b, ny - 1);
-  for (y = 0; y < ny; y++) {
+  var a, b, y, top = topOf(g);
+  /* Issue #59. Above the highest solid level every cell is air that reaches
+     the top, so it is open without being flooded to — that was more than half
+     the volume, and all of the flood's cost up there. The flood starts from
+     the first open layer instead, which is the same set of cells it reached. */
+  if (top < ny) {
+    for (a = 0; a < nx; a++) for (b = 0; b < nz; b++) {
+      var base = (a * nz + b) * ny;
+      for (y = top; y < ny; y++) open[base + y] = 1;
+      q.push(base + top);
+    }
+  } else {
+    for (a = 0; a < nx; a++) for (b = 0; b < nz; b++) push(a, b, ny - 1);
+  }
+  for (y = 0; y < Math.min(top, ny); y++) {
     for (a = 0; a < nx; a++) { push(a, 0, y); push(a, nz - 1, y); }
     for (b = 0; b < nz; b++) { push(0, b, y); push(nx - 1, b, y); }
   }
@@ -3282,55 +3305,57 @@ function meshChunk(w, cx, cz, org) {
   var pos = [], nor = [], ao = [], mat = [], pal = [], idx = [];
   var quads = 0, faces = 0, vbase = 0;
 
-  function solid(a, b, y) {
-    if (a < 0 || b < 0 || y < 0 || a >= nx || b >= nz || y >= ny) return 0;
-    return occ[(a * nz + b) * ny + y];
-  }
-  function seen(a, b, y) {
-    if (a < 0 || b < 0 || y < 0 || a >= nx || b >= nz || y >= ny) return 1;
-    return open[(a * nz + b) * ny + y];
-  }
-
   var side = Math.round(CHUNK / V);
+  /* Issue #59: the same sweep, the same order and the same output, with three
+     costs taken out of it. Nothing at or above `top` is solid, so nothing
+     there can have a face, and every loop that runs up the column stops at it —
+     the mask entries above are never written and stay zero, so the rectangle
+     pass stops exactly where it always did. Cells are addressed by flat index
+     and stride rather than coordinate arrays built per cell. And only the
+     vertical can step outside the grid: the pad ring keeps every horizontal
+     neighbour of a chunk cell in range, so only y is bounds-checked. */
+  var top = topOf(g);
+  var STR = [nz * ny, 1, ny];                     /* strides, index order (a, y, b) */
+  function occY(k, y) { return (y < 0 || y >= ny) ? 0 : occ[k]; }
   for (var d = 0; d < DIRS.length; d++) {
     var axis = DIRS[d][0], sign = DIRS[d][1];
     /* u and v are the two axes of the slice; n is the one being swept. */
     var uA = (axis + 1) % 3, vA = (axis + 2) % 3;
-    var dim = [nx, ny, nz];                       /* index order is (a, y, b) */
     var lim = [side, ny, side];
     var off = [pad, 0, pad];
     var key = new Int32Array(lim[uA] * lim[vA]);
     var aoq = new Int32Array(lim[uA] * lim[vA]);
+    var sLim = axis === 1 ? Math.min(top, ny) : lim[axis];
+    var iLim = uA === 1 ? Math.min(top, ny) : lim[uA];
+    var jLim = vA === 1 ? Math.min(top, ny) : lim[vA];
+    var su = STR[uA], sv = STR[vA], sn = STR[axis], nOff = sign * sn;
+    /* How y moves with each step, for the one axis that can leave the grid. */
+    var yN = axis === 1 ? sign : 0, yU = uA === 1 ? 1 : 0, yV = vA === 1 ? 1 : 0;
 
-    for (var s = 0; s < lim[axis]; s++) {
-      var i, j, p = [0, 0, 0];
+    for (var s = 0; s < sLim; s++) {
+      var i, j;
       /* ---- build the mask ---- */
-      for (i = 0; i < lim[uA]; i++) {
-        for (j = 0; j < lim[vA]; j++) {
-          p[axis] = s + off[axis]; p[uA] = i + off[uA]; p[vA] = j + off[vA];
-          var a = p[0], y = p[1], b = p[2];
+      for (i = 0; i < iLim; i++) {
+        var rowK = (s + off[axis]) * sn + (i + off[uA]) * su + off[vA] * sv;
+        var rowY = (axis === 1 ? s : 0) + (uA === 1 ? i : 0);
+        for (j = 0; j < jLim; j++) {
+          var k = rowK + j * sv, y = rowY + (vA === 1 ? j : 0);
           var m = 0, pg = 0, packed = 0;
-          if (solid(a, b, y)) {
-            var q = [0, 0, 0]; q[axis] = sign;
-            var na = a + q[0], nyy = y + q[1], nb = b + q[2];
-            if (!solid(na, nb, nyy) && seen(na, nb, nyy)) {
+          if (occ[k]) {
+            var nk = k + nOff, nyy = y + yN;
+            var nSolid = occY(nk, nyy);
+            var nSeen = (nyy < 0 || nyy >= ny) ? 1 : open[nk];
+            if (!nSolid && nSeen) {
+              var a = (k / STR[0]) | 0, b = ((k - a * STR[0]) / ny) | 0;
               var sf = surfaceAt(w, g.i0 + a, g.j0 + b, y);
               m = sf.mat; pg = sf.pal;
               /* the four corners of the face, in the slice's own axes */
-              var e1 = [0, 0, 0], e2 = [0, 0, 0];
-              e1[uA] = 1; e2[vA] = 1;
-              var c0 = cornerAO(solid(na - e1[0], nb - e1[2], nyy - e1[1]),
-                                solid(na - e2[0], nb - e2[2], nyy - e2[1]),
-                                solid(na - e1[0] - e2[0], nb - e1[2] - e2[2], nyy - e1[1] - e2[1]));
-              var c1 = cornerAO(solid(na + e1[0], nb + e1[2], nyy + e1[1]),
-                                solid(na - e2[0], nb - e2[2], nyy - e2[1]),
-                                solid(na + e1[0] - e2[0], nb + e1[2] - e2[2], nyy + e1[1] - e2[1]));
-              var c2 = cornerAO(solid(na + e1[0], nb + e1[2], nyy + e1[1]),
-                                solid(na + e2[0], nb + e2[2], nyy + e2[1]),
-                                solid(na + e1[0] + e2[0], nb + e1[2] + e2[2], nyy + e1[1] + e2[1]));
-              var c3 = cornerAO(solid(na - e1[0], nb - e1[2], nyy - e1[1]),
-                                solid(na + e2[0], nb + e2[2], nyy + e2[1]),
-                                solid(na - e1[0] + e2[0], nb - e1[2] + e2[2], nyy - e1[1] + e2[1]));
+              var uMk = nk - su, uPk = nk + su, vMk = nk - sv, vPk = nk + sv;
+              var uMy = nyy - yU, uPy = nyy + yU, vMy = nyy - yV, vPy = nyy + yV;
+              var c0 = cornerAO(occY(uMk, uMy), occY(vMk, vMy), occY(uMk - sv, uMy - yV));
+              var c1 = cornerAO(occY(uPk, uPy), occY(vMk, vMy), occY(uPk - sv, uPy - yV));
+              var c2 = cornerAO(occY(uPk, uPy), occY(vPk, vPy), occY(uPk + sv, uPy + yV));
+              var c3 = cornerAO(occY(uMk, uMy), occY(vPk, vPy), occY(uMk + sv, uMy + yV));
               packed = c0 | (c1 << 2) | (c2 << 4) | (c3 << 6);
               faces++;
             } else m = 0;
@@ -3342,15 +3367,15 @@ function meshChunk(w, cx, cz, org) {
         }
       }
       /* ---- pull rectangles out of it ---- */
-      for (i = 0; i < lim[uA]; i++) {
-        for (j = 0; j < lim[vA];) {
+      for (i = 0; i < iLim; i++) {
+        for (j = 0; j < jLim;) {
           var kk = key[i * lim[vA] + j];
           if (!kk) { j++; continue; }
           var aa2 = aoq[i * lim[vA] + j], wRun = 1;
-          while (j + wRun < lim[vA] && key[i * lim[vA] + j + wRun] === kk
+          while (j + wRun < jLim && key[i * lim[vA] + j + wRun] === kk
                  && aoq[i * lim[vA] + j + wRun] === aa2) wRun++;
           var hRun = 1, ok = true;
-          while (i + hRun < lim[uA] && ok) {
+          while (i + hRun < iLim && ok) {
             for (var t = 0; t < wRun; t++) {
               if (key[(i + hRun) * lim[vA] + j + t] !== kk || aoq[(i + hRun) * lim[vA] + j + t] !== aa2) { ok = false; break; }
             }
