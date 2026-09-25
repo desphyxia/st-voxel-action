@@ -565,6 +565,13 @@ if (BROWSER_HALF) {
          depending on how long the checks before it ran. Noon and clear, until
          the SKY checks let it go. */
       await bp.evaluate(() => window.QSPLAY.setSky('noon', 0, true));
+      /* Streaming is the default only where a worker answers (#64). From disk a
+         blob: worker is refused, so this page — and every check that follows
+         on it — is the one-window world, and it has to have said why. */
+      const booted = await bp.evaluate(() => ({ s: window.QSPLAY.streaming, b: window.QSPLAY.boot }));
+      check(!booted.s && booted.b && booted.b.workers === false,
+            'BUILD: with no worker to build chunks, it opens on one window',
+            `streaming ${booted.s ? 'ON' : 'off'}; boot asked for workers for ${booted.b ? booted.b.ms.toFixed(0) : '?'} ms and got none`);
 
       /* ---------- BUILD: it opens in the view ----------
          The page is a design document with a game in the middle of it, and the
@@ -2027,8 +2034,13 @@ if (BROWSER_HALF) {
       const wErrors = [];
       wp.on('pageerror', (e) => wErrors.push(e.message));
       wp.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) wErrors.push(m.text()); });
-      await wp.goto(`http://127.0.0.1:${srv.address().port}/?stream=1`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      /* No flag: served, the build is meant to stream by default. */
+      await wp.goto(`http://127.0.0.1:${srv.address().port}/`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
       await wp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      const wboot = await wp.evaluate(() => ({ s: window.QSPLAY.streaming, b: window.QSPLAY.boot }));
+      check(wboot.s && wboot.b && wboot.b.workers,
+            'WORKER: and where a worker answers, the build streams by default',
+            `streaming ${wboot.s ? 'on' : 'OFF'}; a worker answered boot in ${wboot.b ? wboot.b.ms.toFixed(0) : '?'} ms`);
       await wp.evaluate(() => { const P = window.QSPLAY; P.setSky('noon', 0, true); P.pause(true); P.input.press('KeyW'); });
       const takes = [];
       let wc = null, lastDone = 0;
@@ -2058,7 +2070,66 @@ if (BROWSER_HALF) {
         }
         return out;
       });
-      await wp.evaluate(() => { window.QSPLAY.input.release('KeyW'); window.QSPLAY.pause(false); });
+      await wp.evaluate(() => { window.QSPLAY.input.release('KeyW'); });
+
+      /* ---------- STREAM: the zoom stops before the loaded ground does (#31) ----------
+         A streamed world's only edge is the ring of chunks around the players,
+         and the widest zoom used to show it — sky in a near corner of the
+         screen, where no fog reaches. Asked for 40, the view has to settle
+         where every screen corner still lands on loaded ground, and come back
+         to what the player asked for when they zoom in again. */
+      const zoom = await wp.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS, c = P.cam, cv = document.querySelector('#cv');
+        QS.setView(c, 40); P.frameOnce(); P.frameOnce();
+        const capped = c.view, f = P.field, h = QS.CHUNK / 2;
+        let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+        for (const e of f.live()) { x0 = Math.min(x0, e.cx * QS.CHUNK - h); x1 = Math.max(x1, e.cx * QS.CHUNK + h);
+                                    z0 = Math.min(z0, e.cz * QS.CHUNK - h); z1 = Math.max(z1, e.cz * QS.CHUNK + h); }
+        /* Every corner of the screen, followed down onto the target's height. */
+        const cam3 = P.camera, V3 = window.THREE.Vector3, out = [];
+        for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+          const p = new V3(sx, sy, -1).unproject(cam3), d = new V3(0, 0, -1).transformDirection(cam3.matrixWorld);
+          const t = (c.ty - p.y) / d.y; out.push([p.x + t * d.x, p.z + t * d.z]);
+        }
+        const inside = out.every(([x, z]) => x > x0 && x < x1 && z > z0 && z < z1);
+        QS.setView(c, 10); P.frameOnce();
+        return { capped, inside, back: c.view, w: cv.width };
+      });
+      check(zoom.capped < 40 && zoom.capped >= 6 && zoom.inside && zoom.back === 10,
+            'STREAM: zoomed all the way out, the screen stays on loaded ground',
+            `asked for 40, held at ${zoom.capped.toFixed(1)} with every corner inside the loaded chunks; `
+            + `back to ${zoom.back} when asked`);
+
+      /* ---------- NET, streamed: a guest grows the kind of world its host has ----------
+         The host's cfg did not say whether it streamed, so a streamed host and
+         its guest stood in two different worlds from one seed. */
+      const [wpeer] = await Promise.all([
+        wp.waitForEvent('popup', { timeout: PATIENCE }),
+        wp.evaluate(() => window.QSPLAY.host()),
+      ]);
+      wpeer.setDefaultTimeout(PATIENCE);
+      wpeer.on('pageerror', (e) => wErrors.push(`peer: ${e.message}`));
+      await wpeer.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready && window.QSPLAY.connected), null, { timeout: PATIENCE });
+      await wp.waitForFunction(() => window.QSPLAY.connected, null, { timeout: PATIENCE });
+      await wpeer.evaluate(() => { const P = window.QSPLAY; P.setSky('noon', 0, true); P.pause(true); P.input.press('KeyD'); });
+      for (let q = 0; q < 20; q++) {
+        await wpeer.evaluate(() => window.QSPLAY.run(4));
+        await wp.evaluate(() => window.QSPLAY.run(4));
+      }
+      await wpeer.evaluate(() => window.QSPLAY.input.release('KeyD'));
+      for (let q = 0; q < 12; q++) {
+        await wpeer.evaluate(() => window.QSPLAY.run(4));
+        await wp.evaluate(() => window.QSPLAY.run(4));
+      }
+      const hostSees = await wp.evaluate(() => ({ x: window.QSPLAY.peer.x, z: window.QSPLAY.peer.z }));
+      const guestIs = await wpeer.evaluate(() => ({ s: window.QSPLAY.streaming, x: window.QSPLAY.actor.x,
+                                                     z: window.QSPLAY.actor.z, y: window.QSPLAY.actor.y }));
+      const sgap = Math.hypot(hostSees.x - guestIs.x, hostSees.z - guestIs.z);
+      check(guestIs.s && Number.isFinite(guestIs.y) && sgap < 0.6,
+            'NET: a streamed host\'s guest streams too, and both agree where it stands',
+            `guest streaming ${guestIs.s ? 'on' : 'OFF'}, ${sgap.toFixed(3)} m apart`);
+      await wpeer.close();
+      await wp.evaluate(() => window.QSPLAY.pause(false));
       await wp.close();
       srv.close();
       takes.sort((a, b) => a - b);

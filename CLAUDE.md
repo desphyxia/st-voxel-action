@@ -25,7 +25,7 @@ anything.
 | `src/sim/` | Collision, the character controller, the isometric camera, the input table, combat, the first enemy, the socket lattice and what is lying on the ground — all written against the movement budget and all free of the DOM and three.js, which is why they can be asserted in node. |
 | `src/net/` | The wire: a three-method transport interface, a loopback double with latency and loss, and the host/guest sessions. No DOM either. |
 | `src/mesh/` | Greedy meshing with baked per-face AO, and the edit layer a carve writes into. Reads the generator's spans, not its voxels. No DOM either. |
-| `src/gen/chunk.mjs`, `src/sim/chunks.mjs`, `src/sim/stream.mjs` | Chunk streaming (#13), in three layers: what to generate, what is solid across what is loaded, and which chunk next. Open the build with **`?stream=1`** to play a world with no edge — see below. |
+| `src/gen/chunk.mjs`, `src/sim/chunks.mjs`, `src/sim/stream.mjs` | Chunk streaming (#13), in three layers: what to generate, what is solid across what is loaded, and which chunk next. The build streams by default wherever a worker answers — see below. |
 | `docs/play/index.html` | **The playable build.** Open it in a browser and walk around; *Host a game* opens a second window and puts another character in the same world. Carries an inlined copy of `src/gen`, `src/mesh`, `src/sim` and `src/net`. |
 | `src/sim/lattice.mjs` | The spine of progression. Read it before touching combat numbers: every constant in `combat.mjs` is now a *base*, and `statsOf(a)` is what an actor actually plays with. |
 | `docs/concept/index.html` | The concept plate: the design document, the renderer, and an inlined copy of `src/gen` it draws. |
@@ -158,37 +158,38 @@ everything into one scope:
 Edit the modules, run the bundler, commit both. The smoke test fails if they have drifted, and
 also fails if the plate's worlds stop matching the ones node generates from `src/gen`.
 
-## Streaming is an option below the view, off by default
+## Streaming is the default where a worker can build chunks
 
-**Streaming** in the control row under the stage replaces the one 64 m window
-with a field of 32 m chunks that load and unload around the players.
-`?stream=1` still works when the page is opened from disk, but it is not the
-way in: **published as an artifact the page runs inside an iframe whose own
-URL carries no query**, so the flag never reached it and the feature was
-unreachable there for as long as it was the only switch. The button is
-asserted by the browser half; the flag cannot be. It is measured — ten node
-assertions across `CHUNK`, `FIELD`, `STREAM` and `SEAM`, plus four in the
-browser half — and it is still not the default, for one reason:
+The build opens on a **streamed** world — a field of 32 m chunks that load and
+unload around the players, with no edge — whenever its worker pool answers at
+boot, and on the one 64 m window when it does not. **Streaming** in the control
+row switches either way; `?stream=1` and `?stream=0` decide it outright where
+the page is opened from disk. Published as an artifact the page runs inside an
+iframe whose own URL carries no query, so the flags do not reach it there.
 
-**A chunk does not fit in a frame.** Generating one 40 m window costs 86–290 ms
-cold and a 60 Hz frame is 16.7 ms, so a chunk arriving on the main thread is a
-freeze a dozen frames long. Generation *and meshing* now both go to a worker
-built from the page's own inlined bundle — measured off-thread over HTTP, since
-a `blob:` worker is refused from a `file:` origin and the local gate can only
-ever report that refusal. What this thread still pays is **67 ms**: 18 ms to
-take the transferred buffers back in, and 49 ms to build the chunk's collider
-and put it in the scene. Four frames rather than fifteen, and the collider is
-what is left. The readout shows every figure, so it has numbers on it rather
-than an opinion — which is also why the option is offered rather than made the
-default.
+**Why it depends on the worker.** A chunk costs 86–290 ms to generate and a
+60 Hz frame is 16.7 ms. With a worker, everything expensive is built off-thread
+and *transferred* — the window's arrays, its mesh, its grass tiles and its
+packed collider — and this thread pays **~7 ms** to adopt a chunk plus ~3–4 ms
+to receive it (#64, measured over HTTP; the readout shows this thread's share
+and transit separately). Without one, every chunk is generated here, which is
+the freeze streaming was held back for. A `blob:` worker is refused from a
+`file:` origin, so opened from disk the build is the window and the local gate
+can only report that refusal; the **WORKER** browser checks serve the page over
+HTTP from inside `tools/smoke.mjs` to reach the worker path at all.
 
-Two things the worker cost a session to learn, both worth not relearning:
-**a world cannot be structured-cloned** — it carries its generator on `w.G`,
-nine closures, and `postMessage` refuses the whole object over them, so the
-worker is sent no generator and the main thread reattaches one with `makeGen`;
-and **readiness cannot be a wall-clock timeout**, because the reply is
-delivered on a main thread that is blocked by construction, so a healthy pool
-reads as a refused one.
+Boot waits up to 1.5 s for the pool's reply, and that is the one honest
+deadline: nothing has been generated yet, so the thread is idle. **While
+playing, readiness can never be a wall-clock timeout** — the reply is delivered
+on a main thread that is blocked by construction, so a healthy pool reads as a
+refused one. And **a world cannot be structured-cloned** — it carries its
+generator on `w.G`, nine closures — so the worker sends no generator and the
+main thread reattaches one with `makeGen`.
+
+A streamed view's zoom stops where the screen's corners still land on loaded
+ground (#31): the ring is the world's only edge, and at an isometric angle it
+first shows in a *near* corner, where no fog reaches. A guest grows the kind of
+world its host has — the host's `cfg` says whether it streams.
 
 **A streamed world is a different world from the same seed.** The generator is
 not size-invariant — a 40 m window and a 64 m window centred on the same point

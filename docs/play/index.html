@@ -8778,6 +8778,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      its node is made drops its mesh with it. */
   var premesh={};
   var POOL_N=2;
+  /* How long boot waits, in ms, for a worker to answer before it settles on
+     one window instead of streaming. Idle-thread milliseconds: see boot. */
+  var BOOT_PATIENCE=1500, bootProbe=null;
   /* How many ticks of pending work with nothing arriving before this thread
      stops waiting and builds one itself. See `pumpStream`. */
   var POOL_PATIENCE=20;
@@ -8983,6 +8986,46 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     reconcileNodes();
   }
 
+  /* ---------- how far out a streamed view may zoom (#31) ----------
+     A window has an edge and showing it is honest: zoomed all the way out, the
+     64 m island is the picture. A streamed world has no edge, only the ring of
+     chunks loaded around the players — at least two chunks, 64 m, from wherever
+     one stands — and at the widest zoom a screen corner reached past it and
+     showed sky. That corner is the *near* side of an isometric view, so fog,
+     which thickens with depth, could never have hidden it.
+
+     So the zoom stops where the screen's four corners, followed down the view
+     direction onto the ground, are still inside what is loaded — measured
+     against the chunks actually there, so a ring still filling in holds the
+     view in until it has. The margin is for ground lower than the player: a
+     corner ray that misses the player's height lands further out by the drop
+     times the ray's run over its fall. */
+  var viewWant=QS.VIEW, viewSet=-1;
+  var VIEW_EDGE_DROP=8, VIEW_EDGE_PAD=3, vxR=new THREE.Vector3(), vxU=new THREE.Vector3(), vxD=new THREE.Vector3();
+  function streamViewMax(aspect){
+    var live=field.live(); if(!live.length) return 40;
+    var c0x=1e9,c1x=-1e9,c0z=1e9,c1z=-1e9,h=QS.CHUNK/2;
+    for(var i=0;i<live.length;i++){ var e=live[i];
+      if(e.cx<c0x)c0x=e.cx; if(e.cx>c1x)c1x=e.cx; if(e.cz<c0z)c0z=e.cz; if(e.cz>c1z)c1z=e.cz; }
+    var x0=c0x*QS.CHUNK-h, x1=c1x*QS.CHUNK+h, z0=c0z*QS.CHUNK-h, z1=c1z*QS.CHUNK+h;
+    camera.updateMatrixWorld();
+    var m=camera.matrixWorld.elements;
+    vxR.set(m[0],m[1],m[2]); vxU.set(m[4],m[5],m[6]); vxD.set(-m[8],-m[9],-m[10]);
+    if(vxD.y>-1e-3) return 40;
+    var run=Math.sqrt(vxD.x*vxD.x+vxD.z*vxD.z)/-vxD.y, best=40;
+    for(var sx=-1;sx<=1;sx+=2) for(var sy=-1;sy<=1;sy+=2){
+      /* Where this corner of a view one unit tall lands on the player's
+         height, as an offset from the target: linear in the view, so the
+         largest view that keeps it inside is a division. */
+      var px=vxR.x*sx*aspect+vxU.x*sy, py=vxR.y*sx*aspect+vxU.y*sy, pz=vxR.z*sx*aspect+vxU.z*sy;
+      var t=-py/vxD.y, ox=px+t*vxD.x, oz=pz+t*vxD.z;
+      var room=VIEW_EDGE_DROP*run+VIEW_EDGE_PAD;
+      if(ox>1e-6) best=Math.min(best,(x1-camT.x-room)/ox); else if(ox<-1e-6) best=Math.min(best,(camT.x-x0-room)/-ox);
+      if(oz>1e-6) best=Math.min(best,(z1-camT.z-room)/oz); else if(oz<-1e-6) best=Math.min(best,(camT.z-z0-room)/-oz);
+    }
+    return Math.max(6,best);
+  }
+
   /* The sun's shadow box is a fixed span around the player rather than the
      whole world, because a streamed world does not have a whole. */
   var SUN_STEP=4;
@@ -9104,7 +9147,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   function regen(seedStr){
     if(session){ says('leave the game first'); return; }
     var gd=grassDens/GRASS_DENS_REF;
-    if(streaming) buildStreamFor({seed:seedStr,force:null,gdens:gd});
+    if(streaming) buildStreamFor({seed:seedStr,force:null,gdens:gd,stream:true});
     else buildFor({seed:seedStr,size:64,force:null,ox:0,oz:0,gdens:gd});
     solo=null; spawn();
   }
@@ -9112,12 +9155,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   /**
    * Switch the world between one window and a field of chunks.
    *
-   * Not a toolbar button. Streaming costs a dozen-frame freeze every time a
-   * chunk arrives, because generation is still on the main thread — that is
-   * measured in src/sim/stream.mjs and shown in the readout — and until a
-   * worker takes it, putting it a click away from someone who came here to
-   * play would be offering them a worse game. It is a flag: `?stream=1`, or
-   * `QSPLAY.setStream(true)` from a console.
+   * The default wherever a worker can build chunks (#64, and see boot): a
+   * streamed chunk then costs this thread about 7 ms. Where none can, every
+   * chunk is generated here, a dozen-frame freeze each, and the build opens
+   * on one window instead. The control under the view switches either way.
    *
    * The seed is kept, and the world still changes. A 40 m window and a 64 m
    * window centred on the same point are different ground — the generator is
@@ -9598,8 +9639,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     session=QS.makeGuest({transport:wire, build:function(cfg){
       /* Nothing about the terrain came over the wire — only its seed did. The
          guest still builds the encounter, but only so that it has models to
-         put the host's numbers into; it never steps them. */
-      var w=buildFor(cfg);
+         put the host's numbers into; it never steps them.
+
+         And whether it streams. A streamed host and a windowed guest were two
+         different worlds from one seed — the generator is not size-invariant —
+         and the host's `cfg` never said which it was. It says now, and the
+         guest grows the same kind (#64, streaming by default). */
+      streaming=!!cfg.stream;
+      var w=streaming?buildStreamFor(cfg):buildFor(cfg);
+      syncStreamBtn();
       seedin.value=cfg.seed;
       /* `encounter` rides along so the session can fold each snapshot's
          machines and loot bitmask back into the copy this end derived. */
@@ -9844,6 +9892,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     camera.position.set(e.x,e.y,e.z);
     camT.set(cam.tx,cam.ty,cam.tz); camera.lookAt(camT);
     var aspect=vp.w/vp.h;
+    /* The cap is applied over the zoom the player asked for, not in place of
+       it: a ring that is still filling in holds the view in, and lets it back
+       out as the chunks arrive. A zoom that differs from what was last set
+       here is the player's own, and becomes the one to return to. */
+    if(streaming&&field&&!plateMode){
+      if(cam.view!==viewSet) viewWant=cam.view;
+      var vcap=Math.min(viewWant,streamViewMax(aspect));
+      if(vcap!==cam.view) QS.setView(cam,vcap);
+      viewSet=cam.view;
+    }
     camera.left=-cam.view*aspect; camera.right=cam.view*aspect;
     camera.top=cam.view; camera.bottom=-cam.view; camera.updateProjectionMatrix();
     if(cam.view!==grassView||worldRev!==grassRev){
@@ -10024,14 +10082,35 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   /* Opened by a host: do not generate anything, wait to be told which world. */
   if(location.hash.indexOf('join')>=0&&window.opener) startGuest();
   else {
-    /* Streaming is opt-in per the note on setStreaming. */
-    /* `?stream=1` still works where the page is opened directly, but it is no
-       longer the only way in: published as an artifact this page runs inside
-       an iframe whose own URL carries no query, so the flag never reached it
-       and the feature was unreachable there. The control below the view is. */
-    if(/[?&]stream=1\b/.test(location.search)) streaming=true;
-    regen(seedin.value||'QUARTERSTONE');
-    syncStreamBtn(); syncGrassCtl(); drawFps();
+    var boot=function(){
+      regen(seedin.value||'QUARTERSTONE');
+      syncStreamBtn(); syncGrassCtl(); drawFps();
+    };
+    /* ---------- streaming by default, where it can be done off-thread ----------
+       A streamed chunk costs this thread ~7 ms now (#64), inside a frame — but
+       only because a worker built it. A page that may not start a worker (a
+       file: origin refuses a blob: one, and a host's CSP may too) would
+       generate every chunk here, and that is the 90-290 ms freeze streaming
+       was held back for. So the build asks first: start the pool, and stream
+       if it answers.
+
+       This is the one place a deadline is honest. The note on makePool is why
+       readiness is never a timer *while playing*: a reply is delivered on this
+       thread, which is then busy generating. Here nothing has been generated
+       yet, the thread is idle, and a live worker answers in milliseconds.
+       `?stream=1` and `?stream=0` still decide it outright. */
+    var q=location.search;
+    if(/[?&]stream=1\b/.test(q)){ streaming=true; boot(); }
+    else if(/[?&]stream=0\b/.test(q)) boot();
+    else {
+      pool=makePool(POOL_N);
+      var waited=0, askT=performance.now();
+      (function ask(){
+        if(pool&&pool.ready&&!pool.failed){ streaming=true; bootProbe={workers:true,ms:performance.now()-askT}; boot(); return; }
+        if(!pool||pool.failed||waited>=BOOT_PATIENCE){ bootProbe={workers:false,ms:performance.now()-askT}; boot(); return; }
+        waited+=25; setTimeout(ask,25);
+      })();
+    }
   }
   stage.focus();
   requestAnimationFrame(frame);
@@ -10040,7 +10119,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      lets the gate assert the wiring exactly instead of waiting on wall clock. */
   window.QSPLAY={
     get actor(){return player();}, get peer(){return other();},
-    get cam(){return cam;}, input:input,
+    get cam(){return cam;}, get camera(){return camera;}, input:input,
     get ready(){return !!built&&!!player();},
     get role(){return role;},
     get connected(){return !!session&&session.connected;},
@@ -10224,6 +10303,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* #64: the gate compares what a worker built against what this thread
        would build, so it needs the field, a chunk's node and the grass tiler. */
     get field(){ return streaming?field:null; },
+    /** What boot found: whether a worker answered, and how long it took. */
+    get boot(){ return bootProbe; },
     node:function(cx,cz){ return nodeAt(cx,cz); },
     grassTiles:function(gd,lim){ return grassTiles(gd,lim===undefined?null:lim,GRASS_TILE); },
     get chunks(){ return streaming?{loaded:field.loaded,built:field.built,dropped:field.dropped,
