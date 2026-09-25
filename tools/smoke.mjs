@@ -2113,8 +2113,20 @@ if (BROWSER_HALF) {
       ]);
       wpeer.setDefaultTimeout(PATIENCE);
       wpeer.on('pageerror', (e) => wErrors.push(`peer: ${e.message}`));
-      await wpeer.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready && window.QSPLAY.connected), null, { timeout: PATIENCE });
-      await wp.waitForFunction(() => window.QSPLAY.connected, null, { timeout: PATIENCE });
+      /* The host is paused from the walk above, and a paused host never ticks —
+         so it never announces itself, and the guest waits for ever. Both are
+         driven by hand until they have met, the same way the walk is. */
+      await wpeer.waitForFunction(() => !!window.QSPLAY, null, { timeout: PATIENCE });
+      let met = false;
+      for (let q = 0; q < 300 && !met; q++) {
+        await wp.evaluate(() => window.QSPLAY.run(4));
+        met = await wpeer.evaluate(() => { const P = window.QSPLAY; if (P.role === 'guest') P.run(1);
+                                           return !!(P.ready && P.connected); })
+              && await wp.evaluate(() => window.QSPLAY.connected);
+        if (!met) await new Promise((r) => setTimeout(r, 100));
+      }
+      check(met, 'NET: a streamed host and its guest find each other', met ? 'joined' : 'never joined');
+      if (met) {
       await wpeer.evaluate(() => { const P = window.QSPLAY; P.setSky('noon', 0, true); P.pause(true); P.input.press('KeyD'); });
       for (let q = 0; q < 20; q++) {
         await wpeer.evaluate(() => window.QSPLAY.run(4));
@@ -2132,6 +2144,7 @@ if (BROWSER_HALF) {
       check(guestIs.s && Number.isFinite(guestIs.y) && sgap < 0.6,
             'NET: a streamed host\'s guest streams too, and both agree where it stands',
             `guest streaming ${guestIs.s ? 'on' : 'OFF'}, ${sgap.toFixed(3)} m apart`);
+      }
       await wpeer.close();
       await wp.evaluate(() => window.QSPLAY.pause(false));
       await wp.close();
