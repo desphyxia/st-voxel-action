@@ -6715,8 +6715,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      step a 6 cm blade is under a pixel. Grass was two thirds of every frame's
      triangles regardless. Up to GRASS_FULL_VIEW every blade is drawn, which
      covers the default view and the first step out; past it the share falls
-     as the view widens, so the blades per pixel stay put, down to GRASS_MIN. */
-  var GRASS_FULL_VIEW=13, GRASS_MIN=0.25;
+     as the view widens, so the blades per pixel stay put, down to GRASS_MIN.
+
+     And the blades that are left widen by as much as their number fell, so
+     the ground stays as covered as it was. Thinning alone was measured and
+     noticed: the look gate's wide plates, drawn at view 20 where two thirds of
+     the blades are kept, read browner than the baseline on five of six seeds
+     (palette 92 to 121 against a bar of 90). */
+  var GRASS_FULL_VIEW=13, GRASS_MIN=0.25, grassWide=1;
   function grassShare(view){ return view<=GRASS_FULL_VIEW?1:Math.max(GRASS_MIN,GRASS_FULL_VIEW/view); }
   function grassCount(full,view){ return Math.max(1,Math.round(full*grassShare(view))); }
   /* An integer mix of a blade's index: deterministic, and even enough that any
@@ -6758,7 +6764,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var hm=grassLen/GRASS_LEN_REF, top=b.y1+b.h*1.30*hm;
     var cx=(b.x0+b.x1)/2, cy=(b.y0+top)/2, cz=(b.z0+b.z1)/2;
     var r=Math.sqrt((b.x1-cx)*(b.x1-cx)+(top-cy)*(top-cy)+(b.z1-cz)*(b.z1-cz))
-          +b.h*1.30*hm*1.6;
+          +b.h*1.30*hm*1.6+GRASS_W*grassWide;
     mesh.geometry.boundingSphere=new THREE.Sphere(new THREE.Vector3(cx,cy,cz),r);
   }
   /* Five vertices, three triangles. The blade used to be seven and five, which
@@ -8909,8 +8915,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     camera.top=cam.view; camera.bottom=-cam.view; camera.updateProjectionMatrix();
     if(cam.view!==grassView||worldRev!==grassRev){
       grassView=cam.view; grassRev=worldRev;
+      grassWide=1/grassShare(cam.view);
+      if(built.gmat) built.gmat.uniforms.uW.value=GRASS_W*grassWide;
       built.scene.traverse(function(o){
-        if(o.userData.kind==='grass'&&o.userData.full) o.count=grassCount(o.userData.full,cam.view);
+        if(o.userData.kind==='grass'&&o.userData.full){ o.count=grassCount(o.userData.full,cam.view); fitGrass(o); }
       });
     }
     var sk=worldRev+'|'+plateMode+'|'+(built.sun?built.sun.position.x+','+built.sun.position.z:'');
