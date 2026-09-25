@@ -78,6 +78,7 @@ export function buildWorld(cfg) {
   buildWaterGeometry(w);
   floodReach(w);               /* what the movement budget can actually reach */
   chooseSpawn(w);
+  w.G.forget();                /* the field cache is for building, not for keeping (#58) */
   return {
     /* One voxel is pos + pal + shd + mat. Colour is resolved at draw time
        against src/gen/palette.mjs, so a biome restyles without regenerating

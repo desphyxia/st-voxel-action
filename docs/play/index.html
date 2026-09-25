@@ -1025,8 +1025,34 @@ function makeGen(seedStr,force){
     var half=(DETAIL_LEVELS-1)/2;
     return (Math.round(N.d.fbm(x*DETAIL_FREQ,z*DETAIL_FREQ,DETAIL_OCT)*(DETAIL_LEVELS-1))-half)*V;
   }
-  return {cell:cell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,
-          sw:sw,prand:prand,prandIn:prandIn,pstream:pstream};
+  /* Issue #58. One region asked for 45,293 cells over 4,751 places — every
+     cell 9.5 times, from erosion reading its neighbours, from choosing ports,
+     and from reading past a window's edge — and the field is two thirds of
+     generation. cell() is a pure function of (x, z), so a cache hit is the value
+     a miss would have computed. It fills during one buildWorld, which
+     empties it at the end (forget, below); bounded anyway, and cleared rather than evicted, because a
+     rebuilt entry is identical and the bookkeeping would cost more than it saves.
+
+     The cached object is never handed out. Two callers keep what cell() returns
+     and write to it — a window's own cells and a region's grid both overwrite
+     H — so every call gets a fresh copy, and nothing either of them does can
+     reach the next caller. The nested w and canyon are read, never written. */
+  var CELLS=new Map(), CELL_CAP=1<<18;
+  function cachedCell(x,z){
+    if((x|0)!==x||(z|0)!==z||x<-32768||z<-32768||x>32767||z>32767) return cell(x,z);
+    var k=(x+32768)*65536+(z+32768), c=CELLS.get(k);
+    if(c===undefined){
+      if(CELLS.size>=CELL_CAP) CELLS.clear();
+      c=cell(x,z); CELLS.set(k,c);
+    }
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw};
+  }
+  /* A world keeps its generator (w.G) for as long as it lives, and a streamed
+     field holds sixteen of them — so the cache is let go when generation ends,
+     and whatever reads the field afterwards starts from empty. */
+  function forget(){ CELLS.clear(); }
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,
+          sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 /* ---------- src/gen/erosion.mjs ---------- */
 /**
@@ -2918,6 +2944,7 @@ function buildWorld(cfg) {
   buildWaterGeometry(w);
   floodReach(w);               /* what the movement budget can actually reach */
   chooseSpawn(w);
+  w.G.forget();                /* the field cache is for building, not for keeping (#58) */
   return {
     /* One voxel is pos + pal + shd + mat. Colour is resolved at draw time
        against src/gen/palette.mjs, so a biome restyles without regenerating
