@@ -40,6 +40,7 @@
  */
 import { V } from '../gen/constants.mjs';
 import { palR, palG, palB } from '../gen/palette.mjs';
+import { MAT } from '../gen/materials.mjs';
 
 /**
  * The six faces of a voxel, each as four corners in units of half a voxel,
@@ -87,13 +88,17 @@ export function meshProps(w, clip) {
   const n = w.pos.length / 3;
   const start = w.propStart === undefined ? n : w.propStart;
   const solid = solidKeys(w);
-  const pos = [], nor = [], col = [], idx = [];
+  /* How much each vertex sways in the wind (#55 item 7): 1 for a leaf, and
+     for the snow a canopy wears, 0 for everything else — so a trunk stands
+     still while its crown moves. */
+  const pos = [], nor = [], col = [], idx = [], sway = [];
   let faces = 0, culled = 0, vbase = 0;
 
   for (let q = start; q < n; q++) {
     const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
     if (clip !== undefined && (x < -clip || x >= clip || z < -clip || z >= clip)) continue;
     const r = palR(w.pal[q], w.shd[q]), g = palG(w.pal[q], w.shd[q]), b = palB(w.pal[q], w.shd[q]);
+    const sw = w.mat[q] === MAT.LEAF || w.mat[q] === MAT.SNOW ? 1 : 0;
     for (let f = 0; f < 6; f++) {
       const d = FACES[f];
       if (solid.has(gkey(x + d.n[0] * V, y + d.n[1] * V, z + d.n[2] * V))) { culled++; continue; }
@@ -103,10 +108,11 @@ export function meshProps(w, clip) {
         pos.push(x + c[0] * V / 2, y + c[1] * V / 2, z + c[2] * V / 2);
         nor.push(d.n[0], d.n[1], d.n[2]);
         col.push(r, g, b);
+        sway.push(sw);
       }
       idx.push(vbase, vbase + 1, vbase + 2, vbase, vbase + 2, vbase + 3);
       vbase += 4;
     }
   }
-  return { pos, nor, col, idx, faces, culled, voxels: vbase / 4 };
+  return { pos, nor, col, idx, sway, faces, culled, voxels: vbase / 4 };
 }

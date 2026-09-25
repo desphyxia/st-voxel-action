@@ -15,7 +15,7 @@
  * A site is [i, j, role]: window cell indices, plus its index within the
  * region, which is what props.mjs builds a ruin or a holding from.
  */
-import { regionAt, regionsFor, keyX, keyZ } from './region.mjs';
+import { regionAt, regionsFor, keyX, keyZ, cellKey } from './region.mjs';
 
 export function layRoutes(w) {
   var M = w.M, cells = w.cells, half = w.half, OX = w.OX, OZ = w.OZ, G = w.G;
@@ -50,11 +50,14 @@ export function layRoutes(w) {
   /* 2. The trail itself, in the order the region laid it — reach.mjs starts a
         player from the first walkable cell along it. */
   for (q = 0; q < regions.length; q++) {
-    var ord = regions[q].order;
+    var ord = regions[q].order, rd = regions[q].roads;
     for (k = 0; k < ord.length; k++) {
       var at2 = idx(ord[k][0], ord[k][1]);
       if (at2 < 0) continue;
       if (!TRAIL[at2]) { TRAIL[at2] = 1; trailPath.push(at2); }
+      /* 2 is road, 1 is path (#55 item 12). Anything that only asks "is this
+         trail" still gets a truthy answer. */
+      if (rd && rd.has(cellKey(ord[k][0], ord[k][1]))) TRAIL[at2] = 2;
     }
   }
 

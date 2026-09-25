@@ -417,6 +417,8 @@ if (NODE_HALF) {
            solid may be in the walkable band over a trail cell. */
         check(m.trailProps === 0, `TRAIL: ${m.seed} nothing stands in the routed trail`,
               m.trailProps ? `${m.trailProps} prop voxels in the walkable band` : 'clear');
+        check(m.lamps >= 1 && m.lampsByTrail === m.lamps, `TRAIL: ${m.seed} lamps stand beside the route`,
+              `${m.lamps} lamps, ${m.lampsByTrail} within 3 m of a trail cell`);
         /* Issue #44: a river one cell wide stepping diagonally rasterised to
            cells meeting only at their corners — a dotted line of puddles that
            flow, foam, wading and the crossing logic all fail to see as a river.

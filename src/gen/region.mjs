@@ -219,6 +219,8 @@ function buildRegion(G, rx, rz) {
   var R = function () { return G.prand(rx, rz, 0x5100 + (n++)); };
 
   var trail = new Set(), grade = new Map(), bridges = [], sites = [];
+  /* Trail cells that are road, not path (#55 item 12): see markPath. */
+  var roads = new Set();
   /* Trail cells in the order the routes laid them down. reach.mjs walks this to
      find somewhere to start a player, and "the first walkable cell along the
      path" is only meaningful if the path has an order. */
@@ -406,13 +408,16 @@ function buildRegion(G, rx, rz) {
     bridges.push([bx, bz, di, dj, len, y]);
   }
 
-  function markPath(path) {
+  /* `road` marks a route that joins this region to a neighbour — hub to
+     port — as road; everything else (hub to its second site, a ford's way
+     over) is path. The two are drawn differently, not routed differently. */
+  function markPath(path, road) {
     if (!path) return;
     for (var q = 0; q < path.length; q++) {
       var pi = (path[q] / N) | 0, pj = path[q] % N;
-      if (!cells[path[q]].magma) mark(x0 + pi, z0 + pj);
+      if (!cells[path[q]].magma) { mark(x0 + pi, z0 + pj); if (road && own(pi, pj)) roads.add(key(x0 + pi, z0 + pj)); }
       var ln = laneOf(path, q);
-      if (ln >= 0) mark(x0 + ((ln / N) | 0), z0 + ln % N);
+      if (ln >= 0) { mark(x0 + ((ln / N) | 0), z0 + ln % N); if (road && own((ln / N) | 0, ln % N)) roads.add(key(x0 + ((ln / N) | 0), z0 + ln % N)); }
     }
     /* A crossing only where the route actually meets water. */
     var w = 0;
@@ -471,14 +476,14 @@ function buildRegion(G, rx, rz) {
      A region with no site at all still carries the trail through: its first
      port stands in as the hub, so a lake does not cut the world in two. */
   var hub = sites.length ? sites[0] : (ports.length ? ports[0] : null);
-  var routes = [];
-  if (sites.length > 1) routes.push(aStar(g, hub[0], hub[1], sites[1][0], sites[1][1]));
+  var routes = [], isRoad = [];
+  if (sites.length > 1) { routes.push(aStar(g, hub[0], hub[1], sites[1][0], sites[1][1])); isRoad.push(false); }
   for (i = 0; i < ports.length; i++) {
     if (ports[i] === hub) continue;
-    routes.push(aStar(g, hub[0], hub[1], ports[i][0], ports[i][1]));
+    routes.push(aStar(g, hub[0], hub[1], ports[i][0], ports[i][1])); isRoad.push(true);
   }
   for (i = 0; i < routes.length; i++) gradePath(routes[i]);
-  for (i = 0; i < routes.length; i++) markPath(routes[i]);
+  for (i = 0; i < routes.length; i++) markPath(routes[i], isRoad[i]);
 
   if (!bridges.length && sites.length) {
     var wet = 0, q3;
@@ -763,7 +768,7 @@ function buildRegion(G, rx, rz) {
   aff.sort(function (a, b) { return a.k < b.k ? -1 : (a.k > b.k ? 1 : (a.x - b.x || a.z - b.z)); });
 
   return {
-    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff,
+    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff, roads: roads,
     /* World-coordinate keys, every one of them. A window converts on the way in
        and on the way out; nothing in here knows a window exists. */
     trail: trail, order: order, grade: grade, bridges: bridges, landmark: lm,

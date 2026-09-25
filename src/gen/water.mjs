@@ -224,6 +224,9 @@ export function buildWaterGeometry(w) {
       if(FLG[kn]&1){
         var dy=WL[kn]-y;
         if(dy<-0.35){ fx+=WDIR[dd2][0]*-dy; fz+=WDIR[dd2][1]*-dy; foam=Math.max(foam,1); }
+        /* A fall lands here: churn (3), the white water at the foot of a fall
+           (#55 item 13), not the thin line of foam a shore gets. */
+        else if(dy>=0.4) foam=3;
         else if(dy>0.35) foam=Math.max(foam,1);
         else { fx+=WDIR[dd2][0]*0.04; fz+=WDIR[dd2][1]*0.04; }
       } else {

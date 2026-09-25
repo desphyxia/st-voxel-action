@@ -11,7 +11,7 @@
 import { V, DIRS4, clamp } from './constants.mjs';
 import { sin, cos, hyp } from './exact.mjs';
 import { MAT } from './materials.mjs';
-import { BIOMES } from './biomes.mjs';
+import { BIOMES, rouletteBiome } from './biomes.mjs';
 import { PAL, pickPal, shadeByte } from './palette.mjs';
 import { PASS } from './rng.mjs';
 import { groundCellAt } from './ground.mjs';
@@ -233,7 +233,12 @@ export function scatterProps(w, kit) {
        suppressed and the smoke test asserts it stays zero. The day that fails
        is the day the budget has to move to the region pass. */
     if(!cc.water&&!cc.magma&&R()<td*0.095){
-      if(treeN<260){ tree(px,pz,bb,bb.tree.t,R); treeN++; } else capped++;
+      /* Which kind of tree is a draw over what each biome present would plant
+         here, not the dominant biome's: a border reads as the two woods
+         mingling rather than a line where one species stops (#39). */
+      var tw=[]; for(q=0;q<cc.w.length;q++) tw.push(cc.w[q]*BIOMES[q].tree.d);
+      var tb=BIOMES[rouletteBiome(tw,R,2)];
+      if(treeN<260){ tree(px,pz,tb,tb.tree.t,R); treeN++; } else capped++;
     }
     else if(!cc.water&&R()<0.028) boulder(px,pz,0.5+R()*0.8,bb,R);
     /* arcs where a canyon crosses rock-heavy ground */
@@ -265,7 +270,7 @@ export function placeClutter(w, kit) {
       bridges = w.bridges, scree = kit.scree, bush = kit.bush, stump = kit.stump,
       fallenTrunk = kit.fallenTrunk, fence = kit.fence, lamp = kit.lamp,
       wallRun = kit.wallRun, pillarRuin = kit.pillarRuin, hut = kit.hut,
-      deckBridge = kit.deckBridge, i, j;
+      deckBridge = kit.deckBridge, surfAt = kit.surfAt, i, j;
   var lamps=[];
   /* Both loops run the full grid rather than an inset one. The old bounds were
      a border-ring skip of the kind erosion had: a cliff foot two metres inside
@@ -320,11 +325,31 @@ export function placeClutter(w, kit) {
   for(rq=0;rq<regions.length;rq++){
     var ord=regions[rq].order;
     for(lk=(LAMP_SPACING>>1);lk<ord.length;lk+=LAMP_SPACING){
-      var lwx=ord[lk][0], lwz=ord[lk][1];
-      var li=lwx-OX+half, lj=lwz-OZ+half;
-      if(li<0||lj<0||li>M-1||lj>M-1) continue;
-      if(cells[li*M+lj].water) continue;
-      var lp=lamp(-half+li+0.6,-half+lj+0.6,G.pstream(PASS.LAMP,lwx,lwz));
+      /* At the edge of the route, facing it (#47). A lamp used to be offset
+         0.6 m diagonally from a trail cell and kept only if that happened to
+         miss the trail — so it existed or not by the trail's local shape, and
+         ash lost its only one when a river fix moved the route a cell. Now it
+         goes across the route's own direction, read from the order the region
+         laid it: 1.2 to 2 m out, the first side with level ground that is not
+         trail or water, and if neither side has room, the next few steps along. */
+      var lp=null;
+      for(var sh=0;sh<6&&!lp&&lk+sh<ord.length;sh++){
+        var le=lk+sh, lwx=ord[le][0], lwz=ord[le][1];
+        var li=lwx-OX+half, lj=lwz-OZ+half;
+        if(li<0||lj<0||li>M-1||lj>M-1) break;
+        if(cells[li*M+lj].water) continue;
+        var ea=ord[Math.max(0,le-2)], eb=ord[Math.min(ord.length-1,le+2)];
+        var tx=eb[0]-ea[0], tz=eb[1]-ea[1], tl=Math.sqrt(tx*tx+tz*tz);
+        if(tl<1e-9) continue;
+        var nx=-tz/tl, nz=tx/tl, cx0=-half+li, cz0=-half+lj, ty=surfAt(cx0,cz0).y;
+        for(var sd=0;sd<2&&!lp;sd++) for(var dd=0;dd<3&&!lp;dd++){
+          var off=(sd?-1:1)*(1.2+dd*0.4), px=cx0+nx*off, pz=cz0+nz*off;
+          if(px<-half+1||pz<-half+1||px>half-1||pz>half-1) continue;
+          var sp=surfAt(px,pz);
+          if(sp.f||Math.abs(sp.y-ty)>0.6) continue;
+          lp=lamp(px,pz,G.pstream(PASS.LAMP,lwx,lwz));
+        }
+      }
       if(lp) lamps.push(lp);
     }
   }

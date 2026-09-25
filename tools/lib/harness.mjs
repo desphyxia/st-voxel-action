@@ -209,6 +209,22 @@ export function measureWorld(d, name) {
     }
   }
 
+  /* Issue #47: a lamp stands beside the route it lights. It used to exist or
+     not by the trail's local shape, and ash had none. Counted here with how
+     many have a trail cell within 3 m of the post; the trail check above
+     already says none of them stands on it. */
+  let lamps = d.lamps.length, lampsByTrail = 0;
+  for (let q = 0; q < d.lamps.length; q++) {
+    const px = d.lamps[q][0] - 0.5, pz = d.lamps[q][2], M = d.M, half = d.half;
+    let near = false;
+    for (let di = -3; di <= 3 && !near; di++) for (let dj = -3; dj <= 3 && !near; dj++) {
+      const i = Math.round(px + half) + di, j = Math.round(pz + half) + dj;
+      if (i < 0 || j < 0 || i >= M || j >= M) continue;
+      if (d.trail[i * M + j] && Math.sqrt((i - half - px) ** 2 + (j - half - pz) ** 2) <= 3) near = true;
+    }
+    if (near) lampsByTrail++;
+  }
+
   /* Water bodies counted two ways. A river narrow enough to be one cell wide,
      stepping diagonally, joins only at its corners: 4-connected sees a string
      of puddles where 8-connected sees one river, and the gap between the two
@@ -251,7 +267,7 @@ export function measureWorld(d, name) {
   for (let i = 0; i < d.unreach.length; i++) unreach += d.unreach[i];
   return {
     seed: name,
-    trailProps, waterBodies, waterBodies8,
+    trailProps, waterBodies, waterBodies8, lamps, lampsByTrail,
     voxels: d.pos.length / 3,
     /* mats must equal voxels: pos, col and mat are one record split three ways,
        and a stamp that forgets its material shows up here as a mismatch. */

@@ -368,6 +368,20 @@ export function step(col, a, input, targets, dt = TICK) {
   let ny = a.y + a.vy * dt;
   if (a.swimming) {
     a.grounded = false;
+    /* Buoyancy lifts the body with nothing over its head checked — so a swim
+       under a bridge floated it into the deck: 1.8 m "inside the ground" on
+       frost once lamps moved and the crossing's approach with them. It rises
+       only as far as the lowest thing above it lets it. */
+    if (ny > a.y) {
+      const ceil = col.ceilingOver(a.x, a.z, r, a.y + EPS);
+      if (ny + h > ceil - EPS) { ny = Math.max(a.y, ceil - h); a.vy = 0; }
+    } else {
+      /* And it sinks only as far as the floor. A body that stepped up onto a
+         submerged ledge this tick is still flagged swimming from before the
+         step, and buoyancy pulled it down into the ledge it stood on. */
+      const g = col.supportUnder(a.x, a.z, r, a.y + EPS);
+      if (ny < g) { ny = g; a.vy = 0; }
+    }
   } else if (a.vy <= 0) {
     const g = col.supportUnder(a.x, a.z, r, a.y + EPS);
     if (ny <= g + EPS) {

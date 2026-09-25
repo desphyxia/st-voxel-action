@@ -218,12 +218,18 @@ export function surfaceAt(w, gi, gj, y) {
   var x = -half + gi * V + V / 2, z = -half + gj * V + V / 2;
   var c = w.cells[clamp(Math.round(x + half), 0, M - 1) * M + clamp(Math.round(z + half), 0, M - 1)];
   var R = w.G.pstream(PASS.VOX, gi + Math.round(w.OX / V), gj + Math.round(w.OZ / V));
-  var b = BIOMES[rouletteBiome(c.w, R)];
+  var b = BIOMES[rouletteBiome(c.w, R, 3)];  /* as surface.mjs: #55 item 9 */
   var top = Math.floor((hh - 0.001) / V);
   if (y >= top) {
     if (flg & 2) return { mat: MAT.ASH, pal: PAL.MAGMA_CRUST.at };
     if (flg & 1) return { mat: b.mat.bed, pal: b.bed.at };
-    if (flg & 4) return { mat: MAT.PATH, pal: PAL.TRODDEN.at };
+    if (flg & 4) {
+      /* As surface.mjs (#55 item 12), draw for draw: the path's dither is the
+         next draw after the roulette on the same stream. */
+      if (!(flg & 8) && R() < 0.35) return { mat: b.mat.surf, pal: b.surf.at };
+      if ((flg & 8) && (b === BIOMES[1] || b === BIOMES[4])) return { mat: MAT.PATH, pal: b.soil.at };
+      return { mat: MAT.PATH, pal: PAL.TRODDEN.at };
+    }
     var n0 = gi > 0 ? w.Hs[k - NZ] : hh - 2, n1 = gi < NX - 1 ? w.Hs[k + NZ] : hh - 2;
     var n2 = gj > 0 ? w.Hs[k - 1] : hh - 2, n3 = gj < NZ - 1 ? w.Hs[k + 1] : hh - 2;
     return (hh - Math.min(n0, n1, n2, n3)) > 0.9

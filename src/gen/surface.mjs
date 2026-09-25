@@ -96,7 +96,7 @@ export function sampleGrid(w) {
          monotone, so two values within V of each other land within V. */
       var top=tr?Math.round(trailRamp(x,z)/V)*V:topsp[1];
       Hs[k]=clamp(top+d,0,CEIL); BOT[k]=topsp[0]; WL[k]=c.wl; DOM[k]=c.dom;
-      FLG[k]=(c.water?1:0)|(c.magma?2:0)|(tr?4:0);
+      FLG[k]=(c.water?1:0)|(c.magma?2:0)|(tr?4:0)|(tr===2?8:0);
     } }
   w.NX = NX; w.NZ = NZ; w.Hs = Hs; w.BOT = BOT; w.WL = WL; w.DOM = DOM; w.FLG = FLG; w.ci = ci;
 }
@@ -122,11 +122,24 @@ export function buildVoxels(w) {
       /* Every shade this column wears comes out of one stream, seeded from the
          column and from nothing the pass did before it got here. */
       var R=G.pstream(PASS.VOX,i+vx0,j+vz0);
-      var b=BIOMES[rouletteBiome(c.w,R)], topc, topm;
+      /* The cube, not the fifth power, for the ground itself (#55 item 9):
+         two biomes met on a line one metre wide — frost against meadow read
+         as a hard straight white edge. A gentler weighting widens the band in
+         which a column may take either biome's surface, so a border is a few
+         metres of dither rather than a seam. Props and grass keep their own. */
+      var b=BIOMES[rouletteBiome(c.w,R,3)], topc, topm;
       if(FLG[k]&2){ emitEm(x,hh-V/2,z,PAL.EM_MAGMA.at+(R()<0.5?0:1),1,MAT.MAGMA);
                     topc=PAL.MAGMA_CRUST.at; topm=MAT.ASH; }
       else if(FLG[k]&1){ topc=pickPal(b.bed,R); topm=b.mat.bed; }
-      else if(FLG[k]&4){ topc=pickPal(PAL.TRODDEN,R); topm=MAT.PATH; }
+      else if(FLG[k]&4){
+        /* Roads and paths (#55 item 12). A road — region to region — is worn
+           earth, or gravel on the mesa and packed snow on the frost. A path —
+           hub to site, or over a ford — lets a third of its columns show the
+           ground it crosses, so it reads as fainter than the road it leaves. */
+        if(!(FLG[k]&8)&&R()<0.35){ topc=pickPal(b.surf,R); topm=b.mat.surf; }
+        else if((FLG[k]&8)&&(b===BIOMES[1]||b===BIOMES[4])){ topc=pickPal(b.soil,R); topm=MAT.PATH; }
+        else { topc=pickPal(PAL.TRODDEN,R); topm=MAT.PATH; }
+      }
       else if(slope>0.9){ topc=pickPal(b.rock,R); topm=b.mat.rock; }
       else { topc=pickPal(b.surf,R); topm=b.mat.surf; }
       var topk=0.9+R()*0.2;

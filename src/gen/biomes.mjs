@@ -43,9 +43,9 @@ export const BIOMES = [
 ];
 
 /** Picks one biome out of a blend, sharpened so blends still read as somewhere. */
-export function rouletteBiome(w, r) {
-  var p = [], t = 0, i;
-  for (i = 0; i < w.length; i++) { var e = w[i] * w[i] * w[i] * w[i] * w[i]; p.push(e); t += e; }
+export function rouletteBiome(w, r, pow) {
+  var p = [], t = 0, i, k = pow === undefined ? 5 : pow;
+  for (i = 0; i < w.length; i++) { var e = 1; for (var q = 0; q < k; q++) e *= w[i]; p.push(e); t += e; }
   var v = r() * t, s = 0;
   for (i = 0; i < w.length; i++) { s += p[i]; if (v <= s) return i; }
   return w.length - 1;

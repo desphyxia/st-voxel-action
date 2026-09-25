@@ -834,9 +834,9 @@ const BIOMES = [
 ];
 
 /** Picks one biome out of a blend, sharpened so blends still read as somewhere. */
-function rouletteBiome(w, r) {
-  var p = [], t = 0, i;
-  for (i = 0; i < w.length; i++) { var e = w[i] * w[i] * w[i] * w[i] * w[i]; p.push(e); t += e; }
+function rouletteBiome(w, r, pow) {
+  var p = [], t = 0, i, k = pow === undefined ? 5 : pow;
+  for (i = 0; i < w.length; i++) { var e = 1; for (var q = 0; q < k; q++) e *= w[i]; p.push(e); t += e; }
   var v = r() * t, s = 0;
   for (i = 0; i < w.length; i++) { s += p[i]; if (v <= s) return i; }
   return w.length - 1;
@@ -1336,6 +1336,8 @@ function buildRegion(G, rx, rz) {
   var R = function () { return G.prand(rx, rz, 0x5100 + (n++)); };
 
   var trail = new Set(), grade = new Map(), bridges = [], sites = [];
+  /* Trail cells that are road, not path (#55 item 12): see markPath. */
+  var roads = new Set();
   /* Trail cells in the order the routes laid them down. reach.mjs walks this to
      find somewhere to start a player, and "the first walkable cell along the
      path" is only meaningful if the path has an order. */
@@ -1523,13 +1525,16 @@ function buildRegion(G, rx, rz) {
     bridges.push([bx, bz, di, dj, len, y]);
   }
 
-  function markPath(path) {
+  /* `road` marks a route that joins this region to a neighbour — hub to
+     port — as road; everything else (hub to its second site, a ford's way
+     over) is path. The two are drawn differently, not routed differently. */
+  function markPath(path, road) {
     if (!path) return;
     for (var q = 0; q < path.length; q++) {
       var pi = (path[q] / N) | 0, pj = path[q] % N;
-      if (!cells[path[q]].magma) mark(x0 + pi, z0 + pj);
+      if (!cells[path[q]].magma) { mark(x0 + pi, z0 + pj); if (road && own(pi, pj)) roads.add(key(x0 + pi, z0 + pj)); }
       var ln = laneOf(path, q);
-      if (ln >= 0) mark(x0 + ((ln / N) | 0), z0 + ln % N);
+      if (ln >= 0) { mark(x0 + ((ln / N) | 0), z0 + ln % N); if (road && own((ln / N) | 0, ln % N)) roads.add(key(x0 + ((ln / N) | 0), z0 + ln % N)); }
     }
     /* A crossing only where the route actually meets water. */
     var w = 0;
@@ -1588,14 +1593,14 @@ function buildRegion(G, rx, rz) {
      A region with no site at all still carries the trail through: its first
      port stands in as the hub, so a lake does not cut the world in two. */
   var hub = sites.length ? sites[0] : (ports.length ? ports[0] : null);
-  var routes = [];
-  if (sites.length > 1) routes.push(aStar(g, hub[0], hub[1], sites[1][0], sites[1][1]));
+  var routes = [], isRoad = [];
+  if (sites.length > 1) { routes.push(aStar(g, hub[0], hub[1], sites[1][0], sites[1][1])); isRoad.push(false); }
   for (i = 0; i < ports.length; i++) {
     if (ports[i] === hub) continue;
-    routes.push(aStar(g, hub[0], hub[1], ports[i][0], ports[i][1]));
+    routes.push(aStar(g, hub[0], hub[1], ports[i][0], ports[i][1])); isRoad.push(true);
   }
   for (i = 0; i < routes.length; i++) gradePath(routes[i]);
-  for (i = 0; i < routes.length; i++) markPath(routes[i]);
+  for (i = 0; i < routes.length; i++) markPath(routes[i], isRoad[i]);
 
   if (!bridges.length && sites.length) {
     var wet = 0, q3;
@@ -1880,7 +1885,7 @@ function buildRegion(G, rx, rz) {
   aff.sort(function (a, b) { return a.k < b.k ? -1 : (a.k > b.k ? 1 : (a.x - b.x || a.z - b.z)); });
 
   return {
-    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff,
+    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff, roads: roads,
     /* World-coordinate keys, every one of them. A window converts on the way in
        and on the way out; nothing in here knows a window exists. */
     trail: trail, order: order, grade: grade, bridges: bridges, landmark: lm,
@@ -2017,11 +2022,14 @@ function layRoutes(w) {
   /* 2. The trail itself, in the order the region laid it — reach.mjs starts a
         player from the first walkable cell along it. */
   for (q = 0; q < regions.length; q++) {
-    var ord = regions[q].order;
+    var ord = regions[q].order, rd = regions[q].roads;
     for (k = 0; k < ord.length; k++) {
       var at2 = idx(ord[k][0], ord[k][1]);
       if (at2 < 0) continue;
       if (!TRAIL[at2]) { TRAIL[at2] = 1; trailPath.push(at2); }
+      /* 2 is road, 1 is path (#55 item 12). Anything that only asks "is this
+         trail" still gets a truthy answer. */
+      if (rd && rd.has(cellKey(ord[k][0], ord[k][1]))) TRAIL[at2] = 2;
     }
   }
 
@@ -2356,6 +2364,9 @@ function buildWaterGeometry(w) {
       if(FLG[kn]&1){
         var dy=WL[kn]-y;
         if(dy<-0.35){ fx+=WDIR[dd2][0]*-dy; fz+=WDIR[dd2][1]*-dy; foam=Math.max(foam,1); }
+        /* A fall lands here: churn (3), the white water at the foot of a fall
+           (#55 item 13), not the thin line of foam a shore gets. */
+        else if(dy>=0.4) foam=3;
         else if(dy>0.35) foam=Math.max(foam,1);
         else { fx+=WDIR[dd2][0]*0.04; fz+=WDIR[dd2][1]*0.04; }
       } else {
@@ -2491,7 +2502,7 @@ function sampleGrid(w) {
          monotone, so two values within V of each other land within V. */
       var top=tr?Math.round(trailRamp(x,z)/V)*V:topsp[1];
       Hs[k]=clamp(top+d,0,CEIL); BOT[k]=topsp[0]; WL[k]=c.wl; DOM[k]=c.dom;
-      FLG[k]=(c.water?1:0)|(c.magma?2:0)|(tr?4:0);
+      FLG[k]=(c.water?1:0)|(c.magma?2:0)|(tr?4:0)|(tr===2?8:0);
     } }
   w.NX = NX; w.NZ = NZ; w.Hs = Hs; w.BOT = BOT; w.WL = WL; w.DOM = DOM; w.FLG = FLG; w.ci = ci;
 }
@@ -2517,11 +2528,24 @@ function buildVoxels(w) {
       /* Every shade this column wears comes out of one stream, seeded from the
          column and from nothing the pass did before it got here. */
       var R=G.pstream(PASS.VOX,i+vx0,j+vz0);
-      var b=BIOMES[rouletteBiome(c.w,R)], topc, topm;
+      /* The cube, not the fifth power, for the ground itself (#55 item 9):
+         two biomes met on a line one metre wide — frost against meadow read
+         as a hard straight white edge. A gentler weighting widens the band in
+         which a column may take either biome's surface, so a border is a few
+         metres of dither rather than a seam. Props and grass keep their own. */
+      var b=BIOMES[rouletteBiome(c.w,R,3)], topc, topm;
       if(FLG[k]&2){ emitEm(x,hh-V/2,z,PAL.EM_MAGMA.at+(R()<0.5?0:1),1,MAT.MAGMA);
                     topc=PAL.MAGMA_CRUST.at; topm=MAT.ASH; }
       else if(FLG[k]&1){ topc=pickPal(b.bed,R); topm=b.mat.bed; }
-      else if(FLG[k]&4){ topc=pickPal(PAL.TRODDEN,R); topm=MAT.PATH; }
+      else if(FLG[k]&4){
+        /* Roads and paths (#55 item 12). A road — region to region — is worn
+           earth, or gravel on the mesa and packed snow on the frost. A path —
+           hub to site, or over a ford — lets a third of its columns show the
+           ground it crosses, so it reads as fainter than the road it leaves. */
+        if(!(FLG[k]&8)&&R()<0.35){ topc=pickPal(b.surf,R); topm=b.mat.surf; }
+        else if((FLG[k]&8)&&(b===BIOMES[1]||b===BIOMES[4])){ topc=pickPal(b.soil,R); topm=MAT.PATH; }
+        else { topc=pickPal(PAL.TRODDEN,R); topm=MAT.PATH; }
+      }
       else if(slope>0.9){ topc=pickPal(b.rock,R); topm=b.mat.rock; }
       else { topc=pickPal(b.surf,R); topm=b.mat.surf; }
       var topk=0.9+R()*0.2;
@@ -2798,7 +2822,12 @@ function scatterProps(w, kit) {
        suppressed and the smoke test asserts it stays zero. The day that fails
        is the day the budget has to move to the region pass. */
     if(!cc.water&&!cc.magma&&R()<td*0.095){
-      if(treeN<260){ tree(px,pz,bb,bb.tree.t,R); treeN++; } else capped++;
+      /* Which kind of tree is a draw over what each biome present would plant
+         here, not the dominant biome's: a border reads as the two woods
+         mingling rather than a line where one species stops (#39). */
+      var tw=[]; for(q=0;q<cc.w.length;q++) tw.push(cc.w[q]*BIOMES[q].tree.d);
+      var tb=BIOMES[rouletteBiome(tw,R,2)];
+      if(treeN<260){ tree(px,pz,tb,tb.tree.t,R); treeN++; } else capped++;
     }
     else if(!cc.water&&R()<0.028) boulder(px,pz,0.5+R()*0.8,bb,R);
     /* arcs where a canyon crosses rock-heavy ground */
@@ -2830,7 +2859,7 @@ function placeClutter(w, kit) {
       bridges = w.bridges, scree = kit.scree, bush = kit.bush, stump = kit.stump,
       fallenTrunk = kit.fallenTrunk, fence = kit.fence, lamp = kit.lamp,
       wallRun = kit.wallRun, pillarRuin = kit.pillarRuin, hut = kit.hut,
-      deckBridge = kit.deckBridge, i, j;
+      deckBridge = kit.deckBridge, surfAt = kit.surfAt, i, j;
   var lamps=[];
   /* Both loops run the full grid rather than an inset one. The old bounds were
      a border-ring skip of the kind erosion had: a cliff foot two metres inside
@@ -2885,11 +2914,31 @@ function placeClutter(w, kit) {
   for(rq=0;rq<regions.length;rq++){
     var ord=regions[rq].order;
     for(lk=(LAMP_SPACING>>1);lk<ord.length;lk+=LAMP_SPACING){
-      var lwx=ord[lk][0], lwz=ord[lk][1];
-      var li=lwx-OX+half, lj=lwz-OZ+half;
-      if(li<0||lj<0||li>M-1||lj>M-1) continue;
-      if(cells[li*M+lj].water) continue;
-      var lp=lamp(-half+li+0.6,-half+lj+0.6,G.pstream(PASS.LAMP,lwx,lwz));
+      /* At the edge of the route, facing it (#47). A lamp used to be offset
+         0.6 m diagonally from a trail cell and kept only if that happened to
+         miss the trail — so it existed or not by the trail's local shape, and
+         ash lost its only one when a river fix moved the route a cell. Now it
+         goes across the route's own direction, read from the order the region
+         laid it: 1.2 to 2 m out, the first side with level ground that is not
+         trail or water, and if neither side has room, the next few steps along. */
+      var lp=null;
+      for(var sh=0;sh<6&&!lp&&lk+sh<ord.length;sh++){
+        var le=lk+sh, lwx=ord[le][0], lwz=ord[le][1];
+        var li=lwx-OX+half, lj=lwz-OZ+half;
+        if(li<0||lj<0||li>M-1||lj>M-1) break;
+        if(cells[li*M+lj].water) continue;
+        var ea=ord[Math.max(0,le-2)], eb=ord[Math.min(ord.length-1,le+2)];
+        var tx=eb[0]-ea[0], tz=eb[1]-ea[1], tl=Math.sqrt(tx*tx+tz*tz);
+        if(tl<1e-9) continue;
+        var nx=-tz/tl, nz=tx/tl, cx0=-half+li, cz0=-half+lj, ty=surfAt(cx0,cz0).y;
+        for(var sd=0;sd<2&&!lp;sd++) for(var dd=0;dd<3&&!lp;dd++){
+          var off=(sd?-1:1)*(1.2+dd*0.4), px=cx0+nx*off, pz=cz0+nz*off;
+          if(px<-half+1||pz<-half+1||px>half-1||pz>half-1) continue;
+          var sp=surfAt(px,pz);
+          if(sp.f||Math.abs(sp.y-ty)>0.6) continue;
+          lp=lamp(px,pz,G.pstream(PASS.LAMP,lwx,lwz));
+        }
+      }
       if(lp) lamps.push(lp);
     }
   }
@@ -3003,6 +3052,28 @@ function placeLandmark(w, kit) {
 
 
 
+/* ---------- patches (#55 item 14) ----------
+   A field of grass one colour is a carpet. Two smooth positional fields, a
+   few metres across, put clusters in it: wildflowers in meadow, and patches
+   gone dry or autumnal everywhere else. Value noise from integer hashing —
+   no sin, like everything in src/gen — keyed on the seed word and the world
+   metre, so a patch is the same from every window that sees it. */
+const PATCH = 7;
+const FLOWERS = [[0.95, 0.86, 0.35], [0.95, 0.94, 0.90], [0.66, 0.52, 0.86], [0.93, 0.56, 0.66]];
+function patchHash(sw, a, b, salt) {
+  var h = Math.imul(sw ^ Math.imul(a, 0x27d4eb2d) ^ Math.imul(b, 0x165667b1) ^ salt, 0x85ebca6b);
+  h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function patchField(sw, x, z, salt) {
+  var fx = x / PATCH, fz = z / PATCH, a = Math.floor(fx), b = Math.floor(fz);
+  var u = fx - a, v = fz - b;
+  u = u * u * (3 - 2 * u); v = v * v * (3 - 2 * v);
+  var p00 = patchHash(sw, a, b, salt), p10 = patchHash(sw, a + 1, b, salt),
+      p01 = patchHash(sw, a, b + 1, salt), p11 = patchHash(sw, a + 1, b + 1, salt);
+  return (p00 + (p10 - p00) * u) + ((p01 + (p11 - p01) * u) - (p00 + (p10 - p00) * u)) * v;
+}
+
 function buildGrass(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, FLG = w.FLG, half = w.half,
       cellAt = w.cellAt, G = w.G, i, j, k, x, z;
@@ -3022,12 +3093,24 @@ function buildGrass(w) {
     }
     var R=G.pstream(PASS.GRASS,i+vx0,j+vz0);
     var want=dsum*3.2*dmul;
+    /* Where this cell sits in the two patch fields, by world metre. */
+    var wmx=Math.floor(x+w.OX), wmz=Math.floor(z+w.OZ), sw=G.sw|0;
+    var bloom=cq.w[0]>0.45?patchField(sw,wmx,wmz,0x5f1):0;
+    var turn=(cq.w[4]||0)>0.5?0:patchField(sw,wmx,wmz,0x2a7);
+    var flowerK=bloom>0.66?(bloom-0.66)/0.34:0, autumnK=turn>0.68?(turn-0.68)/0.32:0;
     var nb=Math.floor(want); if(R()<want-nb) nb++;
     for(var g2=0;g2<nb;g2++){
       gpos.push(x+(R()-0.5)*0.5,Hs[k],z+(R()-0.5)*0.5);
-      gph.push(R()*6.28); gtint.push(R()<0.15?1:0);
+      gph.push(R()*6.28); gtint.push(R()<0.15+autumnK*0.45?1:0);
       gsc.push(hbase+R()*hvar); gyaw.push(R()*3.14);
-      gcol.push(cr,cg,cb); gdry.push(dr,dg,db);
+      if(flowerK>0&&R()<flowerK*0.45){
+        var fl=FLOWERS[(R()*FLOWERS.length)|0];
+        gcol.push(fl[0],fl[1],fl[2]);
+      } else if(autumnK>0){
+        var ak=autumnK*0.45;
+        gcol.push(cr+(dr-cr)*ak,cg+(dg-cg)*ak,cb+(db-cb)*ak);
+      } else gcol.push(cr,cg,cb);
+      gdry.push(dr,dg,db);
     }
   }
   w.grass = { p: gpos, ph: gph, ti: gtint, sc: gsc, yw: gyaw, c: gcol, dc: gdry };
@@ -3536,12 +3619,18 @@ function surfaceAt(w, gi, gj, y) {
   var x = -half + gi * V + V / 2, z = -half + gj * V + V / 2;
   var c = w.cells[clamp(Math.round(x + half), 0, M - 1) * M + clamp(Math.round(z + half), 0, M - 1)];
   var R = w.G.pstream(PASS.VOX, gi + Math.round(w.OX / V), gj + Math.round(w.OZ / V));
-  var b = BIOMES[rouletteBiome(c.w, R)];
+  var b = BIOMES[rouletteBiome(c.w, R, 3)];  /* as surface.mjs: #55 item 9 */
   var top = Math.floor((hh - 0.001) / V);
   if (y >= top) {
     if (flg & 2) return { mat: MAT.ASH, pal: PAL.MAGMA_CRUST.at };
     if (flg & 1) return { mat: b.mat.bed, pal: b.bed.at };
-    if (flg & 4) return { mat: MAT.PATH, pal: PAL.TRODDEN.at };
+    if (flg & 4) {
+      /* As surface.mjs (#55 item 12), draw for draw: the path's dither is the
+         next draw after the roulette on the same stream. */
+      if (!(flg & 8) && R() < 0.35) return { mat: b.mat.surf, pal: b.surf.at };
+      if ((flg & 8) && (b === BIOMES[1] || b === BIOMES[4])) return { mat: MAT.PATH, pal: b.soil.at };
+      return { mat: MAT.PATH, pal: PAL.TRODDEN.at };
+    }
     var n0 = gi > 0 ? w.Hs[k - NZ] : hh - 2, n1 = gi < NX - 1 ? w.Hs[k + NZ] : hh - 2;
     var n2 = gj > 0 ? w.Hs[k - 1] : hh - 2, n3 = gj < NZ - 1 ? w.Hs[k + 1] : hh - 2;
     return (hh - Math.min(n0, n1, n2, n3)) > 0.9
@@ -3850,6 +3939,7 @@ function clearEdits(w) {
 
 
 
+
 /**
  * The six faces of a voxel, each as four corners in units of half a voxel,
  * wound counter-clockwise seen from outside so the default front face is the
@@ -3896,13 +3986,17 @@ function meshProps(w, clip) {
   const n = w.pos.length / 3;
   const start = w.propStart === undefined ? n : w.propStart;
   const solid = solidKeys(w);
-  const pos = [], nor = [], col = [], idx = [];
+  /* How much each vertex sways in the wind (#55 item 7): 1 for a leaf, and
+     for the snow a canopy wears, 0 for everything else — so a trunk stands
+     still while its crown moves. */
+  const pos = [], nor = [], col = [], idx = [], sway = [];
   let faces = 0, culled = 0, vbase = 0;
 
   for (let q = start; q < n; q++) {
     const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
     if (clip !== undefined && (x < -clip || x >= clip || z < -clip || z >= clip)) continue;
     const r = palR(w.pal[q], w.shd[q]), g = palG(w.pal[q], w.shd[q]), b = palB(w.pal[q], w.shd[q]);
+    const sw = w.mat[q] === MAT.LEAF || w.mat[q] === MAT.SNOW ? 1 : 0;
     for (let f = 0; f < 6; f++) {
       const d = FACES[f];
       if (solid.has(gkey(x + d.n[0] * V, y + d.n[1] * V, z + d.n[2] * V))) { culled++; continue; }
@@ -3912,12 +4006,13 @@ function meshProps(w, clip) {
         pos.push(x + c[0] * V / 2, y + c[1] * V / 2, z + c[2] * V / 2);
         nor.push(d.n[0], d.n[1], d.n[2]);
         col.push(r, g, b);
+        sway.push(sw);
       }
       idx.push(vbase, vbase + 1, vbase + 2, vbase, vbase + 2, vbase + 3);
       vbase += 4;
     }
   }
-  return { pos, nor, col, idx, faces, culled, voxels: vbase / 4 };
+  return { pos, nor, col, idx, sway, faces, culled, voxels: vbase / 4 };
 }
 /* ---------- src/sim/collider.mjs ---------- */
 /**
@@ -5924,6 +6019,20 @@ function step(col, a, input, targets, dt = TICK) {
   let ny = a.y + a.vy * dt;
   if (a.swimming) {
     a.grounded = false;
+    /* Buoyancy lifts the body with nothing over its head checked — so a swim
+       under a bridge floated it into the deck: 1.8 m "inside the ground" on
+       frost once lamps moved and the crossing's approach with them. It rises
+       only as far as the lowest thing above it lets it. */
+    if (ny > a.y) {
+      const ceil = col.ceilingOver(a.x, a.z, r, a.y + EPS);
+      if (ny + h > ceil - EPS) { ny = Math.max(a.y, ceil - h); a.vy = 0; }
+    } else {
+      /* And it sinks only as far as the floor. A body that stepped up onto a
+         submerged ledge this tick is still flagged swimming from before the
+         step, and buoyancy pulled it down into the ledge it stood on. */
+      const g = col.supportUnder(a.x, a.z, r, a.y + EPS);
+      if (ny < g) { ny = g; a.vy = 0; }
+    }
   } else if (a.vy <= 0) {
     const g = col.supportUnder(a.x, a.z, r, a.y + EPS);
     if (ny <= g + EPS) {
@@ -8093,7 +8202,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        tears up, and a churn of white where it lands. vD runs 0 at the lip to 1
        at the base (src/gen/water.mjs). The streaks scroll down, faster lower,
        as water does that is still accelerating. */
-    ' if(vF>1.5){',
+    /* Churn: the pool a fall lands in, white and moving. Two octaves of the
+       falls' own noise scrolling out from the drop, over the pool's colour. */
+    ' if(vF>2.5){',
+    '   float n=fallN(vP.xz*3.1+vec2(uTime*0.9,-uTime*0.7))*0.6+fallN(vP.xz*6.3-vec2(uTime*1.3,uTime*0.4))*0.4;',
+    '   c=mix(c,vec3(0.90,0.95,0.97),smoothstep(0.35,0.75,n)*0.85+0.10); a=0.95; }',
+    ' else if(vF>1.5){',
     '   float t=clamp(vD,0.0,1.0), u=(vP.x+vP.z)*9.0;',
     '   float v=vP.y*1.1+uTime*(1.4+t*1.2);',
     '   float n=fallN(vec2(u,v*0.45))*0.6+fallN(vec2(u*2.1+7.3,v*1.1))*0.4;',
@@ -8155,6 +8269,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       d[i*4]=QS.PALETTE[i]>>16&255; d[i*4+1]=QS.PALETTE[i]>>8&255;
       d[i*4+2]=QS.PALETTE[i]&255;   d[i*4+3]=255;
     }
+    /* Alpha marks the rock groups (#55 item 10): the fragment shader bands a
+       rock face by height instead of dithering it, which is what turns a
+       mesa cliff into strata. Everything else is opaque 255 as before. */
+    for(var rk in QS.PAL) if(/_ROCK$/.test(rk)){
+      for(var ri=0;ri<QS.PAL[rk].n;ri++) d[(QS.PAL[rk].at+ri)*4+3]=128;
+    }
     var t=new THREE.DataTexture(d,n,1,THREE.RGBAFormat);
     t.magFilter=t.minFilter=THREE.NearestFilter;
     t.generateMipmaps=false; t.needsUpdate=true;
@@ -8173,6 +8293,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         '#include <emissivemap_fragment>\n'
         +'  float skyUp=clamp(normalize(vSkyN).y,0.0,1.0);\n'
         +'  diffuseColor.rgb*=1.0-0.28*uWet;\n'
+        /* Weathering (#55 item 11): moss on the faces the sun never reaches —
+           north-facing, in patches a couple of metres across — and not on
+           anything pale enough to be snow or ash-white. */
+        +'  { float skNorth=smoothstep(0.55,0.9,-normalize(vSkyN).z);\n'
+        +'    vec2 skM=floor(vSkyW.xz/2.0); float skP=fract(sin(dot(skM,vec2(12.9898,78.233)))*43758.5453);\n'
+        +'    float skL=dot(diffuseColor.rgb,vec3(0.3,0.59,0.11));\n'
+        +'    float moss=skNorth*step(0.45,skP)*(1.0-smoothstep(0.55,0.75,skL))*(1.0-uSnow);\n'
+        +'    diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(0.66,0.86,0.46),moss*0.55); }\n'
         +'  diffuseColor.rgb=mix(diffuseColor.rgb,vec3(0.93,0.95,0.98),uSnow*smoothstep(0.55,0.92,skyUp));')
       .replace('#include <aomap_fragment>',
         '  reflectedLight.directDiffuse*=skyCloud(vSkyW.xz);\n#include <aomap_fragment>');
@@ -8376,6 +8504,30 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       u.uPx.value=vp.h/(2*v);
     }
   }
+  /* ---------- canopies in the wind (#55 item 7) ----------
+     The grass moved and the trees did not, which made a forest read as painted
+     on. A leaf vertex (aSway 1, from src/mesh/propmesh.mjs) is pushed along
+     the wind by a slow sway and a quicker flutter, phased by which 1.5 m clump
+     of canopy it is in — so a crown moves as a few masses, not as a shimmer of
+     separate voxels — and a little more the higher it stands. Trunks carry 0
+     and stay put. A few centimetres: enough to be seen, not enough to open a
+     gap a player would notice. */
+  var SWAY_U={uSwayT:{value:0},uSwayW:{value:new THREE.Vector2(0.72,0.69)}};
+  function swayLambert(){
+    var m=new THREE.MeshLambertMaterial({vertexColors:true});
+    m.onBeforeCompile=function(sh){
+      sh.uniforms.uSwayT=SWAY_U.uSwayT; sh.uniforms.uSwayW=SWAY_U.uSwayW;
+      sh.vertexShader='attribute float aSway; uniform float uSwayT; uniform vec2 uSwayW;\n'+sh.vertexShader.replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n'
+        +'  if(aSway>0.5){ vec3 swp=(modelMatrix*vec4(transformed,1.0)).xyz; vec2 cl=floor(swp.xz/1.5);\n'
+        +'    float ph=dot(cl,vec2(1.7,2.3)), up=clamp((swp.y-1.0)*0.25,0.3,1.0);\n'
+        +'    float s=sin(uSwayT*1.1+ph)*0.045+sin(uSwayT*3.3+ph*1.7)*0.012;\n'
+        +'    transformed.xz+=uSwayW*(s*up); }');
+      skyHook(sh);
+    };
+    return m;
+  }
   function skyLambert(){
     var m=new THREE.MeshLambertMaterial({vertexColors:true});
     m.onBeforeCompile=skyHook; return m;
@@ -8401,6 +8553,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
              hash for both would tie the darkest stone to one particular hue. */
           +'  float qsPick=min(floor(qsGrain(qsCell)*vGroup.y),vGroup.y-1.0);\n'
           +'  float qsShade=0.90+0.20*qsGrain(qsCell+vec3(19.0,7.0,3.0));\n'
+          /* Strata (#55 item 10): on a rock group's vertical faces the colour
+             is picked by a band of world height, not by the voxel — 50 cm
+             beds, the pick offset per 6 m of cliff so the bands do not line
+             up across a whole canyon, and a slower shade that runs with them. */
+          +'  float qsRock=step(texture2D(uPal,vec2((vGroup.x+0.5)/uPalN,0.5)).a,0.9)*(1.0-step(0.5,abs(vSkyN.y)));\n'
+          +'  float qsBand=floor(vWP.y/0.5+qsGrain(vec3(floor(vWP.x/6.0),7.0,floor(vWP.z/6.0)))*3.0);\n'
+          +'  qsPick=mix(qsPick,mod(qsBand,vGroup.y),qsRock);\n'
+          +'  qsShade=mix(qsShade,0.86+0.18*fract(qsBand*0.618)+0.04*qsGrain(qsCell),qsRock);\n'
           +'  vec3 qsCol=texture2D(uPal,vec2((vGroup.x+qsPick+0.5)/uPalN,0.5)).rgb;\n'
           +'  diffuseColor.rgb*=qsCol*qsShade;');
       skyHook(sh);
@@ -8576,6 +8736,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         ArrayBuffer.isView(pm.nor)?pm.nor:new Float32Array(pm.nor),3));
       pg.setAttribute('color',new THREE.BufferAttribute(
         ArrayBuffer.isView(pm.col)?pm.col:new Float32Array(pm.col),3));
+      pg.setAttribute('aSway',new THREE.BufferAttribute(
+        ArrayBuffer.isView(pm.sway)?pm.sway:new Float32Array(pm.sway||[]),1));
       pg.setIndex(ArrayBuffer.isView(pm.idx)?new THREE.BufferAttribute(pm.idx,1):pm.idx);
       pg.userData={faces:pm.faces,culled:pm.culled};
       propMesh=new THREE.Mesh(pg,mats.prop);
@@ -8679,8 +8841,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     return {
       mesh:meshMaterial(),
       /* What the instanced prop boxes were drawn with, so culling their
-         insides cannot change how the outsides are lit. */
-      prop:skyLambert(),
+         insides cannot change how the outsides are lit — and canopies that
+         move with the wind (#55 item 7). */
+      prop:swayLambert(),
       /* uPush is who is standing in the grass: both players and the two
          nearest machines, in world space, parked far away when there is
          nobody. uSun is the direction sceneShell puts the sun in — grass is
@@ -9221,6 +9384,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     ng.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pm.pos),3));
     ng.setAttribute('normal',new THREE.BufferAttribute(new Float32Array(pm.nor),3));
     ng.setAttribute('color',new THREE.BufferAttribute(new Float32Array(pm.col),3));
+    ng.setAttribute('aSway',new THREE.BufferAttribute(new Float32Array(pm.sway),1));
     ng.setIndex(pm.idx);
     ng.userData={faces:pm.faces,culled:pm.culled};
     host.propMesh.geometry=ng;
@@ -9516,7 +9680,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
          occupancy set. That is not main-thread work either. */
       +'  var pmr=QS.meshProps(w,QS.CHUNK/2);\n'
       +'  var props={pos:new Float32Array(pmr.pos),nor:new Float32Array(pmr.nor),\n'
-      +'             col:new Float32Array(pmr.col),idx:new Uint32Array(pmr.idx),\n'
+      +'             col:new Float32Array(pmr.col),idx:new Uint32Array(pmr.idx),sway:new Float32Array(pmr.sway),\n'
       +'             faces:pmr.faces,culled:pmr.culled};\n'
       /* The chunk's collider, built and packed here: sorting and merging
          sixteen thousand columns was the largest thing left on the main
@@ -9529,7 +9693,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       +'  self.postMessage({cx:d.cx,cz:d.cz,w:out,mesh:mesh,props:props,grass:grass,col:cp,\n'
       +'                    gen:_now()-t0,mesh_ms:_now()-t1},\n'
       +'    [mesh.pos.buffer,mesh.nor.buffer,mesh.col.buffer,mesh.grp.buffer,mesh.idx.buffer,\n'
-      +'     props.pos.buffer,props.nor.buffer,props.col.buffer,props.idx.buffer].concat(gbuf,tx,[cp.off.buffer,cp.sp.buffer,cp.liq.buffer,cp.lev.buffer]));\n'
+      +'     props.pos.buffer,props.nor.buffer,props.col.buffer,props.idx.buffer,props.sway.buffer].concat(gbuf,tx,[cp.off.buffer,cp.sp.buffer,cp.liq.buffer,cp.lev.buffer]));\n'
       +'  }catch(err){ self.postMessage({cx:d.cx,cz:d.cz,err:String((err&&err.message)||err)}); }\n'
       +'};\n';
     var url,ws=[];
@@ -9893,6 +10057,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     tm=spec.t===undefined?12.5:spec.t;
     var wa=0.6+QS.sin(tm*0.06)*0.7;
     wind.set(QS.cos(wa),QS.sin(wa));
+    SWAY_U.uSwayT.value=tm; SWAY_U.uSwayW.value.copy(wind);
     if(built.gmat){
       built.gmat.uniforms.uTime.value=tm; built.gmat.uniforms.uWind.value.copy(wind);
       /* The grass parts around whoever is standing in it. Nobody is standing
@@ -10675,6 +10840,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     wind.set(Math.cos(wa),Math.sin(wa));
     if(built.gmat){ built.gmat.uniforms.uTime.value=tm; built.gmat.uniforms.uWind.value.copy(wind);
       setGrassPush(a); }
+    SWAY_U.uSwayT.value=tm; SWAY_U.uSwayW.value.copy(wind);
     if(built.wmat){ built.wmat.uniforms.uTime.value=tm; built.wmat.uniforms.uWind.value.copy(wind); }
 
     for(var q=0;q<postFlash.length;q++) if(postFlash[q]>0) postFlash[q]-=dt;
