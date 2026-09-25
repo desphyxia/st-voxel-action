@@ -459,6 +459,31 @@ if (NODE_HALF) {
   }
   check(cascades > 0, 'WATER: and water still falls where the terrain steps it down',
         `${cascades} cascades across ${worlds.length} seeds`);
+
+  /* Every step down from water to lower water is closed by a face. Only falls
+     of 0.4 m and more used to be: a river descends a voxel at a time, and each
+     25 cm step was an open slit onto the bed, a dark crack across the surface
+     at 45° — 5,609 of them over 27 streamed chunks. Counted from the emitted
+     geometry, against the steps in the level field it was built from. */
+  let steps = 0, faces = 0, riffles = 0;
+  for (const w of worlds) {
+    const { NX, NZ, FLG, WL } = w, v = w.water.v;
+    for (let i = 1; i < NX - 1; i++) for (let j = 1; j < NZ - 1; j++) {
+      const k = i * NZ + j;
+      if (!(FLG[k] & 1)) continue;
+      for (const [di, dj] of D4W) {
+        const kn = (i + di) * NZ + (j + dj);
+        if ((FLG[kn] & 1) && WL[kn] < WL[k] - 0.001) steps++;
+      }
+    }
+    for (let q = 0; q < v.length / 12; q++) {
+      const y0 = v[q * 12 + 1], y2 = v[q * 12 + 7];
+      if (y0 !== y2) { faces++; if (y0 - y2 < 0.4) riffles++; }
+    }
+  }
+  check(steps > 0 && faces === steps,
+        'WATER: and every step down to lower water is closed, however small',
+        `${steps} steps across ${worlds.length} seeds, ${faces} faces (${riffles} riffles under 0.4 m)`);
   /* The self-test: cut one bank voxel beside water down to the bed and require
      the check to find it. */
   const w0 = worlds.find((w) => w.FLG.some((f) => f & 1)), Hs2 = Float32Array.from(w0.Hs);

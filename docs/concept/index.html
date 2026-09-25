@@ -2095,13 +2095,20 @@ function buildWaterGeometry(w) {
       var di3=WDIR[dd2][0], dj3=WDIR[dd2][1], kn2=(i+di3)*NZ+(j+dj3);
       if(!(FLG[kn2]&1)) continue;
       var yl=WL[kn2];
-      if(yl>y-0.4) continue;
+      if(yl>y-0.001) continue;
       var q2;
       if(di3===1) q2=[x+V,y,z, x+V,y,z+V, x+V,yl,z+V, x+V,yl,z];
       else if(di3===-1) q2=[x,y,z, x,y,z+V, x,yl,z+V, x,yl,z];
       else if(dj3===1) q2=[x,y,z+V, x+V,y,z+V, x+V,yl,z+V, x,yl,z+V];
       else q2=[x,y,z, x+V,y,z, x+V,yl,z, x,yl,z];
-      wquad(q2,1,2,di3,dj3);
+      /* Every step down to lower water is closed, not only the ones tall
+         enough to be a fall. A river descends a voxel at a time, and a 25 cm
+         step with no face was an open slit onto the bed under it — at 45° a
+         dark crack across the surface, 5,609 of them over 27 streamed chunks.
+         Under 0.4 m it is a riffle: shaded as surface foam (1), which the
+         shader ripples exactly as it ripples the quads either side, so both
+         edges stay sealed. From 0.4 m it is a fall (2), as it always was. */
+      wquad(q2,y-yl<0.4?dep:1,y-yl<0.4?1:2,di3,dj3);
     }
   }
   w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl };
