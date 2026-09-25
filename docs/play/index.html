@@ -8096,7 +8096,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
        it on the floor first and finding 19 pale pixels where an arc should be. */
     var arcGeo=new THREE.RingGeometry(0.5,QS.REACH,22,1,Math.PI/2-QS.ARC/2,QS.ARC);
     var sweep=new THREE.Mesh(arcGeo,new THREE.MeshBasicMaterial(
-      {color:0xffe9c4,transparent:true,opacity:0.8,side:THREE.DoubleSide,depthWrite:false}));
+      {color:0xffe9c4,transparent:true,opacity:0.8,side:THREE.DoubleSide,depthWrite:false,
+       /* A tell, not a surface: the filmic curve (#55) would pull it down into
+          the grey of whatever it sweeps over, and it is there to be read. */
+       toneMapped:false}));
     sweep.rotation.x=Math.PI/2; sweep.position.y=h*0.5; sweep.visible=false; g.add(sweep);
     sweep.userData.keep=true; sweep.castShadow=false;
     var blob=makeBlob(r*1.35); g.add(blob);
