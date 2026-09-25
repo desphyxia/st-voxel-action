@@ -8838,9 +8838,6 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     get connected(){return !!session&&session.connected;},
     get stats(){return session?session.stats:null;},
     get targets(){return targets;},
-    /* What the player walks against, for a check that has to find open ground
-       rather than trust the spawn to have some. Read, never replaced. */
-    get col(){return col;},
     /** The machines, in the same shape the wire carries them. */
     get foes(){return session?session.foes:(encounter?encounter.wire():null);},
     /** The actual machines, for a test that needs to put one back how it was. */

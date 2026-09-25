@@ -737,6 +737,15 @@ if (BROWSER_HALF) {
            both counts, so what is compared is arc against arc. One settling
            tick first, so the actor's idea of where it is standing has caught
            up with where it was just put. */
+        /* No machine in the frame. After #53 a graded trail runs from the
+           nearest sentry's post to the practice posts, and a sentry woken by
+           the walking checks above comes down it and stands 1.7 m from this
+           post, rising and lighting its top plate — pale, and moving, so the
+           idle frame and the swing frame each counted a different amount of
+           it. Parked out of the world for the measurement and put back after,
+           so the checks that want them find them where they were. */
+        const parked = (P.machines || []).map((e) => [e, e.x, e.y, e.z]);
+        for (const [e] of parked) { e.x += 1000; e.z += 1000; }
         P.run(2);
         /* And nothing still lit from the check before. The swing trail and a
            post's hit flash fade on the wall clock, not on ticks, so what was
@@ -751,6 +760,7 @@ if (BROWSER_HALF) {
         P.give(QS.MOD.SIGIL);
         const seated = P.socket(0, 0);
         const kit = swingAndCount();
+        for (const [e, x, y, z] of parked) { e.x = x; e.y = y; e.z = z; }
         P.pause(false);
         return { idle, bare: bare - idle, kit: kit - idle,
                  bareReach, kitReach: a.st.reach, seated };
@@ -1406,12 +1416,12 @@ if (BROWSER_HALF) {
         for (let ring = 0; ring <= 12 && !start; ring++) {
           for (let k = 0; k < Math.max(1, ring * 8) && !start; k++) {
             const t = (k / Math.max(1, ring * 8)) * Math.PI * 2;
-            const probe = QS.placeOnGround(P.col, P.actor.x + ring * Math.cos(t), P.actor.z + ring * Math.sin(t));
+            const probe = QS.placeOnGround(P.collider, P.actor.x + ring * Math.cos(t), P.actor.z + ring * Math.sin(t));
             if (!probe) continue;
             const px = probe.x, pz = probe.z;
             let vaulted = false;
             for (let q = 0; q < 60; q++) {
-              QS.step(P.col, probe, { mx: head.mx, mz: head.mz }, []);
+              QS.step(P.collider, probe, { mx: head.mx, mz: head.mz }, []);
               if (probe.vault || probe.swimming || probe.dead) vaulted = true;
             }
             if (!vaulted && Math.sqrt((probe.x - px) ** 2 + (probe.z - pz) ** 2) > 3.9) start = [px, pz];
@@ -1420,7 +1430,7 @@ if (BROWSER_HALF) {
         out.start = start;
         const a = P.actor;
         if (start) {
-          const s0 = QS.placeOnGround(P.col, start[0], start[1]);
+          const s0 = QS.placeOnGround(P.collider, start[0], start[1]);
           a.x = s0.x; a.y = s0.y; a.z = s0.z; a.grounded = s0.grounded; a.apex = s0.apex;
         }
         a.dead = null; a.vx = 0; a.vz = 0; a.vy = 0; a.vault = null;
