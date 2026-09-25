@@ -10,6 +10,89 @@
  */
 import { V, DIRS4, clamp } from './constants.mjs';
 import { hyp } from './exact.mjs';
+import { groundCellAt } from './ground.mjs';
+
+/* ---------- water is held by its banks (issue #57) ----------
+   The field lays a river 0.75 m deep in a bed cut a metre into the ground, and
+   a pond 1.25 m deep, so on level ground the surface sits a quarter-metre under
+   the bank. Nothing kept it there. Erosion cuts banks back, a trail's cutting
+   lowers them, and a river crossing a slope has its downhill bank below it —
+   and wherever that happened the water stood above the dry ground beside it,
+   held up by nothing, and the renderer drew the edge as a waterfall.
+
+   So: a water cell's surface may be no higher than FREEBOARD under the lowest
+   dry bank beside it, and its bed is carved by the same amount, so it keeps its
+   depth rather than draining away. A lowered cell pulls the water around it
+   down too, but on a slope: d cells away the surface may stand at most
+   d * EASE above it. EASE is under the 0.4 m at which the renderer hangs a
+   sheet, so the surface eases back up to its own level instead of stepping.
+   A hard radius was tried first and made the problem it was fixing — every
+   cell just outside it stood a full step above the one just inside, and
+   meadow's falls between water cells went from 84 to 159. Only a cell that was
+   actually held down does the pulling, and only water at its own level: an
+   unbounded slope was tried second and pulled mesa's rivers down through
+   every terrace, taking all 244 of its real cascades with them.
+
+   Every input is read through groundCellAt and the field, never this window
+   alone, so two windows onto the same bank decide it the same way. Runs after
+   the region's grading and before the spans are cut, which is what lets a
+   carved bed reach the spans with nothing else to update. */
+const FREEBOARD = 0.25;
+/** A change of level the renderer draws as a fall: water this far below its
+    neighbour is a different pool, and a held-down cell never pulls it, so a
+    river's natural cascade down a terrace survives. */
+const STEP = 0.4;
+/** Metres per cell a lowered surface climbs back towards its own level. */
+const EASE = 0.25;
+/** Cells a lowered surface reaches: enough for EASE to climb back 2 m. */
+const SETTLE = 8;
+
+export function containWater(w) {
+  var M = w.M, cells = w.cells, half = w.half, OX = w.OX, OZ = w.OZ, G = w.G, i, j, d;
+  /* Ground and water as this pass sees them, at any world coordinate. */
+  function at(x, z) {
+    var c = groundCellAt(w, x, z);
+    if (c.water && c.wl === undefined) c = { H: c.H, water: true, magma: c.magma, wl: G.cell(x, z).wl };
+    return c;
+  }
+  /* How high this cell's water may stand, or null if it is not water. */
+  function cap(x, z) {
+    var c = at(x, z);
+    if (!c.water) return null;
+    var lim = c.wl;
+    for (var q = 0; q < 4; q++) {
+      var n = at(x + DIRS4[q][0], z + DIRS4[q][1]);
+      if (n.water || n.magma) continue;
+      if (n.H - FREEBOARD < lim) lim = n.H - FREEBOARD;
+    }
+    return { wl: c.wl, lim: lim };
+  }
+  var R = SETTLE, S = M + 2 * R, caps = new Array(S * S);
+  for (i = 0; i < S; i++) for (j = 0; j < S; j++) {
+    caps[i * S + j] = cap(-half + i - R + OX, -half + j - R + OZ);
+  }
+  var out = [];
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    var c0 = cells[i * M + j];
+    if (!c0.water) continue;
+    var own = caps[(i + R) * S + (j + R)], lim = own.lim;
+    for (var a = -R; a <= R; a++) for (var b = -R; b <= R; b++) {
+      var n = caps[(i + R + a) * S + (j + R + b)];
+      if (!n || n.lim >= n.wl || Math.abs(n.wl - own.wl) >= STEP) continue;
+      var up = n.lim + EASE * Math.max(Math.abs(a), Math.abs(b));
+      if (up < lim) lim = up;
+    }
+    if (lim < c0.wl) out.push([c0, lim]);
+  }
+  /* Applied after every cap is read, so no cell's answer depends on the order
+     the window happened to walk them in. */
+  for (d = 0; d < out.length; d++) {
+    var cw = out[d][0], nl = out[d][1], depth = cw.wl - cw.H;
+    cw.wl = nl;
+    cw.H = Math.min(cw.H, Math.floor(nl - depth + 1e-9));
+  }
+  w.contained = out.length;
+}
 
 export function fillWaterTable(w) {
   var M = w.M, cells = w.cells, i, j, d0;
@@ -17,15 +100,19 @@ export function fillWaterTable(w) {
     var changed=0;
     for(i=1;i<M-1;i++)for(j=1;j<M-1;j++){
       var cw2=cells[i*M+j]; if(cw2.water||cw2.magma) continue;
-      var best=0,walls=0,spill=false;
+      var best=0,walls=0,spill=false,rim=Infinity;
       for(d0=0;d0<4;d0++){
         var cn2=cells[(i+DIRS4[d0][0])*M+(j+DIRS4[d0][1])];
         if(cn2.water){ if(cn2.wl>cw2.H+0.75&&cn2.wl>best) best=cn2.wl; }
-        else if(cn2.H>=cw2.H+1) walls++;
-        else if(cn2.H<cw2.H) spill=true;
+        else {
+          if(cn2.H>=cw2.H+1) walls++;
+          else if(cn2.H<cw2.H) spill=true;
+          if(!cn2.magma&&cn2.H<rim) rim=cn2.H;
+        }
       }
-      /* a hollow fills; a plain drains */
-      if(best>0&&walls>=2&&!spill){
+      /* a hollow fills; a plain drains; and a hollow whose rim is lower than
+         the water it would take in is not a hollow at that level (#57) */
+      if(best>0&&walls>=2&&!spill&&rim>=best){
         cw2.water=true; cw2.pond=true; cw2.wl=best; cw2.sp=[[0,Math.max(cw2.H,1)]]; changed++;
       }
     }
@@ -79,10 +166,15 @@ export function buildWaterGeometry(w) {
     }
     var cfw=cellAt(x,z); fx=cfw.fx; fz=cfw.fz;
     wquad([x,y,z, x+V,y,z, x+V,y,z+V, x,y,z+V],dep,foam,fx,fz);
-    /* vertical sheets wherever the surface steps down */
+    /* A fall is water stepping down onto lower water. It used to be any step
+       at all, dry ground included, so water standing above a bank that did not
+       hold it was drawn as a waterfall onto the grass (#57). containWater now
+       keeps a surface under its banks, and a fall is only ever drawn where the
+       terrain put one pool below another. */
     for(dd2=0;dd2<4;dd2++){
       var di3=WDIR[dd2][0], dj3=WDIR[dd2][1], kn2=(i+di3)*NZ+(j+dj3);
-      var yl=(FLG[kn2]&1)?WL[kn2]:Hs[kn2];
+      if(!(FLG[kn2]&1)) continue;
+      var yl=WL[kn2];
       if(yl>y-0.4) continue;
       var q2;
       if(di3===1) q2=[x+V,y,z, x+V,y,z+V, x+V,yl,z+V, x+V,yl,z];

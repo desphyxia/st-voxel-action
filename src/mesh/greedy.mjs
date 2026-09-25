@@ -332,8 +332,19 @@ export function meshChunk(w, cx, cz, org) {
     /* Split the quad along the darker diagonal, or the crease bends the wrong
        way and a corner lights up where it should be in shadow. */
     var a0 = packed & 3, a2 = (packed >> 4) & 3, a1 = (packed >> 2) & 3, a3 = (packed >> 6) & 3;
-    if (a0 + a2 > a1 + a3) idx.push(vbase, vbase + 1, vbase + 2, vbase, vbase + 2, vbase + 3);
-    else idx.push(vbase + 1, vbase + 2, vbase + 3, vbase + 1, vbase + 3, vbase);
+    /* The corners run o, o+du, o+du+dv, o+dv whichever way the face points,
+       so that order is counter-clockwise seen from +axis and clockwise seen
+       from -axis. A negative face therefore takes the same two triangles the
+       other way round. It used not to, and the material is single-sided: every
+       -X, -Y and -Z face was culled, and three of the four view steps lost
+       their walls (#56). */
+    if (a0 + a2 > a1 + a3) {
+      if (sign > 0) idx.push(vbase, vbase + 1, vbase + 2, vbase, vbase + 2, vbase + 3);
+      else idx.push(vbase, vbase + 2, vbase + 1, vbase, vbase + 3, vbase + 2);
+    } else {
+      if (sign > 0) idx.push(vbase + 1, vbase + 2, vbase + 3, vbase + 1, vbase + 3, vbase);
+      else idx.push(vbase + 1, vbase + 3, vbase + 2, vbase + 1, vbase, vbase + 3);
+    }
     vbase += 4; quads++;
   }
 

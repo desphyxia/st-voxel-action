@@ -22,7 +22,7 @@ import { makeGen } from './field.mjs';
 import { erode } from './erosion.mjs';
 import { layRoutes } from './routes.mjs';
 import { cutSpans } from './spans.mjs';
-import { fillWaterTable, flowField, buildWaterGeometry } from './water.mjs';
+import { containWater, fillWaterTable, flowField, buildWaterGeometry } from './water.mjs';
 import { sampleGrid, buildVoxels } from './surface.mjs';
 import { makeStamps, scatterProps, placeClutter, placeLandmark } from './props.mjs';
 import { buildGrass } from './grass.mjs';
@@ -58,6 +58,7 @@ export function buildWorld(cfg) {
   w.gdens = cfg.gdens === undefined ? 1 : cfg.gdens;
   erode(w);                    /* talus at the cliff feet, banks cut back */
   layRoutes(w);                /* sites, A* routes, grading, crossings */
+  containWater(w);             /* no surface above the bank that holds it */
   cutSpans(w);                 /* caves cut, then rims undercut over them */
   fillWaterTable(w);           /* hollows flood until they spill */
   flowField(w);                /* one downhill vector per cell */
@@ -91,6 +92,9 @@ export function buildWorld(cfg) {
        putting something in — see src/sim/loot.mjs. */
     sites: w.sites,
     Hs: w.Hs, FLG: w.FLG, NX: w.NX, NZ: w.NZ, half: w.half,
+    /* The water surface per voxel column, so a check can ask whether a bank
+       holds what is beside it (#57). */
+    WL: w.WL,
     cells: w.cells, M: w.M, spawn: w.spawn, size: w.size,
     /* Where this window sits and what grew it. The mesher (src/mesh) needs both
        to rebuild a column's own positional stream — which is only reproducible

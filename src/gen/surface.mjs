@@ -46,11 +46,22 @@ export function sampleGrid(w) {
        there put a metre-high ledge in the middle of a level route. */
     return Math.max(cells[clamp(a,0,M-1)*M+clamp(b,0,M-1)].H,1);
   }
+  /* A trail ramps towards the ground beside it, never into water. A water
+     cell's H is its *bed*, and a trail along a shore used to blend its edge
+     down towards the riverbed: fen's lakeside trail tilted into the lake, and
+     the edge voxels dropped below the water they bordered, which the water
+     pass then drew as a fall onto dry ground — every one of the fourteen left
+     once the banks held (#57). Beside water, the trail reads its own height. */
+  function rampH(a,b,own){
+    var c=cells[clamp(a,0,M-1)*M+clamp(b,0,M-1)];
+    return (c.water||c.magma)?own:cellH(a,b);
+  }
   function trailRamp(px,pz){
     var fx=px+half, fz=pz+half;
     var a=Math.floor(fx), b=Math.floor(fz), tx=fx-a, tz=fz-b;
-    var h0=cellH(a,b)*(1-tx)+cellH(a+1,b)*tx;
-    var h1=cellH(a,b+1)*(1-tx)+cellH(a+1,b+1)*tx;
+    var own=cellH(ci(px),ci(pz));
+    var h0=rampH(a,b,own)*(1-tx)+rampH(a+1,b,own)*tx;
+    var h1=rampH(a,b+1,own)*(1-tx)+rampH(a+1,b+1,own)*tx;
     return h0*(1-tz)+h1*tz;
   }
   for(i=0;i<NX;i++){ x=-half+i*V+V/2;

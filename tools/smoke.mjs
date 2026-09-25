@@ -419,6 +419,52 @@ if (NODE_HALF) {
 
 }
 
+/* ---------- WATER: held by its banks, and falls only onto water, issue #57 ----------
+   Water stood above dry ground that did not hold it, and the renderer drew
+   every such edge as a waterfall onto the grass — half or more of all falls on
+   every seed. What is asserted is the cause, at the resolution it is drawn:
+   no water column stands 0.4 m or more (the height at which a fall is drawn)
+   above a dry column beside it. And, so the fix cannot have been to remove
+   water, that real cascades — water stepping down onto lower water — are still
+   produced somewhere across the six seeds. */
+if (NODE_HALF) {
+  const D4W = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const standing = (w, Hs) => {
+    const { NX, NZ, FLG, WL } = w, where = [];
+    let falls = 0;
+    for (let i = 1; i < NX - 1; i++) for (let j = 1; j < NZ - 1; j++) {
+      const k = i * NZ + j;
+      if (!(FLG[k] & 1)) continue;
+      for (const [di, dj] of D4W) {
+        const kn = (i + di) * NZ + (j + dj);
+        if (FLG[kn] & 1) { if (WL[kn] <= WL[k] - 0.4) falls++; }
+        else if (Hs[kn] <= WL[k] - 0.4) where.push(`${i},${j}`);
+      }
+    }
+    return { where, falls };
+  };
+  let cascades = 0;
+  for (let q = 0; q < worlds.length; q++) {
+    const r = standing(worlds[q], worlds[q].Hs);
+    cascades += r.falls;
+    check(r.where.length === 0, `WATER: ${GOLDEN_SEEDS[q].nm} no water stands above the bank beside it`,
+          r.where.length ? `${r.where.length} edges, first at voxel ${r.where[0]}` : `${r.falls} falls, every one onto water`);
+  }
+  check(cascades > 0, 'WATER: and water still falls where the terrain steps it down',
+        `${cascades} cascades across ${worlds.length} seeds`);
+  /* The self-test: cut one bank voxel beside water down to the bed and require
+     the check to find it. */
+  const w0 = worlds.find((w) => w.FLG.some((f) => f & 1)), Hs2 = Float32Array.from(w0.Hs);
+  let planted = null;
+  for (let i = 1; i < w0.NX - 1 && !planted; i++) for (let j = 1; j < w0.NZ - 1 && !planted; j++) {
+    const k = i * w0.NZ + j, kn = (i + 1) * w0.NZ + j;
+    if ((w0.FLG[k] & 1) && !(w0.FLG[kn] & 1)) { Hs2[kn] = w0.WL[k] - 1; planted = `${i},${j}`; }
+  }
+  const caught = planted && standing(w0, Hs2).where.includes(planted);
+  check(!!caught, 'WATER: and the check sees a bank that does not hold',
+        caught ? `bank beside ${planted} cut down, found` : `CUT BANK AT ${planted} NOT SEEN — the check is blind`);
+}
+
 /* The plate generates its hero world synchronously on load, so even
    DOMContentLoaded can take minutes under software rendering on a slow runner.
    Playwright's 30 s default is nowhere near enough — this failed in CI once. */

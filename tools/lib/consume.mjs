@@ -79,6 +79,9 @@ const reads = (txt, k) => new RegExp(HOLDER + '\\.' + k + '\\b').test(txt);
  * in a diff.
  */
 export const EXEMPT = {
+  WL: 'read by the gate, not by a renderer: the WATER checks ask whether a '
+    + 'bank holds the water beside it, per voxel column, which is how water '
+    + 'standing on dry ground and drawn as a waterfall was caught (#57).',
   bridges: 'read by the gate, not by a renderer: the SANITY check counts them '
     + 'per seed, which is how making them route-driven was caught removing them '
     + 'from every world.',

@@ -1649,6 +1649,29 @@ export function meshSuite() {
   say('and no face is drawn by two chunks at once',
       dup === 0, dup ? `${dup} duplicated at a seam` : `${seen.size} distinct faces across four chunks`);
 
+  /* Issue #56. The terrain material is single-sided, so a triangle wound
+     against its normal is simply not drawn. Every -X, -Y and -Z face was, for
+     as long as the mesh existed, and three of the four view steps lost their
+     walls. Checked per direction, so a regression names the face it lost. */
+  const wind = {};
+  for (const m of chunks) {
+    for (let t = 0; t < m.idx.length; t += 3) {
+      const a = m.idx[t] * 3, b = m.idx[t + 1] * 3, c = m.idx[t + 2] * 3, P = m.pos;
+      const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2];
+      const vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2];
+      const dot = (uy * vz - uz * vy) * m.nor[a] + (uz * vx - ux * vz) * m.nor[a + 1]
+                + (ux * vy - uy * vx) * m.nor[a + 2];
+      const k = `${m.nor[a]},${m.nor[a + 1]},${m.nor[a + 2]}`;
+      wind[k] = wind[k] || [0, 0];
+      wind[k][dot > 0 ? 0 : 1]++;
+    }
+  }
+  const dirs = Object.keys(wind), backward = dirs.filter((k) => wind[k][1] > 0);
+  say('every face is wound to face the way it points, in all six directions',
+      dirs.length === 6 && backward.length === 0,
+      backward.length ? backward.map((k) => `${k}: ${wind[k][1]} of ${wind[k][0] + wind[k][1]} backwards`).join('; ')
+                      : `${dirs.length} directions, ${dirs.reduce((s, k) => s + wind[k][0], 0)} triangles, all facing out`);
+
   const again = meshChunk(w, 0, 0);
   const first = chunks[0];
   const same = again.quads === first.quads
