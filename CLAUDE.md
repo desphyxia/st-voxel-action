@@ -88,9 +88,10 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`61a2dc3`** (#30, #31, #55 — batch 1) at **version 27**, forced on the user's word after the loop found the live page identical to `e366591`; concept from **`972b6e8`**
-(#58, #59) at **version 20**, nothing having touched it since. The concept needed no force:
-the same session had published both before.
+Play is published from **`c49b24c`** (#64, #51, #31, #63 — batch 2, PR #66) at **version 28**, no force needed after the batch 1 publish in the same session; concept is still
+at **version 20**, which the loop found identical to **`0056e02`** (not `972b6e8` as this line
+said). It is **stale**: #63 moved its `src/gen` bundle in `e0006c1`, and its republish was refused
+as unviewed — waiting on the user's word to force.
 On 2026-09-25 the loop found the live pages identical to `a3297ad` (play, version 21) and
 `7434073` (concept, version 17) — the shas recorded here, for once — and both were forced on
 the user's word. `9c26036` was version 14 of each, forced the same way.
