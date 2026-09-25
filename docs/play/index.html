@@ -10089,7 +10089,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* ---------- streaming by default, where it can be done off-thread ----------
        A streamed chunk costs this thread ~7 ms now (#64), inside a frame — but
        only because a worker built it. A page that may not start a worker (a
-       file: origin refuses a blob: one, and a host's CSP may too) would
+       host's CSP may refuse a blob: one) would
        generate every chunk here, and that is the 90-290 ms freeze streaming
        was held back for. So the build asks first: start the pool, and stream
        if it answers.

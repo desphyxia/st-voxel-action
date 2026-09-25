@@ -173,10 +173,13 @@ and *transferred* — the window's arrays, its mesh, its grass tiles and its
 packed collider — and this thread pays **~7 ms** to adopt a chunk plus ~3–4 ms
 to receive it (#64, measured over HTTP; the readout shows this thread's share
 and transit separately). Without one, every chunk is generated here, which is
-the freeze streaming was held back for. A `blob:` worker is refused from a
-`file:` origin, so opened from disk the build is the window and the local gate
-can only report that refusal; the **WORKER** browser checks serve the page over
-HTTP from inside `tools/smoke.mjs` to reach the worker path at all.
+the freeze streaming was held back for. **This note used to say a `blob:`
+worker is refused from a `file:` origin. Measured on 2026-09-25, headless
+Chromium starts one from disk and it builds chunks** — the old refusal was the
+wall-clock readiness bug below, not the origin. So a page opened from disk
+streams too, and the gate's window checks ask for `?stream=0`. The **WORKER**
+browser checks serve the page over HTTP from inside `tools/smoke.mjs`, the way
+a person gets it, and are where the default is asserted.
 
 Boot waits up to 1.5 s for the pool's reply, and that is the one honest
 deadline: nothing has been generated yet, so the thread is idle. **While

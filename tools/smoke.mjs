@@ -556,7 +556,11 @@ if (BROWSER_HALF) {
       bp.on('pageerror', (e) => bErrors.push(e.message));
       bp.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) bErrors.push(m.text()); });
       const bfile = preparePage({ target: PLAY_TARGET, outDir: OUT, name: 'play.html' });
-      await bp.goto(`file://${bfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      /* `?stream=0`: the BUILD checks are about the one-window world, and the
+         build now streams by default wherever a worker answers — which, from
+         disk, headless Chromium's blob: workers do. The default is WORKER's to
+         check, on a page served the way a person would get it. */
+      await bp.goto(`file://${bfile}?stream=0`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
       await bp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
       check(bErrors.length === 0, 'BUILD: boots with no page errors', bErrors.slice(0, 3).join(' | '));
 
@@ -565,13 +569,11 @@ if (BROWSER_HALF) {
          depending on how long the checks before it ran. Noon and clear, until
          the SKY checks let it go. */
       await bp.evaluate(() => window.QSPLAY.setSky('noon', 0, true));
-      /* Streaming is the default only where a worker answers (#64). From disk a
-         blob: worker is refused, so this page — and every check that follows
-         on it — is the one-window world, and it has to have said why. */
+      /* And `?stream=0` is obeyed without asking anything of a worker. */
       const booted = await bp.evaluate(() => ({ s: window.QSPLAY.streaming, b: window.QSPLAY.boot }));
-      check(!booted.s && booted.b && booted.b.workers === false,
-            'BUILD: with no worker to build chunks, it opens on one window',
-            `streaming ${booted.s ? 'ON' : 'off'}; boot asked for workers for ${booted.b ? booted.b.ms.toFixed(0) : '?'} ms and got none`);
+      check(!booted.s && booted.b === null,
+            'BUILD: asked for one window, it opens on one window',
+            `streaming ${booted.s ? 'ON' : 'off'}; boot ${booted.b ? 'PROBED workers' : 'did not probe'}`);
 
       /* ---------- BUILD: it opens in the view ----------
          The page is a design document with a game in the middle of it, and the
@@ -1777,7 +1779,7 @@ if (BROWSER_HALF) {
       cp.setDefaultTimeout(PATIENCE);
       const cErrors = [];
       cp.on('pageerror', (e) => cErrors.push(e.message));
-      await cp.goto(`file://${bfile}`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      await cp.goto(`file://${bfile}?stream=0`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
       await cp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
       await cp.evaluate(() => window.QSPLAY.setSky('noon', 0, true));
       /* The in-view button, first and on its own, because it is the only one
@@ -1998,12 +2000,14 @@ if (BROWSER_HALF) {
          an environment question. */
       const worker = streamed.chunks;
       if (worker.workers > 0 && worker.offThread > 0) {
-        check(worker.gen > worker.deliver + worker.take,
+        /* Adoption alone: `deliver` is a round trip less the worker's time,
+           and mostly a reply queued behind a software-rendered frame — not
+           this thread's work (#64). */
+        check(worker.gen > worker.take,
               'WORKER: generating a chunk costs the main thread less than doing it',
               `${worker.offThread} windows off this thread: ${worker.gen.toFixed(0)} ms to `
-              + `generate, ${worker.deliver.toFixed(0)} ms to deliver and `
-              + `${worker.take.toFixed(0)} ms to adopt — ${(worker.deliver + worker.take).toFixed(0)} ms `
-              + `on this thread against ${worker.gen.toFixed(0)} doing it here`);
+              + `generate there, ${worker.take.toFixed(0)} ms to adopt here `
+              + `(${worker.deliver.toFixed(0)} ms in transit)`);
       } else {
         check(true, 'WORKER: no worker here, and the build streams without one',
               worker.poolFailed ? 'the pool was refused or never answered — main-thread fallback'
