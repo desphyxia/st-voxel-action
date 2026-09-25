@@ -5917,6 +5917,284 @@ function makeEncounter(col, world, posts) {
     },
   };
 }
+/* ---------- src/sim/anim.mjs ---------- */
+/**
+ * Rigs and poses: issue #33.
+ *
+ * Every character and machine used to be a handful of boxes posed in code, one
+ * mesh and one draw call per box, with "a wedge on the nose, so facing is
+ * visible without an animation system". This is the animation system — the
+ * half of it that is not three.js, so it can be asserted in node like the rest
+ * of src/sim.
+ *
+ * A **rig** is data: bones, each at an offset from its parent, and boxes, each
+ * riding one bone. The page builds it into one skinned mesh — one draw call a
+ * character (#62) — and a pose is a set of small rotations and offsets per bone.
+ *
+ * A **pose** is a pure function of simulation state and presentation time. It
+ * reads the actor or the machine's wire record and never writes to either, so
+ * a guest replaying inputs cannot come to depend on an animation having played,
+ * and the netcode's bit-identical ending cannot move. Nothing in src/sim reads
+ * anything here.
+ *
+ * Two rules the camera sets. From 45 degrees vertical motion is foreshortened
+ * to almost nothing, so what reads is what moves *across* the ground: a swing
+ * is a twist of the body and a sweep of the arm, not a raised sword, and the
+ * sentry's wind-up is a lean back and its arms drawn behind it. And a committed
+ * action is animated as committed: while a swing runs its pose is its clock,
+ * exactly, with no blending that could make it look as though it might stop.
+ *
+ * Trigonometry is src/gen/exact.mjs's, like everything in src/.
+ */
+
+
+
+
+
+const PI = 3.141592653589793;
+
+/* ---------- the rigs ----------
+   Offsets in metres. `at` on a bone is from its parent; `at` on a part is the
+   box's centre in its bone's frame. A colour is a hex, or a role the page
+   fills in ('cloth', 'skin'), so two players can wear one rig. */
+
+const R = ACTOR.radius, H = ACTOR.height;
+
+const HERO_RIG = {
+  bones: [
+    { name: 'root', parent: null, at: [0, 0, 0] },
+    { name: 'hips', parent: 'root', at: [0, H * 0.31, 0] },
+    { name: 'legL', parent: 'hips', at: [-R * 0.3, 0, 0] },
+    { name: 'legR', parent: 'hips', at: [R * 0.3, 0, 0] },
+    { name: 'torso', parent: 'hips', at: [0, 0, 0] },
+    { name: 'head', parent: 'torso', at: [0, H * 0.35, 0] },
+    { name: 'armL', parent: 'torso', at: [-R * 0.7, H * 0.21, 0] },
+    { name: 'armR', parent: 'torso', at: [R * 0.7, H * 0.21, 0] },
+    { name: 'blade', parent: 'armR', at: [0, 0, 0] },
+  ],
+  parts: [
+    { name: 'legL', bone: 'legL', size: [R * 0.56, H * 0.31, R * 0.8], at: [0, -H * 0.155, 0], color: 0x33302c },
+    { name: 'legR', bone: 'legR', size: [R * 0.56, H * 0.31, R * 0.8], at: [0, -H * 0.155, 0], color: 0x33302c },
+    { name: 'torso', bone: 'torso', size: [R * 1.49, H * 0.34, R * 1.03], at: [0, H * 0.18, 0], color: 'cloth' },
+    { name: 'pack', bone: 'torso', size: [R * 0.86, H * 0.17, R * 0.46], at: [0, H * 0.22, -R * 0.69], color: 0x4a4038 },
+    { name: 'head', bone: 'head', size: [R * 0.97, H * 0.18, R * 0.91], at: [0, H * 0.09, 0], color: 'skin' },
+    /* The nose stays: facing still has to read at forty pixels tall. */
+    { name: 'nose', bone: 'head', size: [R * 0.3, R * 0.3, R * 0.5], at: [0, -H * 0.04, R * 0.72], color: 0xd9a25e },
+    { name: 'armL', bone: 'armL', size: [R * 0.34, H * 0.26, R * 0.34], at: [0, -H * 0.11, 0], color: 'cloth' },
+    { name: 'hand', bone: 'armR', size: [R * 0.34, R * 0.34, R * 0.6], at: [0, 0, R * 0.12], color: 'skin' },
+    { name: 'guard', bone: 'armR', size: [0.30, 0.07, 0.10], at: [0, 0, 0], color: 0x6b6660 },
+    /* On a bone of its own, so the lattice's reach can stretch it from the
+       guard without stretching the guard. */
+    { name: 'blade', bone: 'blade', size: [0.07, 0.09, 1.15], at: [0, 0, 0.58], color: 0x9aa1a7 },
+  ],
+};
+
+/* Squat and wide, because from 45 degrees you mostly see the top of things
+   (docs/DECISIONS.md). The arms are new: a wind-up you can see from above has
+   to move across the ground, and a box that only changes height cannot. */
+const SENTRY_RIG = {
+  bones: [
+    { name: 'root', parent: null, at: [0, 0, 0] },
+    { name: 'body', parent: 'root', at: [0, 0.2, 0] },
+    { name: 'plate', parent: 'body', at: [0, 0.85, 0] },
+    { name: 'armL', parent: 'body', at: [-0.62, 0.5, 0.05] },
+    { name: 'armR', parent: 'body', at: [0.62, 0.5, 0.05] },
+  ],
+  parts: [
+    { name: 'skirt', bone: 'root', size: [1.35, 0.28, 1.35], at: [0, 0.14, 0], color: 0x2f2b27 },
+    { name: 'body', bone: 'body', size: [1.05, 0.85, 1.05], at: [0, 0.425, 0], color: 0x4a443e },
+    { name: 'plate', bone: 'plate', size: [0.92, 0.16, 0.92], at: [0, 0.09, 0], color: 0x3a3532 },
+    { name: 'armL', bone: 'armL', size: [0.24, 0.24, 0.62], at: [0, 0, 0.22], color: 0x3b3631 },
+    { name: 'armR', bone: 'armR', size: [0.24, 0.24, 0.62], at: [0, 0, 0.22], color: 0x3b3631 },
+  ],
+};
+
+/* ---------- a pose ----------
+   Per bone: rx, ry, rz (radians), px, py, pz (metres, added to the bone's own
+   offset), sy and sz (scale). Anything absent is zero, or one for a scale. */
+
+function blank(rig) {
+  const p = {};
+  for (const b of rig.bones) p[b.name] = { rx: 0, ry: 0, rz: 0, px: 0, py: 0, pz: 0, sy: 1, sz: 1 };
+  return p;
+}
+const KEYS = ['rx', 'ry', 'rz', 'px', 'py', 'pz', 'sy', 'sz'];
+
+/** A pose part-way from `a` to `b`. */
+function blendPose(a, b, k) {
+  const out = {};
+  for (const n in b) {
+    const x = a[n] || b[n], y = b[n], o = {};
+    for (const key of KEYS) o[key] = x[key] + (y[key] - x[key]) * k;
+    out[n] = o;
+  }
+  return out;
+}
+
+function easeInOut(u) { u = u < 0 ? 0 : (u > 1 ? 1 : u); return u * u * (3 - 2 * u); }
+
+/**
+ * The blade's sweep across the ground, as a yaw on the sword arm: back through
+ * the wind-up, through the arc while it cuts, home through recovery. The same
+ * numbers the build drew before there was a rig, so the swing covers the same
+ * ground it always did.
+ */
+function swingYaw(t) {
+  const mid = WINDUP + ACTIVE;
+  if (t < WINDUP) return -1.35 * (t / WINDUP);
+  if (t < mid) return -1.35 + 2.75 * ((t - WINDUP) / ACTIVE);
+  return 1.40 * (1 - (t - mid) / (SWING_TIME - mid));
+}
+
+/**
+ * The player's pose. `a` is the actor and is only read. `look` is presentation
+ * state the page keeps: `walk`, a stride phase in radians it advances with the
+ * distance walked, and `reach`, the blade length the lattice works out to.
+ */
+function poseHero(a, look) {
+  const p = blank(HERO_RIG);
+  const walk = look.walk || 0, reach = look.reach || REACH;
+  p.blade.sz = reach / REACH;
+  if (a.dead) {
+    /* Down on its back, and staying there. */
+    p.root.rx = -1.45; p.root.py = R * 0.4;
+    p.armL.rx = -0.6; p.armR.ry = 0.4;
+    return p;
+  }
+  const speed = hyp(a.vx || 0, a.vz || 0), m = speed / RUN > 1 ? 1 : speed / RUN;
+
+  /* Walking: the legs and the free arm swing across the ground, the body
+     bobs a little and leans into the run. */
+  const s = sin(walk);
+  p.legL.rx = s * 0.62 * m; p.legR.rx = -s * 0.62 * m;
+  p.armL.rx = -s * 0.5 * m;
+  p.hips.py = (s < 0 ? -s : s) * 0.035 * m;
+  p.torso.rx = 0.1 * m;
+
+  if (a.vault) {
+    const u = easeInOut(a.vault.t / VAULT_TIME);
+    p.legL.rx = 1.0 * (1 - u) + 0.2; p.legR.rx = 0.5 * (1 - u);
+    p.torso.rx = 0.45 * (1 - u); p.armL.rx = -1.2 * (1 - u);
+  } else if (!a.grounded) {
+    p.legL.rx = 0.55; p.legR.rx = -0.25; p.armL.rx = -0.9; p.armL.rz = -0.3;
+  }
+
+  if (a.swing) {
+    /* Committed: this is the swing's clock and nothing else. The body turns
+       back through the wind-up, drives through as it cuts — a small step onto
+       the front foot — and unwinds through recovery. */
+    const t = a.swing.t, mid = WINDUP + ACTIVE;
+    let twist, lean, step, stance;
+    if (t < WINDUP) {
+      const k = easeInOut(t / WINDUP);
+      twist = -0.5 * k; lean = -0.12 * k; step = 0; stance = k;
+    } else if (t < mid) {
+      const k = (t - WINDUP) / ACTIVE;
+      twist = -0.5 + 1.1 * k; lean = -0.12 + 0.42 * k; step = 0.16 * k; stance = 1;
+    } else {
+      const k = easeInOut((t - mid) / (SWING_TIME - mid));
+      twist = 0.6 * (1 - k); lean = 0.3 * (1 - k); step = 0.16 * (1 - k); stance = 1 - k;
+    }
+    p.armR.ry = swingYaw(t);
+    p.torso.ry = twist; p.torso.rx = lean;
+    p.head.ry = -twist * 0.6;
+    p.root.pz = step;
+    p.legL.rx = 0.32 * stance; p.legR.rx = -0.28 * stance;
+    p.armL.rx = -0.4 * stance; p.armL.rz = -0.35 * stance;
+  }
+
+  if (a.dodge) {
+    /* A flicker, not a fade — it has to be legible in seventeen ticks: a squat,
+       and a lean the way the dodge is going, whichever way that is from the
+       way it faces. */
+    const u = a.dodge.t / DODGE_TIME, k = sin(PI * (u < 0 ? 0 : (u > 1 ? 1 : u)));
+    const fx = a.faceX || 0, fz = a.faceZ || 1, dx = a.dodge.dx || 0, dz = a.dodge.dz || 0;
+    const fwd = dx * fx + dz * fz, side = dx * fz - dz * fx;
+    p.root.sy = 0.78;
+    p.root.rx = 0.55 * fwd * k; p.root.rz = -0.55 * side * k;
+    p.legL.rx = 0.7 * k; p.legR.rx = 0.7 * k;
+  }
+
+  if (a.hurtT > 0) {
+    const k = a.hurtT / HURT_TIME;
+    p.torso.rx -= 0.4 * k; p.head.rx -= 0.25 * k;
+  }
+  return p;
+}
+
+/**
+ * The sentry's pose, from the record a machine sends over the wire — the same
+ * record the host draws from, so the two agree by construction. `look.walk` is
+ * a stride phase the page advances while the machine moves, and `look.t`
+ * presentation time for the shudder of a stagger.
+ */
+function poseSentry(m, look) {
+  const p = blank(SENTRY_RIG), walk = look.walk || 0, t = look.t || 0;
+  if (m.s === EST.DEAD) {
+    p.root.rz = 0.9;                            /* toppled, and it stays toppled */
+    p.body.sy = 0.72; p.armL.rx = 0.9; p.armR.rx = 0.9;
+    return p;
+  }
+  if (m.s === EST.DORMANT) {
+    /* Settled low, arms folded in. */
+    p.body.sy = 0.72; p.armL.ry = 0.5; p.armR.ry = -0.5; p.armL.pz = -0.12; p.armR.pz = -0.12;
+    return p;
+  }
+  if (m.s === EST.WAKE || m.s === EST.CLOSE) {
+    const s = sin(walk);
+    p.body.py = (s < 0 ? -s : s) * 0.035;
+    p.body.rz = s * 0.05;
+    p.armL.rx = s * 0.25; p.armR.rx = -s * 0.25;
+  }
+  if (m.s === EST.TELEGRAPH) {
+    /* It stops dead, rises, and draws back: the body leans away from you and
+       both arms pull behind it. From above, the plate slides backwards across
+       the ground while it flares — that is the wind-up you can see. */
+    const k = easeInOut((m.t || 0) / TELEGRAPH_TIME);
+    p.body.sy = 1 + 0.12 * k;
+    p.body.rx = -0.28 * k;
+    p.armL.ry = 0.75 * k; p.armR.ry = -0.75 * k;
+    p.armL.pz = -0.3 * k; p.armR.pz = -0.3 * k;
+  }
+  if (m.s === EST.STRIKE) {
+    /* All of it forward at once: the lunge you were warned about. */
+    const k = easeInOut(((m.t || 0) / STRIKE_TIME) * 2);
+    p.body.sy = 1.12 - 0.1 * k;
+    p.body.rx = -0.28 + 0.62 * k;
+    p.root.pz = 0.28 * k;
+    p.armL.ry = 0.75 * (1 - k); p.armR.ry = -0.75 * (1 - k);
+    p.armL.pz = -0.3 + 0.65 * k; p.armR.pz = -0.3 + 0.65 * k;
+  }
+  if (m.s === EST.RECOVER) {
+    /* Spent: slumped forward with its arms down. This is the opening. */
+    const k = 1 - easeInOut((m.t || 0) / RECOVER_TIME);
+    p.body.sy = 0.9 + 0.1 * (1 - k);
+    p.body.rx = 0.34 * k;
+    p.armL.rx = 0.55 * k; p.armR.rx = 0.55 * k;
+  }
+  if (m.s === EST.STAGGER) {
+    p.root.px = 0.05 * sin(t * 61);
+    p.body.rz = 0.14 * sin(t * 43);
+    p.body.rx = -0.12;
+  }
+  if (m.u > 0) p.body.rx -= 0.25 * (m.u / HURT_TIME);
+  return p;
+}
+
+/** How far a stride carries a character, in metres: one full cycle of `walk`. */
+const STRIDE = 1.35;
+/** The same for a machine, which shuffles. */
+const SENTRY_STRIDE = 0.9;
+
+/** Every bone's rest position in the rig's own frame: what a part's box is laid against. */
+function restPositions(rig) {
+  const at = {};
+  for (const b of rig.bones) {
+    const p = b.parent ? at[b.parent] : [0, 0, 0];
+    at[b.name] = [p[0] + b.at[0], p[1] + b.at[1], p[2] + b.at[2]];
+  }
+  return at;
+}
 /* ---------- src/sim/camera.mjs ---------- */
 /**
  * The isometric camera, as maths rather than as a renderer.
@@ -6585,7 +6863,7 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -7306,27 +7584,87 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     blob.visible=true; blob.position.y=gy-y+0.03;
     blob.scale.set(r*k,1,r*k); blob.material.opacity=0.42*k;
   }
+  /* ---------- rigs (#33, #62) ----------
+     A rig is data in src/sim/anim.mjs — bones, and boxes riding them — and it
+     is built here into one skinned mesh: every box of a character in one
+     buffer, each vertex bound to its bone, coloured per vertex. That is one
+     draw call a character where there was one per box, and it is what makes a
+     pose possible at all: the swing turns the body and sweeps the arm, the
+     sentry leans back and draws its arms behind it, and none of it is a box
+     changing scale. `ranges` remembers where each box's vertices are, so a
+     single part can change colour — the sentry's plate is the tell. */
+  function buildRig(def,colours){
+    var rest=QS.restPositions(def), idx={}, bones=[], byName={};
+    def.bones.forEach(function(b,i){
+      var bone=new THREE.Bone(); bone.name=b.name; bone.position.set(b.at[0],b.at[1],b.at[2]);
+      idx[b.name]=i; bones.push(bone); byName[b.name]=bone;
+      if(b.parent) byName[b.parent].add(bone);
+    });
+    var pos=[],nor=[],cols=[],si=[],sw=[],ind=[],ranges={},base=0,c=new THREE.Color();
+    def.parts.forEach(function(pt){
+      var bx=new THREE.BoxGeometry(pt.size[0],pt.size[1],pt.size[2]);
+      var r=rest[pt.bone], bi=idx[pt.bone];
+      c.setHex(typeof pt.color==='string'?colours[pt.color]:pt.color);
+      var P=bx.attributes.position, N=bx.attributes.normal, n=P.count, v;
+      for(v=0;v<n;v++){
+        pos.push(P.getX(v)+r[0]+pt.at[0],P.getY(v)+r[1]+pt.at[1],P.getZ(v)+r[2]+pt.at[2]);
+        nor.push(N.getX(v),N.getY(v),N.getZ(v)); cols.push(c.r,c.g,c.b);
+        si.push(bi,0,0,0); sw.push(1,0,0,0);
+      }
+      var I=bx.index.array; for(v=0;v<I.length;v++) ind.push(I[v]+base);
+      ranges[pt.name]=[base,n]; base+=n; bx.dispose();
+    });
+    var geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+    geo.setAttribute('normal',new THREE.Float32BufferAttribute(nor,3));
+    geo.setAttribute('color',new THREE.Float32BufferAttribute(cols,3));
+    geo.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(si,4));
+    geo.setAttribute('skinWeight',new THREE.Float32BufferAttribute(sw,4));
+    geo.setIndex(ind);
+    var mesh=new THREE.SkinnedMesh(geo,new THREE.MeshLambertMaterial({vertexColors:true,skinning:true}));
+    mesh.add(bones[0]); mesh.updateMatrixWorld(true);
+    mesh.bind(new THREE.Skeleton(bones));
+    /* A skinned mesh's bounds are its bind pose, not where the bones have put
+       it; a character is small and always near the camera's target. */
+    mesh.frustumCulled=false; mesh.castShadow=false;
+    mesh.userData.keep=true; mesh.userData.kind='actor';
+    return {mesh:mesh,bones:byName,def:def,ranges:ranges,tint:{},shown:null,at:-1};
+  }
+  /** Colour one part of a rig — only when it changes, since it rewrites vertices. */
+  function tintRig(rig,part,hex){
+    if(rig.tint[part]===hex) return;
+    rig.tint[part]=hex;
+    var rg=rig.ranges[part], col=rig.mesh.geometry.attributes.color, c=new THREE.Color(hex);
+    for(var v=rg[0];v<rg[0]+rg[1];v++) col.setXYZ(v,c.r,c.g,c.b);
+    col.needsUpdate=true;
+  }
+  /* Easing toward the pose the simulation calls for, except while the pose is
+     committed: a swing's pose is its clock, exactly, with no blend that could
+     make it look as though it might stop. With no time passed — the gate's
+     own draws — it goes straight there. */
+  var POSE_EASE=0.07;
+  function showPose(rig,target,committed){
+    var dt=rig.at<0?0:tm-rig.at, k=(committed||!rig.shown||dt<=0)?1:1-Math.exp(-dt/POSE_EASE);
+    var p=k>=1?target:QS.blendPose(rig.shown,target,k);
+    rig.shown=p; rig.at=tm;
+    for(var q=0;q<rig.def.bones.length;q++){
+      var b=rig.def.bones[q], bone=rig.bones[b.name], o=p[b.name];
+      bone.position.set(b.at[0]+o.px,b.at[1]+o.py,b.at[2]+o.pz);
+      bone.rotation.set(o.rx,o.ry,o.rz);
+      bone.scale.set(1,o.sy,o.sz);
+    }
+  }
+  /** Advance a stride phase by the ground actually covered, not by time. */
+  function stride(o,x,z,len){
+    if(o.lastX!==null){
+      var d=Math.sqrt((x-o.lastX)*(x-o.lastX)+(z-o.lastZ)*(z-o.lastZ));
+      if(d<2) o.walk+=d/len*Math.PI*2;          /* a teleport is not a step */
+    }
+    o.lastX=x; o.lastZ=z;
+  }
   function makeAvatar(cloth,skin){
-    function box(w,h,d,c){return new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
-      new THREE.MeshLambertMaterial({color:c}));}
-    var g=new THREE.Group();
-    /* Sized from ACTOR so what you see is what collides. */
-    var r=ACTOR.radius, h=ACTOR.height;
-    var legs=box(r*1.2,h*0.31,r*0.86,0x33302c); legs.position.y=h*0.155; g.add(legs);
-    var torso=box(r*1.49,h*0.34,r*1.03,cloth); torso.position.y=h*0.49; g.add(torso);
-    var head=box(r*0.97,h*0.18,r*0.91,skin); head.position.y=h*0.75; g.add(head);
-    var pack=box(r*0.86,h*0.17,r*0.46,0x4a4038); pack.position.set(0,h*0.53,-r*0.69); g.add(pack);
-    /* A wedge on the nose, so facing is visible without an animation system. */
-    var nose=new THREE.Mesh(new THREE.ConeGeometry(r*0.30,r*0.75,4),
-      new THREE.MeshBasicMaterial({color:0xd9a25e}));
-    nose.rotation.x=Math.PI/2; nose.position.set(0,h*0.62,r*0.95); g.add(nose);
-
-    /* The longblade. One frame of eight, no sockets in it — #23 is about
-       whether a committed swing reads, not about gear. */
-    var arm=new THREE.Group(); arm.position.set(r*0.7,h*0.52,0); g.add(arm);
-    var blade=box(0.07,0.09,1.15,0x9aa1a7); blade.position.z=0.58; arm.add(blade);
-    var guard=box(0.30,0.07,0.10,0x6b6660); arm.add(guard);
-
+    var g=new THREE.Group(), r=ACTOR.radius, h=ACTOR.height;
+    var rig=buildRig(QS.HERO_RIG,{cloth:cloth,skin:skin}); g.add(rig.mesh);
     /* The arc is what actually reads at forty pixels tall — the blade itself is
        three voxels wide and half behind the character. It sits at blade height
        rather than on the ground: the detail pass moves the surface by up to half
@@ -7337,28 +7675,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var sweep=new THREE.Mesh(arcGeo,new THREE.MeshBasicMaterial(
       {color:0xffe9c4,transparent:true,opacity:0.8,side:THREE.DoubleSide,depthWrite:false}));
     sweep.rotation.x=Math.PI/2; sweep.position.y=h*0.5; sweep.visible=false; g.add(sweep);
-    /* Rebuilt when the lattice changes what the blade covers: a sigil that
-       widened the hitbox and not the arc would be a lie drawn on the floor. */
-    blade.scale.z=1;
-
-    g.traverse(function(o){ if(o.isMesh){ o.castShadow=false; o.userData.keep=true; } });
+    sweep.userData.keep=true; sweep.castShadow=false;
     var blob=makeBlob(r*1.35); g.add(blob);
-    return {g:g,arm:arm,blade:blade,sweep:sweep,fade:0,reach:-1,arc:-1,blob:blob};
+    return {g:g,rig:rig,sweep:sweep,fade:0,reach:QS.REACH,arc:-1,blob:blob,walk:0,lastX:null,lastZ:null};
   }
   /**
    * A sentry automaton. Squat and wide, because from 45 degrees you mostly see
    * the top of things — so the readable surface is its top plate, and that is
-   * where the tell goes: it stops dead, rises, and the plate flares.
+   * where the tell goes: it stops dead, rises, draws back, and the plate flares.
    */
   function makeFoe(){
-    function box(w,h,d,c){return new THREE.Mesh(new THREE.BoxGeometry(w,h,d),
-      new THREE.MeshLambertMaterial({color:c}));}
     var g=new THREE.Group();
-    var skirt=box(1.35,0.28,1.35,0x2f2b27); skirt.position.y=0.14; g.add(skirt);
-    var body=box(1.05,0.85,1.05,0x4a443e); body.position.y=0.62; g.add(body);
-    var plate=new THREE.Mesh(new THREE.BoxGeometry(0.92,0.16,0.92),
-      new THREE.MeshBasicMaterial({color:0x3a3532}));
-    plate.position.y=1.12; g.add(plate);
+    var rig=buildRig(QS.SENTRY_RIG,{}); g.add(rig.mesh);
     /* The danger zone, on the ground in front of it, at the height the player's
        own arc sits at — anything lower is lost in the voxels. */
     var wedge=new THREE.Mesh(
@@ -7371,7 +7699,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     bar.position.y=1.7; g.add(bar);
     var blob=makeBlob(0.95); g.add(blob);
     g.traverse(function(o){ if(o.isMesh){ o.userData.keep=true; } });
-    return {g:g,skirt:skirt,body:body,plate:plate,wedge:wedge,bar:bar,blob:blob};
+    return {g:g,rig:rig,wedge:wedge,bar:bar,blob:blob,walk:0,lastX:null,lastZ:null};
   }
   var foeMeshes=[];
 
@@ -7382,67 +7710,72 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      top plate makes about its telegraph. A cache stands on a plinth and wears a
      second ring, because it is the one that also holds knowledge. */
   var TRADCOL=[0xd9a25e,0x4fc3cd,0x8fd14f];
-  function makeLootMesh(isCache){
-    var g=new THREE.Group();
-    var cube=new THREE.Mesh(new THREE.BoxGeometry(0.34,0.34,0.34),
-      new THREE.MeshBasicMaterial({color:0xffffff}));
-    cube.position.y=isCache?0.95:0.45; g.add(cube);
-    var ring=new THREE.Mesh(new THREE.RingGeometry(0.42,0.62,20),
-      new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.45,
-                                   side:THREE.DoubleSide,depthWrite:false}));
-    ring.rotation.x=Math.PI/2; ring.position.y=0.08; g.add(ring);
-    var halo=null, plinth=null;
-    if(isCache){
-      plinth=new THREE.Mesh(new THREE.CylinderGeometry(0.34,0.44,0.55,6),
-        new THREE.MeshLambertMaterial({color:0x4a443e}));
-      plinth.position.y=0.28; g.add(plinth);
-      halo=new THREE.Mesh(new THREE.RingGeometry(0.78,0.96,24),
-        new THREE.MeshBasicMaterial({color:0xe8e3d7,transparent:true,opacity:0.30,
-                                     side:THREE.DoubleSide,depthWrite:false}));
-      halo.rotation.x=Math.PI/2; halo.position.y=0.06; g.add(halo);
+  /* One instanced mesh per kind of piece, not four meshes per item (#62): a
+     cube and a ring for everything on the ground, a plinth and a halo for the
+     caches. Colour is per instance. */
+  var loot=null;
+  function makeLoot(nAll,nCache){
+    function inst(geo,mat,n){
+      var m=new THREE.InstancedMesh(geo,mat,Math.max(1,n)), c=new THREE.Color(0xffffff);
+      for(var q=0;q<Math.max(1,n);q++) m.setColorAt(q,c);
+      m.count=0; m.frustumCulled=false; m.userData.keep=true; m.userData.kind='loot';
+      return m;
     }
-    g.traverse(function(o){ if(o.isMesh) o.userData.keep=true; });
-    g.visible=false;
-    return {g:g,cube:cube,ring:ring,halo:halo,plinth:plinth,cache:isCache};
+    function flat(g){ g.rotateX(Math.PI/2); return g; }
+    return {
+      cube:inst(new THREE.BoxGeometry(0.34,0.34,0.34),new THREE.MeshBasicMaterial({color:0xffffff}),nAll),
+      ring:inst(flat(new THREE.RingGeometry(0.42,0.62,20)),new THREE.MeshBasicMaterial({color:0xffffff,
+        transparent:true,opacity:0.45,side:THREE.DoubleSide,depthWrite:false}),nAll),
+      plinth:inst(new THREE.CylinderGeometry(0.34,0.44,0.55,6),new THREE.MeshLambertMaterial({color:0x4a443e}),nCache),
+      halo:inst(flat(new THREE.RingGeometry(0.78,0.96,24)),new THREE.MeshBasicMaterial({color:0xe8e3d7,
+        transparent:true,opacity:0.30,side:THREE.DoubleSide,depthWrite:false}),nCache)
+    };
   }
-  var lootMeshes=[];
+  function eachLoot(fn){ if(loot) ['cube','ring','plinth','halo'].forEach(function(k){ fn(loot[k]); }); }
+  /** One post, lit or not: a colour and a squash, rewritten only when it changes. */
+  function setPost(q,lit){
+    if(!postMesh||postLit[q]===lit) return;
+    postLit[q]=lit;
+    var t=postMesh.userData.posts[q];
+    lootP.set(t.x,t.y+0.75,t.z); lootQ.identity(); lootS.set(1,lit?0.92:1,1);
+    postMesh.setMatrixAt(q,lootM.compose(lootP,lootQ,lootS)); lootS.set(1,1,1);
+    lootC.setHex(lit?0xffd9a0:0x6b5a45); postMesh.setColorAt(q,lootC);
+    postMesh.instanceMatrix.needsUpdate=true; postMesh.instanceColor.needsUpdate=true;
+  }
+  var lootM=new THREE.Matrix4(), lootQ=new THREE.Quaternion(), lootE=new THREE.Euler(),
+      lootP=new THREE.Vector3(), lootS=new THREE.Vector3(1,1,1), lootC=new THREE.Color();
   function poseLoot(){
-    var field=encounter&&encounter.loot;
-    var items=field?field.open():[];
-    var q;
-    for(q=0;q<lootMeshes.length;q++) lootMeshes[q].g.visible=false;
-    for(q=0;q<items.length&&q<lootMeshes.length;q++){
-      var o=items[q], it=o.item, m=lootMeshes[q];
-      /* The pool is not index-aligned with the field — a cache mesh has a
-         plinth and a spoil does not, so the right one has to be found. */
-      var want=o.kind==='cache';
-      if(m.cache!==want){
-        for(var r=q+1;r<lootMeshes.length;r++) if(lootMeshes[r].cache===want){
-          var t=lootMeshes[q]; lootMeshes[q]=lootMeshes[r]; lootMeshes[r]=t; break;
-        }
-        m=lootMeshes[q];
-        if(m.cache!==want) continue;
+    if(!loot) return;
+    var field=encounter&&encounter.loot, items=field?field.open():[], n=0, nc=0;
+    for(var q=0;q<items.length&&n<loot.cube.instanceMatrix.count;q++){
+      var o=items[q], it=o.item, cache=o.kind==='cache';
+      if(cache&&nc>=loot.plinth.instanceMatrix.count) continue;
+      lootC.setHex(TRADCOL[QS.MODULES[it.mod].trad]);
+      lootE.set(0.5,tm*1.1,0); lootQ.setFromEuler(lootE);
+      lootP.set(it.x,it.y+(cache?0.95:0.45)+Math.sin(tm*1.8+it.x)*0.06,it.z);
+      loot.cube.setMatrixAt(n,lootM.compose(lootP,lootQ,lootS)); loot.cube.setColorAt(n,lootC);
+      lootQ.identity(); lootP.set(it.x,it.y+0.08,it.z);
+      loot.ring.setMatrixAt(n,lootM.compose(lootP,lootQ,lootS)); loot.ring.setColorAt(n,lootC);
+      n++;
+      if(cache){
+        lootP.set(it.x,it.y+0.28,it.z); loot.plinth.setMatrixAt(nc,lootM.compose(lootP,lootQ,lootS));
+        lootP.set(it.x,it.y+0.06,it.z); loot.halo.setMatrixAt(nc,lootM.compose(lootP,lootQ,lootS));
+        nc++;
       }
-      var c=TRADCOL[QS.MODULES[it.mod].trad];
-      m.cube.material.color.setHex(c);
-      m.ring.material.color.setHex(c);
-      m.g.position.set(it.x,it.y,it.z);
-      m.cube.rotation.y=tm*1.1; m.cube.rotation.x=0.5;
-      m.cube.position.y=(m.cache?0.95:0.45)+Math.sin(tm*1.8+it.x)*0.06;
-      m.g.visible=true;
     }
+    loot.cube.count=n; loot.ring.count=n; loot.plinth.count=nc; loot.halo.count=nc;
+    eachLoot(function(m){ m.instanceMatrix.needsUpdate=true; if(m.instanceColor) m.instanceColor.needsUpdate=true; });
   }
-
-  /** Everything the machine is about to do, said in a colour and a height. */
+  /** Everything the machine is about to do, said in a pose and a colour. */
   function poseFoe(f,m){
     var EST=QS.EST, dead=m.s===EST.DEAD;
     f.g.position.set(m.x,m.y,m.z);
-    f.g.rotation.z=dead?0.9:0;                 /* toppled, and it stays toppled */
-    if(dead) f.blob.visible=false; else seatBlob(f.blob,m.x,m.y,m.z);
     f.g.rotation.y=Math.atan2(m.fx,m.fz);
-    var rise=dead?0:(m.s===EST.DORMANT?0.72:(m.s===EST.TELEGRAPH?1.12:1));
-    f.body.scale.y=rise; f.body.position.y=0.62*rise;
-    f.plate.position.y=0.16+0.85*rise+0.1;
+    if(dead) f.blob.visible=false; else seatBlob(f.blob,m.x,m.y,m.z);
+    stride(f,m.x,m.z,QS.SENTRY_STRIDE);
+    /* The strike is committed the way the player's swing is: its pose is its
+       clock. Everything else eases, so a machine coming to a stop reads as one. */
+    showPose(f.rig,QS.poseSentry(m,{walk:f.walk,t:tm}),m.s===EST.STRIKE||m.s===EST.TELEGRAPH);
     var tell=0;
     if(m.s===EST.TELEGRAPH) tell=Math.min(1,m.t/QS.TELEGRAPH_TIME);
     else if(m.s===EST.STRIKE) tell=1;
@@ -7451,7 +7784,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         :(m.s===EST.RECOVER?0x4a2a18
           :(m.s===EST.STAGGER?0xffffff
             :(tell?mixHex(0xff9a3c,0xffffff,tell):0xc9722a))));
-    f.plate.material.color.setHex(m.u>0?0xffd7cf:col);
+    tintRig(f.rig,'plate',m.u>0?0xffd7cf:col);
     f.wedge.visible=!dead&&(m.s===EST.TELEGRAPH||m.s===EST.STRIKE);
     /* The ramp is the clock: it starts as a stain and finishes nearly solid,
        so how long you have left is readable without counting frames. Measured
@@ -7473,31 +7806,23 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   var avatar=makeAvatar(0x2f6f7a,0xc99a6e), peerAvatar=makeAvatar(0xa5642a,0xb5855c);
   peerAvatar.g.visible=false;
 
-  /** Where the blade is through the swing: back, through, and home again. */
-  function bladeAngle(a){
-    if(!a.swing) return 0;
-    var t=a.swing.t, mid=QS.WINDUP+QS.ACTIVE;
-    if(t<QS.WINDUP) return -1.35*(t/QS.WINDUP);
-    if(t<mid) return -1.35+2.75*((t-QS.WINDUP)/QS.ACTIVE);
-    return 1.40*(1-(t-mid)/(QS.SWING_TIME-mid));
-  }
   /* The reach and arc the lattice works out to, made into geometry — once per
-     change, not once per frame. */
+     change, not once per frame. The blade's own length is a bone's scale now,
+     set in the pose from the same reach. */
   function tuneSweep(av,a){
     var st=QS.statsOf(a);
     if(av.reach===st.reach&&av.arc===st.arc) return;
     av.reach=st.reach; av.arc=st.arc;
     if(av.sweep.geometry) av.sweep.geometry.dispose();
     av.sweep.geometry=new THREE.RingGeometry(0.5,st.reach,22,1,Math.PI/2-st.arc/2,st.arc);
-    av.blade.scale.z=st.reach/QS.REACH;
-    av.blade.position.z=0.58*av.blade.scale.z;
   }
   function poseAvatar(av,a){
     tuneSweep(av,a);
     av.g.position.set(a.x,a.y,a.z);
     av.g.rotation.y=Math.atan2(a.faceX,a.faceZ);
     seatBlob(av.blob,a.x,a.y,a.z);
-    av.arm.rotation.y=bladeAngle(a);
+    stride(av,a.x,a.z,QS.STRIDE);
+    showPose(av.rig,QS.poseHero(a,{walk:av.walk,reach:av.reach}),!!a.swing);
     /* The trail outlives the hitbox on purpose. The active window is seven
        ticks — an eighth of a second — and at this zoom that is one frame of
        something you were not looking at. What is drawn and what is dangerous
@@ -7506,17 +7831,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     av.sweep.visible=av.fade>0.02;
     av.sweep.material.opacity=0.85*av.fade;
     av.sweep.scale.setScalar(1+(1-av.fade)*0.22);
-    /* A dodge is a flicker, not a fade — it has to be legible in 17 ticks. */
-    av.g.scale.y=QS.dodging(a)?0.78:1;
   }
-
   /* ---------- state ---------- */
   var camera=new THREE.OrthographicCamera(-1,1,1,-1,0.1,420);
   var cam=QS.makeCamera({}), input=QS.makeInput(), built=null, col=null;
   /* `solo` is the character when nobody else is here; once a session exists it
      owns the characters instead, and `solo` is left behind. */
   var solo=null, session=null, wire=null, role='solo', warped=false;
-  var targets=null, encounter=null, postMeshes=[], postHits=[], postFlash=[];
+  var targets=null, encounter=null, postMesh=null, postLit=[], postHits=[], postFlash=[];
   var vp={w:1,h:1}, tm=0, deaths=0, fps=60, wind=new THREE.Vector2(0.72,0.69);
   /* Beside fps, and for the same reason: the readout is drawn during start-up,
      before the frame loop's own state has been declared. Leaving it down there
@@ -7772,25 +8094,27 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      problem and not this one. */
   function populate(data){
     var posts=QS.practicePosts(col,data.spawn);
-    postMeshes=posts.map(function(t){
-      var m=new THREE.Mesh(new THREE.CylinderGeometry(t.r,t.r*1.15,1.5,8),
-        new THREE.MeshLambertMaterial({color:0x6b5a45}));
-      m.position.set(t.x,t.y+0.75,t.z); m.castShadow=true; m.userData.keep=false;
-      built.scene.add(m); return m;
-    });
+    /* One instanced mesh for every post (#62). They stand still, so they keep
+       casting into the static shadow map (#60). */
+    postMesh=null; postLit=posts.map(function(){ return null; });
+    if(posts.length){
+      postMesh=new THREE.InstancedMesh(new THREE.CylinderGeometry(posts[0].r,posts[0].r*1.15,1.5,8),
+        new THREE.MeshLambertMaterial({color:0xffffff}),posts.length);
+      postMesh.castShadow=true; postMesh.frustumCulled=false; postMesh.userData.keep=false;
+      postMesh.userData.posts=posts;
+      for(var pq=0;pq<posts.length;pq++) setPost(pq,false);
+      built.scene.add(postMesh);
+    }
     postHits=posts.map(function(){return 0;});
     postFlash=posts.map(function(){return 0;});
     encounter=QS.makeEncounter(col,data,posts);
     targets=encounter.targets;
     foeMeshes.forEach(function(f){ built.scene.remove(f.g); });
     foeMeshes=encounter.enemies.map(function(){ var f=makeFoe(); built.scene.add(f.g); return f; });
-    lootMeshes.forEach(function(m){
-      m.g.traverse(function(o){ if(o.isMesh&&o.geometry) o.geometry.dispose(); });
-    });
-    lootMeshes=[];
-    encounter.loot.caches.forEach(function(){ lootMeshes.push(makeLootMesh(true)); });
-    encounter.loot.spoils.forEach(function(){ lootMeshes.push(makeLootMesh(false)); });
-    lootMeshes.forEach(function(m){ built.scene.add(m.g); });
+    eachLoot(function(m){ if(m.parent) m.parent.remove(m); m.geometry.dispose(); m.material.dispose(); });
+    var nc=encounter.loot.caches.length;
+    loot=makeLoot(nc+encounter.loot.spoils.length,nc);
+    eachLoot(function(m){ built.scene.add(m); });
     drawLattice();
     return {col:col,spawn:data.spawn,targets:targets,encounter:encounter};
   }
@@ -8892,11 +9216,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       if(fm) poseFoe(foeMeshes[fq],fm);
     }
     poseLoot();
-    for(var q=0;q<postMeshes.length;q++){
-      var lit=postFlash[q]>0;
-      postMeshes[q].material.color.setHex(lit?0xffd9a0:0x6b5a45);
-      postMeshes[q].scale.y=lit?0.92:1;
-    }
+    for(var q=0;q<postLit.length;q++) setPost(q,postFlash[q]>0);
     /* Issue #29: a look baseline is of the *world*. A character mid-stride, a
        machine mid-telegraph and a practice post are all things the gate would
        then be measuring, and all three move for reasons that have nothing to
@@ -8904,8 +9224,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     if(plateMode){
       avatar.g.visible=false; peerAvatar.g.visible=false;
       for(var hq=0;hq<foeMeshes.length;hq++) foeMeshes[hq].g.visible=false;
-      for(hq=0;hq<lootMeshes.length;hq++) lootMeshes[hq].g.visible=false;
-      for(hq=0;hq<postMeshes.length;hq++) postMeshes[hq].visible=false;
+      eachLoot(function(m){ m.visible=false; });
+      if(postMesh) postMesh.visible=false;
     }
     var e=QS.eye(cam);
     camera.position.set(e.x,e.y,e.z);
@@ -8980,7 +9300,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   }
   function frameBody(now){
     if(!last){ last=now; fpsAt=now; }
-    var dt=Math.min((now-last)/1000,0.25); last=now;
+    /* Never backwards. A frame's timestamp is when the frame began, and the
+       gate's frameOnce() passes performance.now() — which can be later than
+       the next frame's own stamp. A negative dt grew the swing trail's fade
+       instead of shrinking it, and after a gated swing the trail came back as
+       an arc 29 times its size over a third of the screen (found while
+       building #33; the loop has done it since frameOnce existed). */
+    var dt=Math.max(0,Math.min((now-last)/1000,0.25)); last=Math.max(last,now);
     tm+=dt; acc+=dt;
     pollPad();
     /* Fixed step, so the trajectory does not depend on the frame rate — the
@@ -9117,6 +9443,26 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* The swing arc's visibility is the thing #23 is actually about, so the
        gate gets to assert it rather than infer it from a screenshot. */
     get sweeping(){return avatar.sweep.visible;},
+    /* Every bone of the player's rig and each machine's, as drawn (#33). */
+    get rigs(){
+      function st(r){ var o={}; for(var n in r.bones){ var b=r.bones[n];
+        o[n]={rx:b.rotation.x,ry:b.rotation.y,rz:b.rotation.z,sy:b.scale.y,sz:b.scale.z,
+              px:b.position.x,py:b.position.y,pz:b.position.z}; } return o; }
+      return {hero:st(avatar.rig),foes:foeMeshes.map(function(f){ return st(f.rig); })};
+    },
+    /* Draw calls spent on everything that is not the world itself: characters,
+       machines, posts, loot and what they carry (#62). Counted as three would
+       issue them — visible all the way up, one per mesh, instanced or not. */
+    get actorDraws(){
+      var WORLD=['terrain','props','boxes','emissive','water','grass'], n=0, list=[];
+      if(built) built.scene.traverse(function(o){
+        if(!(o.isMesh||o.isInstancedMesh)||WORLD.indexOf(o.userData.kind)>=0) return;
+        for(var p=o;p;p=p.parent) if(!p.visible) return;
+        if(o.isInstancedMesh&&o.count<1) return;
+        n++; list.push(o.userData.kind||(o.userData.blob?'blob':'other'));
+      });
+      return {n:n,list:list};
+    },
     /* How many times the shadow map has actually been drawn (#60). */
     get shadowRenders(){ return shadowRenders; },
     /* The player's blob, and every mesh in the scene that casts. */

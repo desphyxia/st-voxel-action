@@ -78,7 +78,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -234,6 +234,9 @@ if (NODE_HALF) for (const r of regionSuite()) check(r.ok, `REGION: ${r.label}`, 
    REGION is two windows onto one region. This is neighbouring regions: a
    trail that crosses an edge crosses it at a port both sides derive alone. */
 if (NODE_HALF) for (const r of networkSuite()) check(r.ok, `NETWORK: ${r.label}`, r.detail);
+
+/* ---------- ANIM: poses read the simulation and never write it, issue #33 ---------- */
+if (NODE_HALF) for (const r of animSuite()) check(r.ok, `ANIM: ${r.label}`, r.detail);
 
 /* ---------- MESH: the greedy mesher, issue #12 ---------- */
 if (NODE_HALF) for (const r of meshSuite()) check(r.ok, `MESH: ${r.label}`, r.detail);
@@ -681,13 +684,31 @@ if (BROWSER_HALF) {
         const before = pale(), struckBefore = P.struck;
         P.input.press('KeyF'); P.run(1); P.input.release('KeyF');
         const windup = QS.phase(a) === QS.PHASE.WINDUP;
+        /* Issue #33: the rig late in the wind-up, and again as it cuts. */
+        while (a.swing && a.swing.t < 0.2) P.run(1);
+        P.draw(); const wound = P.rigs.hero;
         while (QS.phase(a) !== QS.PHASE.ACTIVE) P.run(1);
         P.run(2);
         const during = pale(), sweeping = P.sweeping;
+        P.run(4); P.draw(); const cut = P.rigs.hero;
         while (a.swing) P.run(1);
         P.pause(false);
-        return { before, during, sweeping, windup, struck: P.struck - struckBefore };
+        return { before, during, sweeping, windup, struck: P.struck - struckBefore, wound, cut };
       });
+      /* Issue #33: the swing is a pose, not an arm group on one axis. Late in
+         the wind-up the body has turned back with the blade; as it cuts, both
+         have driven through past the facing. */
+      check(!!reads.wound && reads.wound.armR.ry < -0.9 && reads.wound.torso.ry < -0.25
+            && reads.cut.armR.ry > 0.5 && reads.cut.torso.ry > 0.2,
+            'BUILD: the swing is animated: the body winds back with the blade and drives through',
+            reads.wound ? `wound up: blade ${reads.wound.armR.ry.toFixed(2)}, body ${reads.wound.torso.ry.toFixed(2)}; `
+                          + `cutting: blade ${reads.cut.armR.ry.toFixed(2)}, body ${reads.cut.torso.ry.toFixed(2)}` : 'no rig');
+      /* Issue #62: characters, machines, posts and loot were 57 meshes, each its
+         own draw call. */
+      const ad = await bp.evaluate(() => window.QSPLAY.actorDraws);
+      const tally = {}; for (const k of ad.list) tally[k] = (tally[k] || 0) + 1;
+      check(ad.n <= 16, 'BUILD: characters, machines, posts and loot cost a handful of draw calls',
+            `${ad.n} draws: ${Object.entries(tally).map(([k, n]) => k + ' ' + n).join(', ')} (were 57 meshes)`);
       check(reads.windup && reads.sweeping, 'BUILD: a swing has a wind-up and shows its arc',
             `${reads.windup ? 'wound up' : 'no wind-up'}, ${reads.sweeping ? 'arc drawn' : 'ARC MISSING'}`);
       check(reads.during > reads.before + 40, 'BUILD: and the arc is visible on screen',
@@ -867,9 +888,11 @@ if (BROWSER_HALF) {
         }
         /* Late in the wind-up, where the tell is at its most emphatic. */
         const lit = grab();
+        const rigLit = P.rigs.foes[0];
         const held = live.ai.t;
         live.ai.state = QS.EST.CLOSE; live.ai.t = 0;
         const dark = grab();                     /* same frame, no tell */
+        const rigDark = P.rigs.foes[0];
         live.ai.state = QS.EST.TELEGRAPH; live.ai.t = held;
         let orange = 0, cx = 0, cy = 0;
         for (let i = 0; i < lit.d.length; i += 4) {
@@ -895,7 +918,7 @@ if (BROWSER_HALF) {
           P.run(1);
         }
         P.pause(false);
-        return { foes: foes.length, orange, off, tele, sawWake, sawClose,
+        return { foes: foes.length, orange, off, tele, sawWake, sawClose, rigLit, rigDark,
                  dead: P.foes[0] && P.foes[0].s === QS.EST.DEAD, hp: P.foes[0] && P.foes[0].h };
       });
       check(tells.foes > 0 && tells.sawWake && tells.sawClose,
@@ -907,6 +930,15 @@ if (BROWSER_HALF) {
       check(tells.orange > 300 && tells.off < 160,
             'BUILD: and its telegraph is visible on screen',
             `${tells.orange} px turn orange, ${Number.isFinite(tells.off) ? tells.off.toFixed(0) : '-'} px from the character`);
+      /* Issue #33: the telegraph is a pose now, not a box changing height. Late
+         in the wind-up the machine has risen, leans away and has drawn both
+         arms behind it; the same frame without the tell has done none of it. */
+      const rl = tells.rigLit, rd = tells.rigDark;
+      check(!!rl && rl.body.sy > 1.05 && rl.body.rx < -0.15 && rl.armL.ry > 0.4 && rl.armR.ry < -0.4
+            && Math.abs(rd.body.rx) < 0.1 && Math.abs(rd.armL.ry) < 0.1,
+            'BUILD: and the telegraph is animated: it rises, leans back and draws its arms',
+            rl ? `wound up: rise ${rl.body.sy.toFixed(2)}, lean ${rl.body.rx.toFixed(2)}, arms ${rl.armL.ry.toFixed(2)} / ${rl.armR.ry.toFixed(2)}; `
+                 + `without the tell: lean ${rd.body.rx.toFixed(2)}, arms ${rd.armL.ry.toFixed(2)}` : 'no rig');
       check(tells.dead && tells.hp === 0, 'BUILD: and it can be killed',
             tells.dead ? 'down' : `still up on ${tells.hp} hp`);
 

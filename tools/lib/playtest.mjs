@@ -32,6 +32,7 @@ import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache, portsOf, regionOf, REGION } from '../../src/gen/region.mjs';
 import { erodeAt } from '../../src/gen/erosion.mjs';
+import { HERO_RIG, SENTRY_RIG, poseHero, poseSentry, swingYaw, restPositions } from '../../src/sim/anim.mjs';
 import { meshChunk, surfaceAt, isCut, innerChunk } from '../../src/mesh/greedy.mjs';
 import { meshProps } from '../../src/mesh/propmesh.mjs';
 import { palR, palG, palB } from '../../src/gen/palette.mjs';
@@ -1595,6 +1596,91 @@ export function networkSuite() {
       !!spur && pd.includes(tip),
       spur ? (pd.includes(tip) ? `six-metre spur planted to ${tip}, found` : `SPUR TO ${tip} NOT SEEN — the check is blind`)
            : 'nowhere to plant a spur');
+  return out;
+}
+
+/* ------------------------------------------------------------------ anim ----
+ * Issue #33. A pose is a pure function of simulation state and presentation
+ * time: it reads the actor or the machine's wire record and never writes to
+ * either, so nothing the netcode compares can depend on an animation having
+ * played. And a committed swing is animated as committed — its pose is its
+ * clock, and nothing else.
+ * ------------------------------------------------------------------------- */
+
+export function animSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  /* Rigs: every part rides a bone that exists, every bone's parent comes
+     before it, and the rest pose is where the boxes are laid. */
+  const rigBad = [];
+  for (const [nm, rig] of [['hero', HERO_RIG], ['sentry', SENTRY_RIG]]) {
+    const seen = new Set();
+    for (const b of rig.bones) {
+      if (b.parent && !seen.has(b.parent)) rigBad.push(`${nm}.${b.name} before its parent`);
+      seen.add(b.name);
+    }
+    for (const p of rig.parts) if (!seen.has(p.bone)) rigBad.push(`${nm} part ${p.name} on no bone`);
+    const rest = restPositions(rig);
+    if (Object.keys(rest).length !== rig.bones.length) rigBad.push(`${nm} rest positions`);
+  }
+  say('both rigs are whole: every part on a bone, every bone after its parent',
+      rigBad.length === 0, rigBad.length ? rigBad.join('; ') : `hero ${HERO_RIG.bones.length} bones / ${HERO_RIG.parts.length} parts, sentry ${SENTRY_RIG.bones.length} / ${SENTRY_RIG.parts.length}`);
+
+  /* Read-only: a battery of states, each posed twice, and the actor compared
+     byte for byte before and after. */
+  const actors = [
+    { x: 1, y: 2, z: 3, vx: 3, vz: 1, faceX: 0, faceZ: 1, grounded: true, hurtT: 0, swing: null, dodge: null, vault: null, dead: null },
+    { x: 0, y: 0, z: 0, vx: 0, vz: 0, faceX: 1, faceZ: 0, grounded: true, hurtT: 0.1, swing: { t: 0.3, hit: 1 }, dodge: null, vault: null, dead: null },
+    { x: 0, y: 0, z: 0, vx: 2, vz: 0, faceX: 0, faceZ: 1, grounded: false, hurtT: 0, swing: null, dodge: { t: 0.1, dx: 1, dz: 0 }, vault: null, dead: null },
+    { x: 0, y: 0, z: 0, vx: 0, vz: 0, faceX: 0, faceZ: 1, grounded: true, hurtT: 0, swing: null, dodge: null, vault: { t: 0.2 }, dead: null },
+    { x: 0, y: 0, z: 0, vx: 0, vz: 0, faceX: 0, faceZ: 1, grounded: true, hurtT: 0, swing: null, dodge: null, vault: null, dead: 'fell' },
+  ];
+  let wrote = 0, drift = 0;
+  for (const a of actors) {
+    const before = JSON.stringify(a);
+    const p1 = JSON.stringify(poseHero(a, { walk: 1.3, reach: 1.9 }));
+    const p2 = JSON.stringify(poseHero(a, { walk: 1.3, reach: 1.9 }));
+    if (JSON.stringify(a) !== before) wrote++;
+    if (p1 !== p2) drift++;
+  }
+  const wires = [0, 1, 2, 3, 4, 5, 6, 7].map((s) => ({ x: 0, y: 0, z: 0, fx: 0, fz: 1, s, t: 0.3, h: 3, u: s === 6 ? 0.1 : 0 }));
+  for (const m of wires) {
+    const before = JSON.stringify(m);
+    const p1 = JSON.stringify(poseSentry(m, { walk: 0.7, t: 2.1 })), p2 = JSON.stringify(poseSentry(m, { walk: 0.7, t: 2.1 }));
+    if (JSON.stringify(m) !== before) wrote++;
+    if (p1 !== p2) drift++;
+  }
+  say('a pose reads the simulation and never writes to it, and the same state gives the same pose',
+      wrote === 0 && drift === 0, `${actors.length} actor states and ${wires.length} machine states: ${wrote} written to, ${drift} that posed differently twice`);
+
+  /* Committed: the blade is exactly the swing's clock, at every tick of it, and
+     the body winds back, drives through and comes home. */
+  let off = 0, t, minTwist = 0, maxTwist = 0;
+  const base = { x: 0, y: 0, z: 0, vx: 0, vz: 0, faceX: 0, faceZ: 1, grounded: true, hurtT: 0, dodge: null, vault: null, dead: null };
+  for (t = 0; t <= CB.SWING_TIME + 1e-9; t += TICK) {
+    const p = poseHero({ ...base, swing: { t, hit: 0 } }, { walk: 5 });
+    if (Math.abs(p.armR.ry - swingYaw(t)) > 1e-12) off++;
+    minTwist = Math.min(minTwist, p.torso.ry); maxTwist = Math.max(maxTwist, p.torso.ry);
+  }
+  const home = poseHero({ ...base, swing: { t: CB.SWING_TIME - 1e-6, hit: 0 } }, {});
+  say('a swing is posed by its clock alone: the blade follows it exactly, the body winds back and drives through',
+      off === 0 && minTwist < -0.4 && maxTwist > 0.5 && Math.abs(home.torso.ry) < 0.01,
+      `${off} ticks off the clock; body turns ${minTwist.toFixed(2)} to ${maxTwist.toFixed(2)} and ends at ${home.torso.ry.toFixed(3)}`);
+
+  /* The sentry's wind-up grows through the telegraph and releases into the
+     strike, on the surfaces the camera can see: lean and arms. */
+  let mono = true, lastLean = 1;
+  for (let k = 0; k <= 10; k++) {
+    const p = poseSentry({ s: EN.EST.TELEGRAPH, t: EN.TELEGRAPH_TIME * k / 10, fx: 0, fz: 1, u: 0 }, {});
+    if (p.body.rx > lastLean + 1e-12) mono = false;
+    lastLean = p.body.rx;
+  }
+  const wound = poseSentry({ s: EN.EST.TELEGRAPH, t: EN.TELEGRAPH_TIME, fx: 0, fz: 1, u: 0 }, {});
+  const struck = poseSentry({ s: EN.EST.STRIKE, t: EN.STRIKE_TIME, fx: 0, fz: 1, u: 0 }, {});
+  say('a telegraph winds up steadily and the strike releases it forward',
+      mono && wound.body.rx < -0.2 && wound.armL.ry > 0.5 && struck.body.rx > 0.2 && struck.root.pz > 0.2,
+      `lean ${wound.body.rx.toFixed(2)} at the end of the wind-up, ${struck.body.rx.toFixed(2)} and ${struck.root.pz.toFixed(2)} m forward as it strikes`);
   return out;
 }
 

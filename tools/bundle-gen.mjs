@@ -29,7 +29,7 @@ const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'palette', 'rng', 'biomes', 'field', 'erosion', 'region', 'ground', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index', 'chunk'],
   'src/mesh': ['greedy', 'carve', 'propmesh'],
-  'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'loot', 'actor', 'enemy', 'camera', 'input'],
+  'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'loot', 'actor', 'enemy', 'anim', 'camera', 'input'],
   'src/net': ['transport', 'session'],
 };
 
@@ -68,6 +68,8 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'softProp'
                  'PICKUP_R', 'CACHES', 'makeLootField', 'cacheSites', 'spoilModule',
                  'SENTRY', 'EST', 'makeSentry', 'stepSentry', 'makeEncounter',
                  'WAKE_TIME', 'TELEGRAPH_TIME', 'STRIKE_TIME', 'RECOVER_TIME',
+                 'HERO_RIG', 'SENTRY_RIG', 'poseHero', 'poseSentry', 'blendPose', 'swingYaw',
+                 'restPositions', 'STRIDE', 'SENTRY_STRIDE',
                  'makeCamera', 'snap', 'warpTo', 'follow', 'eye', 'basis', 'moveFrom',
                  'project', 'groundAt', 'heading', 'aimFromPointer', 'aimFromStick',
                  'setView', 'VIEW', 'QUARTER', 'START_YAW',
