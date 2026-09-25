@@ -738,6 +738,10 @@ if (BROWSER_HALF) {
            tick first, so the actor's idea of where it is standing has caught
            up with where it was just put. */
         P.run(2);
+        /* And nothing still lit from the check before. The swing trail and a
+           post's hit flash fade on the wall clock, not on ticks, so what was
+           left of them here depended on how fast the renderer was. */
+        P.settle();
         const idle = lit();
         const bare = swingAndCount();
         const bareReach = a.st.reach;

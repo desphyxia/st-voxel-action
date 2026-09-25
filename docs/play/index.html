@@ -8854,6 +8854,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     /* The swing arc's visibility is the thing #23 is actually about, so the
        gate gets to assert it rather than infer it from a screenshot. */
     get sweeping(){return avatar.sweep.visible;},
+    /* Put out what the last swing left lit. The sweep's fade and a post's hit
+       flash decay per rendered frame, on the wall clock, and under software
+       rendering how many frames run between two checks is anyone's guess — so
+       a count of pale pixels could open on 0 or 440 from the same world. */
+    settle:function(){
+      avatar.fade=0; peerAvatar.fade=0;
+      for(var q=0;q<postFlash.length;q++) postFlash[q]=0;
+    },
     get struck(){return postHits.reduce(function(k,v){return k+v;},0);},
     run:function(n){ for(var q=0;q<(n||1);q++) tick(); },
     /* Hands the clock to the caller. The loop keeps drawing, so a test can hold
