@@ -128,6 +128,8 @@ export const ONE_SIDED = [
                          puts it back on each streamed chunk, because the mesher
                          reads G.pstream to shade a voxel (#13). The plate
                          generates in place and never needs to reattach one. */
+  'OX->play',         /* the window's origin, added back for the where-am-I label */
+  'OZ->play',
   'bridges->play',    /* a deck is wood underfoot: the sound gate finds one (#36) */
   'lmPos->plate',
   'ovhPos->plate',

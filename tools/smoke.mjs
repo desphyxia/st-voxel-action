@@ -716,6 +716,21 @@ if (BROWSER_HALF) {
       check(bErrors.length === 0, 'BUILD: boots with no page errors', bErrors.slice(0, 3).join(' | '));
       /* #34: the character is the authored model, read from the .vox the
          bundle carries — and the page that did it is still one file on disk. */
+      /* The seed and the player's world coordinates, always on screen, so a
+         screenshot of a bug says where it is. */
+      const where = await bp.evaluate(() => {
+        const P = window.QSPLAY; P.frameOnce();
+        const el = document.getElementById('where'), a = P.actor, r = el.getBoundingClientRect();
+        const c = document.querySelector('#cv').getBoundingClientRect();
+        return { text: P.where, shown: getComputedStyle(el).display !== 'none', seed: P.seed,
+                 x: a.x, z: a.z, mid: Math.abs((r.left + r.right) / 2 - (c.left + c.right) / 2), low: c.bottom - r.bottom };
+      });
+      const wm = /x (-?[\d.]+)\s+y (-?[\d.]+)\s+z (-?[\d.]+)/.exec(where.text || '');
+      check(where.shown && where.text.startsWith(where.seed) && wm
+            && Math.abs(Number(wm[1]) - where.x) < 0.06 && Math.abs(Number(wm[3]) - where.z) < 0.06
+            && where.mid < 2 && where.low >= 0 && where.low < 30,
+            'BUILD: the seed and where the player stands are shown at the middle bottom of the view',
+            `"${where.text}", ${where.mid.toFixed(0)} px off centre, ${where.low.toFixed(0)} px above the bottom`);
       const hero = await bp.evaluate(() => window.QSPLAY.heroModel);
       check(hero.loaded && hero.authored === hero.parts, 'BUILD: the hero is the hand-authored .vox model, not boxes',
             `${hero.authored} of ${hero.parts} parts authored, ${hero.verts} vertices`);
