@@ -120,6 +120,17 @@ const GROUPS = {
   EM_HIVE:    [0xb7f04f],
   EM_WRECK:   [0xff9a3c],
   EM_SPORE:   [0xb8f07a, 0x8fe8c8],
+
+  /* ---- the authored hero (#34), after everything else so no index moves ---- */
+  HERO_HAIR:    [0x3a2a1e],
+  HERO_LEATHER: [0x5a3f2a],
+  HERO_BOOT:    [0x2e2622],
+  HERO_TROUSER: [0x3b3834],
+  HERO_CANVAS:  [0x6b604c],
+  HERO_EYE:     [0x16181c],
+  HERO_IRON:    [0x6b6660],
+  HERO_STEEL:   [0xa9b0b6],
+  HERO_MARK:    [0xd9a25e],
 };
 
 /** The flat table the renderer indexes. */

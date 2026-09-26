@@ -29,6 +29,7 @@ anything.
 | `docs/play/index.html` | **The playable build.** Open it in a browser and walk around; *Host a game* opens a second window and puts another character in the same world. Carries an inlined copy of `src/gen`, `src/mesh`, `src/sim` and `src/net`. |
 | `src/sim/lattice.mjs` | The spine of progression. Read it before touching combat numbers: every constant in `combat.mjs` is now a *base*, and `statsOf(a)` is what an actor actually plays with. |
 | `docs/concept/index.html` | The concept plate: the design document, the renderer, and an inlined copy of `src/gen` it draws. |
+| `assets/vox/`, `src/mesh/vox.mjs` | Hand-authored MagicaVoxel models (#34) and their reader. `hero.vox` dresses the hero rig, one named model per part; `tools/author-hero.mjs` wrote it and is retired the day someone edits the file in MagicaVoxel. The bundler carries each model into the build as base64. |
 | `tools/` | Headless render and verify harness. Dev only. |
 | `README.md` | Short public summary of the project. |
 
@@ -142,7 +143,8 @@ node tools/bundle-gen.mjs --check   # fail if either page is out of date
 ```
 
 Two pages carry a bundle: the plate gets `src/gen`, the playable build gets `src/gen`,
-`src/mesh`, `src/sim` **and** `src/net`. `MODULES` in `tools/bundle-gen.mjs` is the dependency order, and
+`src/mesh`, `src/sim` **and** `src/net`, plus `assets/vox/*.vox` as base64 — so a changed
+model is a stale bundle too, and SYNC says so. `MODULES` in `tools/bundle-gen.mjs` is the dependency order, and
 it is also the concatenation order — a module may only use names defined above it. Three traps
 the bundler now fails on rather than letting through, all of them consequences of concatenating
 everything into one scope:

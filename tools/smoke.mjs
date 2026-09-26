@@ -87,6 +87,9 @@ import { chunkWorld } from '../src/gen/chunk.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
 import { captureLook, compare, breaches, describe } from './lib/look.mjs';
 import { audit, worldFields, EXEMPT, ONE_SIDED } from './lib/consume.mjs';
+import { parseVox, writeVox, meshVox, VOX_SCALE, HERO_VOX_ROLES } from '../src/mesh/vox.mjs';
+import { HERO_RIG } from '../src/sim/anim.mjs';
+import { authorHero, HERO_VOX } from './author-hero.mjs';
 
 const argv = process.argv.slice(2);
 const UPDATE = argv.includes('--update');
@@ -327,6 +330,48 @@ if (NODE_HALF) for (const r of trailSuite()) check(r.ok, `WALK: ${r.label}`, r.d
    same inputs from the same state has to reproduce the host exactly, or a guest
    can only ever be approximately where it thinks it is. */
 if (NODE_HALF) for (const r of netSuite()) check(r.ok, `NET: ${r.label}`, r.detail);
+
+/* ---------- VOX: the authored hero, issue #34 ----------
+   The first hand-authored model. What has to hold for it to replace the
+   boxes: the file is a .vox a person can open and that reads back to the
+   same bytes; every part of the hero rig has a model of that name; each is
+   the size of the box it replaces to within a voxel, so the bones and poses
+   still fit; every colour it uses means something in the palette and
+   material tables; and the faces point out. */
+if (NODE_HALF) {
+  const bytes = new Uint8Array(readFileSync(HERO_VOX)), v = parseVox(bytes);
+  check(Buffer.compare(Buffer.from(authorHero()), Buffer.from(bytes)) === 0
+        && Buffer.compare(Buffer.from(writeVox(v)), Buffer.from(bytes)) === 0,
+        'VOX: assets/vox/hero.vox is what its author writes, and reads back to the same bytes',
+        `${bytes.length} bytes, version ${v.version}, ${v.models.length} models`);
+  const byName = Object.fromEntries(v.models.map((m) => [m.name, m]));
+  const off = [], unnamed = HERO_RIG.parts.filter((pt) => !byName[pt.name]).map((pt) => pt.name);
+  for (const pt of HERO_RIG.parts) {
+    const m = byName[pt.name]; if (!m) continue;
+    const dims = [m.size[0], m.size[2], m.size[1]].map((n) => n * VOX_SCALE);
+    if (dims.some((d, i) => Math.abs(d - pt.size[i]) > VOX_SCALE + 1e-9)) off.push(`${pt.name} ${dims.map((d) => d.toFixed(3)).join('x')} for ${pt.size.map((d) => d.toFixed(3)).join('x')}`);
+  }
+  check(unnamed.length === 0 && off.length === 0, 'VOX: every part of the hero rig has a model of its name and size',
+        unnamed.length ? `no model for ${unnamed.join(', ')}` : (off.length ? off.join('; ') : `${HERO_RIG.parts.length} parts, each within a voxel of its box`));
+  const used = new Set();
+  v.models.forEach((m) => { for (let q = 3; q < m.xyzi.length; q += 4) used.add(m.xyzi[q]); });
+  const loose = [...used].filter((c) => { const r = HERO_VOX_ROLES[c]; return !r || (!r.tint && !PAL[r.pal]) || r.mat === undefined; });
+  check(loose.length === 0, 'VOX: every colour the model uses is a palette entry and a material, not a raw colour',
+        loose.length ? `no role for index ${loose.join(', ')}` : `${used.size} colour indices, all mapped`);
+  /* A 2 m cube of 8 voxels: 24 outer faces and none between them, all facing out. */
+  const cube = { size: [2, 2, 2], xyzi: new Uint8Array([0,0,0,1, 1,0,0,1, 0,1,0,1, 1,1,0,1, 0,0,1,1, 1,0,1,1, 0,1,1,1, 1,1,1,1]) };
+  const cm = meshVox(cube, 1);
+  let outward = 0;
+  for (let t = 0; t < cm.idx.length; t += 3) {
+    const [a, b, c] = [cm.idx[t], cm.idx[t + 1], cm.idx[t + 2]].map((i) => cm.pos.slice(i * 3, i * 3 + 3));
+    const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+    const mid = [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3, (a[2] + b[2] + c[2]) / 3];
+    if (n[0] * mid[0] + n[1] * mid[1] + n[2] * mid[2] > 0) outward++;
+  }
+  check(cm.faces === 24 && outward === cm.idx.length / 3, 'VOX: a model meshes to its outer faces only, every one facing out',
+        `${cm.faces} faces on a 2x2x2 block, ${outward} of ${cm.idx.length / 3} triangles outward`);
+}
 
 const t1 = Date.now();
 let jumped = 0, vaulted = 0;
@@ -669,6 +714,11 @@ if (BROWSER_HALF) {
       await bp.goto(`file://${bfile}?stream=0`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
       await bp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
       check(bErrors.length === 0, 'BUILD: boots with no page errors', bErrors.slice(0, 3).join(' | '));
+      /* #34: the character is the authored model, read from the .vox the
+         bundle carries — and the page that did it is still one file on disk. */
+      const hero = await bp.evaluate(() => window.QSPLAY.heroModel);
+      check(hero.loaded && hero.authored === hero.parts, 'BUILD: the hero is the hand-authored .vox model, not boxes',
+            `${hero.authored} of ${hero.parts} parts authored, ${hero.verts} vertices`);
 
       /* The sky turns with the simulation (#30), and everything below that
          counts pixels would be counting a different hour and different weather
