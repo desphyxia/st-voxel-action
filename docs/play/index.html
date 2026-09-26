@@ -8595,9 +8595,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      Remembered per browser, and a browser that refuses storage just gets the
      defaults each time. */
   var GFX_PRESETS={
-    low:   {res:0.75,aa:false,shadows:'off', grass:0.35,wind:false,clouds:false,parts:0,  water:'simple',sway:false,magma:false,lamps:0,detail:false},
-    medium:{res:1,   aa:false,shadows:'low', grass:0.7, wind:true, clouds:false,parts:0.4,water:'full',  sway:true, magma:true, lamps:2,detail:true},
-    high:  {res:1.5, aa:true, shadows:'high',grass:1,   wind:true, clouds:true, parts:1,  water:'full',  sway:true, magma:true, lamps:4,detail:true}
+    low:   {res:0.75,aa:false,shadows:'off', grass:0.35,wind:false,clouds:false,parts:0,  water:'simple',sway:false,magma:false,lamps:0,detail:false,life:false},
+    medium:{res:1,   aa:false,shadows:'low', grass:0.7, wind:true, clouds:false,parts:0.4,water:'full',  sway:true, magma:true, lamps:2,detail:true, life:true},
+    high:  {res:1.5, aa:true, shadows:'high',grass:1,   wind:true, clouds:true, parts:1,  water:'full',  sway:true, magma:true, lamps:4,detail:true, life:true}
   };
   var GFX_COARSE=!!(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches);
   /* grassMode sits outside the presets: it is the comparison #70 asked for,
@@ -9676,6 +9676,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       case 'glass': tone(ctx,dest,t0,'sine',2400,2350,0.18*v,0.002,0.2);
                     tone(ctx,dest,t0,'sine',3170,3100,0.12*v,0.002,0.15);
                     burst(ctx,dest,nb,t0,'highpass',4200,0.7,0.2*v,0.002,0.03,o); break;
+      /* Ambient life (#69): all of it synthesised, like the rest. */
+      case 'chirp': tone(ctx,dest,t0,'sine',3100,4300,0.10*v,0.004,0.06);
+                    tone(ctx,dest,t0+0.09,'sine',3600,4800,0.09*v,0.004,0.05);
+                    tone(ctx,dest,t0+0.17,'sine',3300,3900,0.07*v,0.004,0.07); break;
+      case 'caw':   tone(ctx,dest,t0,'sawtooth',520,380,0.08*v,0.01,0.16);
+                    burst(ctx,dest,nb,t0,'bandpass',1400,1.6,0.10*v,0.01,0.14,o); break;
+      case 'wings': for(var wq=0;wq<4;wq++) burst(ctx,dest,nb,t0+wq*0.06,'bandpass',1100+wq*120,0.9,0.22*v,0.004,0.04,o+wq*0.2); break;
+      case 'plop':  tone(ctx,dest,t0,'sine',520,160,0.35*v,0.003,0.12);
+                    burst(ctx,dest,nb,t0+0.02,'lowpass',900,0.7,0.18*v,0.01,0.1,o); break;
+      case 'croak': tone(ctx,dest,t0,'square',150,118,0.10*v,0.01,0.12);
+                    tone(ctx,dest,t0+0.16,'square',142,112,0.09*v,0.01,0.12); break;
       case 'splash':burst(ctx,dest,nb,t0,'lowpass',1300,0.5,0.45*v,0.02,0.18,o);
                     burst(ctx,dest,nb,t0+0.03,'bandpass',2400,1.0,0.2*v,0.01,0.12,o+0.5); break;
       case 'swing': { var s=ctx.createBufferSource(); s.buffer=nb;
@@ -12236,6 +12247,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       });
     }
     skyFog();
+    lifeFrame();
     placeLamps();
     if(!built.warm) warmPrograms();
     shadowDue();
@@ -12472,6 +12484,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     {k:'sway',label:'Tree sway',opts:[[false,'Off'],[true,'On']]},
     {k:'magma',label:'Magma motion',opts:[[false,'Still'],[true,'Moving']]},
     {k:'lamps',label:'Lamp light',opts:[[0,'Off'],[2,'2'],[4,'4']]},
+    {k:'life',label:'Ambient life',sub:'birds, fish, insects, frogs, lizards',opts:[[false,'Off'],[true,'On']]},
     {k:'detail',label:'Moss & strata',opts:[[false,'Off'],[true,'On']]},
     {k:'aa',label:'Anti-aliasing',sub:'applies when the page is next loaded',opts:[[false,'Off'],[true,'On']]}
   ];
@@ -12593,6 +12606,381 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   });
   gfxEl.addEventListener('keyup',function(e){ e.stopPropagation(); });
 
+  /* ---------- ambient life (#69) ----------
+     Birds, fish, insects, frogs and lizards: drawn, never fought, and never
+     read by anything that simulates. Where each one is comes from the seed and
+     the place — an 8 m cell of the world, sampled for deep water, banks, sunlit
+     rock, canopy and grass — and what it is doing comes from skySec, the clock
+     host and guest share, so both windows see the same bird on the same branch
+     without a byte crossing the wire. What reacts to a player reacts to either
+     of them, by their positions, which both windows also hold.
+
+     The scars are silent: a cell more than a third scar holds nothing, and no
+     song is heard over it. Plate mode draws none of it, so the look gate
+     measures the world rather than where a fish happened to be. */
+  var LIFE_CELL=8, LIFE_R=40, LIFE_SAMPLES=12, LIFE_NEW=4;
+  var LIFE_CAP={bird:64,wing:128,fish:40,leap:8,frog:24,lizard:16,fly:48,tiny:96,shade:24,ring:12};
+  var life={built:null,m:null,cells:new Map(),state:new Map(),rings:[],list:[],
+            stats:{cells:0,fish:0,jumps:0,birds:0,flocks:0,butterflies:0,dragonflies:0,midges:0,frogs:0,lizards:0,silent:0}};
+  function lifeHash(a,b,c,d){
+    var h=Math.imul((a|0)^0x9e3779b9,0x85ebca6b)^Math.imul((b|0)+0x632be5ab,0xc2b2ae35)
+          ^Math.imul((c|0)+0x27d4eb2f,0x165667b1)^Math.imul((d|0)+0x61c88647,0x9e3779b1);
+    h^=h>>>15; h=Math.imul(h,0x2c1b3c6d); h^=h>>>12; h=Math.imul(h,0x297a2d39); h^=h>>>15;
+    return (h>>>0)/4294967296;
+  }
+  function lifeSeed(){
+    var s=String(built&&built.cfg?built.cfg.seed:''), h=2166136261;
+    for(var i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); }
+    return h|0;
+  }
+  /** The ground at a world point, from the loaded chunk: null where nothing is loaded. */
+  function lifeGround(x,z){
+    var at=worldAt(x,z); if(!at) return null;
+    var d=at.d, V=QS.V, gi=Math.floor((at.x+d.half)/V), gj=Math.floor((at.z+d.half)/V);
+    if(gi<1||gj<1||gi>=d.NX-1||gj>=d.NZ-1) return null;
+    var k=gi*d.NZ+gj, wet=(d.FLG[k]&1)!==0;
+    return {d:d,gi:gi,gj:gj,k:k,y:d.Hs[k],wet:wet,wl:wet?d.WL[k]:-Infinity,lx:at.x,lz:at.z};
+  }
+  function lifeWetAt(x,z){ var g=lifeGround(x,z); return g&&g.wet?g.wl-g.y:0; }
+  /* ---- what a cell can hold ----
+     Sampled once per world, at hashed points, and cached; a cell whose chunk
+     is not loaded yet is asked again later rather than remembered as empty. */
+  function lifeCell(cx,cz,seed){
+    var key=cx+','+cz, got=life.cells.get(key);
+    if(got!==undefined) return got;
+    var G=built.data&&built.data.G; if(!G) return null;
+    var mx=cx*LIFE_CELL+LIFE_CELL/2, mz=cz*LIFE_CELL+LIFE_CELL/2, c, scar=0;
+    /* Off a window world's edge there is nothing, for good; a streamed chunk
+       not loaded yet is asked again when it is. */
+    if(!lifeGround(mx,mz)){
+      if(streaming) return null;
+      got={cx:cx,cz:cz,dom:-1,scar:0,silent:true,fish:[],banks:[],rocks:[],perches:[],flowers:[],ponds:[]};
+      life.cells.set(key,got); return got;
+    }
+    try{ c=G.cell(Math.round(mx),Math.round(mz)); }catch(e){ return null; }
+    for(var b=0;b<QS.BIOMES.length;b++) if(QS.BIOMES[b].scar) scar+=(c.w&&c.w[b])||0;
+    var out={cx:cx,cz:cz,dom:c.dom,scar:scar,silent:scar>0.35,fish:[],banks:[],rocks:[],perches:[],flowers:[],ponds:[]};
+    if(!out.silent){
+      var V=QS.V;
+      for(var s=0;s<LIFE_SAMPLES;s++){
+        var x=cx*LIFE_CELL+lifeHash(seed,cx,cz,s*2)*LIFE_CELL, z=cz*LIFE_CELL+lifeHash(seed,cx,cz,s*2+1)*LIFE_CELL;
+        var g=lifeGround(x,z); if(!g) continue;
+        if(g.wet){
+          var depth=g.wl-g.y;
+          if(depth>=0.7&&out.fish.length<2){
+            /* the widest circle round it that stays in water deep enough to swim */
+            var r=2.2;
+            for(;r>0.6;r-=0.4){ var ok=true;
+              for(var q=0;q<8&&ok;q++){ var a=q*Math.PI/4; if(lifeWetAt(x+Math.cos(a)*r,z+Math.sin(a)*r)<0.45) ok=false; }
+              if(ok) break; }
+            if(r>0.6) out.fish.push({x:x,z:z,y:g.wl,r:r});
+          } else if(out.ponds.length<1) out.ponds.push({x:x,z:z,y:g.wl});
+          continue;
+        }
+        /* a bank: dry, water within half a metre, and not far above it */
+        if(out.banks.length<2){
+          var wd=null, wl=0;
+          for(var q2=0;q2<8;q2++){ var a2=q2*Math.PI/4, ww=lifeGround(x+Math.cos(a2)*0.5,z+Math.sin(a2)*0.5);
+            if(ww&&ww.wet&&Math.abs(ww.wl-g.y)<0.6){ wd=a2; wl=ww.wl; break; } }
+          if(wd!==null){ out.banks.push({x:x,z:z,y:g.y,dir:wd,wl:wl}); continue; }
+        }
+        var mat=QS.surfaceAt(g.d,g.gi,g.gj,Math.floor((g.y-0.001)/V)).mat;
+        if((mat===QS.MAT.ROCK||mat===QS.MAT.BASALT)&&out.rocks.length<1){ out.rocks.push({x:x,z:z,y:g.y}); continue; }
+        /* a perch: the top of a canopy column, well above the ground */
+        if(out.perches.length<2){
+          var tops=propTops(g.d), bx=Math.round(g.lx/V), bz=Math.round(g.lz/V), best=null;
+          for(var a3=-2;a3<=2;a3++)for(var b3=-2;b3<=2;b3++){
+            var e=tops.get((bx+a3+8192)*16384+(bz+b3+8192));
+            if(e&&e[1]===QS.MAT.LEAF&&e[0]>g.y+1.4&&(!best||e[0]>best[0])) best=[e[0],x+a3*V,z+b3*V];
+          }
+          if(best){ out.perches.push({x:best[1],z:best[2],y:best[0]}); continue; }
+        }
+        if(mat===QS.MAT.GRASS&&(c.dom===QS.BIO.MEADOW||c.dom===QS.BIO.PINE)&&out.flowers.length<2)
+          out.flowers.push({x:x,z:z,y:g.y});
+      }
+    }
+    life.cells.set(key,out); life.stats.cells++;
+    return out;
+  }
+  /* ---- the meshes: a handful of instanced draws for all of it ---- */
+  function lifeMeshes(){
+    var box=new THREE.BoxGeometry(1,1,1), g={};
+    function inst(name,geo,mat,cap){
+      var m=new THREE.InstancedMesh(geo,mat,cap); m.count=0; m.frustumCulled=false;
+      m.castShadow=false; m.receiveShadow=false; m.userData.kind='life'; m.userData.life=name;
+      m.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(cap*3),3);
+      built.scene.add(m); g[name]=m; return m;
+    }
+    var wingR=new THREE.BoxGeometry(1,0.12,1).translate(0.5,0,0), wingL=wingR.clone().translate(-1,0,0);
+    inst('bird',box,new THREE.MeshLambertMaterial(),LIFE_CAP.bird);
+    inst('wingR',wingR,new THREE.MeshLambertMaterial(),LIFE_CAP.bird);
+    inst('wingL',wingL,new THREE.MeshLambertMaterial(),LIFE_CAP.bird);
+    /* A fish is a dark shape under the surface, drawn over the water rather
+       than under it: the water is near-opaque, and this is what reads. */
+    var fm=inst('fish',box,new THREE.MeshBasicMaterial({transparent:true,opacity:0.42,depthWrite:false}),LIFE_CAP.fish);
+    fm.renderOrder=4;
+    inst('leap',box,new THREE.MeshLambertMaterial(),LIFE_CAP.leap);
+    inst('frog',box,new THREE.MeshLambertMaterial(),LIFE_CAP.frog);
+    inst('lizard',box,new THREE.MeshLambertMaterial(),LIFE_CAP.lizard);
+    var flyR=new THREE.PlaneGeometry(1,1).rotateX(-Math.PI/2).translate(0.5,0,0), flyL=flyR.clone().translate(-1,0,0);
+    inst('flyR',flyR,new THREE.MeshBasicMaterial({side:THREE.DoubleSide}),LIFE_CAP.fly);
+    inst('flyL',flyL,new THREE.MeshBasicMaterial({side:THREE.DoubleSide}),LIFE_CAP.fly);
+    inst('tiny',box,new THREE.MeshBasicMaterial(),LIFE_CAP.tiny);
+    makeBlob(1).material.dispose();   /* for the blob texture every shadow here shares */
+    var sh=inst('shade',new THREE.CircleGeometry(1,16).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({map:blobTex,transparent:true,opacity:0.30,depthWrite:false,
+      polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),LIFE_CAP.shade);
+    sh.renderOrder=1;
+    var rg=inst('ring',new THREE.RingGeometry(0.8,1,24).rotateX(-Math.PI/2),
+      new THREE.MeshBasicMaterial({transparent:true,blending:THREE.AdditiveBlending,depthWrite:false}),LIFE_CAP.ring);
+    rg.renderOrder=5;
+    return g;
+  }
+  var lm4=new THREE.Matrix4(), lq=new THREE.Quaternion(), lp=new THREE.Vector3(), ls=new THREE.Vector3(),
+      le=new THREE.Euler(0,0,0,'YXZ'), lc=new THREE.Color();
+  function lifePut(m,x,y,z,yaw,pitch,roll,sx,sy,sz,col){
+    var n=m.count; if(n>=m.instanceMatrix.count) return false;
+    le.set(pitch,yaw,roll); lq.setFromEuler(le); lp.set(x,y,z); ls.set(sx,sy,sz);
+    lm4.compose(lp,lq,ls); m.setMatrixAt(n,lm4);
+    lc.setHex(col); m.setColorAt(n,lc); m.count=n+1; return true;
+  }
+  function lifeBodies(){ var o=[], a=player(), b=other(); if(a) o.push(a); if(b) o.push(b); return o; }
+  function lifeNear(bodies,x,z){
+    var best=Infinity, who=null;
+    for(var i=0;i<bodies.length;i++){ var dx=bodies[i].x-x, dz=bodies[i].z-z, d=Math.sqrt(dx*dx+dz*dz);
+      if(d<best){ best=d; who=bodies[i]; } }
+    return {d:best,b:who};
+  }
+  function lifeRing(x,y,z,T){
+    life.rings.push({x:x,y:y+0.03,z:z,t:T});
+    if(life.rings.length>LIFE_CAP.ring) life.rings.shift();
+  }
+  /* A per-creature record of what it did, for the few that remember: a bird
+     that flew stays flown until the players have gone. */
+  function lifeState(id){ var s=life.state.get(id); if(!s){ s={mode:0,t0:-1e9,dx:1,dz:0,k:-1}; life.state.set(id,s); } return s; }
+  function lifeHide(){ if(life.m) for(var k in life.m) life.m[k].count=0; life.list.length=0; }
+  function lifeFrame(){
+    if(!built) return;
+    if(life.built!==built){ life.built=built; life.m=null; life.cells.clear(); life.state.clear(); life.rings.length=0; }
+    if(!GFX.life||plateMode){ lifeHide(); return; }
+    if(!life.m) life.m=lifeMeshes();
+    /* Only creatures that reacted keep a record; the settled ones are let go
+       when the list grows, and are no different for it. */
+    if(life.state.size>1500) life.state.forEach(function(v,k){ if(v.mode===0) life.state.delete(k); });
+    var M=life.m; for(var mk in M) M[mk].count=0;
+    life.list.length=0;
+    var T=skySec, seed=lifeSeed(), sky=skyNow, day=sky.day, rain=sky.rain||0, bodies=lifeBodies();
+    var st=life.stats; st.fish=st.birds=st.flocks=st.butterflies=st.dragonflies=st.midges=st.frogs=st.lizards=st.silent=0;
+    var c0x=Math.floor((cam.tx-LIFE_R)/LIFE_CELL), c1x=Math.floor((cam.tx+LIFE_R)/LIFE_CELL),
+        c0z=Math.floor((cam.tz-LIFE_R)/LIFE_CELL), c1z=Math.floor((cam.tz+LIFE_R)/LIFE_CELL), made=0, cx, cz, i;
+    for(cx=c0x;cx<=c1x;cx++) for(cz=c0z;cz<=c1z;cz++){
+      var fresh=!life.cells.has(cx+','+cz);
+      if(fresh&&made>=LIFE_NEW) continue;
+      var cell=lifeCell(cx,cz,seed); if(!cell) continue;
+      if(fresh) made++;
+      if(cell.silent){ if(cell.dom>=0) st.silent++; continue; }
+      lifeFish(cell,seed,T,bodies,M);
+      lifePerched(cell,seed,T,bodies,M,day,rain);
+      if(day>0.4&&rain<0.3) lifeButterflies(cell,seed,T,M);
+      lifePonds(cell,seed,T,M,day);
+      lifeFrogs(cell,seed,T,bodies,M,day);
+      if(day>0.5&&rain<0.2) lifeLizards(cell,seed,T,bodies,M);
+    }
+    if(day>0.25&&rain<0.5) lifeFlocks(seed,T,M);
+    /* ripples: a ring that widens and fades over a second */
+    for(i=life.rings.length-1;i>=0;i--){
+      var rr=life.rings[i], u=(T-rr.t)/1.1;
+      if(u<0||u>1){ life.rings.splice(i,1); continue; }
+      var k=1-u, g2=Math.round(0.55*k*255);
+      lifePut(M.ring,rr.x,rr.y,rr.z,0,0,0,0.15+u*0.75,1,0.15+u*0.75,(g2<<16)|(g2<<8)|g2);
+    }
+    for(mk in M){ M[mk].instanceMatrix.needsUpdate=true; if(M[mk].instanceColor) M[mk].instanceColor.needsUpdate=true; }
+  }
+  function lifeSee(kind,id,x,y,z){ life.list.push({kind:kind,id:id,x:x,y:y,z:z}); }
+  /* ---- fish: circling under the surface, darting, and now and then a leap ---- */
+  function lifeFish(cell,seed,T,bodies,M){
+    for(var s=0;s<cell.fish.length;s++){
+      var sp=cell.fish[s], n=1+Math.floor(lifeHash(seed,cell.cx,cell.cz,100+s)*3);
+      for(var f=0;f<n;f++){
+        var id=cell.cx+','+cell.cz+':f'+s+'.'+f, h=lifeHash(seed,cell.cx*31+s,cell.cz*17+f,7);
+        var r=sp.r*(0.55+0.45*lifeHash(seed,cell.cx,cell.cz,200+s*8+f)), w=(0.22+0.2*h)/r*(h<0.5?1:-1);
+        var ph=h*6.2832+f*2.1, a=w*T+ph, x=sp.x+Math.cos(a)*r, z=sp.z+Math.sin(a)*r;
+        /* heading along the circle; yaw turns +x (a box's long side) toward it */
+        var sg=w>0?1:-1, hx=-Math.sin(a)*sg, hz=Math.cos(a)*sg, yaw=Math.atan2(-hz,hx);
+        /* a wading body within a couple of metres scatters them */
+        var nb=lifeNear(bodies,x,z);
+        if(nb.b&&nb.d<2.6&&nb.b.y<sp.y+0.6){ var k=(2.6-nb.d)/2.6; x+=(x-nb.b.x)/Math.max(nb.d,0.1)*1.4*k; z+=(z-nb.b.z)/Math.max(nb.d,0.1)*1.4*k; }
+        /* a leap: in one eighteen-second window of five a fish may jump, for 0.7 s */
+        var P=18, off=h*P, kw=Math.floor((T+off)/P), leap=lifeHash(seed,kw,cell.cx*97+s,cell.cz*89+f);
+        var tj=kw*P-off+2+leap*12, u=(T-tj)/0.7, S=lifeState(id);
+        if(leap<0.22&&u>=0&&u<=1){
+          if(S.k!==kw){ S.k=kw; st_jump(); lifeRing(x,sp.y,z,T); sndPlay('splash',x,z,0.35); }
+          var hy=0.55*4*u*(1-u), fwd=0.7*u;
+          lifePut(M.leap,x+hx*fwd,sp.y+hy,z+hz*fwd,yaw,0,(0.5-u)*1.8,0.42,0.10,0.13,0x9aa7a8);
+          if(u>0.93&&S.k2!==kw){ S.k2=kw; lifeRing(x+hx*0.7,sp.y,z+hz*0.7,T); }
+          lifeSee('leap',id,x,sp.y+hy,z);
+        } else {
+          lifePut(M.fish,x,sp.y+0.012,z,yaw,0,0,0.46,0.01,0.15,0x06161d);
+          lifeSee('fish',id,x,sp.y,z);
+        }
+        life.stats.fish++;
+      }
+    }
+  }
+  function st_jump(){ life.stats.jumps++; }
+  /* ---- birds on the canopy: they sit, they turn, and they go when you come ---- */
+  var BIRD_COL={song:[0x6b4a2e,0x8a3a2a,0xb8923a],crow:[0x1c1c20,0x24242a,0x1a1a1e]};
+  function lifePerched(cell,seed,T,bodies,M,day,rain){
+    var kind=(cell.dom===QS.BIO.THORN||cell.dom===QS.BIO.MESA)?'crow':'song';
+    for(var s=0;s<cell.perches.length;s++){
+      /* most canopies are empty at any one visit: a bird is an event */
+      var ph=lifeHash(seed,cell.cx,cell.cz,300+s); if(ph>0.3) continue;
+      var p=cell.perches[s], n=1+(ph<0.08?1:0);
+      for(var b=0;b<n;b++){
+        var id=cell.cx+','+cell.cz+':b'+s+'.'+b, h=lifeHash(seed,cell.cx*13+s,cell.cz*7+b,11);
+        var px=p.x+(b?0.35:0), pz=p.z+(b?-0.2:0), py=p.y, S=lifeState(id), nb=lifeNear(bodies,px,pz), x, y, z, yaw, flap=0;
+        var size=kind==='crow'?0.38:0.3, col=BIRD_COL[kind][Math.floor(h*3)];
+        if(S.mode===0&&nb.d<4.5){
+          S.mode=1; S.t0=T; var dx=px-(nb.b?nb.b.x:px-1), dz=pz-(nb.b?nb.b.z:pz), l=Math.sqrt(dx*dx+dz*dz)||1;
+          var j=(h-0.5)*1.2, ca=Math.cos(j), sa=Math.sin(j); S.dx=(dx*ca-dz*sa)/l; S.dz=(dx*sa+dz*ca)/l;
+          sndPlay('wings',px,pz,0.5);
+        }
+        var s2=T-S.t0;
+        if(S.mode===1&&s2>5){ S.mode=2; }
+        if(S.mode===2&&s2>20&&nb.d>7){ S.mode=3; S.t0=T; s2=0; }
+        if(S.mode===3&&s2>3){ S.mode=0; }
+        if(S.mode===2) continue;
+        if(S.mode===0){
+          x=px; y=py+size*0.5; z=pz; yaw=lifeHash(seed,Math.floor(T/3+h*7),cell.cx+s,cell.cz+b)*6.2832;
+          /* song, by day, where there is any */
+          if(day>0.4&&rain<0.3&&lifeHash(seed,Math.floor(T/2.5+h*5),cell.cx*3+s,cell.cz*5+b)<0.06&&S.sang!==Math.floor(T/2.5+h*5)){
+            S.sang=Math.floor(T/2.5+h*5); sndPlay(kind==='crow'?'caw':'chirp',x,z,0.45);
+          }
+        } else {
+          var u=S.mode===1?s2:(3-s2)*1.6;
+          x=px+S.dx*6*u; z=pz+S.dz*6*u; y=py+size*0.5+2.6*Math.pow(Math.max(u,0),1.2)*0.5+u*0.8;
+          yaw=Math.atan2(-S.dz,S.dx); flap=Math.sin(T*28+h*9)*0.9;
+        }
+        lifeBird(M,x,y,z,yaw,flap,size,col);
+        lifeSee('bird',id,x,y,z); life.stats.birds++;
+      }
+    }
+  }
+  function lifeBird(M,x,y,z,yaw,flap,size,col){
+    lifePut(M.bird,x,y,z,yaw,0,0,size,size*0.55,size*0.6,col);
+    lifePut(M.wingR,x,y+size*0.1,z,yaw,0,flap,size*0.9,size*0.5,size*0.5,col);
+    lifePut(M.wingL,x,y+size*0.1,z,yaw,0,-flap,size*0.9,size*0.5,size*0.5,col);
+  }
+  /* ---- flocks: crossing a 64 m region in a window of 45 s, shadows below ---- */
+  function lifeFlocks(seed,T,M){
+    var R=64, W=45, w=Math.floor(T/W), s=(T-w*W)/W, rx0=Math.floor((cam.tx-R)/R), rz0=Math.floor((cam.tz-R)/R);
+    var sunY=sunDirV.y, shadows=skyNow.sunI>0.25&&sunY>0.2;
+    for(var rx=rx0;rx<=rx0+2;rx++) for(var rz=rz0;rz<=rz0+2;rz++){
+      var h=lifeHash(seed,rx,rz,w*7+3); if(h>0.3) continue;
+      var mx=rx*R+R/2, mz=rz*R+R/2, c;
+      try{ c=built.data.G.cell(Math.round(mx),Math.round(mz)); }catch(e){ continue; }
+      var scar=0; for(var b=0;b<QS.BIOMES.length;b++) if(QS.BIOMES[b].scar) scar+=(c.w&&c.w[b])||0;
+      if(scar>0.35) continue;
+      var kind=c.water?'gull':((c.dom===QS.BIO.THORN||c.dom===QS.BIO.MESA)?'crow':'song');
+      var th=lifeHash(seed,rx,rz,w*7+4)*6.2832, dx=Math.cos(th), dz=Math.sin(th);
+      var n=5+Math.floor(lifeHash(seed,rx,rz,w*7+5)*5), size=kind==='gull'?0.36:(kind==='crow'?0.28:0.18);
+      var bcol=kind==='gull'?0xe8ecee:(kind==='crow'?0x1c1c20:0x6b4a2e), alt=13+lifeHash(seed,rx,rz,w*7+6)*5;
+      life.stats.flocks++;
+      for(var i=0;i<n;i++){
+        var ox=(lifeHash(seed,rx,rz,w*97+i)-0.5)*7, oz=(lifeHash(seed,rx,rz,w*89+i)-0.5)*5-i*0.8;
+        var along=(s-0.5)*140+oz, x=mx+dx*along-dz*ox, z=mz+dz*along+dx*ox;
+        var y=alt+Math.sin(T*0.9+i)*0.6, flap=Math.sin(T*(kind==='gull'?7:12)+i*1.7)*0.8;
+        lifeBird(M,x,y,z,Math.atan2(-dz,dx),flap,size*1.2,bcol);
+        lifeSee('flock',rx+','+rz+':'+w+'.'+i,x,y,z);
+        if(shadows){
+          var gy=col2(x,z,y), k=(y-gy)/sunY, sx=x-sunDirV.x*k, sz=z-sunDirV.z*k, gs=col2(sx,sz,y);
+          if(gs>-Infinity) lifePut(M.shade,sx,gs+0.04,sz,0,0,0,size*2.2,1,size*1.6,0xffffff);
+        }
+      }
+    }
+  }
+  function col2(x,z,y){ var g=col?col.supportUnder(x,z,0.2,y):-Infinity; return g>-Infinity?g:0; }
+  /* ---- butterflies over the grass by day ---- */
+  var FLY_COL=[0xf2efe2,0xf0d24a,0xe88a2a,0x6f9ae0];
+  function lifeButterflies(cell,seed,T,M){
+    for(var s=0;s<cell.flowers.length;s++){
+      var fh=lifeHash(seed,cell.cx,cell.cz,400+s); if(fh>0.35) continue;
+      var f=cell.flowers[s], n=1+(fh<0.1?1:0);
+      for(var b=0;b<n;b++){
+        var h=lifeHash(seed,cell.cx*19+s,cell.cz*23+b,13), a=h*50, bb=h*31, cc=h*17;
+        var x=f.x+1.6*Math.sin(0.37*T+a), z=f.z+1.6*Math.sin(0.29*T+cc), y=f.y+1.0+0.3*Math.sin(1.3*T+bb);
+        var yaw=Math.atan2(-0.29*1.6*Math.cos(0.29*T+cc),0.37*1.6*Math.cos(0.37*T+a)), flap=1.2*Math.abs(Math.sin(15*T+a));
+        var col=FLY_COL[Math.floor(h*4)];
+        lifePut(M.flyR,x,y,z,yaw,0,flap,0.2,1,0.17,col); lifePut(M.flyL,x,y,z,yaw,0,-flap,0.2,1,0.17,col);
+        lifeSee('butterfly',cell.cx+','+cell.cz+':u'+s+'.'+b,x,y,z); life.stats.butterflies++;
+      }
+    }
+  }
+  /* ---- over still water: a dragonfly by day, midges at dusk ---- */
+  function lifePonds(cell,seed,T,M,day){
+    for(var s=0;s<cell.ponds.length;s++){
+      var p=cell.ponds[s], h=lifeHash(seed,cell.cx,cell.cz,500+s);
+      if(day>0.45&&h<0.7){
+        var seg=1.6, k=Math.floor(T/seg+h*9), u=Math.min(1,(T/seg+h*9-k)/0.35);
+        var ax=p.x+(lifeHash(seed,k,cell.cx,cell.cz)-0.5)*5, az=p.z+(lifeHash(seed,k,cell.cz,cell.cx)-0.5)*5;
+        var bx=p.x+(lifeHash(seed,k+1,cell.cx,cell.cz)-0.5)*5, bz=p.z+(lifeHash(seed,k+1,cell.cz,cell.cx)-0.5)*5;
+        var x=bx+(ax-bx)*(1-u), z=bz+(az-bz)*(1-u), y=p.y+0.45+0.05*Math.sin(T*5), yaw=Math.atan2(-(bz-az),bx-ax);
+        lifePut(M.tiny,x,y,z,yaw,0,0,0.2,0.03,0.03,0x2a8a8a);
+        var fl=0.25*Math.sin(T*60);
+        lifePut(M.flyR,x,y+0.01,z,yaw+Math.PI/2,0,fl,0.09,1,0.03,0xb8d4dc);
+        lifePut(M.flyL,x,y+0.01,z,yaw+Math.PI/2,0,-fl,0.09,1,0.03,0xb8d4dc);
+        lifeSee('dragonfly',cell.cx+','+cell.cz+':d'+s,x,y,z); life.stats.dragonflies++;
+      }
+      if(day>0.12&&day<0.55){
+        for(var i=0;i<10;i++){
+          var hh=lifeHash(seed,cell.cx*7+i,cell.cz*11+s,600), t=T*(1.5+hh);
+          var x2=p.x+0.35*Math.sin(t+hh*20), z2=p.z+0.35*Math.cos(t*1.3+hh*11), y2=p.y+0.55+0.25*Math.sin(t*1.7+hh*7);
+          lifePut(M.tiny,x2,y2,z2,0,0,0,0.022,0.022,0.022,0x151515);
+        }
+        life.stats.midges++;
+      }
+    }
+  }
+  /* ---- frogs on the bank: into the water when you come, calling at dusk ---- */
+  function lifeFrogs(cell,seed,T,bodies,M,day){
+    for(var s=0;s<cell.banks.length;s++){
+      var p=cell.banks[s], n=1+(lifeHash(seed,cell.cx,cell.cz,700+s)<0.4?1:0);
+      for(var b=0;b<n;b++){
+        var id=cell.cx+','+cell.cz+':r'+s+'.'+b, h=lifeHash(seed,cell.cx*29+s,cell.cz*31+b,17);
+        var ox=(b?0.3:0)*Math.cos(p.dir+1.6), oz=(b?0.3:0)*Math.sin(p.dir+1.6);
+        var x=p.x+ox, z=p.z+oz, y=p.y, S=lifeState(id), nb=lifeNear(bodies,x,z);
+        if(S.mode===0&&nb.d<3.2){ S.mode=1; S.t0=T; }
+        var s2=T-S.t0;
+        if(S.mode===1&&s2>0.45){ S.mode=2; lifeRing(x+Math.cos(p.dir)*0.9,p.wl,z+Math.sin(p.dir)*0.9,T); sndPlay('plop',x,z,0.6); }
+        if(S.mode===2&&s2>25&&nb.d>6){ S.mode=3; S.t0=T; s2=0; }
+        if(S.mode===3&&s2>0.45){ S.mode=0; }
+        if(S.mode===2) continue;
+        var u=S.mode===1?s2/0.45:(S.mode===3?1-s2/0.45:0);
+        var fx=x+Math.cos(p.dir)*0.9*u, fz=z+Math.sin(p.dir)*0.9*u, fy=y+(p.wl-y)*u+0.35*4*u*(1-u);
+        lifePut(M.frog,fx,fy+0.05,fz,-p.dir,0,0,0.24,0.13,0.19,h<0.5?0x4f6b2c:0x6b5a2e);
+        lifeSee('frog',id,fx,fy,fz); life.stats.frogs++;
+        if(S.mode===0&&day<0.5&&lifeHash(seed,Math.floor(T/4+h*9),cell.cx+s,cell.cz+b)<0.1&&S.sang!==Math.floor(T/4+h*9)){
+          S.sang=Math.floor(T/4+h*9); sndPlay('croak',x,z,0.5);
+        }
+      }
+    }
+  }
+  /* ---- lizards on sunlit rock: gone into a crack when you come ---- */
+  function lifeLizards(cell,seed,T,bodies,M){
+    for(var s=0;s<cell.rocks.length;s++){
+      var p=cell.rocks[s], id=cell.cx+','+cell.cz+':l'+s, h=lifeHash(seed,cell.cx*37+s,cell.cz*41,19);
+      var S=lifeState(id), nb=lifeNear(bodies,p.x,p.z);
+      if(S.mode===0&&nb.d<3.5){ S.mode=1; S.t0=T; var dx=p.x-(nb.b?nb.b.x:p.x-1), dz=p.z-(nb.b?nb.b.z:p.z), l=Math.sqrt(dx*dx+dz*dz)||1; S.dx=dx/l; S.dz=dz/l; }
+      var s2=T-S.t0;
+      if(S.mode===1&&s2>0.3) S.mode=2;
+      if(S.mode===2&&s2>20&&nb.d>6) S.mode=0;
+      if(S.mode===2) continue;
+      var u=S.mode===1?s2/0.3:0, x=p.x+S.dx*1.2*u, z=p.z+S.dz*1.2*u;
+      var yaw=S.mode===1?Math.atan2(-S.dz,S.dx):h*6.2832+0.4*Math.sin(Math.floor(T/2.3+h*4));
+      lifePut(M.lizard,x,p.y+0.03,z,yaw,0,0,0.5,0.09,0.13,h<0.5?0x8a7650:0x6d6a5a);
+      lifeSee('lizard',id,x,p.y,z); life.stats.lizards++;
+    }
+  }
+
   /* ---------- the report (#71) ----------
      What the recorder writes every five seconds, what a report is made of,
      and the panel that offers it: after an error, when the graphics context
@@ -12663,6 +13051,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     } else byHand();
   }
   document.getElementById('crashcopy').addEventListener('click',function(e){ e.stopPropagation(); copyReport(); });
+  /* Framed — as the published artifact is — a page is not allowed to hand
+     over a file, so the button would do nothing. Copy report still works. */
+  try{ if(window.top!==window) document.getElementById('crashsave').hidden=true; }catch(e){ document.getElementById('crashsave').hidden=true; }
   document.getElementById('crashsave').addEventListener('click',function(e){
     e.stopPropagation();
     try{
@@ -12767,6 +13158,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get shadowRenders(){ return shadowRenders; },
     /* #71: GPU buffers and bytes as the context saw them made and freed. */
     get memory(){ return memNow(); },
+    /* #69: what ambient life drew in the last frame, by kind and by creature,
+       and what a cell of the world was found to hold. */
+    get life(){ return {on:!!GFX.life,stats:Object.assign({},life.stats),drawn:life.list.length}; },
+    lifeList:function(){ return life.list.map(function(e){ return {kind:e.kind,id:e.id,x:e.x,y:e.y,z:e.z}; }); },
+    lifeCellAt:function(x,z){ return lifeCell(Math.floor(x/LIFE_CELL),Math.floor(z/LIFE_CELL),lifeSeed()); },
+    /* One update of ambient life without drawing a frame, for a gate that
+       needs to watch a fish for two minutes in software rendering. */
+    lifeTick:function(){ lifeFrame(); return life.list.length; },
+    /* Where a point of the world lands on screen, in CSS pixels. */
+    screenOf:function(x,y,z){ return QS.project(cam,{x:x,y:y,z:z},vp); },
     /* The flight recorder (#71): the record as it stands, the report text,
        and the doors the panel uses. */
     get flight(){ return JSON.parse(JSON.stringify(REC)); },
