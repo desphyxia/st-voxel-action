@@ -1003,6 +1003,21 @@ function makeGen(seedStr,force){
     var n=N.h.fbm(x*0.017,z*0.017,2);
     return Math.round(base+(n-0.38)*hill*1.9)-1;
   }
+  /**
+   * The level a river's surface stands at: the same smooth shape its bed
+   * follows, but not rounded to the metre. The surface used to be the bed
+   * plus 0.75, so wherever the land's shape crossed a whole metre the river
+   * dropped a metre at once — a fall across the stream — and between those,
+   * the banks eased it down a quarter at a time in every direction, a river
+   * that slanted across itself. Now it descends a quarter-metre at a time
+   * along its length, as gently as the land does, and stands level across it;
+   * the bed is cut to keep the river's depth under whatever the level is.
+   */
+  function riverLevel(x,z,w){
+    var base=wsum(w,'base'), hill=wsum(w,'hill');
+    var n=N.h.fbm(x*0.017,z*0.017,2);
+    return Math.round((base+(n-0.38)*hill*1.9-0.25)*4)/4;
+  }
   function riverAt(x,z){
     var v=N.r.fbm(x*0.0105,z*0.0105,3), d=Math.abs(v-0.5)*155;
     var w=1+Math.floor(N.r.n2(x*0.03+13,z*0.03+13)*4); if(w>4)w=4;
@@ -1065,7 +1080,12 @@ function makeGen(seedStr,force){
     }
     H+=pillarAt(x,z,colw);
     var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
-    if(r.d<rw/2||riverCorner(x,z,rw)){ H=Math.min(H-1,riverBed(x,z,w)); water=true; }
+    var rl=null;
+    /* The smooth level, but never above the ground the river runs through: a
+       dip in the land would otherwise hold water metres deep above it, which
+       the banks then pulled down and the bed was carved below the world to
+       keep. Where the land is lower, the surface sits a quarter under it. */
+    if(r.d<rw/2||riverCorner(x,z,rw)){ rl=Math.min(riverLevel(x,z,w),H-0.25); H=Math.min(H-1,Math.floor(rl-0.75+1e-9)); water=true; }
     if(!water&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
@@ -1082,7 +1102,7 @@ function makeGen(seedStr,force){
          through them. */
       if(f<0.022){ H=Math.min(H-1,riverBed(x,z,w)); magma=true; water=false; } }
     H=clamp(H,0,CEIL);
-    if(water) wl=H+(pond?1.25:0.75);
+    if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
     return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw};
   }
@@ -2401,7 +2421,11 @@ function drainPerched(w) {
         for (var d = 0; d < 4; d++) {
           var nx = p[0] + DIRS4[d][0], nz = p[1] + DIRS4[d][1], nl = lvl(nx, nz);
           if (nl === null) continue;
-          if (Math.abs(nl - wl0) < STEP) {
+          /* Joined neighbour to neighbour, as water is: a river easing down a
+             quarter at a time is one pool, though its ends differ by more
+             than a step. Measured against where the pool was entered, a hump
+             of 8.25 / 8.0 / 7.75 split at 7.75 and never saw itself perched. */
+          if (Math.abs(nl - pl) < STEP) {
             var nk = nx + ',' + nz;
             if (seen.has(nk)) continue;
             if (Math.max(Math.abs(nx - x0), Math.abs(nz - z0)) > PERCH_R) { open = true; break; }
@@ -2467,18 +2491,23 @@ function buildWaterGeometry(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, WL = w.WL, FLG = w.FLG, half = w.half,
       cellAt = w.cellAt, i, j, k, x, z, y;
   var wv=[],wi=[],wd=[],wf=[],wfl=[],wn=0;
-  /* `dep` is one depth per corner. A fall carries 0 at its lip and 1 at its
-     base, so the shader knows how far the water has dropped at every point. */
-  function wquad(q,dep,foam,fx,fz){
+  /* Everything a quad carries is given per corner: depth, foam and flow. A
+     fall carries depth 0 at its lip and 1 at its base, so the shader knows how
+     far the water has dropped, and foam 2 on all four corners. A surface quad
+     carries foam as an amount from 0 to 1 — shore froth and the churn under a
+     fall — and it is the same at a corner whichever quad asks, so the foam,
+     like the level, runs across the surface without a seam. */
+  function wquad(q,dep,foam,fl){
     for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]);
-      wd.push(typeof dep==='number'?dep:dep[a]); wf.push(foam); wfl.push(fx,fz); }
+      wd.push(dep[a]); wf.push(foam[a]); wfl.push(fl[a*2],fl[a*2+1]); }
     wi.push(wn,wn+2,wn+1, wn,wn+3,wn+2); wn+=4;
   }
   var WDIR=[[1,0],[-1,0],[0,1],[0,-1]];
   /* A fall's four corners are laid lip, lip, base, base. */
-  var FALL_DEP=[0,0,1,1];
-  /* How deep each column reads: its surface over the mean bed around it. */
-  var DEP=new Float32Array(NX*NZ);
+  var FALL_DEP=[0,0,1,1], FALL_FOAM=[2,2,2,2];
+  /* How deep each column reads: its surface over the mean bed around it. And
+     per column, the way it flows and whether a fall lands in it. */
+  var DEP=new Float32Array(NX*NZ), FX=new Float32Array(NX*NZ), FZ=new Float32Array(NX*NZ), CH=new Uint8Array(NX*NZ);
   for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
     k=i*NZ+j; if(!(FLG[k]&1)) continue;
     var bsum=0,bn=0;
@@ -2488,6 +2517,9 @@ function buildWaterGeometry(w) {
       bsum+=Hs[kb]; bn++;
     }
     DEP[k]=clamp((WL[k]-bsum/bn)/1.6,0,1);
+    var cf=cellAt(-half+i*V,-half+j*V); FX[k]=cf.fx; FZ[k]=cf.fz;
+    for(var dq=0;dq<4;dq++){ var kq=(i+WDIR[dq][0])*NZ+(j+WDIR[dq][1]);
+      if((FLG[kq]&1)&&WL[kq]-WL[k]>=STEP) CH[k]=1; }
   }
   /* One surface, not a tile per column. Each column used to be drawn flat at
      its own level, and a river whose level eases down a quarter-metre at a
@@ -2502,41 +2534,32 @@ function buildWaterGeometry(w) {
      never on which quad asks, so both sides of a join agree — and a fall
      keeps its lip and its base, with a face between them. */
   var cv=[];
+  /* A corner, as the pool `own` is in sees it: [level, depth, foam, fx, fz]. */
   function corner(ci,cj,own){
     cv.length=0;
+    var dry=0;
     for(var a=ci-1;a<=ci;a++)for(var b=cj-1;b<=cj;b++){
-      if(a<0||b<0||a>=NX||b>=NZ) continue;
-      var kk=a*NZ+b; if(FLG[kk]&1) cv.push(WL[kk],DEP[kk]);
+      if(a<0||b<0||a>=NX||b>=NZ){ dry++; continue; }
+      var kk=a*NZ+b; if(FLG[kk]&1) cv.push(kk); else dry++;
     }
-    /* insertion sort by level, pairs kept together */
-    for(var p=2;p<cv.length;p+=2) for(var r=p;r>0&&cv[r-2]>cv[r];r-=2){
-      var t0=cv[r-2],t1=cv[r-1]; cv[r-2]=cv[r]; cv[r-1]=cv[r+1]; cv[r]=t0; cv[r+1]=t1; }
-    var at=0; while(at<cv.length&&Math.abs(cv[at]-own)>1e-9) at+=2;
+    /* insertion sort by level */
+    for(var p=1;p<cv.length;p++) for(var r=p;r>0&&WL[cv[r-1]]>WL[cv[r]];r--){ var t0=cv[r-1]; cv[r-1]=cv[r]; cv[r]=t0; }
+    var at=0; while(at<cv.length&&Math.abs(WL[cv[at]]-own)>1e-9) at++;
     var lo=at, hi=at;
-    while(lo>0&&cv[lo]-cv[lo-2]<STEP) lo-=2;
-    while(hi+2<cv.length&&cv[hi+2]-cv[hi]<STEP) hi+=2;
-    var sy=0,sd=0,n=0;
-    for(var g=lo;g<=hi;g+=2){ sy+=cv[g]; sd+=cv[g+1]; n++; }
-    return [sy/n,sd/n];
+    while(lo>0&&WL[cv[lo]]-WL[cv[lo-1]]<STEP) lo--;
+    while(hi+1<cv.length&&WL[cv[hi+1]]-WL[cv[hi]]<STEP) hi++;
+    var sy=0,sd=0,sx=0,sz=0,ch=0,n=0;
+    for(var g=lo;g<=hi;g++){ var kg=cv[g]; sy+=WL[kg]; sd+=DEP[kg]; sx+=FX[kg]; sz+=FZ[kg]; if(CH[kg]) ch=1; n++; }
+    /* Froth where the water meets the bank, and churn where a fall lands. */
+    var foam=Math.max(dry?0.55:0,ch);
+    return [sy/n,sd/n,foam,sx/n,sz/n];
   }
   for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
     k=i*NZ+j; if(!(FLG[k]&1)) continue;
     x=-half+i*V; z=-half+j*V; y=WL[k];
-    var foam=0, dd2;
-    for(dd2=0;dd2<4;dd2++){
-      var kn=(i+WDIR[dd2][0])*NZ+(j+WDIR[dd2][1]);
-      if(FLG[kn]&1){
-        var dy=WL[kn]-y;
-        if(dy<-0.35) foam=Math.max(foam,1);
-        /* A fall lands here: churn (3), the white water at the foot of a fall
-           (#55 item 13), not the thin line of foam a shore gets. */
-        else if(dy>=STEP) foam=3;
-        else if(dy>0.35) foam=Math.max(foam,1);
-      } else foam=Math.max(foam,1);
-    }
-    var cfw=cellAt(x,z), fx=cfw.fx, fz=cfw.fz;
-    var c00=corner(i,j,y), c10=corner(i+1,j,y), c11=corner(i+1,j+1,y), c01=corner(i,j+1,y);
-    wquad([x,c00[0],z, x+V,c10[0],z, x+V,c11[0],z+V, x,c01[0],z+V],[c00[1],c10[1],c11[1],c01[1]],foam,fx,fz);
+    var dd2, c00=corner(i,j,y), c10=corner(i+1,j,y), c11=corner(i+1,j+1,y), c01=corner(i,j+1,y);
+    wquad([x,c00[0],z, x+V,c10[0],z, x+V,c11[0],z+V, x,c01[0],z+V],[c00[1],c10[1],c11[1],c01[1]],
+          [c00[2],c10[2],c11[2],c01[2]],[c00[3],c00[4],c10[3],c10[4],c11[3],c11[4],c01[3],c01[4]]);
     /* A fall is water stepping down onto lower water by STEP or more. A step
        under that is part of the surface now — its two sides share corners —
        and needs no face. The face runs from this quad's edge corners down to
@@ -2552,7 +2575,7 @@ function buildWaterGeometry(w) {
       var ex0=-half+e0[0]*V, ez0=-half+e0[1]*V, ex1=-half+e1[0]*V, ez1=-half+e1[1]*V;
       var u0=corner(e0[0],e0[1],y)[0], u1=corner(e1[0],e1[1],y)[0];
       var l0=corner(e0[0],e0[1],yl)[0], l1=corner(e1[0],e1[1],yl)[0];
-      wquad([ex0,u0,ez0, ex1,u1,ez1, ex1,l1,ez1, ex0,l0,ez0],FALL_DEP,2,di3,dj3);
+      wquad([ex0,u0,ez0, ex1,u1,ez1, ex1,l1,ez1, ex0,l0,ez0],FALL_DEP,FALL_FOAM,[di3,dj3,di3,dj3,di3,dj3,di3,dj3]);
     }
   }
   w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl };
@@ -4028,24 +4051,34 @@ function mixHex(h1,h2,t){
     ' p.y+=w; vW=w; vP=p; gl_Position=projectionMatrix*modelViewMatrix*vec4(p,1.0);}'].join('\n');
   var WATER_FS=['uniform float uTime; uniform vec2 uWind; uniform float uGust;',
     'varying float vW; varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
+    'float wH(vec2 p){ vec3 q=fract(vec3(p.xyx)*0.1031); q+=dot(q,q.yzx+33.33); return fract((q.x+q.y)*q.z); }',
+    'float wN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);',
+    ' return mix(mix(wH(i),wH(i+vec2(1.0,0.0)),f.x),mix(wH(i+vec2(0.0,1.0)),wH(i+vec2(1.0,1.0)),f.x),f.y); }',
+    /* Flow-map noise: two cycling samples crossfaded, so the offset never
+       grows and a bending current never shreds the pattern into stripes. */
+    'float wF(vec2 p, vec2 f, float t){ float a=fract(t), b=fract(t+0.5);',
+    ' return mix(wN(p-f*a*1.6),wN(p-f*b*1.6+vec2(0.37,0.71)),abs(1.0-2.0*a)); }',
     'void main(){',
     ' vec3 shallow=vec3(0.34,0.66,0.64), deep=vec3(0.05,0.20,0.29);',
     ' vec3 c=mix(shallow,deep,clamp(vD,0.0,1.0));',
     ' vec2 fl=normalize(vFl+uWind*0.45+vec2(0.0001));',
-    ' float adv=dot(vP.xz,fl)*2.6-uTime*2.1*(0.6+0.8*uGust);',
-    ' c+=vec3(0.05,0.09,0.09)*(sin(adv)*0.5+0.5);',
-    ' float chop=sin(vP.x*1.7+uTime*1.3)*sin(vP.z*1.4-uTime*1.1);',
-    ' c+=vec3(0.06,0.10,0.10)*max(chop,0.0);',
-    ' float g=pow(max(sin(vP.x*2.13+adv*0.55)*sin(vP.z*1.77-adv*0.37),0.0),6.0);',
+    /* Ripples carried along the flow as moving noise, not bands of
+       sin(dot(position, flow)), which bunched into contour lines wherever the
+       flow turned. */
+    ' vec2 advp=vP.xz*1.4; float ft=uTime*0.45*(0.6+0.8*uGust);',
+    ' float adv=wF(advp,fl,ft)*0.65+wF(advp*2.3+vec2(3.1,7.7),fl,ft*1.3)*0.35;',
+    ' c+=vec3(0.05,0.09,0.09)*adv; adv*=6.0;',
+    ' c+=vec3(0.06,0.10,0.10)*smoothstep(0.5,0.9,wN(advp*0.6+vec2(uTime*0.25,uTime*0.18)));',
+    ' float g=smoothstep(0.80,0.97,wN(advp*2.7+vec2(uTime*0.3,-uTime*0.2)));',
     ' c+=vec3(0.70,0.85,0.80)*g*0.30;',
-    ' float a=0.86;',
-    ' if(vF>0.5&&vF<1.5){ float f=0.55+0.45*sin(uTime*3.0+vP.x*4.0+vP.z*3.2);',
-    '   c=mix(c,vec3(0.86,0.94,0.96),0.40*f); a=0.92; }',
-    /* Churn where a fall lands (3), and the fall (2) — whose bands flow down,
-       not up: fract(y*3 + t) moves a band's phase towards lower y. */
-    ' if(vF>2.5){ float f=0.5+0.5*sin(uTime*4.0+vP.x*5.0-vP.z*4.3);',
-    '   c=mix(c,vec3(0.90,0.95,0.97),0.55+0.35*f); a=0.95; }',
-    ' else if(vF>1.5){ float st=fract(vP.y*3.0+uTime*2.6+sin(vP.x*8.0+vP.z*6.0)*0.25);',
+    ' float a=mix(0.80,0.98,smoothstep(0.05,0.45,vD));',
+    /* Surface foam is an amount, 0 to 1, per corner and so continuous across
+       the pool: froth at the banks and churn where a fall lands. A fall (2)
+       has its own bands, which flow down: fract(y*3 + t) moves towards lower y. */
+    ' float fo=vF<1.5?clamp(vF,0.0,1.0):0.0;',
+    ' if(fo>0.01){ float f=0.55+0.45*sin(uTime*3.0+vP.x*4.0+vP.z*3.2);',
+    '   c=mix(c,vec3(0.88,0.95,0.97),fo*(0.35+0.45*f)); a=mix(a,0.95,fo); }',
+    ' if(vF>1.5){ float st=fract(vP.y*3.0+uTime*2.6+sin(vP.x*8.0+vP.z*6.0)*0.25);',
     '   c=mix(vec3(0.48,0.72,0.78),vec3(0.93,0.98,1.0),smoothstep(0.25,0.95,st)); a=0.93; }',
     ' gl_FragColor=vec4(c,a);}'].join('\n');
 

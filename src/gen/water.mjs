@@ -132,7 +132,11 @@ export function drainPerched(w) {
         for (var d = 0; d < 4; d++) {
           var nx = p[0] + DIRS4[d][0], nz = p[1] + DIRS4[d][1], nl = lvl(nx, nz);
           if (nl === null) continue;
-          if (Math.abs(nl - wl0) < STEP) {
+          /* Joined neighbour to neighbour, as water is: a river easing down a
+             quarter at a time is one pool, though its ends differ by more
+             than a step. Measured against where the pool was entered, a hump
+             of 8.25 / 8.0 / 7.75 split at 7.75 and never saw itself perched. */
+          if (Math.abs(nl - pl) < STEP) {
             var nk = nx + ',' + nz;
             if (seen.has(nk)) continue;
             if (Math.max(Math.abs(nx - x0), Math.abs(nz - z0)) > PERCH_R) { open = true; break; }
@@ -198,18 +202,23 @@ export function buildWaterGeometry(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, WL = w.WL, FLG = w.FLG, half = w.half,
       cellAt = w.cellAt, i, j, k, x, z, y;
   var wv=[],wi=[],wd=[],wf=[],wfl=[],wn=0;
-  /* `dep` is one depth per corner. A fall carries 0 at its lip and 1 at its
-     base, so the shader knows how far the water has dropped at every point. */
-  function wquad(q,dep,foam,fx,fz){
+  /* Everything a quad carries is given per corner: depth, foam and flow. A
+     fall carries depth 0 at its lip and 1 at its base, so the shader knows how
+     far the water has dropped, and foam 2 on all four corners. A surface quad
+     carries foam as an amount from 0 to 1 — shore froth and the churn under a
+     fall — and it is the same at a corner whichever quad asks, so the foam,
+     like the level, runs across the surface without a seam. */
+  function wquad(q,dep,foam,fl){
     for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]);
-      wd.push(typeof dep==='number'?dep:dep[a]); wf.push(foam); wfl.push(fx,fz); }
+      wd.push(dep[a]); wf.push(foam[a]); wfl.push(fl[a*2],fl[a*2+1]); }
     wi.push(wn,wn+2,wn+1, wn,wn+3,wn+2); wn+=4;
   }
   var WDIR=[[1,0],[-1,0],[0,1],[0,-1]];
   /* A fall's four corners are laid lip, lip, base, base. */
-  var FALL_DEP=[0,0,1,1];
-  /* How deep each column reads: its surface over the mean bed around it. */
-  var DEP=new Float32Array(NX*NZ);
+  var FALL_DEP=[0,0,1,1], FALL_FOAM=[2,2,2,2];
+  /* How deep each column reads: its surface over the mean bed around it. And
+     per column, the way it flows and whether a fall lands in it. */
+  var DEP=new Float32Array(NX*NZ), FX=new Float32Array(NX*NZ), FZ=new Float32Array(NX*NZ), CH=new Uint8Array(NX*NZ);
   for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
     k=i*NZ+j; if(!(FLG[k]&1)) continue;
     var bsum=0,bn=0;
@@ -219,6 +228,9 @@ export function buildWaterGeometry(w) {
       bsum+=Hs[kb]; bn++;
     }
     DEP[k]=clamp((WL[k]-bsum/bn)/1.6,0,1);
+    var cf=cellAt(-half+i*V,-half+j*V); FX[k]=cf.fx; FZ[k]=cf.fz;
+    for(var dq=0;dq<4;dq++){ var kq=(i+WDIR[dq][0])*NZ+(j+WDIR[dq][1]);
+      if((FLG[kq]&1)&&WL[kq]-WL[k]>=STEP) CH[k]=1; }
   }
   /* One surface, not a tile per column. Each column used to be drawn flat at
      its own level, and a river whose level eases down a quarter-metre at a
@@ -233,41 +245,32 @@ export function buildWaterGeometry(w) {
      never on which quad asks, so both sides of a join agree — and a fall
      keeps its lip and its base, with a face between them. */
   var cv=[];
+  /* A corner, as the pool `own` is in sees it: [level, depth, foam, fx, fz]. */
   function corner(ci,cj,own){
     cv.length=0;
+    var dry=0;
     for(var a=ci-1;a<=ci;a++)for(var b=cj-1;b<=cj;b++){
-      if(a<0||b<0||a>=NX||b>=NZ) continue;
-      var kk=a*NZ+b; if(FLG[kk]&1) cv.push(WL[kk],DEP[kk]);
+      if(a<0||b<0||a>=NX||b>=NZ){ dry++; continue; }
+      var kk=a*NZ+b; if(FLG[kk]&1) cv.push(kk); else dry++;
     }
-    /* insertion sort by level, pairs kept together */
-    for(var p=2;p<cv.length;p+=2) for(var r=p;r>0&&cv[r-2]>cv[r];r-=2){
-      var t0=cv[r-2],t1=cv[r-1]; cv[r-2]=cv[r]; cv[r-1]=cv[r+1]; cv[r]=t0; cv[r+1]=t1; }
-    var at=0; while(at<cv.length&&Math.abs(cv[at]-own)>1e-9) at+=2;
+    /* insertion sort by level */
+    for(var p=1;p<cv.length;p++) for(var r=p;r>0&&WL[cv[r-1]]>WL[cv[r]];r--){ var t0=cv[r-1]; cv[r-1]=cv[r]; cv[r]=t0; }
+    var at=0; while(at<cv.length&&Math.abs(WL[cv[at]]-own)>1e-9) at++;
     var lo=at, hi=at;
-    while(lo>0&&cv[lo]-cv[lo-2]<STEP) lo-=2;
-    while(hi+2<cv.length&&cv[hi+2]-cv[hi]<STEP) hi+=2;
-    var sy=0,sd=0,n=0;
-    for(var g=lo;g<=hi;g+=2){ sy+=cv[g]; sd+=cv[g+1]; n++; }
-    return [sy/n,sd/n];
+    while(lo>0&&WL[cv[lo]]-WL[cv[lo-1]]<STEP) lo--;
+    while(hi+1<cv.length&&WL[cv[hi+1]]-WL[cv[hi]]<STEP) hi++;
+    var sy=0,sd=0,sx=0,sz=0,ch=0,n=0;
+    for(var g=lo;g<=hi;g++){ var kg=cv[g]; sy+=WL[kg]; sd+=DEP[kg]; sx+=FX[kg]; sz+=FZ[kg]; if(CH[kg]) ch=1; n++; }
+    /* Froth where the water meets the bank, and churn where a fall lands. */
+    var foam=Math.max(dry?0.55:0,ch);
+    return [sy/n,sd/n,foam,sx/n,sz/n];
   }
   for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
     k=i*NZ+j; if(!(FLG[k]&1)) continue;
     x=-half+i*V; z=-half+j*V; y=WL[k];
-    var foam=0, dd2;
-    for(dd2=0;dd2<4;dd2++){
-      var kn=(i+WDIR[dd2][0])*NZ+(j+WDIR[dd2][1]);
-      if(FLG[kn]&1){
-        var dy=WL[kn]-y;
-        if(dy<-0.35) foam=Math.max(foam,1);
-        /* A fall lands here: churn (3), the white water at the foot of a fall
-           (#55 item 13), not the thin line of foam a shore gets. */
-        else if(dy>=STEP) foam=3;
-        else if(dy>0.35) foam=Math.max(foam,1);
-      } else foam=Math.max(foam,1);
-    }
-    var cfw=cellAt(x,z), fx=cfw.fx, fz=cfw.fz;
-    var c00=corner(i,j,y), c10=corner(i+1,j,y), c11=corner(i+1,j+1,y), c01=corner(i,j+1,y);
-    wquad([x,c00[0],z, x+V,c10[0],z, x+V,c11[0],z+V, x,c01[0],z+V],[c00[1],c10[1],c11[1],c01[1]],foam,fx,fz);
+    var dd2, c00=corner(i,j,y), c10=corner(i+1,j,y), c11=corner(i+1,j+1,y), c01=corner(i,j+1,y);
+    wquad([x,c00[0],z, x+V,c10[0],z, x+V,c11[0],z+V, x,c01[0],z+V],[c00[1],c10[1],c11[1],c01[1]],
+          [c00[2],c10[2],c11[2],c01[2]],[c00[3],c00[4],c10[3],c10[4],c11[3],c11[4],c01[3],c01[4]]);
     /* A fall is water stepping down onto lower water by STEP or more. A step
        under that is part of the surface now — its two sides share corners —
        and needs no face. The face runs from this quad's edge corners down to
@@ -283,7 +286,7 @@ export function buildWaterGeometry(w) {
       var ex0=-half+e0[0]*V, ez0=-half+e0[1]*V, ex1=-half+e1[0]*V, ez1=-half+e1[1]*V;
       var u0=corner(e0[0],e0[1],y)[0], u1=corner(e1[0],e1[1],y)[0];
       var l0=corner(e0[0],e0[1],yl)[0], l1=corner(e1[0],e1[1],yl)[0];
-      wquad([ex0,u0,ez0, ex1,u1,ez1, ex1,l1,ez1, ex0,l0,ez0],FALL_DEP,2,di3,dj3);
+      wquad([ex0,u0,ez0, ex1,u1,ez1, ex1,l1,ez1, ex0,l0,ez0],FALL_DEP,FALL_FOAM,[di3,dj3,di3,dj3,di3,dj3,di3,dj3]);
     }
   }
   w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl };

@@ -116,6 +116,21 @@ export function makeGen(seedStr,force){
     var n=N.h.fbm(x*0.017,z*0.017,2);
     return Math.round(base+(n-0.38)*hill*1.9)-1;
   }
+  /**
+   * The level a river's surface stands at: the same smooth shape its bed
+   * follows, but not rounded to the metre. The surface used to be the bed
+   * plus 0.75, so wherever the land's shape crossed a whole metre the river
+   * dropped a metre at once — a fall across the stream — and between those,
+   * the banks eased it down a quarter at a time in every direction, a river
+   * that slanted across itself. Now it descends a quarter-metre at a time
+   * along its length, as gently as the land does, and stands level across it;
+   * the bed is cut to keep the river's depth under whatever the level is.
+   */
+  function riverLevel(x,z,w){
+    var base=wsum(w,'base'), hill=wsum(w,'hill');
+    var n=N.h.fbm(x*0.017,z*0.017,2);
+    return Math.round((base+(n-0.38)*hill*1.9-0.25)*4)/4;
+  }
   function riverAt(x,z){
     var v=N.r.fbm(x*0.0105,z*0.0105,3), d=Math.abs(v-0.5)*155;
     var w=1+Math.floor(N.r.n2(x*0.03+13,z*0.03+13)*4); if(w>4)w=4;
@@ -178,7 +193,12 @@ export function makeGen(seedStr,force){
     }
     H+=pillarAt(x,z,colw);
     var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
-    if(r.d<rw/2||riverCorner(x,z,rw)){ H=Math.min(H-1,riverBed(x,z,w)); water=true; }
+    var rl=null;
+    /* The smooth level, but never above the ground the river runs through: a
+       dip in the land would otherwise hold water metres deep above it, which
+       the banks then pulled down and the bed was carved below the world to
+       keep. Where the land is lower, the surface sits a quarter under it. */
+    if(r.d<rw/2||riverCorner(x,z,rw)){ rl=Math.min(riverLevel(x,z,w),H-0.25); H=Math.min(H-1,Math.floor(rl-0.75+1e-9)); water=true; }
     if(!water&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
@@ -195,7 +215,7 @@ export function makeGen(seedStr,force){
          through them. */
       if(f<0.022){ H=Math.min(H-1,riverBed(x,z,w)); magma=true; water=false; } }
     H=clamp(H,0,CEIL);
-    if(water) wl=H+(pond?1.25:0.75);
+    if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
     return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw};
   }
