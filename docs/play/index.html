@@ -12711,6 +12711,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
          sphere, and a mesh left unculled is charged whether seen or not. */
       geo=geo.clone(); geo.boundingSphere=new THREE.Sphere();
       var m=new THREE.InstancedMesh(geo,mat,cap); m.count=0;
+      m.frustumCulled=true;   /* r128's InstancedMesh starts with it off */
       m.userData.lb=[0,0,0,0,0,0,0];
       m.castShadow=false; m.receiveShadow=false; m.userData.kind='life'; m.userData.life=name;
       m.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(cap*3),3);
