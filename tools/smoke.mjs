@@ -881,7 +881,15 @@ if (BROWSER_HALF) {
 
       const widened = await bp.evaluate(() => {
         const P = window.QSPLAY, QS = window.QS;
-        const lit = () => {
+        /* The arc alone. It is translucent, so what reaches the screen is the
+           ground's colour mixed with the arc's, and counting pixels past a
+           fixed "pale" bar counted the ground as much as the arc: the same
+           swings measured 1.19 on one runner and 1.30 on another once #3
+           changed the ground here. So the frame is drawn twice, the second
+           time with the swing trails moved to a layer the camera does not
+           draw, and a pixel counts when the arc is what made it brighter —
+           the telegraph check's method, whatever the arc lies over. */
+        const shot = () => {
           P.draw();
           const c = document.querySelector('#cv');
           const g = document.createElement('canvas');
@@ -889,11 +897,24 @@ if (BROWSER_HALF) {
           const x = g.getContext('2d');
           x.drawImage(c, 0, 0);
           const s = P.screen(), R = 110;
-          const d = x.getImageData(Math.max(0, (s.x - R) | 0), Math.max(0, (s.y - R) | 0),
-                                   R * 2, R * 2).data;
+          return x.getImageData(Math.max(0, (s.x - R) | 0), Math.max(0, (s.y - R) | 0), R * 2, R * 2).data;
+        };
+        const lit = () => {
+          const sweeps = [];
+          P.scene.traverse((o) => { if (o.isMesh && !o.isInstancedMesh && o.geometry && o.geometry.type === 'RingGeometry') sweeps.push(o); });
+          /* Over the ground as well as on it: the post stands where the
+             ground rises, and how much of a flat arc a slope hides is the
+             terrain's business, not the reach's. */
+          const was = sweeps.map((o) => o.material.depthTest);
+          for (const o of sweeps) { o.material.depthTest = false; o.material.needsUpdate = true; }
+          const on = shot();
+          sweeps.forEach((o, i) => { o.material.depthTest = was[i]; o.material.needsUpdate = true; });
+          for (const o of sweeps) o.layers.set(1);
+          const off = shot();
+          for (const o of sweeps) o.layers.set(0);
           let n = 0;
-          for (let i = 0; i < d.length; i += 4) {
-            if (d[i] > 210 && d[i + 1] > 195 && d[i + 2] > 150) n++;
+          for (let i = 0; i < on.length; i += 4) {
+            if ((on[i] + on[i + 1] + on[i + 2]) - (off[i] + off[i + 1] + off[i + 2]) > 45) n++;
           }
           return n;
         };
@@ -925,10 +946,9 @@ if (BROWSER_HALF) {
         a.faceX = 1; a.faceZ = 0; a.vx = 0; a.vz = 0;
         a.hp = QS.PLAYER_HP; a.dead = null; a.swing = null; a.dodge = null; a.vault = null;
         QS.warpTo(P.cam, a.x, a.y, a.z);
-        /* Whatever in this patch of world is already pale. Subtracted from
-           both counts, so what is compared is arc against arc. One settling
-           tick first, so the actor's idea of where it is standing has caught
-           up with where it was just put. */
+        /* What the arc adds before any swing: nothing, if the trail from the
+           check before has gone. One settling tick first, so the actor's idea
+           of where it is standing has caught up with where it was just put. */
         /* No machine in the frame. After #53 a graded trail runs from the
            nearest sentry's post to the practice posts, and a sentry woken by
            the walking checks above comes down it and stands 1.7 m from this
@@ -954,7 +974,7 @@ if (BROWSER_HALF) {
         const kit = swingAndCount();
         for (const [e, x, y, z] of parked) { e.x = x; e.y = y; e.z = z; }
         P.pause(false);
-        return { idle, bare: bare - idle, kit: kit - idle,
+        return { idle, bare, kit,
                  bareReach, kitReach: a.st.reach, seated };
       });
       check(widened.seated && widened.kitReach > widened.bareReach,
@@ -963,7 +983,7 @@ if (BROWSER_HALF) {
       check(widened.bare > 0 && widened.kit > widened.bare * 1.2,
             'BUILD: and the arc on screen is the one it actually cuts with',
             `${widened.bare} lit pixels bare, ${widened.kit} with the sigil, `
-            + `over ${widened.idle} already pale`);
+            + `drawn by the arc alone (${widened.idle} before any swing)`);
 
       /* ---------- BUILD: does the telegraph read? ----------
          The question issue #24 turns on. Counting a colour band the way the
