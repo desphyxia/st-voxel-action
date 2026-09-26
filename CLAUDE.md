@@ -103,6 +103,14 @@ Identical means nobody has typed into the page and forcing loses nothing. On 202
 pages came back identical to `487222d`. **Force is still the user's call, not yours** — show
 them that result and ask.
 
+**Stamp the build when publishing the play page.** The page carries `var QS_BUILD='dev';`, and
+the flight recorder (#71) puts it at the top of every crash report. Publish from a copy with the
+commit stamped in, so a report pasted into the chat says exactly which code it came from:
+
+```
+git show <sha>:docs/play/index.html | sed "s/var QS_BUILD='dev';/var QS_BUILD='<sha>';/" > play.html
+```
+
 Neither is published automatically, and a stale artifact is worse than no artifact: it is a
 live link, already in circulation, quietly serving a build that no longer exists.
 

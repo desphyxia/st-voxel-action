@@ -2209,6 +2209,41 @@ if (BROWSER_HALF) {
               'NET: each window shows its partner\'s health without opening anything',
               `host sees ${hudH.who} at ${hudH.w}% (${hudH.want.toFixed(0)}), guest sees ${hudG.who} at ${hudG.w}% (${hudG.want.toFixed(0)})`);
 
+        /* ---------- REPORT: the flight recorder and Copy report (#71) ----------
+           A caught error opens the panel and is in the record; Copy report
+           yields the report, on the clipboard or shown selected where a page
+           is refused it; and a record left without its clean-exit mark — a
+           session the system ended — is offered when the page next checks. */
+        const rep = await bp.evaluate(async () => {
+          const P = window.QSPLAY, el = document.getElementById('crash');
+          const snap = P.snap();
+          window.dispatchEvent(new ErrorEvent('error', { message: 'smoke probe error', filename: 'x.js', lineno: 1, colno: 1 }));
+          const onError = { open: !el.hidden, head: document.getElementById('crashh').textContent,
+                            recorded: P.flight.events.some((e) => e.msg === 'smoke probe error') };
+          document.getElementById('crashcopy').click();
+          await new Promise((r) => setTimeout(r, 300));
+          const ta = document.getElementById('crashtxt'), msg = document.getElementById('crashmsg').textContent;
+          const copied = /^Copied/.test(msg) || (!ta.hidden && ta.value.indexOf('Quarterstone report') === 0);
+          const text = P.reportText();
+          el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          const closed = el.hidden;
+          const prev = P.flight; prev.clean = false; prev.snap = Object.assign({}, prev.snap, { seed: 'SMOKE-LAST' });
+          localStorage.setItem('qs.flight', JSON.stringify(prev));
+          const offered = P.checkLastSession(), head2 = document.getElementById('crashh').textContent;
+          const lastText = document.getElementById('crashtxt').value;
+          document.getElementById('crashclose').click();
+          return { snap, onError, copied, msg, text: text.slice(0, 400), hasSeed: text.indexOf('"seed": "' + snap.seed + '"') > 0, closed, offered, head2,
+                   lastHasSeed: lastText.indexOf('SMOKE-LAST') > 0, closedAgain: el.hidden };
+        });
+        check(rep.onError.open && rep.onError.recorded && rep.copied && rep.closed
+              && rep.text.indexOf('Quarterstone report') === 0 && rep.hasSeed && rep.snap.mem && rep.snap.mem.buffers > 0,
+              'REPORT: a caught error opens the report, is in it, and Copy report hands it over (#71)',
+              `"${rep.onError.head}"; ${rep.copied ? 'copied' : 'NOT copied'} (${rep.msg.slice(0, 40)}); `
+              + `seed ${rep.snap.seed}, ${rep.snap.mem.gpuMB} MB in ${rep.snap.mem.buffers} GPU buffers`);
+        check(rep.offered && /unexpectedly/.test(rep.head2) && rep.lastHasSeed && rep.closedAgain,
+              'REPORT: and a session that ended without closing is offered on the next load',
+              `${rep.offered ? 'offered' : 'NOT offered'}: "${rep.head2}", ${rep.lastHasSeed ? 'the last session\'s record' : 'NOT the last session'}`);
+
         /* ---------- SETTINGS: the graphics dialog (#70) ----------
            The gear opens it over the view; every row is a way of drawing the
            same world. A key pressed inside it is not a step, Escape closes it,
@@ -2626,6 +2661,45 @@ if (BROWSER_HALF) {
               'PERF: and redraws the shadow map a handful of times a minute, for ground coming into view',
               `${walk.redraws} redraws in 60 s: ${Object.entries(walk.why).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'}`);
         await wp.evaluate(() => { window.QSPLAY.input.releaseAll(); });
+
+        /* ---------- MEMORY: travel does not cost GPU memory (#71) ----------
+           An unloaded chunk used to leave its instance buffers on the GPU:
+           three r128 frees instanceMatrix only when the mesh itself is
+           disposed. Over 480 m that grew GPU memory 17 MB per 100 m with the
+           loaded chunk count flat — per chunk from 5 MB to 9 and rising — and
+           an iPhone ends that by killing the tab. Six 48 m jumps: GPU memory
+           per loaded chunk stays within a quarter of where it started, and
+           buffers are being freed at all. */
+        const mem = await wp.evaluate(async () => {
+          const P = window.QSPLAY, a = P.actor, per = Math.round(1 / window.QS.TICK), rows = [];
+          const x0 = a.x, z0 = a.z;
+          /* Let the stream catch up before reading anything: a jump the
+             workers have not caught up with reads as memory saved. */
+          const settle = async (tx, tz) => {
+            let still = 0, last = -1;
+            for (let i = 0; i < 120 && still < 4; i++) {
+              a.x = tx; a.z = tz; a.y = Math.max(a.y, 30); a.vx = a.vz = 0;
+              P.run(Math.round(per / 2)); await new Promise((r) => setTimeout(r, 60)); P.frameOnce();
+              const c = P.chunks;
+              if (c.pending === 0 && c.nodes === c.loaded && c.loaded === last) still++; else still = 0;
+              last = c.loaded;
+            }
+          };
+          for (let m = 1; m <= 6; m++) {
+            await settle(x0 + m * 48, z0);
+            const mm = P.memory, n = P.chunks.nodes;
+            rows.push({ at: m * 48, mb: mm.gpuMB, chunks: n, per: mm.gpuMB / n, buffers: mm.buffers });
+          }
+          await settle(x0, z0);
+          return { rows, dropped: P.field.dropped, back: P.chunks.nodes };
+        });
+        {
+          const early = Math.max(mem.rows[0].per, mem.rows[1].per), last = mem.rows[mem.rows.length - 1];
+          check(mem.dropped > 0 && mem.rows.every((r) => r.chunks >= 9) && last.per <= early * 1.25,
+                'MEMORY: 288 m of streaming costs no GPU memory beyond the chunks it holds (#71)',
+                `${mem.dropped} chunks let go; ${mem.rows.map((r) => `${r.mb.toFixed(0)} MB/${r.chunks}`).join(', ')}; `
+                + `${last.per.toFixed(1)} MB a chunk at the end against ${early.toFixed(1)} early`);
+        }
 
         /* ---------- STREAM: the zoom stops before the loaded ground does (#31) ----------
            A streamed world's only edge is the ring of chunks around the players,

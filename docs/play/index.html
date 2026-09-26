@@ -249,6 +249,12 @@
   .gfxrows .seg button{flex:1 1 auto}
   .gfxrows input[type=range]{width:100%;accent-color:var(--sand)}
   .gfxnote{margin:12px 0 0;color:var(--dim);font-size:10px;line-height:1.5}
+  /* The report panel (#71): above the dialog, since a crash can open it from there. */
+  .crash{z-index:31}
+  .crashmsg{margin:0 0 10px;color:var(--text);font-size:11px;line-height:1.5;font-family:var(--mono)}
+  .crashtxt{width:100%;height:120px;box-sizing:border-box;background:var(--ink);color:var(--muted);
+            border:1px solid var(--line2);font:10px/1.4 var(--mono);margin-bottom:10px;resize:vertical}
+  .crashb{display:flex;gap:6px;flex-wrap:wrap}
 </style>
 
 <div class="wrap">
@@ -290,9 +296,23 @@
       </div>
       <div class="dead" id="dead"><span id="deadmsg">dead</span></div>
       <div class="toast" id="toast"></div>
+      <div class="gfx crash" id="crash" hidden>
+        <div class="gfxp" role="alertdialog" aria-modal="true" aria-labelledby="crashh" aria-describedby="crashmsg">
+          <div class="gfxtop"><h3 id="crashh">Report</h3></div>
+          <p class="crashmsg" id="crashmsg"></p>
+          <textarea class="crashtxt" id="crashtxt" readonly hidden aria-label="Report text"></textarea>
+          <div class="crashb">
+            <button type="button" id="crashcopy">Copy report</button>
+            <button type="button" id="crashsave">Download</button>
+            <button type="button" id="crashreload" hidden>Reload</button>
+            <button type="button" id="crashclose">Close</button>
+          </div>
+        </div>
+      </div>
       <div class="gfx" id="gfx" hidden>
         <div class="gfxp" role="dialog" aria-modal="true" aria-labelledby="gfxh">
           <div class="gfxtop"><h3 id="gfxh">Graphics</h3><span class="gfxrate" id="gfxrate"></span>
+            <button type="button" id="gfxreport" title="Copy a report of this session for a bug: build, place, settings, memory and recent errors">Report</button>
             <button type="button" class="gfxdone" id="gfxdone">Done</button></div>
           <div class="gfxpre" id="gfxpre" role="group" aria-label="Preset"></div>
           <div class="gfxrows" id="gfxrows"></div>
@@ -8592,11 +8612,78 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   var GFX_AA=!!GFX.aa;
   function gfxSave(){ try{ localStorage.setItem('qs.gfx',JSON.stringify(GFX)); }catch(e){} }
 
+  /* ---------- the flight recorder (#71) ----------
+     When iOS runs out of patience with a tab it kills it, and nothing in the
+     page runs at that moment — so the page keeps a record as it goes, and
+     reads the last one back when it next opens. `clean` is set only when the
+     page is closed normally; a record that ends without it is a session that
+     died, and the next load offers the report. Errors are caught from here
+     on, before anything else can throw. The build is stamped into QS_BUILD
+     when the page is published; 'dev' is a copy that was not. */
+  var QS_BUILD='dev';
+  var REC_KEY='qs.flight', REC_PREV=null;
+  try{ REC_PREV=JSON.parse(localStorage.getItem(REC_KEY)||'null'); }catch(e){}
+  var REC={v:1,build:QS_BUILD,started:new Date().toISOString(),clean:false,
+           ua:navigator.userAgent,dpr:window.devicePixelRatio||1,
+           screen:[screen.width,screen.height],touch:GFX_COARSE,events:[],trail:[],snap:null};
+  function recEvent(kind,msg,where){
+    msg=String(msg||'').slice(0,300);
+    var last=REC.events[REC.events.length-1];
+    if(last&&last.kind===kind&&last.msg===msg){ last.n++; return; }
+    REC.events.push({t:+((performance.now()/1000).toFixed(1)),kind:kind,msg:msg,where:where?String(where).slice(0,300):'',n:1});
+    if(REC.events.length>20) REC.events.shift();
+    recSave();
+  }
+  function recSave(){ try{ localStorage.setItem(REC_KEY,JSON.stringify(REC)); }catch(e){} }
+  window.addEventListener('error',function(e){
+    recEvent('error',e.message||(e.error&&e.error.message)||'error',
+             (e.filename?e.filename.split('/').pop():'')+':'+(e.lineno||0)+':'+(e.colno||0)
+             +(e.error&&e.error.stack?'\n'+e.error.stack.split('\n').slice(0,4).join('\n'):''));
+    if(window.QSREPORT) window.QSREPORT.show('error');
+  });
+  window.addEventListener('unhandledrejection',function(e){
+    var r=e.reason; recEvent('rejection',(r&&r.message)||String(r),r&&r.stack?r.stack.split('\n').slice(0,4).join('\n'):'');
+    if(window.QSREPORT) window.QSREPORT.show('error');
+  });
+  window.addEventListener('pagehide',function(){ REC.clean=true; recSave(); });
+  recSave();
+
   /* ---------- renderer ---------- */
   var renderer;
   try{ renderer=new THREE.WebGLRenderer({canvas:cv,antialias:GFX_AA,alpha:false}); }
   catch(e){ fb.style.display='grid'; return; }
   renderer.setClearColor(0x0b0f14,1);
+  /* GPU memory, counted where it is spent (#71). A leak is by definition
+     memory nothing in the scene refers to any more, so it cannot be found by
+     walking the scene; it can be found by counting buffers made and deleted
+     and the bytes uploaded to each. Only the calls that create, fill or free
+     a buffer or a texture are wrapped — none of them runs per frame. */
+  var MEM={buffers:0,bytes:0,textures:0,sizes:new Map()};
+  (function(gl){
+    if(!gl) return;
+    var cb=gl.createBuffer, db=gl.deleteBuffer, bd=gl.bufferData, ct=gl.createTexture, dt=gl.deleteTexture;
+    gl.createBuffer=function(){ var b=cb.apply(gl,arguments); MEM.buffers++; MEM.sizes.set(b,0); return b; };
+    gl.deleteBuffer=function(b){
+      if(MEM.sizes.has(b)){ MEM.bytes-=MEM.sizes.get(b); MEM.sizes.delete(b); MEM.buffers--; }
+      return db.apply(gl,arguments);
+    };
+    gl.bufferData=function(target,data){
+      var b=gl.getParameter(target===gl.ELEMENT_ARRAY_BUFFER?gl.ELEMENT_ARRAY_BUFFER_BINDING:gl.ARRAY_BUFFER_BINDING);
+      if(b&&MEM.sizes.has(b)){
+        var n=typeof data==='number'?data:(data&&data.byteLength)||0;
+        MEM.bytes+=n-MEM.sizes.get(b); MEM.sizes.set(b,n);
+      }
+      return bd.apply(gl,arguments);
+    };
+    gl.createTexture=function(){ MEM.textures++; return ct.apply(gl,arguments); };
+    gl.deleteTexture=function(t){ MEM.textures--; return dt.apply(gl,arguments); };
+  })(renderer.getContext());
+  function memNow(){
+    var pm=performance.memory;
+    return {buffers:MEM.buffers,gpuMB:+(MEM.bytes/1048576).toFixed(1),textures:MEM.textures,
+            geometries:renderer.info.memory.geometries,
+            heapMB:pm?+(pm.usedJSHeapSize/1048576).toFixed(0):null};
+  }
   /* Batch 1 (#30, #31, #55): a filmic curve, so a sunlit snowfield keeps its
      detail instead of clipping to flat white, and a night is dark without
      crushing to black. Output stays linear: the palette was authored against
@@ -10742,6 +10829,26 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     drawLattice();
   }
 
+  /* Letting go of one drawn object: its geometry, its own material, and —
+     for an instanced mesh — its instance buffer. That last one is not the
+     geometry's: three r128 frees instanceMatrix only when the mesh itself is
+     disposed, and nothing here ever did, so every chunk unloaded left its
+     grass and prop instance buffers on the GPU. Measured over 480 m of
+     streaming, GPU buffers grew 17 MB per 100 m with the loaded chunk count
+     flat — the slow climb an iPhone ends by killing the tab. `shared` names
+     materials that outlive the object. */
+  function freeObject(o,shared){
+    if(!(o.isMesh||o.isInstancedMesh||o.isPoints)) return;
+    if(o.geometry&&o.geometry!==boxGeo) o.geometry.dispose();
+    if(o.isInstancedMesh) o.dispose();
+    var m=o.material;
+    if(m&&m.dispose&&(!shared||shared.indexOf(m)<0)) m.dispose();
+  }
+  function sharedMats(){
+    var out=[], ms=built&&built.mats; if(ms) for(var k in ms) if(ms[k]&&ms[k].isMaterial) out.push(ms[k]);
+    return out;
+  }
+
   /** Build (or rebuild) the world and its scene. Returns what a session needs. */
   /* Throw away everything the last world put in the scene. Shared materials
      are held on `built.mats` and are not disposed here — a streamed world has
@@ -10749,20 +10856,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      the grass off the other twenty-four. */
   function disposeWorld(){
     if(!built) return;
-    var keepMats=built.mats||{};
-    built.scene.traverse(function(n){
-      if((n.isMesh||n.isInstancedMesh)&&!n.userData.keep){
-        if(n.geometry&&n.geometry!==boxGeo) n.geometry.dispose();
-        if(n.material&&n.material.dispose
-           &&n.material!==keepMats.mesh&&n.material!==keepMats.grass
-           &&n.material!==keepMats.water&&n.material!==keepMats.prop)
-          n.material.dispose();
-      }
-    });
-    if(keepMats.mesh) keepMats.mesh.dispose();
-    if(keepMats.grass) keepMats.grass.dispose();
-    if(keepMats.water) keepMats.water.dispose();
-    if(keepMats.prop) keepMats.prop.dispose();
+    var keep=sharedMats();
+    built.scene.traverse(function(n){ if(!n.userData.keep) freeObject(n,keep); });
+    keep.forEach(function(m){ m.dispose(); });
+    /* The sun's shadow map is a 2048 render target of its own: a new world
+       brings a new sun, and the old one's map stayed on the GPU. */
+    if(built.sun&&built.sun.shadow) built.sun.shadow.dispose();
   }
 
   /* The posts, the machines and the loot. Placed from the world on both
@@ -10790,7 +10889,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     targets=encounter.targets;
     foeMeshes.forEach(function(f){ built.scene.remove(f.g); });
     foeMeshes=encounter.enemies.map(function(){ var f=makeFoe(); built.scene.add(f.g); return f; });
-    eachLoot(function(m){ if(m.parent) m.parent.remove(m); m.geometry.dispose(); m.material.dispose(); });
+    eachLoot(function(m){ if(m.parent) m.parent.remove(m); freeObject(m); });
     var nc=encounter.loot.caches.length;
     loot=makeLoot(nc+encounter.loot.spoils.length,nc);
     eachLoot(function(m){ built.scene.add(m); });
@@ -10834,13 +10933,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
 
   function dropNode(k){
     var nd=nodes[k];
-    nd.g.traverse(function(o){
-      if((o.isMesh||o.isInstancedMesh)&&o.geometry&&o.geometry!==boxGeo) o.geometry.dispose();
-      if(o.isInstancedMesh&&o.material&&o.material.dispose
-         &&o.material!==built.mats.mesh&&o.material!==built.mats.grass&&o.material!==built.mats.grassLean
-         &&o.material!==built.mats.water&&o.material!==built.mats.prop)
-        o.material.dispose();
-    });
+    var keep=sharedMats();
+    nd.g.traverse(function(o){ freeObject(o,keep); });
     built.scene.remove(nd.g);
     /* No redraw: a chunk is let go well outside the view, and the shadow it
        leaves in the map falls where nothing is looked at (#70). */
@@ -10997,7 +11091,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
             gen:0,mesh_ms:0,deliver:0,take:0,col:0,node:0,gen0:0,done:0,sent:0,failed:false,waited:0,err:null};
     ws.forEach(function(w,k){
       w.onerror=function(e){ P.failed=true; P.ready=false;
-        P.err=(e&&e.message)||'refused'; };
+        P.err=(e&&e.message)||'refused'; recEvent('worker',P.err); };
       w.onmessage=function(ev){
         var d=ev.data;
         if(d.pong){ P.ready=true; return; }
@@ -11194,7 +11288,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     }
     built.scene.add(g);
     renderer.compile(built.scene,camera);
-    built.scene.remove(g); box.dispose();
+    built.scene.remove(g); g.children.forEach(function(o){ if(o.isInstancedMesh) o.dispose(); }); box.dispose();
   }
 
   /* The sun's shadow box, centred where the shadow map was last drawn from.
@@ -12299,7 +12393,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
                     pool.deliver.toFixed(0)+' ms in transit; here '+
                     pool.col.toFixed(1)+' ms collider, '+pool.node.toFixed(1)+' ms scene)':'generated on this thread')+
                   (stream.pending?('   '+stream.pending+' queued'):'')+'\n'):'')+
-      net+'   '+fps.toFixed(0)+' fps';
+      net+'   '+fps.toFixed(0)+' fps\n'+
+      (function(m){ return 'memory '+m.gpuMB+' MB in '+m.buffers+' GPU buffers, '+m.textures+' textures'
+        +(m.heapMB!==null?'   heap '+m.heapMB+' MB':''); })(memNow());
   }
 
   resize();
@@ -12326,6 +12422,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var boot=function(){
       regen(seedin.value||'QUARTERSTONE');
       syncStreamBtn(); syncGrassCtl(); drawFps();
+      recSnap(); checkLastSession(false);
     };
     /* ---------- streaming by default, where it can be done off-thread ----------
        A streamed chunk costs this thread ~7 ms now (#64), inside a frame — but
@@ -12496,6 +12593,105 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   });
   gfxEl.addEventListener('keyup',function(e){ e.stopPropagation(); });
 
+  /* ---------- the report (#71) ----------
+     What the recorder writes every five seconds, what a report is made of,
+     and the panel that offers it: after an error, when the graphics context
+     is lost, when the last session died, and from Report in the graphics
+     dialog. The simplest way out is the one taken: Copy report puts the text
+     on the clipboard to paste into the chat or an issue, and where a framed
+     page is refused the clipboard, the text is shown selected instead. */
+  function recSnap(){
+    try{
+      var a=player(), m=memNow();
+      REC.snap={t:+((performance.now()/1000).toFixed(0)),
+        seed:built&&built.cfg?built.cfg.seed:null,
+        at:a?[+a.x.toFixed(1),+a.y.toFixed(2),+a.z.toFixed(1)]:null,
+        streaming:!!streaming,role:session?session.role:'solo',
+        view:+cam.view.toFixed(1),fps:+fps.toFixed(0),cpuMs:+costMs.toFixed(1),
+        chunks:field?field.loaded:null,mem:m,
+        gfx:{preset:GFX.preset,grassMode:GFX.grassMode,res:GFX.res,shadows:GFX.shadows,grass:GFX.grass},
+        sky:skyNow?skyNow.phase:null};
+      REC.trail.push({t:REC.snap.t,fps:REC.snap.fps,gpuMB:m.gpuMB,heapMB:m.heapMB,chunks:REC.snap.chunks});
+      if(REC.trail.length>24) REC.trail.shift();
+      recSave();
+    }catch(e){}
+  }
+  setInterval(recSnap,5000);
+  function reportOf(r){
+    return {what:'Quarterstone report',build:r.build,started:r.started,made:new Date().toISOString(),
+            endedCleanly:r.clean,ua:r.ua,dpr:r.dpr,screen:r.screen,touch:r.touch,
+            now:r.snap,trail:r.trail,events:r.events,settings:r===REC?Object.assign({},GFX):undefined};
+  }
+  function reportText(r){
+    var o=reportOf(r||REC);
+    return 'Quarterstone report · build '+o.build+' · '+o.made+'\n'+JSON.stringify(o,null,1);
+  }
+  var crashEl=document.getElementById('crash'), crashTxt=document.getElementById('crashtxt'),
+      crashMsg=document.getElementById('crashmsg'), crashHead=document.getElementById('crashh'),
+      crashReload=document.getElementById('crashreload'), crashFor=null, crashShown={};
+  var CRASH_SAYS={
+    error:['Something went wrong','An error was caught. The game may still run. Copy the report and paste it into the chat or an issue.'],
+    lost:['The graphics stopped','The browser took the graphics away, usually for lack of memory. Copy the report, then reload to carry on.'],
+    crashed:['Quarterstone closed unexpectedly','The last session ended without being closed. On a phone that is usually the system ending the page for memory. Copy the report of that session?'],
+    manual:['Report','A report of this session: build, place, settings, frame rate, memory and recent errors. Nothing personal is in it.']
+  };
+  function showReport(kind,rec){
+    if(kind==='error'&&crashShown.error&&crashEl.hidden) return;   /* once a session: the rest are recorded */
+    crashShown[kind]=true;
+    recSnap();
+    crashFor=rec||REC;
+    crashHead.textContent=CRASH_SAYS[kind][0]; crashMsg.textContent=CRASH_SAYS[kind][1];
+    crashReload.hidden=kind!=='lost';
+    crashTxt.hidden=true; crashTxt.value=reportText(crashFor);
+    crashEl.hidden=false; input.releaseAll();
+    document.getElementById('crashcopy').focus();
+  }
+  window.QSREPORT={show:function(kind){ try{ showReport(kind); }catch(e){} }};
+  function copyReport(){
+    var text=reportText(crashFor), done=function(ok){
+      crashMsg.textContent=ok?'Copied. Paste it into the chat or an issue.'
+        :'Select the text below and copy it — this page was not allowed the clipboard.';
+    };
+    crashTxt.value=text;
+    function byHand(){
+      crashTxt.hidden=false; crashTxt.focus(); crashTxt.select();
+      var ok=false; try{ ok=document.execCommand('copy'); }catch(e){}
+      done(ok);
+    }
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){ done(true); },byHand);
+    } else byHand();
+  }
+  document.getElementById('crashcopy').addEventListener('click',function(e){ e.stopPropagation(); copyReport(); });
+  document.getElementById('crashsave').addEventListener('click',function(e){
+    e.stopPropagation();
+    try{
+      var a=document.createElement('a');
+      a.href=URL.createObjectURL(new Blob([reportText(crashFor)],{type:'text/plain'}));
+      a.download='quarterstone-report-'+Date.now()+'.txt'; document.body.appendChild(a); a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1000);
+    }catch(err){ copyReport(); }
+  });
+  crashReload.addEventListener('click',function(e){ e.stopPropagation(); REC.clean=true; recSave(); location.reload(); });
+  function closeReport(){ crashEl.hidden=true; stage.focus(); }
+  document.getElementById('crashclose').addEventListener('click',function(e){ e.stopPropagation(); closeReport(); });
+  document.getElementById('gfxreport').addEventListener('click',function(e){ e.stopPropagation(); showReport('manual'); });
+  ['pointerdown','pointerup','pointermove','touchstart','contextmenu','wheel','click','keyup'].forEach(function(ev){
+    crashEl.addEventListener(ev,function(e){ e.stopPropagation(); },{passive:ev!=='contextmenu'});
+  });
+  crashEl.addEventListener('keydown',function(e){ e.stopPropagation(); if(e.key==='Escape'){ e.preventDefault(); closeReport(); } });
+  /* A lost context is the one failure the page itself is told about. */
+  cv.addEventListener('webglcontextlost',function(e){ e.preventDefault(); recEvent('context','WebGL context lost'); showReport('lost'); });
+  cv.addEventListener('webglcontextrestored',function(){ recEvent('context','WebGL context restored'); });
+  /* The last session, if it did not end cleanly and got far enough to leave
+     a snapshot. Not under automation: every gate page is closed without a
+     pagehide, and each would greet the next with a crash that never was. */
+  function checkLastSession(force){
+    var p=REC_PREV;
+    if(p&&!p.clean&&p.snap&&(force||!navigator.webdriver)){ REC_PREV=null; showReport('crashed',p); return true; }
+    return false;
+  }
+
   window.QSPLAY={
     get actor(){return player();}, get peer(){return other();},
     get cam(){return cam;}, get camera(){return camera;}, input:input,
@@ -12569,6 +12765,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     },
     /* How many times the shadow map has actually been drawn (#60). */
     get shadowRenders(){ return shadowRenders; },
+    /* #71: GPU buffers and bytes as the context saw them made and freed. */
+    get memory(){ return memNow(); },
+    /* The flight recorder (#71): the record as it stands, the report text,
+       and the doors the panel uses. */
+    get flight(){ return JSON.parse(JSON.stringify(REC)); },
+    reportText:function(){ return reportText(REC); },
+    showReport:function(kind){ showReport(kind||'manual'); return !crashEl.hidden; },
+    checkLastSession:function(){ REC_PREV=JSON.parse(localStorage.getItem(REC_KEY)||'null'); return checkLastSession(true); },
+    snap:function(){ recSnap(); return REC.snap; },
     /* #70: the graphics settings, as the dialog sees them, and the same doors
        it uses — for the gate and for a console. */
     get gfx(){ return Object.assign({aaLive:GFX_AA,lampsLit:lampNear.length?Math.min(lampLights,lampNear.length):0,
