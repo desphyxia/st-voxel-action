@@ -12706,7 +12706,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   function lifeMeshes(){
     var box=new THREE.BoxGeometry(1,1,1), g={};
     function inst(name,geo,mat,cap){
-      var m=new THREE.InstancedMesh(geo,mat,cap); m.count=0; m.frustumCulled=false;
+      /* Its own geometry, so its bounding sphere can be fitted each frame to
+         where its instances are: three culls an instanced mesh by that
+         sphere, and a mesh left unculled is charged whether seen or not. */
+      geo=geo.clone(); geo.boundingSphere=new THREE.Sphere();
+      var m=new THREE.InstancedMesh(geo,mat,cap); m.count=0;
+      m.userData.lb=[0,0,0,0,0,0,0];
       m.castShadow=false; m.receiveShadow=false; m.userData.kind='life'; m.userData.life=name;
       m.instanceColor=new THREE.InstancedBufferAttribute(new Float32Array(cap*3),3);
       built.scene.add(m); g[name]=m; return m;
@@ -12741,7 +12746,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var n=m.count; if(n>=m.instanceMatrix.count) return false;
     le.set(pitch,yaw,roll); lq.setFromEuler(le); lp.set(x,y,z); ls.set(sx,sy,sz);
     lm4.compose(lp,lq,ls); m.setMatrixAt(n,lm4);
-    lc.setHex(col); m.setColorAt(n,lc); m.count=n+1; return true;
+    lc.setHex(col); m.setColorAt(n,lc); m.count=n+1;
+    /* the box this frame's instances fill, and the widest reach of any */
+    var b=m.userData.lb, r=Math.max(sx,sy,sz)*2;
+    if(n===0){ b[0]=b[3]=x; b[1]=b[4]=y; b[2]=b[5]=z; b[6]=r; }
+    else{ if(x<b[0])b[0]=x; if(y<b[1])b[1]=y; if(z<b[2])b[2]=z; if(x>b[3])b[3]=x; if(y>b[4])b[4]=y; if(z>b[5])b[5]=z; if(r>b[6])b[6]=r; }
+    return true;
   }
   function lifeBodies(){ var o=[], a=player(), b=other(); if(a) o.push(a); if(b) o.push(b); return o; }
   function lifeNear(bodies,x,z){
@@ -12793,7 +12803,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       var k=1-u, g2=Math.round(0.55*k*255);
       lifePut(M.ring,rr.x,rr.y,rr.z,0,0,0,0.15+u*0.75,1,0.15+u*0.75,(g2<<16)|(g2<<8)|g2);
     }
-    for(mk in M){ M[mk].instanceMatrix.needsUpdate=true; if(M[mk].instanceColor) M[mk].instanceColor.needsUpdate=true; }
+    for(mk in M){ var mm=M[mk], lb=mm.userData.lb, sp=mm.geometry.boundingSphere;
+      mm.instanceMatrix.needsUpdate=true; if(mm.instanceColor) mm.instanceColor.needsUpdate=true;
+      if(!mm.count){ sp.radius=-1; continue; }
+      sp.center.set((lb[0]+lb[3])/2,(lb[1]+lb[4])/2,(lb[2]+lb[5])/2);
+      var ex=lb[3]-lb[0], ey=lb[4]-lb[1], ez=lb[5]-lb[2];
+      sp.radius=Math.sqrt(ex*ex+ey*ey+ez*ez)/2+lb[6]; }
   }
   function lifeSee(kind,id,x,y,z){ life.list.push({kind:kind,id:id,x:x,y:y,z:z}); }
   /* ---- fish: circling under the surface, darting, and now and then a leap ---- */
