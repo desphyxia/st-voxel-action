@@ -28,7 +28,7 @@ export const END = '/* QS-BUNDLE-END */';
 const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'palette', 'rng', 'biomes', 'field', 'erosion', 'region', 'ground', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index', 'chunk'],
-  'src/mesh': ['greedy', 'carve', 'propmesh'],
+  'src/mesh': ['greedy', 'carve', 'propmesh', 'vox'],
   'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'loot', 'actor', 'nav', 'enemy', 'anim', 'sky', 'camera', 'input'],
   'src/net': ['transport', 'session'],
 };
@@ -48,7 +48,9 @@ const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'BIO', 'CLIMAT
 const MESH_API = ['meshChunk', 'chunkOccupancy', 'innerChunk', 'openAir', 'surfaceAt', 'LEVELS',
   'isCut', 'solidVox', 'carve', 'clearEdits', 'chunkGrid', 'BITE', 'BITE_R',
   /* props without the faces nobody can see — issue #51 */
-  'meshProps', 'solidKeys'];
+  'meshProps', 'solidKeys',
+  /* authored models — issue #34 */
+  'parseVox', 'meshVox', 'voxBytes', 'VOX_SCALE', 'HERO_VOX_ROLES'];
 
 /** Everything the playable build needs on top of it: the simulation and the wire. */
 const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'colliderFromPacked', 'colliderForChunk', 'softProp',
@@ -84,7 +86,12 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'colliderF
 export const TARGETS = [
   { file: PLATE, name: 'docs/concept/index.html', dirs: ['src/gen'], api: GEN_API },
   { file: PLAY, name: 'docs/play/index.html', dirs: ['src/gen', 'src/mesh', 'src/sim', 'src/net'],
-    api: GEN_API.concat(MESH_API).concat(SIM_API) },
+    api: GEN_API.concat(MESH_API).concat(SIM_API).concat(['ASSETS']),
+    /* Authored models, as base64 inside the bundle (#34): the page is one file
+       opened from disk and published under a CSP that admits no fetch of a
+       sibling, so a .vox travels as text. Inside the generated block, so the
+       SYNC check that catches a stale bundle catches a stale model too. */
+    assets: [['hero.vox', 'assets/vox/hero.vox']] },
 ];
 
 /**
@@ -181,6 +188,13 @@ export function renderBundle(target) {
       assertNoCollisions(target, seen, dir, m, body);
       parts.push(`/* ---------- ${dir}/${m}.mjs ---------- */\n${body}`);
     }
+  }
+  if (target.assets) {
+    const body = target.assets.map(([k, f]) => {
+      const b64 = readFileSync(join(ROOT, f)).toString('base64').replace(/.{1,100}/g, (l) => `\n  '${l}'+`);
+      return `  ${JSON.stringify(k)}:${b64.slice(0, -1)}`;
+    }).join(',\n');
+    parts.push(`/* ---------- assets ---------- */\nconst ASSETS={\n${body}\n};`);
   }
   return [
     BEGIN,

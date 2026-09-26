@@ -542,7 +542,7 @@ function hyp(a, b) { return Math.sqrt(a * a + b * b); }
 
 const MAT = {
   AIR: 0, SOIL: 1, GRASS: 2, ROCK: 3, SAND: 4, SNOW: 5, ICE: 6, BASALT: 7,
-  ASH: 8, WOOD: 9, LEAF: 10, PEAT: 11, PATH: 12, MAGMA: 13, METAL: 14, LIGHT: 15, GLASS: 16, FUNGUS: 17,
+  ASH: 8, WOOD: 9, LEAF: 10, PEAT: 11, PATH: 12, MAGMA: 13, METAL: 14, LIGHT: 15, GLASS: 16, FUNGUS: 17, CLOTH: 18, FLESH: 19,
 };
 
 /** Indexed by MAT. Order is the wire format — append only. */
@@ -565,6 +565,10 @@ const MATERIALS = [
   { id: 15, k: 'light',  nm: 'Lit core', hard: 1.5, dens: 0.8, burn: 0,   cond: 1,   grip: 1,    step: 'metal',  emit: 1, harm: 0 },
   { id: 16, k: 'glass',  nm: 'Glass',    hard: 1.0, dens: 1.2, burn: 0,   cond: 0.3, grip: 0.6,  step: 'glass',  emit: 0, harm: 0 },
   { id: 17, k: 'fungus', nm: 'Fungus',   hard: 0.2, dens: 0.3, burn: 0.4, cond: 0.4, grip: 0.9,  step: 'soft',   emit: 0, harm: 0 },
+  /* What authored characters are made of (#34). Not terrain: nothing is
+     generated from them, but a hit on one is a hit on cloth or on flesh. */
+  { id: 18, k: 'cloth',  nm: 'Cloth',    hard: 0.1, dens: 0.3, burn: 0.9, cond: 0.1, grip: 1,    step: 'soft',   emit: 0, harm: 0 },
+  { id: 19, k: 'flesh',  nm: 'Flesh',    hard: 0.1, dens: 1.0, burn: 0.3, cond: 0.6, grip: 1,    step: 'soft',   emit: 0, harm: 0 },
 ];
 
 /** Wet ground conducts: what chain-frost needs, and why water level matters. */
@@ -698,6 +702,17 @@ const GROUPS = {
   EM_HIVE:    [0xb7f04f],
   EM_WRECK:   [0xff9a3c],
   EM_SPORE:   [0xb8f07a, 0x8fe8c8],
+
+  /* ---- the authored hero (#34), after everything else so no index moves ---- */
+  HERO_HAIR:    [0x3a2a1e],
+  HERO_LEATHER: [0x5a3f2a],
+  HERO_BOOT:    [0x2e2622],
+  HERO_TROUSER: [0x3b3834],
+  HERO_CANVAS:  [0x6b604c],
+  HERO_EYE:     [0x16181c],
+  HERO_IRON:    [0x6b6660],
+  HERO_STEEL:   [0xa9b0b6],
+  HERO_MARK:    [0xd9a25e],
 };
 
 /** The flat table the renderer indexes. */
@@ -4222,6 +4237,205 @@ function meshProps(w, clip) {
     }
   }
   return { pos, nor, col, idx, sway, faces, culled, voxels: vbase / 4 };
+}
+/* ---------- src/mesh/vox.mjs ---------- */
+/**
+ * MagicaVoxel .vox models — issue #34.
+ *
+ * The art pipeline is hybrid (`docs/DECISIONS.md` §7): trees, boulders, walls
+ * and clutter are procedural, and characters, creatures and hero structures
+ * are authored by hand in MagicaVoxel. This is the reader for the second half,
+ * and a writer, because the first model is authored by a script
+ * (tools/author-hero.mjs) and has to come out as a file MagicaVoxel opens.
+ *
+ * A file is RIFF-like: "VOX ", a version, then a MAIN chunk whose children
+ * are what matters here —
+ *
+ *   SIZE, XYZI   one pair per model: its extent, then (x, y, z, colour) bytes
+ *   RGBA         the 256-colour palette; colour index i is entry i - 1
+ *   nTRN/nGRP/nSHP  the scene graph, which is where a model's *name* lives
+ *
+ * Models are matched to what they dress by name, never by order: MagicaVoxel
+ * keeps the names a person gave the parts, and does not promise the order.
+ *
+ * Colour is not carried. A model's palette index is mapped onto the palette
+ * table and the material table (a role, below) the same way a generated voxel
+ * is — #28's argument, that restyling must not mean re-authoring, holds for a
+ * character as much as for a hillside.
+ *
+ * Axes: MagicaVoxel is z-up. Here x stays x, the file's z is up (y), and the
+ * file's y runs backwards into z — a rotation, not a mirror, so a left arm
+ * authored as a left arm stays one.
+ */
+
+
+
+/** Metres per model voxel: a character is finer than the 25 cm terrain grid. */
+const VOX_SCALE = 0.0625;
+
+/**
+ * What each colour index of the hero model means (#34). `tint` names the
+ * per-player colour the rig already takes ('cloth', 'skin'), scaled by `k`;
+ * otherwise `pal` names a palette group. `mat` is the material table's word
+ * for it — what a blade sounds like when it hits, and what it is made of.
+ */
+const HERO_VOX_ROLES = {
+  1: { tint: 'cloth', k: 1, mat: MAT.CLOTH },
+  2: { tint: 'cloth', k: 0.74, mat: MAT.CLOTH },
+  3: { tint: 'skin', k: 1, mat: MAT.FLESH },
+  4: { tint: 'skin', k: 0.82, mat: MAT.FLESH },
+  5: { pal: 'HERO_HAIR', mat: MAT.CLOTH },
+  6: { pal: 'HERO_LEATHER', mat: MAT.CLOTH },
+  7: { pal: 'HERO_BOOT', mat: MAT.CLOTH },
+  8: { pal: 'HERO_TROUSER', mat: MAT.CLOTH },
+  9: { pal: 'HERO_CANVAS', mat: MAT.CLOTH },
+  10: { pal: 'HERO_EYE', mat: MAT.FLESH },
+  11: { pal: 'HERO_IRON', mat: MAT.METAL },
+  12: { pal: 'HERO_STEEL', mat: MAT.METAL },
+  13: { pal: 'HERO_MARK', mat: MAT.METAL },
+};
+
+function tag(b, o) { return String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]); }
+
+/**
+ * Bytes to models. Returns { version, models: [{ name, size: [x, y, z],
+ * xyzi: Uint8Array }], palette: Uint32Array(256) as 0xRRGGBB, index 1 first }.
+ */
+function parseVox(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  if (b.length < 20 || tag(b, 0) !== 'VOX ' || tag(b, 8) !== 'MAIN') throw new Error('not a .vox file');
+  const version = dv.getInt32(4, true);
+  const models = [], palette = new Uint32Array(256), shapes = {}, trns = {};
+  let size = null, o = 20 + dv.getInt32(12, true);
+  const end = o + dv.getInt32(16, true);
+  const str = (p) => { const n = dv.getInt32(p, true); let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(b[p + 4 + i]); return [s, p + 4 + n]; };
+  const dict = (p) => {
+    const n = dv.getInt32(p, true), d = {}; p += 4;
+    for (let i = 0; i < n; i++) { const [k, p1] = str(p); const [v, p2] = str(p1); d[k] = v; p = p2; }
+    return [d, p];
+  };
+  for (let i = 0; i < 256; i++) palette[i] = 0x808080;
+  while (o + 12 <= end) {
+    const id = tag(b, o), n = dv.getInt32(o + 4, true), c = dv.getInt32(o + 8, true), p = o + 12;
+    if (id === 'SIZE') size = [dv.getInt32(p, true), dv.getInt32(p + 4, true), dv.getInt32(p + 8, true)];
+    else if (id === 'XYZI') {
+      const k = dv.getInt32(p, true);
+      models.push({ name: null, size, xyzi: b.slice(p + 4, p + 4 + 4 * k) });
+    } else if (id === 'RGBA') {
+      for (let i = 0; i < 255; i++) palette[i + 1] = (b[p + i * 4] << 16) | (b[p + i * 4 + 1] << 8) | b[p + i * 4 + 2];
+    } else if (id === 'nTRN') {
+      const node = dv.getInt32(p, true), [attr, p1] = dict(p + 4);
+      trns[node] = { name: attr._name || null, child: dv.getInt32(p1, true) };
+    } else if (id === 'nSHP') {
+      const node = dv.getInt32(p, true), [, p1] = dict(p + 4);
+      if (dv.getInt32(p1, true) > 0) shapes[node] = dv.getInt32(p1 + 4, true);
+    }
+    o = p + n + c;
+  }
+  for (const k in trns) {
+    const t = trns[k], m = shapes[t.child];
+    if (t.name && m !== undefined && models[m]) models[m].name = t.name;
+  }
+  return { version, models, palette };
+}
+
+/**
+ * Models to bytes: the chunks MagicaVoxel writes, with a scene graph that
+ * names each model and lays them out side by side so they can be told apart
+ * when the file is opened.
+ */
+function writeVox(v) {
+  const out = [];
+  const i32 = (n) => { out.push(n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255); };
+  const s4 = (s) => { for (let i = 0; i < 4; i++) out.push(s.charCodeAt(i)); };
+  const bytesOf = (fill) => { const save = out.length; fill(); return out.splice(save); };
+  const chunk = (id, body) => { s4(id); i32(body.length); i32(0); for (const x of body) out.push(x); };
+  const str = (s) => { i32(s.length); for (let i = 0; i < s.length; i++) out.push(s.charCodeAt(i)); };
+  const dict = (d) => { const k = Object.keys(d); i32(k.length); for (const q of k) { str(q); str(String(d[q])); } };
+
+  const kids = bytesOf(() => {
+    v.models.forEach((m) => {
+      chunk('SIZE', bytesOf(() => { i32(m.size[0]); i32(m.size[1]); i32(m.size[2]); }));
+      chunk('XYZI', bytesOf(() => { i32(m.xyzi.length / 4); for (const x of m.xyzi) out.push(x); }));
+    });
+    const n = v.models.length;
+    chunk('nTRN', bytesOf(() => { i32(0); dict({}); i32(1); i32(-1); i32(-1); i32(1); dict({}); }));
+    chunk('nGRP', bytesOf(() => { i32(1); dict({}); i32(n); for (let i = 0; i < n; i++) i32(2 + i * 2); }));
+    let x = 0;
+    v.models.forEach((m, i) => {
+      const tx = Math.round(x + m.size[0] / 2);
+      x += m.size[0] + 2;
+      chunk('nTRN', bytesOf(() => {
+        i32(2 + i * 2); dict(m.name ? { _name: m.name } : {}); i32(3 + i * 2); i32(-1); i32(0); i32(1);
+        dict({ _t: `${tx} 0 ${Math.round(m.size[2] / 2)}` });
+      }));
+      chunk('nSHP', bytesOf(() => { i32(3 + i * 2); dict({}); i32(1); i32(i); dict({}); }));
+    });
+    chunk('RGBA', bytesOf(() => {
+      for (let i = 1; i <= 256; i++) {
+        const c = i < 256 ? v.palette[i] : 0;
+        out.push((c >> 16) & 255, (c >> 8) & 255, c & 255, 255);
+      }
+    }));
+  });
+  s4('VOX '); i32(v.version || 150);
+  s4('MAIN'); i32(0); i32(kids.length);
+  for (const x of kids) out.push(x);
+  return new Uint8Array(out);
+}
+
+/**
+ * One model as faces, centred on its own middle the way a box is, in metres:
+ * every face with nothing beside it, as two triangles. `ci` is each vertex's
+ * colour index, for the caller to resolve against its roles.
+ */
+function meshVox(m, scale) {
+  const s = scale === undefined ? VOX_SCALE : scale;
+  const sx = m.size[0], sy = m.size[1], sz = m.size[2];
+  const filled = new Map();
+  for (let q = 0; q < m.xyzi.length; q += 4) filled.set(m.xyzi[q] + sx * (m.xyzi[q + 1] + sy * m.xyzi[q + 2]), m.xyzi[q + 3]);
+  const has = (x, y, z) => x >= 0 && y >= 0 && z >= 0 && x < sx && y < sy && z < sz && filled.has(x + sx * (y + sy * z));
+  /* File axes: +x, -x, +y, -y, +z, -z; and the four corners of each face. */
+  const FACES = [
+    [1, 0, 0, [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]]],
+    [-1, 0, 0, [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]]],
+    [0, 1, 0, [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]]],
+    [0, -1, 0, [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]]],
+    [0, 0, 1, [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]],
+    [0, 0, -1, [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]]],
+  ];
+  const pos = [], nor = [], ci = [], idx = [];
+  /* File (x, y, z) to scene (x, z, -y), centred. */
+  const px = (x) => (x - sx / 2) * s, py = (z) => (z - sz / 2) * s, pz = (y) => -(y - sy / 2) * s;
+  filled.forEach((c, key) => {
+    const x = key % sx, y = ((key / sx) | 0) % sy, z = (key / (sx * sy)) | 0;
+    for (const [dx, dy, dz, cor] of FACES) {
+      if (has(x + dx, y + dy, z + dz)) continue;
+      const b0 = pos.length / 3;
+      for (const [a, bb, cc] of cor) {
+        pos.push(px(x + a), py(z + cc), pz(y + bb));
+        nor.push(dx, dz, -dy);
+        ci.push(c);
+      }
+      /* The corners run anticlockwise seen from outside, and the axis swap is
+         a rotation, so the winding survives it and the faces point out. */
+      idx.push(b0, b0 + 1, b0 + 2, b0, b0 + 2, b0 + 3);
+    }
+  });
+  return { pos, nor, ci, idx, faces: idx.length / 6 };
+}
+
+/** Base64 to bytes, for a model carried inside a page as text. */
+function voxBytes(b64) {
+  const t = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const clean = b64.replace(/[^A-Za-z0-9+/]/g, ''), out = new Uint8Array((clean.length * 3) >> 2);
+  let bits = 0, acc = 0, k = 0;
+  for (let i = 0; i < clean.length; i++) {
+    acc = (acc << 6) | t.indexOf(clean[i]); bits += 6;
+    if (bits >= 8) { bits -= 8; out[k++] = (acc >> bits) & 255; }
+  }
+  return out.subarray(0, k);
 }
 /* ---------- src/sim/collider.mjs ---------- */
 /**
@@ -8025,7 +8239,97 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
+/* ---------- assets ---------- */
+const ASSETS={
+  "hero.vox":
+  'Vk9YIJYAAABNQUlOAAAAAA8ZAABTSVpFDAAAAAAAAAADAAAABAAAAAkAAABYWVpJtAEAAAAAAABsAAAAAAMABwEDAAcCAwAHAAMB'+
+  'BwEDAQcCAwEHAAMCBwEDAgcCAwIHAAMDCAEDAwgCAwMIAAMECAEDBAgCAwQIAAMFCAEDBQgCAwUIAAMGCAEDBggCAwYIAAMHCAED'+
+  'BwgCAwcIAAMICAEDCAgCAwgIAAIABwECAAcCAgAHAAIBBwECAQcCAgEHAAICBgECAgYCAgIGAAIDCAECAwgCAgMIAAIECAECBAgC'+
+  'AgQIAAIFCAECBQgCAgUIAAIGCAECBggCAgYIAAIHCAECBwgCAgcIAAIICAECCAgCAggIAAEABwEBAAcCAQAHAAEBBwEBAQcCAQEH'+
+  'AAECBgEBAgYCAQIGAAEDCAEBAwgCAQMIAAEECAEBBAgCAQQIAAEFCAEBBQgCAQUIAAEGCAEBBggCAQYIAAEHCAEBBwgCAQcIAAEI'+
+  'CAEBCAgCAQgIAAAABwEAAAcCAAAHAAABBwEAAQcCAAEHAAACBwEAAgcCAAIHAAADCAEAAwgCAAMIAAAECAEABAgCAAQIAAAFCAEA'+
+  'BQgCAAUIAAAGCAEABggCAAYIAAAHCAEABwgCAAcIAAAICAEACAgCAAgIU0laRQwAAAAAAAAAAwAAAAQAAAAJAAAAWFlaSbQBAAAA'+
+  'AAAAbAAAAAADAAcBAwAHAgMABwADAQcBAwEHAgMBBwADAgcBAwIHAgMCBwADAwgBAwMIAgMDCAADBAgBAwQIAgMECAADBQgBAwUI'+
+  'AgMFCAADBggBAwYIAgMGCAADBwgBAwcIAgMHCAADCAgBAwgIAgMICAACAAcBAgAHAgIABwACAQcBAgEHAgIBBwACAgYBAgIGAgIC'+
+  'BgACAwgBAgMIAgIDCAACBAgBAgQIAgIECAACBQgBAgUIAgIFCAACBggBAgYIAgIGCAACBwgBAgcIAgIHCAACCAgBAggIAgIICAAB'+
+  'AAcBAQAHAgEABwABAQcBAQEHAgEBBwABAgYBAQIGAgECBgABAwgBAQMIAgEDCAABBAgBAQQIAgEECAABBQgBAQUIAgEFCAABBggB'+
+  'AQYIAgEGCAABBwgBAQcIAgEHCAABCAgBAQgIAgEICAAAAAcBAAAHAgAABwAAAQcBAAEHAgABBwAAAgcBAAIHAgACBwAAAwgBAAMI'+
+  'AgADCAAABAgBAAQIAgAECAAABQgBAAUIAgAFCAAABggBAAYIAgAGCAAABwgBAAcIAgAHCAAACAgBAAgIAgAICFNJWkUMAAAAAAAA'+
+  'AAgAAAAGAAAACgAAAFhZWklUBwAAAAAAANQBAAAABQACAQUAAgIFAAIDBQACBAUAAgUFAAIGBQACBwUAAgAFAQIBBQEBAgUBAQMF'+
+  'AQEEBQEBBQUBAQYFAQEHBQECAAUCBgEFAgYCBQIGAwUCBgQFAgYFBQIGBgUCBgcFAgYABQMCAQUDAQIFAwYDBQMBBAUDAQUFAwYG'+
+  'BQMBBwUDAgAFBAIBBQQBAgUEBgMFBAEEBQQBBQUEBgYFBAEHBQQCAAUFAgEFBQECBQUGAwUFAQQFBQEFBQUGBgUFAQcFBQIABQYC'+
+  'AQUGAQIFBgYDBQYBBAUGAQUFBgYGBQYBBwUGAgAFBwIBBQcBAgUHBgMFBwEEBQcBBQUHBgYFBwEHBQcCAAUIAgEFCAECBQgGAwUI'+
+  'AQQFCAEFBQgGBgUIAQcFCAIBBQkBAgUJBgMFCQEEBQkBBQUJBgYFCQEABAACAQQAAgIEAAIDBAACBAQAAgUEAAIGBAACBwQAAgAE'+
+  'AQIBBAEBAgQBAQMEAQEEBAEBBQQBAQYEAQEHBAECAAQCBgEEAgYCBAIGAwQCBgQEAgYFBAIGBgQCBgcEAgYABAMCAQQDAQIEAwED'+
+  'BAMBBAQDAQUEAwEGBAMBBwQDAgAEBAIBBAQBAgQEAQMEBAEEBAQBBQQEAQYEBAEHBAQCAAQFAgEEBQECBAUBAwQFAQQEBQEFBAUB'+
+  'BgQFAQcEBQIABAYCAQQGAQIEBgEDBAYBBAQGAQUEBgEGBAYBBwQGAgAEBwIBBAcBAgQHAQMEBwEEBAcBBQQHAQYEBwEHBAcCAAQI'+
+  'AgEECAECBAgBAwQIAQQECAEFBAgBBgQIAQcECAIBBAkBAgQJAQMECQEEBAkBBQQJAQYECQEAAwACAQMAAgIDAAIDAwACBAMAAgUD'+
+  'AAIGAwACBwMAAgADAQIBAwEBAgMBAQMDAQEEAwEBBQMBAQYDAQEHAwECAAMCBgEDAgYCAwIGAwMCBgQDAgYFAwIGBgMCBgcDAgYA'+
+  'AwMCAQMDAQIDAwEDAwMBBAMDAQUDAwEGAwMBBwMDAgADBAIBAwQBAgMEAQMDBAEEAwQBBQMEAQYDBAEHAwQCAAMFAgEDBQECAwUB'+
+  'AwMFAQQDBQEFAwUBBgMFAQcDBQIAAwYCAQMGAQIDBgEDAwYBBAMGAQUDBgEGAwYBBwMGAgADBwIBAwcBAgMHAQMDBwEEAwcBBQMH'+
+  'AQYDBwEHAwcCAAMIAgEDCAECAwgBAwMIAQQDCAEFAwgBBgMIAQcDCAIBAwkBAgMJAQMDCQEEAwkBBQMJAQYDCQEAAgACAQIAAgIC'+
+  'AAIDAgACBAIAAgUCAAIGAgACBwIAAgACAQIBAgEBAgIBAQMCAQEEAgEBBQIBAQYCAQEHAgECAAICBgECAgYCAgIGAwICBgQCAgYF'+
+  'AgIGBgICBgcCAgYAAgMCAQIDAQICAwEDAgMBBAIDAQUCAwEGAgMBBwIDAgACBAIBAgQBAgIEAQMCBAEEAgQBBQIEAQYCBAEHAgQC'+
+  'AAIFAgECBQECAgUBAwIFAQQCBQEFAgUBBgIFAQcCBQIAAgYCAQIGAQICBgEDAgYBBAIGAQUCBgEGAgYBBwIGAgACBwIBAgcBAgIH'+
+  'AQMCBwEEAgcBBQIHAQYCBwEHAgcCAAIIAgECCAECAggBAwIIAQQCCAEFAggBBgIIAQcCCAIBAgkBAgIJAQMCCQEEAgkBBQIJAQYC'+
+  'CQEAAQACAQEAAgIBAAIDAQACBAEAAgUBAAIGAQACBwEAAgABAQIBAQEBAgEBAQMBAQEEAQEBBQEBAQYBAQEHAQECAAECBgEBAgYC'+
+  'AQIGAwECBgQBAgYFAQIGBgECBgcBAgYAAQMCAQEDAQIBAwEDAQMBBAEDAQUBAwEGAQMBBwEDAgABBAIBAQQBAgEEAQMBBAEEAQQB'+
+  'BQEEAQYBBAEHAQQCAAEFAgEBBQECAQUBAwEFAQQBBQEFAQUBBgEFAQcBBQIAAQYCAQEGAQIBBgEDAQYBBAEGAQUBBgEGAQYBBwEG'+
+  'AgABBwIBAQcBAgEHAQMBBwEEAQcBBQEHAQYBBwEHAQcCAAEIAgEBCAECAQgBAwEIAQQBCAEFAQgBBgEIAQcBCAIBAQkBAgEJAQMB'+
+  'CQEEAQkBBQEJAQYBCQEAAAACAQAAAgIAAAIDAAACBAAAAgUAAAIGAAACBwAAAgAAAQIBAAEBAgABAQMAAQEEAAEBBQABAQYAAQEH'+
+  'AAECAAACBgEAAgYCAAIGAwACCwQAAgsFAAIGBgACBgcAAgYAAAMCAQADAQIAAwEDAAMBBAADAQUAAwEGAAMBBwADAgAABAIBAAQB'+
+  'AgAEAQMABAEEAAQBBQAEAQYABAEHAAQCAAAFAgEABQECAAUBAwAFAQQABQEFAAUBBgAFAQcABQIAAAYCAQAGAQIABgEDAAYBBAAG'+
+  'AQUABgEGAAYBBwAGAgAABwIBAAcBAgAHAQMABwEEAAcBBQAHAQYABwEHAAcCAAAIAgEACAECAAgBAwAIAgQACAIFAAgBBgAIAQcA'+
+  'CAIBAAkBAgAJAQMACQMEAAkDBQAJAQYACQFTSVpFDAAAAAAAAAAFAAAAAwAAAAUAAABYWVpJMAEAAAAAAABLAAAAAAIACQECAAYC'+
+  'AgAJAwIABgQCAAkAAgEJAQIBBgICAQkDAgEGBAIBCQACAgkBAgIGAgICCwMCAgYEAgIJAAIDCQECAwYCAgMJAwIDBgQCAwkAAgQG'+
+  'AQIEBgICBAYDAgQGBAIEBgABAAkBAQAJAgEACQMBAAkEAQAJAAEBCQEBAQkCAQEJAwEBCQQBAQkAAQIJAQECCQIBAgkDAQIJBAEC'+
+  'CQABAwkBAQMJAgEDCQMBAwkEAQMJAAEEBgEBBAYCAQQGAwEEBgQBBAYAAAAJAQAACQIAAAkDAAAJBAAACQAAAQkBAAEJAgABCQMA'+
+  'AQkEAAEJAAACCQEAAgkCAAIJAwACCQQAAgkAAAMJAQADCQIAAwkDAAMJBAADCQAABAYBAAQGAgAEBgMABAYEAAQGU0laRQwAAAAA'+
+  'AAAABQAAAAUAAAAFAAAAWFlaSdgBAAAAAAAAdQAAAAEEAAMCBAADAwQAAwAEAQMBBAEDAgQBAwMEAQMEBAEDAAQCBQEEAgUCBAIF'+
+  'AwQCBQQEAgUABAMFAQQDBQIEAwUDBAMFBAQDBQEEBAUCBAQFAwQEBQADAAMBAwADAgMAAwMDAAMEAwADAAMBAwEDAQMCAwEDAwMB'+
+  'AwQDAQMAAwIFAQMCBQIDAgUDAwIFBAMCBQADAwUBAwMFAgMDBQMDAwUEAwMFAAMEBQEDBAUCAwQFAwMEBQQDBAUAAgADAQIAAwIC'+
+  'AAMDAgADBAIAAwACAQMBAgEDAgIBAwMCAQMEAgEDAAICAwECAgMCAgIDAwICAwQCAgMAAgMFAQIDAwICAwMDAgMDBAIDBQACBAUB'+
+  'AgQFAgIEBQMCBAUEAgQFAAEAAwEBAAMCAQADAwEAAwQBAAMAAQEDAQEBAwIBAQMDAQEDBAEBAwABAgMBAQIDAgECAwMBAgMEAQID'+
+  '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'+
+  'R0JBAAQAAAAAAAAvb3r/I09X/8mabv+ofFX/Oioe/1o/Kv8uJiL/Ozg0/2tgTP8WGBz/a2Zg/6mwtv/Zol7/gICA/4CAgP+AgID/'+
+  'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA'+
+  '/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CA'+
+  'gP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+A'+
+  'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
+  'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA'+
+  '/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CA'+
+  'gP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+A'+
+  'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
+  'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA'+
+  '/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CA'+
+  'gP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+A'+
+  'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
+  'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP8AAAD/'
+};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,ASSETS:ASSETS};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -9381,7 +9685,26 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      sentry leans back and draws its arms behind it, and none of it is a box
      changing scale. `ranges` remembers where each box's vertices are, so a
      single part can change colour — the sentry's plate is the tell. */
-  function buildRig(def,colours){
+  /* The authored hero (#34): one voxel model per rig part, read from the
+     .vox the bundle carries and matched to parts by the names given them in
+     MagicaVoxel. A part with no model keeps its box, so a model that fails to
+     parse leaves the boxed avatar rather than no avatar. */
+  var HERO_VOX=(function(){
+    try{
+      var out={}, v=QS.parseVox(QS.voxBytes(QS.ASSETS['hero.vox']));
+      v.models.forEach(function(m){ if(m.name) out[m.name]=QS.meshVox(m,QS.VOX_SCALE); });
+      return out;
+    }catch(e){ return null; }
+  })();
+  /** A model vertex's colour: a player's own tint for cloth and skin, and
+      the palette table for everything else — never the file's colour. */
+  function voxColour(ci,colours,c){
+    var r=QS.HERO_VOX_ROLES[ci];
+    if(!r){ c.setHex(0xff00ff); return; }
+    if(r.tint){ c.setHex(colours[r.tint]); c.multiplyScalar(r.k); }
+    else c.setHex(QS.PALETTE[QS.PAL[r.pal].at]);
+  }
+  function buildRig(def,colours,models){
     var rest=QS.restPositions(def), idx={}, bones=[], byName={};
     def.bones.forEach(function(b,i){
       var bone=new THREE.Bone(); bone.name=b.name; bone.position.set(b.at[0],b.at[1],b.at[2]);
@@ -9390,10 +9713,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     });
     var pos=[],nor=[],cols=[],si=[],sw=[],ind=[],ranges={},base=0,c=new THREE.Color();
     def.parts.forEach(function(pt){
+      var r=rest[pt.bone], bi=idx[pt.bone], vm=models&&models[pt.name], v;
+      if(vm){
+        var nv=vm.pos.length/3;
+        for(v=0;v<nv;v++){
+          pos.push(vm.pos[v*3]+r[0]+pt.at[0],vm.pos[v*3+1]+r[1]+pt.at[1],vm.pos[v*3+2]+r[2]+pt.at[2]);
+          nor.push(vm.nor[v*3],vm.nor[v*3+1],vm.nor[v*3+2]);
+          voxColour(vm.ci[v],colours,c); cols.push(c.r,c.g,c.b);
+          si.push(bi,0,0,0); sw.push(1,0,0,0);
+        }
+        for(v=0;v<vm.idx.length;v++) ind.push(vm.idx[v]+base);
+        ranges[pt.name]=[base,nv]; base+=nv;
+        return;
+      }
       var bx=new THREE.BoxGeometry(pt.size[0],pt.size[1],pt.size[2]);
-      var r=rest[pt.bone], bi=idx[pt.bone];
       c.setHex(typeof pt.color==='string'?colours[pt.color]:pt.color);
-      var P=bx.attributes.position, N=bx.attributes.normal, n=P.count, v;
+      var P=bx.attributes.position, N=bx.attributes.normal, n=P.count;
       for(v=0;v<n;v++){
         pos.push(P.getX(v)+r[0]+pt.at[0],P.getY(v)+r[1]+pt.at[1],P.getZ(v)+r[2]+pt.at[2]);
         nor.push(N.getX(v),N.getY(v),N.getZ(v)); cols.push(c.r,c.g,c.b);
@@ -9419,7 +9754,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     geo.boundingSphere.radius+=def===QS.HERO_RIG?1.6:1.0;
     mesh.frustumCulled=true; mesh.castShadow=false;
     mesh.userData.keep=true; mesh.userData.kind='actor';
-    return {mesh:mesh,bones:byName,def:def,ranges:ranges,tint:{},shown:null,at:-1};
+    return {mesh:mesh,bones:byName,def:def,ranges:ranges,tint:{},shown:null,at:-1,
+            authored:models?def.parts.filter(function(pt){ return !!models[pt.name]; }).length:0};
   }
   /** Colour one part of a rig — only when it changes, since it rewrites vertices. */
   function tintRig(rig,part,hex){
@@ -9455,7 +9791,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   }
   function makeAvatar(cloth,skin){
     var g=new THREE.Group(), r=ACTOR.radius, h=ACTOR.height;
-    var rig=buildRig(QS.HERO_RIG,{cloth:cloth,skin:skin}); g.add(rig.mesh);
+    var rig=buildRig(QS.HERO_RIG,{cloth:cloth,skin:skin},HERO_VOX); g.add(rig.mesh);
     /* The arc is what actually reads at forty pixels tall — the blade itself is
        three voxels wide and half behind the character. It sits at blade height
        rather than on the ground: the detail pass moves the surface by up to half
@@ -11462,6 +11798,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        gate gets to assert it rather than infer it from a screenshot. */
     get sweeping(){return avatar.sweep.visible;},
     /* Every bone of the player's rig and each machine's, as drawn (#33). */
+    /* #34: whether the hero is the authored model, and how much of it. */
+    get heroModel(){ var g=avatar.rig.mesh.geometry;
+      return {authored:avatar.rig.authored,parts:QS.HERO_RIG.parts.length,
+              verts:g.attributes.position.count,loaded:!!HERO_VOX}; },
     get rigs(){
       function st(r){ var o={}; for(var n in r.bones){ var b=r.bones[n];
         o[n]={rx:b.rotation.x,ry:b.rotation.y,rz:b.rotation.z,sy:b.scale.y,sz:b.scale.z,
