@@ -122,6 +122,7 @@ export function audit(extra) {
  * for six issues.
  */
 export const ONE_SIDED = [
+  'FLG->play',        /* a cell is wet: where fish swim and frogs sit (#69) */
   'G->play',          /* the generator itself. A worker cannot send one — nine
                          closures, and structuredClone refuses the whole world
                          over them — so the build makes its own with makeGen and
@@ -137,4 +138,5 @@ export const ONE_SIDED = [
   'topi->plate',      /* the reach overlay recolours by top-voxel index */
   'trail->plate',
   'unreach->plate',
+  'WL->play',         /* the water's level there: a fish's surface, a frog's plop (#69) */
 ];
