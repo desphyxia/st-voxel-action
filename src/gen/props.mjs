@@ -25,8 +25,19 @@ export function makeStamps(w) {
   /** Every stamp lands through here, so every stamped voxel has a material and
       a palette entry. `idx` is an index into PALETTE, never a colour: issue #28
       moved the multiply to draw time so these can be restyled. */
+  /* Two stamps can land a voxel in the same cell — a trunk runs up into its
+     own canopy, a boulder rests where a bush stood — and both used to be
+     kept. They were drawn as two cubes in one place, which fought over every
+     pixel: the brown square on a conifer's crown was its trunk showing
+     through its top layer of leaves. A cell holds one voxel; the later stamp
+     is the one that stands, so leaves laid after their trunk cover it. */
+  var filled = new Map();
   function addVox(px,py,pz,idx,k2,m){
-    pos.push(Math.round(px/V)*V,Math.round(py/V)*V,Math.round(pz/V)*V);
+    var ix=Math.round(px/V), iy=Math.round(py/V), iz=Math.round(pz/V);
+    var key=((ix+4096)*8192+(iy+512))*8192+(iz+4096), at=filled.get(key);
+    if(at!==undefined){ pal[at]=idx; shd[at]=shadeByte(k2); mat[at]=m; return; }
+    filled.set(key,pal.length);
+    pos.push(ix*V,iy*V,iz*V);
     pal.push(idx); shd.push(shadeByte(k2)); mat.push(m);
   }
   /** Same, for the emissive pass. */

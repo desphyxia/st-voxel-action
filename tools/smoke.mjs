@@ -511,25 +511,40 @@ if (NODE_HALF) {
   check(cascades > 0, 'WATER: and water still falls where the terrain steps it down',
         `${cascades} cascades across ${worlds.length} seeds`);
 
-  /* Every step down from water to lower water is closed by a face. Only falls
-     of 0.4 m and more used to be: a river descends a voxel at a time, and each
-     25 cm step was an open slit onto the bed, a dark crack across the surface
-     at 45° — 5,609 of them over 27 streamed chunks. Counted from the emitted
-     geometry, against the steps in the level field it was built from. */
-  let steps = 0, faces = 0, riffles = 0;
+  /* No open seam in the water. Each column used to be a flat tile at its own
+     level, and every step down had to be closed by a face or it was a slit
+     onto the bed — a dark crack at 45°, 5,609 of them over 27 streamed chunks.
+     The surface is continuous now (steps under a fall share their corners),
+     so what is asserted is the thing that matters: every join between two
+     water columns either shares its edge, or is closed by a fall face that
+     runs exactly from one edge down to the other. Read from the emitted
+     geometry, against the level field it was built from. */
+  let joins = 0, shared = 0, falls2 = 0, open = [];
   for (const w of worlds) {
-    const { NX, NZ, FLG, WL } = w, v = w.water.v;
-    for (let i = 1; i < NX - 1; i++) for (let j = 1; j < NZ - 1; j++) {
-      const k = i * NZ + j;
-      if (!(FLG[k] & 1)) continue;
-      for (const [di, dj] of D4W) {
-        const kn = (i + di) * NZ + (j + dj);
-        if ((FLG[kn] & 1) && WL[kn] < WL[k] - 0.001) steps++;
-      }
-    }
+    const { NX, NZ, FLG, WL, half } = w, v = w.water.v, f = w.water.f, V = 0.25;
+    const surf = new Map(), fall = new Map(), ek = (x0, z0, x1, z1) => `${x0.toFixed(3)},${z0.toFixed(3)},${x1.toFixed(3)},${z1.toFixed(3)}`;
     for (let q = 0; q < v.length / 12; q++) {
-      const y0 = v[q * 12 + 1], y2 = v[q * 12 + 7];
-      if (y0 !== y2) { faces++; if (y0 - y2 < 0.4) riffles++; }
+      const o = q * 12;
+      if (f[q * 4] === 2) { fall.set(ek(v[o], v[o + 2], v[o + 3], v[o + 5]), [v[o + 1], v[o + 4], v[o + 10], v[o + 7]]); continue; }
+      const i = Math.round((v[o] + half) / V), j = Math.round((v[o + 2] + half) / V);
+      surf.set(i * NZ + j, [v[o + 1], v[o + 4], v[o + 7], v[o + 10]]);   /* y at (i,j) (i+1,j) (i+1,j+1) (i,j+1) */
+    }
+    for (let i = 1; i < NX - 2; i++) for (let j = 1; j < NZ - 2; j++) {
+      const k = i * NZ + j; if (!(FLG[k] & 1)) continue;
+      for (const [di, dj] of [[1, 0], [0, 1]]) {
+        const kn = (i + di) * NZ + (j + dj); if (!(FLG[kn] & 1)) continue;
+        const A = surf.get(k), B = surf.get(kn); if (!A || !B) continue;
+        joins++;
+        /* the shared edge: A's far side, B's near side */
+        const a0 = di ? A[1] : A[3], a1 = A[2], b0 = B[0], b1 = di ? B[3] : B[1];
+        if (Math.abs(a0 - b0) < 1e-5 && Math.abs(a1 - b1) < 1e-5) { shared++; continue; }
+        const x0 = -half + (i + di) * V, z0 = -half + (j + dj) * V, x1 = x0 + (dj ? V : 0), z1 = z0 + (di ? V : 0);
+        const fc = fall.get(ek(x0, z0, x1, z1)) || fall.get(ek(x1, z1, x0, z0));
+        const hiA = WL[k] > WL[kn], top = hiA ? [a0, a1] : [b0, b1], bot = hiA ? [b0, b1] : [a0, a1];
+        const ok = fc && ((Math.abs(fc[0] - top[0]) < 1e-5 && Math.abs(fc[1] - top[1]) < 1e-5 && Math.abs(fc[2] - bot[0]) < 1e-5 && Math.abs(fc[3] - bot[1]) < 1e-5)
+                       || (Math.abs(fc[0] - top[1]) < 1e-5 && Math.abs(fc[1] - top[0]) < 1e-5 && Math.abs(fc[2] - bot[1]) < 1e-5 && Math.abs(fc[3] - bot[0]) < 1e-5));
+        if (ok) falls2++; else if (open.length < 5) open.push(`${i},${j}→${i + di},${j + dj} (${WL[k]} / ${WL[kn]})`); else open.push(null);
+      }
     }
   }
   /* #15: the reach pass repairs rather than reports. A cliff top the budget
@@ -607,9 +622,10 @@ if (NODE_HALF) {
         perchedAt.length ? `${perchedAt.length} perched: ${perchedAt.slice(0, 3).join('; ')}`
           : `none over ${worlds.length} seeds and 9 streamed chunks; a cell lifted a metre is found`);
 
-  check(steps > 0 && faces === steps,
-        'WATER: and every step down to lower water is closed, however small',
-        `${steps} steps across ${worlds.length} seeds, ${faces} faces (${riffles} riffles under 0.4 m)`);
+  check(joins > 0 && open.length === 0 && falls2 > 0,
+        'WATER: one surface — every join between water columns is shared, or closed by a fall',
+        open.length ? `${open.length} open joins: ${open.filter(Boolean).join('; ')}`
+          : `${joins} joins across ${worlds.length} seeds: ${shared} shared, ${falls2} closed by a fall`);
   /* The self-test: cut one bank voxel beside water down to the bed and require
      the check to find it. */
   const w0 = worlds.find((w) => w.FLG.some((f) => f & 1)), Hs2 = Float32Array.from(w0.Hs);
@@ -2503,9 +2519,9 @@ if (BROWSER_HALF) {
         return Object.assign({ hot, moved }, P.magma);
       }, [{ seed: s.seed, size: s.size, force: s.force, ox: s.ox, oz: s.oz }, mx, mz]);
       await mp.close();
-      check(mErr.length === 0 && mg.sheets >= 1 && mg.quads === cols && mg.gap >= 0.05 && mg.boxes === 0,
+      check(mErr.length === 0 && mg.sheets >= 1 && mg.quads === cols && mg.gap >= 0.05 && mg.boxes === 0 && mg.falls > 0,
             'MAGMA: a surface of its own, clear of the crust under it, with no box left to fight it',
-            `${mg.quads} quads for ${cols} magma columns in ${mg.sheets} sheet(s), ${mg.gap.toFixed(3)} m over the crust, `
+            `${mg.quads} quads for ${cols} magma columns in ${mg.sheets} sheet(s), ${mg.falls} falls, ${mg.gap.toFixed(3)} m over the crust, `
             + `${mg.boxes} boxes at magma${mErr.length ? '; ' + mErr[0] : ''}`);
       check(mg.hot > 150 && mg.moved > mg.hot * 0.1,
             'MAGMA: and it moves',

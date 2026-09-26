@@ -188,7 +188,12 @@ export function makeGen(seedStr,force){
        burn is a scar now and crosses rivers the old ash biome never had, and
        a seam's trench beside a river is dry ground below the water (#3). */
     if(w[BIO.ASH]>0.5&&!water&&r.d>=rw/2+2){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
-      if(f<0.022){ H-=1; magma=true; water=false; } }
+      /* Level, like a river (#67): a seam used to be the ground less a metre,
+         so it kept every bump under it and a basalt pillar standing in it
+         carried magma up its top. Its bed is the large-scale shape of the
+         land instead — no fine octave, no pillars, no canyon — so it flows
+         through them. */
+      if(f<0.022){ H=Math.min(H-1,riverBed(x,z,w)); magma=true; water=false; } }
     H=clamp(H,0,CEIL);
     if(water) wl=H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
