@@ -13145,7 +13145,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        machines, posts, loot and what they carry (#62). Counted as three would
        issue them — visible all the way up, one per mesh, instanced or not. */
     get actorDraws(){
-      var WORLD=['terrain','props','boxes','emissive','magma','water','grass'], n=0, list=[];
+      var WORLD=['terrain','props','boxes','emissive','magma','water','grass','life'], n=0, list=[];
       if(built) built.scene.traverse(function(o){
         if(!(o.isMesh||o.isInstancedMesh)||WORLD.indexOf(o.userData.kind)>=0) return;
         for(var p=o;p;p=p.parent) if(!p.visible) return;

@@ -2267,15 +2267,16 @@ if (BROWSER_HALF) {
           const bird = P.lifeList().find((e) => e.kind === 'bird'); let rose = null;
           if (bird) { const a = P.actor; a.x = bird.x + 1; a.z = bird.z; a.y = bird.y; P.run(30); P.lifeTick();
             const now = P.lifeList().find((e) => e.id === bird.id); rose = now ? now.y - bird.y : Infinity; }
+          P.frameOnce(); let draws = 0; P.scene.traverse((o) => { if (o.userData.kind === 'life' && o.visible && o.count > 0) draws++; });
           P.setGfx('life', false); P.frameOnce(); const off = { on: P.life.on, drawn: P.life.drawn, draws: P.draws.kinds.life || 0 };
           P.setGfx('life', true); P.frameOnce(); const back = P.life.drawn;
-          return { kinds, leapt, leapAfter, rose, off, back };
+          return { kinds, leapt, leapAfter, rose, off, back, draws };
         });
         {
           const k = life.kinds, n = Object.keys(k).length;
-          check(k.fish > 0 && k.bird > 0 && (k.butterfly > 0 || k.frog > 0 || k.lizard > 0) && n >= 4,
-                'LIFE: the world is lived in, each kind where it belongs (#69)',
-                Object.entries(k).map(([a, b]) => `${b} ${a}`).join(', ') || 'nothing');
+          check(k.fish > 0 && k.bird > 0 && (k.butterfly > 0 || k.frog > 0 || k.lizard > 0) && n >= 4 && life.draws <= 12,
+                'LIFE: the world is lived in, each kind where it belongs, in a dozen draws at most (#69)',
+                (Object.entries(k).map(([a, b]) => `${b} ${a}`).join(', ') || 'nothing') + `; ${life.draws} draws`);
           check(life.rose !== null && life.rose > 0.5 && life.leapt,
                 'LIFE: a bird takes off from a player who walks up to it, and a fish leaps',
                 `bird ${life.rose === null ? 'NONE' : life.rose === Infinity ? 'flew out of sight' : `rose ${life.rose.toFixed(2)} m`}; `
