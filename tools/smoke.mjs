@@ -1347,6 +1347,42 @@ if (BROWSER_HALF) {
             'SKY: and the hand-written grass and water shaders are fogged like everything else',
             `${sky.fogged} of ${sky.fogMats} grass and water meshes take the scene's fog`);
 
+      /* ---------- SOUND: surfaces sound like themselves (#36) ----------
+         Measured, not listened to: each footstep voice is rendered offline and
+         reduced to loudness, brightness and ring. Grass, rock, snow and a deck
+         — the four surfaces the issue names — must each differ from every
+         other in at least one of those by a margin an ear would hear. Then a
+         walk: the character's own footsteps fire on its stride and are keyed
+         by the material the mesher says is under it, and a deck is wood. */
+      const snd = await bp.evaluate(async () => {
+        const P = window.QSPLAY, QS = window.QS, keys = ['soft', 'hard', 'crunch', 'wood'], sig = {};
+        for (const k of keys) sig[k] = await P.renderVoice(k);
+        P.pause(true);
+        const a = P.actor, s0 = P.audio.steps;
+        P.input.press('KeyW');
+        for (let i = 0; i < 180; i++) { P.run(1); P.frameOnce(); }
+        P.input.release('KeyW');
+        const walked = P.audio.steps - s0, heard = P.audio.byKey;
+        const under = QS.MATERIALS[P.matUnder(a.x, a.y, a.z)].step;
+        const br = P.bridges && P.bridges[0];
+        const deck = br ? QS.MATERIALS[P.matUnder(br[0], br[5] + QS.V / 2, br[1])].k : null;
+        P.pause(false);
+        return { sig, walked, heard, under, deck };
+      });
+      const differ = (p, q) => {
+        const r = (u, v) => Math.max(u, v) / Math.max(1e-9, Math.min(u, v));
+        return r(p.zcr, q.zcr) > 1.3 || r(p.ring, q.ring) > 1.3 || r(p.rms, q.rms) > 1.5;
+      };
+      const ks = Object.keys(snd.sig), alike = [];
+      for (let i = 0; i < ks.length; i++) for (let j = i + 1; j < ks.length; j++) if (!differ(snd.sig[ks[i]], snd.sig[ks[j]])) alike.push(`${ks[i]}~${ks[j]}`);
+      check(alike.length === 0, 'SOUND: grass, rock, snow and a wooden deck are four different footsteps',
+            alike.length ? `too alike: ${alike.join(', ')}`
+              : ks.map((k) => `${k} ${snd.sig[k].zcr.toFixed(0)}/s ${(snd.sig[k].ring * 1000).toFixed(0)} ms`).join(', '));
+      check(snd.walked >= 3 && Object.keys(snd.heard).length > 0 && snd.deck === 'wood',
+            'SOUND: footsteps fall on the stride, keyed by the ground under them, and a deck is wood',
+            `${snd.walked} steps over 3 s (${Object.entries(snd.heard).map(([k, v]) => `${k} ${v}`).join(', ')}), `
+            + `now on ${snd.under}; deck reads ${snd.deck}`);
+
       /* ---------- SCAR: each scar is legible from the air over it (#32) ----------
          A scar is read by more than colour (#11): each puts its own motes in
          the air and leans the fog to its own tint, ash the most — "ashfall
@@ -1904,6 +1940,20 @@ if (BROWSER_HALF) {
       check(gap < 0.6, 'NET: and both windows agree where it ended up',
             `${gap.toFixed(3)} m apart, ${guestSays.stats.corrections} corrections, ` +
             `${guestSays.stats.replayed} inputs replayed`);
+
+      /* #35: each window shows its partner's condition without a panel —
+         their bars, sized to what that window knows of them. */
+      const peerHud = async (pg) => pg.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS; P.frameOnce();
+        const el = document.getElementById('peervitals'), hp = document.getElementById('peerhp');
+        const o = P.peer, want = 100 * o.hp / (o.maxHp || QS.PLAYER_HP);
+        return { shown: getComputedStyle(el).display !== 'none', w: parseFloat(hp.style.width), want,
+                 who: document.getElementById('peerwho').textContent };
+      });
+      const hudH = await peerHud(bp), hudG = await peerHud(peerPage);
+      check(hudH.shown && hudG.shown && Math.abs(hudH.w - hudH.want) < 1 && Math.abs(hudG.w - hudG.want) < 1,
+            'NET: each window shows its partner\'s health without opening anything',
+            `host sees ${hudH.who} at ${hudH.w}% (${hudH.want.toFixed(0)}), guest sees ${hudG.who} at ${hudG.w}% (${hudG.want.toFixed(0)})`);
 
       await bp.screenshot({ path: join(OUT, 'play.png') });
       await peerPage.screenshot({ path: join(OUT, 'play-guest.png') });

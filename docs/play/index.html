@@ -96,6 +96,16 @@
   .vitals .bar{height:8px;border:1px solid var(--line2);background:rgba(10,13,17,.6);
                margin-bottom:3px}
   .vitals .bar.st{height:6px}
+  /* The partner (#35): smaller, above your own, and a pin at the edge of the
+     view pointing to them when they are off it. */
+  .vitals.peer{bottom:40px;width:150px}
+  .vitals.peer .who{display:block;font:500 10px/1.2 var(--mono,monospace);letter-spacing:.08em;
+                    text-transform:uppercase;color:#b5855c;margin-bottom:2px}
+  .vitals.peer.down .who{color:#e0654a}
+  .vitals.peer .hp i{background:#b5855c}
+  .peerpin{position:absolute;display:none;width:0;height:0;pointer-events:none;
+           border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:13px solid #d9965e;
+           filter:drop-shadow(0 0 2px rgba(0,0,0,.8));transform-origin:50% 60%}
   .vitals i{display:block;height:100%;width:100%;transition:width .06s linear}
   .vitals .hp i{background:#c9563a}
   .vitals .st i{background:var(--sand)}
@@ -232,6 +242,11 @@
           <button id="streamtog" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window — a world with no edge, and a different world from the same seed">Stream</button>
         </span>
       </div>
+      <div class="vitals peer" id="peervitals"><span class="who" id="peerwho">partner</span>
+        <div class="bar hp"><i id="peerhp"></i></div>
+        <div class="bar st"><i id="peerst"></i></div>
+      </div>
+      <div class="peerpin" id="peerpin"></div>
       <div class="vitals" id="vitals">
         <div class="bar hp"><i id="hpfill"></i></div>
         <div class="bar st"><i id="staminafill"></i></div>
@@ -275,6 +290,7 @@
       <button class="ctl" id="meshbtn" type="button" aria-pressed="true" title="Draw the terrain as a greedy mesh with baked occlusion. Off is the instanced boxes it replaced, kept so the two can be compared.">Mesh: on</button>
       <button class="ctl" id="streambtn" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window. A world with no edge, from the same seed — and a different world, because the generator is not size-invariant.">Streaming: off</button>
       <button class="ctl" id="skybtn" type="button" title="Hold the sun at one hour, or let the day turn. The weather keeps moving either way.">Sky: auto</button>
+      <button class="ctl" id="soundbtn" type="button" aria-pressed="true" title="Footsteps by what you stand on, impacts, wind and water — all synthesised, nothing loaded">Sound: on</button>
       <button class="ctl" id="fullbtn" type="button">Fullscreen</button>
       <span class="gctl">
         <label for="gdens">Grass density <b id="gdensv">60 / m&sup2;</b></label>
@@ -8745,6 +8761,194 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       u.uPx.value=vp.h/(2*v);
     }
   }
+  /* ---------- sound (#36, #55 item 8) ----------
+     Material-driven and sparse, as §8 decides: footsteps read off the voxel
+     under the foot, impacts and carving off what was hit, and two beds — wind
+     that follows the gusts and how high you stand, and water that follows how
+     much of it is near. All synthesised with WebAudio from one noise buffer,
+     so there are no files for the CSP to refuse. None of it reaches into
+     src/sim: like the renderer, it is a consumer of what the simulation did.
+
+     `voice` takes the context it plays on, so the same recipe renders into an
+     OfflineAudioContext for the gate, which is how "four surfaces sound like
+     four different surfaces" is measured rather than asserted by ear. */
+  var SND={ctx:null,out:null,noise:null,on:true,wind:null,water:null,
+           steps:0,byKey:{},last:null,events:0,waterNear:0,waterAt:-1};
+  try{ SND.on=localStorage.getItem('qs.sound')!=='off'; }catch(e){}
+  function noiseBuf(ctx){
+    var n=ctx.sampleRate*2, b=ctx.createBuffer(1,n,ctx.sampleRate), d=b.getChannelData(0), s=0x2545f491;
+    /* A fixed LCG rather than Math.random, so an offline render is the same
+       every time the gate draws it. */
+    for(var i=0;i<n;i++){ s=(Math.imul(s,1664525)+1013904223)|0; d[i]=(s>>>8)/8388608-1; }
+    return b;
+  }
+  /** One envelope on a gain node: a fast attack and an exponential fall. */
+  function env(ctx,g,t0,peak,att,dec){
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.linearRampToValueAtTime(peak,t0+att);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+att+dec);
+  }
+  function burst(ctx,dest,nb,t0,type,f,q,peak,att,dec,off){
+    var s=ctx.createBufferSource(); s.buffer=nb;
+    var fl=ctx.createBiquadFilter(); fl.type=type; fl.frequency.value=f; fl.Q.value=q;
+    var g=ctx.createGain(); env(ctx,g,t0,peak,att,dec);
+    s.connect(fl); fl.connect(g); g.connect(dest);
+    s.start(t0,off||0); s.stop(t0+att+dec+0.02);
+  }
+  function tone(ctx,dest,t0,type,f0,f1,peak,att,dec){
+    var o=ctx.createOscillator(); o.type=type;
+    o.frequency.setValueAtTime(f0,t0); o.frequency.exponentialRampToValueAtTime(f1,t0+att+dec);
+    var g=ctx.createGain(); env(ctx,g,t0,peak,att,dec);
+    o.connect(g); g.connect(dest); o.start(t0); o.stop(t0+att+dec+0.02);
+  }
+  /** A footstep, an impact or a crumble, by the material's `step` key. */
+  function voice(ctx,dest,nb,key,t0,v){
+    var o=((t0*977)%1.2);                         /* a different slice of noise each time */
+    switch(key){
+      case 'soft':  burst(ctx,dest,nb,t0,'lowpass',650,0.7,0.55*v,0.006,0.07,o); break;
+      case 'hard':  burst(ctx,dest,nb,t0,'bandpass',2300,1.4,0.45*v,0.002,0.035,o);
+                    tone(ctx,dest,t0,'triangle',210,120,0.25*v,0.002,0.03); break;
+      case 'grain': burst(ctx,dest,nb,t0,'bandpass',3600,0.8,0.30*v,0.01,0.09,o); break;
+      case 'crunch':burst(ctx,dest,nb,t0,'highpass',1400,0.6,0.35*v,0.012,0.05,o);
+                    burst(ctx,dest,nb,t0+0.045,'highpass',1800,0.6,0.28*v,0.008,0.08,o+0.3); break;
+      case 'wood':  tone(ctx,dest,t0,'triangle',150,85,0.55*v,0.003,0.09);
+                    burst(ctx,dest,nb,t0,'bandpass',900,2.0,0.25*v,0.003,0.05,o); break;
+      case 'brush': burst(ctx,dest,nb,t0,'highpass',2600,0.5,0.18*v,0.02,0.13,o); break;
+      case 'metal': tone(ctx,dest,t0,'square',620,600,0.10*v,0.002,0.14);
+                    tone(ctx,dest,t0,'square',931,905,0.07*v,0.002,0.10); break;
+      case 'glass': tone(ctx,dest,t0,'sine',2400,2350,0.18*v,0.002,0.2);
+                    tone(ctx,dest,t0,'sine',3170,3100,0.12*v,0.002,0.15);
+                    burst(ctx,dest,nb,t0,'highpass',4200,0.7,0.2*v,0.002,0.03,o); break;
+      case 'splash':burst(ctx,dest,nb,t0,'lowpass',1300,0.5,0.45*v,0.02,0.18,o);
+                    burst(ctx,dest,nb,t0+0.03,'bandpass',2400,1.0,0.2*v,0.01,0.12,o+0.5); break;
+      case 'swing': { var s=ctx.createBufferSource(); s.buffer=nb;
+                    var fl=ctx.createBiquadFilter(); fl.type='bandpass'; fl.Q.value=1.6;
+                    fl.frequency.setValueAtTime(380,t0); fl.frequency.exponentialRampToValueAtTime(1700,t0+0.16);
+                    var g=ctx.createGain(); env(ctx,g,t0,0.35*v,0.05,0.13);
+                    s.connect(fl); fl.connect(g); g.connect(dest); s.start(t0,o); s.stop(t0+0.2); } break;
+      case 'hit':   tone(ctx,dest,t0,'square',330,140,0.25*v,0.002,0.12);
+                    burst(ctx,dest,nb,t0,'bandpass',1600,0.9,0.5*v,0.002,0.08,o); break;
+      case 'hurt':  tone(ctx,dest,t0,'sine',120,60,0.6*v,0.004,0.18);
+                    burst(ctx,dest,nb,t0,'lowpass',500,0.7,0.4*v,0.004,0.1,o); break;
+      case 'down':  tone(ctx,dest,t0,'sawtooth',180,40,0.25*v,0.01,0.6);
+                    burst(ctx,dest,nb,t0,'lowpass',900,0.6,0.6*v,0.01,0.5,o); break;
+      case 'crumble':for(var q=0;q<4;q++) burst(ctx,dest,nb,t0+q*0.035,'lowpass',700+q*260,0.8,0.4*v,0.004,0.06,o+q*0.2); break;
+    }
+  }
+  function sndStart(){
+    if(!SND.on) return;
+    try{
+      if(!SND.ctx){
+        var AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+        var ctx=new AC(), comp=ctx.createDynamicsCompressor(), out=ctx.createGain();
+        out.gain.value=0.8; out.connect(comp); comp.connect(ctx.destination);
+        SND.ctx=ctx; SND.out=out; SND.noise=noiseBuf(ctx);
+        /* The two beds: looped noise, filtered, whose gains follow the world. */
+        function bed(type,f,q){
+          var s=ctx.createBufferSource(); s.buffer=SND.noise; s.loop=true;
+          var fl=ctx.createBiquadFilter(); fl.type=type; fl.frequency.value=f; fl.Q.value=q;
+          var g=ctx.createGain(); g.gain.value=0;
+          s.connect(fl); fl.connect(g); g.connect(out); s.start();
+          return {f:fl,g:g};
+        }
+        SND.wind=bed('bandpass',420,0.6); SND.water=bed('lowpass',900,0.4);
+      }
+      if(SND.ctx.state==='suspended') SND.ctx.resume();
+    }catch(e){ SND.ctx=null; }
+  }
+  /** Play `key` at a place: quieter with distance from the listener. */
+  function sndPlay(key,x,z,vol){
+    SND.events++; SND.last=key;
+    if(!SND.on||!SND.ctx||SND.ctx.state!=='running') return;
+    var a=player(), v=vol===undefined?1:vol;
+    if(a&&x!==undefined){ var d=Math.sqrt((x-a.x)*(x-a.x)+(z-a.z)*(z-a.z)); v*=1/(1+d*d*0.02); if(v<0.03) return; }
+    voice(SND.ctx,SND.out,SND.noise,key,SND.ctx.currentTime+0.005,v);
+  }
+  /** The world and window-local place that hold (x, z). */
+  function worldAt(x,z){
+    if(!built) return null;
+    if(streaming){ var c=QS.chunkAt(x,z), nd=nodeAt(c.cx,c.cz);
+      return nd?{d:nd.data,x:x-c.cx*QS.CHUNK,z:z-c.cz*QS.CHUNK}:null; }
+    return {d:built.data,x:x,z:z};
+  }
+  /** Where a world's props stand, as the top of each prop column: made once. */
+  function propTops(d){
+    if(d._tops) return d._tops;
+    var m=new Map(), V=QS.V, s=d.propStart===undefined?d.pos.length/3:d.propStart;
+    for(var q=s;q<d.pos.length/3;q++){
+      var ix=Math.round(d.pos[q*3]/V), iz=Math.round(d.pos[q*3+2]/V), k=(ix+8192)*16384+(iz+8192);
+      var t=d.pos[q*3+1]+V/2, e=m.get(k);
+      if(!e||t>e[0]) m.set(k,[t,d.mat[q]]);
+    }
+    d._tops=m; return m;
+  }
+  /** The material a body at (x, y, z) is standing on: a prop's, if it is on
+      one — a deck is wood — and otherwise the ground's, from the mesher's own
+      reading of the surface. */
+  function matUnder(x,y,z){
+    var at=worldAt(x,z); if(!at) return QS.MAT.SOIL;
+    var d=at.d, V=QS.V, gi=Math.floor((at.x+d.half)/V), gj=Math.floor((at.z+d.half)/V);
+    if(gi<0||gj<0||gi>=d.NX||gj>=d.NZ) return QS.MAT.SOIL;
+    var hh=d.Hs[gi*d.NZ+gj];
+    if(y>hh+0.15){
+      var tops=propTops(d), bx=Math.round(at.x/V), bz=Math.round(at.z/V);
+      for(var a2=-1;a2<=1;a2++)for(var b2=-1;b2<=1;b2++){
+        var e=tops.get((bx+a2+8192)*16384+(bz+b2+8192));
+        if(e&&Math.abs(e[0]-y)<0.3) return e[1];
+      }
+    }
+    return QS.surfaceAt(d,gi,gj,Math.floor((hh-0.001)/V)).mat;
+  }
+  /** A footstep for this body, if its stride just put a foot down. */
+  function footfall(o,a,kind){
+    var n=Math.floor(o.walk/Math.PI);
+    if(o.stepN===undefined){ o.stepN=n; return; }
+    if(n===o.stepN) return;
+    o.stepN=n;
+    if(!a.grounded&&!a.inWater) return;
+    var key=a.inWater?'splash':(kind==='sentry'?'metal':QS.MATERIALS[matUnder(a.x,a.y,a.z)].step);
+    if(key==='none') return;
+    if(o===avatar){ SND.steps++; SND.byKey[key]=(SND.byKey[key]||0)+1; }
+    sndPlay(key,a.x,a.z,kind==='sentry'?0.5:(o===avatar?0.7:0.55));
+  }
+  /** Per frame: the beds follow the wind, the height and the water near. */
+  function sndFrame(){
+    var a=player();
+    if(!a||!SND.ctx||SND.ctx.state!=='running'){ return; }
+    var t=SND.ctx.currentTime;
+    /* Gusts: two slow beats, so the wind rises and falls rather than hums. */
+    var gust=0.55+0.45*Math.sin(tm*0.23)*Math.sin(tm*0.071+1.3);
+    var at=worldAt(a.x,a.z), lift=0;
+    if(at){ var d=at.d, s=0, n=0;
+      for(var q=0;q<8;q++){ var gx=at.x+Math.cos(q*0.785)*6, gz=at.z+Math.sin(q*0.785)*6;
+        var gi=Math.floor((gx+d.half)/QS.V), gj=Math.floor((gz+d.half)/QS.V);
+        if(gi>=0&&gj>=0&&gi<d.NX&&gj<d.NZ){ s+=d.Hs[gi*d.NZ+gj]; n++; } }
+      if(n) lift=Math.max(0,Math.min(1,(a.y-s/n)/4));
+    }
+    SND.wind.g.gain.setTargetAtTime(0.025+0.09*gust*(0.4+0.6*lift),t,0.3);
+    SND.wind.f.frequency.setTargetAtTime(300+500*gust+300*lift,t,0.3);
+    /* Water: how much of it is within 8 m, looked at twice a second. */
+    if(tm-SND.waterAt>0.5&&at){
+      SND.waterAt=tm; var dd=at.d, M=dd.M, w=0;
+      var ci=Math.round(at.x+dd.half), cj=Math.round(at.z+dd.half);
+      for(var i=ci-8;i<=ci+8;i+=2)for(var j=cj-8;j<=cj+8;j+=2){
+        if(i<0||j<0||i>=M||j>=M) continue;
+        if(dd.cells[i*M+j].water) w+=1/(1+Math.sqrt((i-ci)*(i-ci)+(j-cj)*(j-cj)));
+      }
+      SND.waterNear=Math.min(1,w/4);
+    }
+    SND.water.g.gain.setTargetAtTime(0.10*SND.waterNear,t,0.5);
+  }
+  function sndToggle(on){
+    SND.on=on;
+    try{ localStorage.setItem('qs.sound',on?'on':'off'); }catch(e){}
+    if(on) sndStart(); else if(SND.ctx) SND.ctx.suspend();
+  }
+  /* A context may only start from a gesture: the first key or press does it. */
+  ['pointerdown','keydown','touchstart'].forEach(function(ev){
+    window.addEventListener(ev,function(){ if(SND.on&&(!SND.ctx||SND.ctx.state!=='running')) sndStart(); },{passive:true});
+  });
+
   /* ---------- canopies in the wind (#55 item 7) ----------
      The grass moved and the trees did not, which made a forest read as painted
      on. A leaf vertex (aSway 1, from src/mesh/propmesh.mjs) is pushed along
@@ -9379,6 +9583,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     f.g.rotation.y=Math.atan2(m.fx,m.fz);
     if(dead) f.blob.visible=false; else seatBlob(f.blob,m.x,m.y,m.z);
     stride(f,m.x,m.z,QS.SENTRY_STRIDE);
+    if(!dead) footfall(f,{x:m.x,y:m.y,z:m.z,grounded:true,inWater:false},'sentry');
+    if(f.lastH!==undefined&&m.h<f.lastH) sndPlay(dead?'down':'hit',m.x,m.z,1);
+    f.lastH=m.h;
     /* The strike is committed the way the player's swing is: its pose is its
        clock. Everything else eases, so a machine coming to a stop reads as one. */
     showPose(f.rig,QS.poseSentry(m,{walk:f.walk,t:tm}),m.s===EST.STRIKE||m.s===EST.TELEGRAPH);
@@ -9428,6 +9635,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     av.g.rotation.y=Math.atan2(a.faceX,a.faceZ);
     seatBlob(av.blob,a.x,a.y,a.z);
     stride(av,a.x,a.z,QS.STRIDE);
+    footfall(av,a,'hero');
+    var ph=QS.phase(a);
+    if(ph===QS.PHASE.ACTIVE&&av.lastPh!==QS.PHASE.ACTIVE) sndPlay('swing',a.x,a.z,av===avatar?0.8:0.6);
+    av.lastPh=ph;
+    if(av.lastHp!==undefined&&a.hp<av.lastHp-0.5) sndPlay('hurt',a.x,a.z,av===avatar?1:0.6);
+    av.lastHp=a.hp;
     showPose(av.rig,QS.poseHero(a,{walk:av.walk,reach:av.reach}),!!a.swing);
     /* The trail outlives the hitbox on purpose. The active window is seven
        ticks — an eighth of a second — and at this zoom that is one frame of
@@ -9589,6 +9802,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       lx=x-c.cx*QS.CHUNK; lz=z-c.cz*QS.CHUNK;
     }else ix=voxelIndexOf(built.data);
     var r=QS.carve(host.data,lx,y,lz,opts||{});
+    if(r.cut) sndPlay('crumble',x,z,0.9); else if(r.held) sndPlay('hard',x,z,0.9);
     for(var q=0;q<r.chunks.length;q++) host.mesh.userData.remesh(host.data,r.chunks[q][0],r.chunks[q][1]);
     /* Taking rock away can uncover a prop face that was buried in it, so the
        prop mesh is rebuilt with the terrain mesh. This is what having props on
@@ -10434,6 +10648,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   document.getElementById('skybtn').addEventListener('click',function(){
     setSky(SKY_FIXES.indexOf(skyFix)+1);
   });
+  (function(){
+    var b=document.getElementById('soundbtn');
+    function show(){ b.textContent='Sound: '+(SND.on?'on':'off'); b.setAttribute('aria-pressed',SND.on?'true':'false'); }
+    b.addEventListener('click',function(){ sndToggle(!SND.on); show(); });
+    show();
+  })();
   /* Length on `input` — it is a uniform, so it can follow the drag. Density on
      `change` — it regrows the world, so it waits for the slider to be let go. */
   document.getElementById('glen').addEventListener('input',function(){
@@ -10675,6 +10895,32 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   var netstat=document.getElementById('netstat'), hostBtn=document.getElementById('hostbtn');
   var staminaEl=document.getElementById('vitals'), staminaFill=document.getElementById('staminafill'),
       hpFill=document.getElementById('hpfill');
+  var peerEl=document.getElementById('peervitals'), peerHp=document.getElementById('peerhp'),
+      peerSt=document.getElementById('peerst'), peerWho=document.getElementById('peerwho'),
+      peerPin=document.getElementById('peerpin');
+  /** The partner's condition (#35): their bars, whether they are down, and
+      where they are when the view has lost them. Two players is the game, so
+      this is the status that matters most, and it needs no panel opened. */
+  function drawPeer(){
+    var o=other();
+    if(!o||!session||!session.connected){ peerEl.style.display='none'; peerPin.style.display='none'; return; }
+    var mh=o.maxHp||QS.PLAYER_HP, ms=o.st&&o.st.maxStamina?o.st.maxStamina:QS.STAMINA_MAX;
+    peerEl.style.display='block';
+    peerHp.style.width=(100*Math.max(0,o.hp)/mh).toFixed(1)+'%';
+    peerSt.style.width=(100*Math.max(0,o.stamina||0)/ms).toFixed(1)+'%';
+    peerEl.classList.toggle('down',!!o.dead);
+    peerWho.textContent=o.dead?'partner · down':'partner';
+    var sp=QS.project(cam,{x:o.x,y:o.y+1,z:o.z},vp), m=18;
+    var off=sp.x<m||sp.y<m||sp.x>vp.w-m||sp.y>vp.h-m;
+    peerPin.style.display=off?'block':'none';
+    if(off){
+      var cx=vp.w/2, cy=vp.h/2, dx=sp.x-cx, dy=sp.y-cy;
+      var k=Math.min((cx-m)/Math.max(1e-6,Math.abs(dx)),(cy-m)/Math.max(1e-6,Math.abs(dy)));
+      peerPin.style.left=(cx+dx*k-7).toFixed(0)+'px'; peerPin.style.top=(cy+dy*k-6).toFixed(0)+'px';
+      peerPin.style.transform='rotate('+(Math.atan2(dy,dx)+Math.PI/2).toFixed(3)+'rad)';
+    }
+    peerPin.dataset.off=off?'1':'0';
+  }
   function says(msg,live){
     netstat.innerHTML=msg;
     netstat.classList.toggle('live',!!live);
@@ -11089,12 +11335,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     avatar.fade=Math.max(0,avatar.fade-dt/SWEEP_FADE);
     peerAvatar.fade=Math.max(0,peerAvatar.fade-dt/SWEEP_FADE);
     draw();
+    sndFrame();
 
     if(!a){ hud.textContent='waiting for the host…'; staminaEl.style.display='none'; return; }
     staminaEl.style.display='block';
     staminaFill.style.width=(100*a.stamina/a.st.maxStamina).toFixed(1)+'%';
     staminaFill.style.background=a.stamina<a.st.swingCost?'#a5553a':'#d9a25e';
     hpFill.style.width=(100*a.hp/a.maxHp).toFixed(1)+'%';
+    drawPeer();
     var state=a.dead?('dead · '+a.dead)
       :(a.vault?'vaulting':(a.swimming?'swimming'
         :(a.inWater?'wading':(a.grounded?'grounded':'airborne'))));
@@ -11292,6 +11540,25 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       if(sec!==undefined&&sec!==null){ skySec=sec; skyStepAt=-1; }
       skyCalm=!!calm;
       return setSky(Math.max(0,SKY_NAMES.indexOf(name||'auto')));
+    },
+    /* #36: what the sound layer heard, and a way to measure a voice. `render`
+       draws one into an OfflineAudioContext and returns what it sounds like
+       as three numbers — loudness, brightness (zero crossings a second) and
+       how long it rings — so the gate can tell surfaces apart without ears. */
+    get audio(){ return {on:SND.on,running:!!SND.ctx&&SND.ctx.state==='running',steps:SND.steps,
+                         byKey:Object.assign({},SND.byKey),events:SND.events,last:SND.last,water:SND.waterNear}; },
+    matUnder:function(x,y,z){ return matUnder(x,y,z); },
+    get bridges(){ return built&&built.data?built.data.bridges:null; },
+    renderVoice:function(key){
+      var OAC=window.OfflineAudioContext||window.webkitOfflineAudioContext, sr=22050;
+      var ctx=new OAC(1,Math.round(sr*0.5),sr);
+      voice(ctx,ctx.destination,noiseBuf(ctx),key,0.01,1);
+      return ctx.startRendering().then(function(b){
+        var d=b.getChannelData(0), e=0, zc=0, pk=0, last=0;
+        for(var i=0;i<d.length;i++){ e+=d[i]*d[i]; if(i&&(d[i]>=0)!==(d[i-1]>=0)) zc++; if(Math.abs(d[i])>pk) pk=Math.abs(d[i]); }
+        for(i=0;i<d.length;i++) if(Math.abs(d[i])>pk*0.03) last=i;
+        return {rms:Math.sqrt(e/d.length),zcr:zc/(d.length/sr),ring:last/sr};
+      });
     },
     /* #32: what a cell's weights put in the air — the motes for its dominant
        row at a given daylight, and the haze its scars lay over the view. */

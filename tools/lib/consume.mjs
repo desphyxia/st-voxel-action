@@ -128,12 +128,8 @@ export const ONE_SIDED = [
                          puts it back on each streamed chunk, because the mesher
                          reads G.pstream to shade a voxel (#13). The plate
                          generates in place and never needs to reattach one. */
-  'Hs->plate',        /* the plate shades from the height field; the build's collider owns it */
-  'M->plate',
-  'NX->plate',
-  'cells->plate',
+  'bridges->play',    /* a deck is wood underfoot: the sound gate finds one (#36) */
   'lmPos->plate',
-  'mat->plate',
   'ovhPos->plate',
   'propStart->play',  /* where terrain ends and props begin — the mesher's split (#12) */
   'topi->plate',      /* the reach overlay recolours by top-voxel index */
