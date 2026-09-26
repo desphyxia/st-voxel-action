@@ -2244,6 +2244,53 @@ if (BROWSER_HALF) {
               'REPORT: and a session that ended without closing is offered on the next load',
               `${rep.offered ? 'offered' : 'NOT offered'}: "${rep.head2}", ${rep.lastHasSeed ? 'the last session\'s record' : 'NOT the last session'}`);
 
+        /* ---------- LIFE: ambient creatures (#69) ----------
+           What lives in a place is read from the place: fish where water is
+           deep enough to swim, birds on canopies, butterflies over meadow.
+           A bird takes off from a player who walks up to it; a fish leaps
+           now and then; the Ambient life row takes all of it away and puts
+           it back; and both windows see the same fish in the same water at
+           the same moment, from nothing but the seed and the shared clock. */
+        const lifeAt = (pg, sec) => pg.evaluate((sec) => {
+          const P = window.QSPLAY; P.setSky('noon', sec, true);
+          for (let i = 0; i < 40; i++) P.lifeTick();
+          return P.lifeList();
+        }, sec);
+        const hostLife = await lifeAt(bp, 600), guestLife = await lifeAt(peerPage, 600);
+        const life = await bp.evaluate(() => {
+          const P = window.QSPLAY, kinds = {};
+          P.lifeList().forEach((e) => { kinds[e.kind] = (kinds[e.kind] || 0) + 1; });
+          /* two minutes of the clock, a quarter second at a time */
+          const j0 = P.life.stats.jumps; let t = 600;
+          while (P.life.stats.jumps === j0 && t < 720) { t += 0.25; P.setSky('noon', t, true); P.lifeTick(); }
+          const leapt = P.life.stats.jumps > j0, leapAfter = t - 600;
+          const bird = P.lifeList().find((e) => e.kind === 'bird'); let rose = null;
+          if (bird) { const a = P.actor; a.x = bird.x + 1; a.z = bird.z; a.y = bird.y; P.run(30); P.lifeTick();
+            const now = P.lifeList().find((e) => e.id === bird.id); rose = now ? now.y - bird.y : Infinity; }
+          P.setGfx('life', false); P.frameOnce(); const off = { on: P.life.on, drawn: P.life.drawn, draws: P.draws.kinds.life || 0 };
+          P.setGfx('life', true); P.frameOnce(); const back = P.life.drawn;
+          return { kinds, leapt, leapAfter, rose, off, back };
+        });
+        {
+          const k = life.kinds, n = Object.keys(k).length;
+          check(k.fish > 0 && k.bird > 0 && (k.butterfly > 0 || k.frog > 0 || k.lizard > 0) && n >= 4,
+                'LIFE: the world is lived in, each kind where it belongs (#69)',
+                Object.entries(k).map(([a, b]) => `${b} ${a}`).join(', ') || 'nothing');
+          check(life.rose !== null && life.rose > 0.5 && life.leapt,
+                'LIFE: a bird takes off from a player who walks up to it, and a fish leaps',
+                `bird ${life.rose === null ? 'NONE' : life.rose === Infinity ? 'flew out of sight' : `rose ${life.rose.toFixed(2)} m`}; `
+                + `${life.leapt ? `a leap after ${life.leapAfter.toFixed(1)} s` : 'NO leap in two minutes'}`);
+          check(!life.off.on && life.off.drawn === 0 && life.off.draws === 0 && life.back > 0,
+                'LIFE: Ambient life off draws none of it, and on brings it back',
+                `off: ${life.off.drawn} creatures, ${life.off.draws} draws; on: ${life.back} creatures`);
+          const g = new Map(guestLife.map((e) => [e.id, e])); let shared = 0, worst = 0;
+          for (const e of hostLife) { if (e.kind !== 'fish' && e.kind !== 'butterfly') continue;
+            const o = g.get(e.id); if (!o) continue; shared++; worst = Math.max(worst, Math.hypot(e.x - o.x, e.y - o.y, e.z - o.z)); }
+          check(shared > 0 && worst < 1e-6,
+                'LIFE: host and guest see the same fish and butterflies in the same places',
+                `${shared} seen by both, ${worst.toExponential(1)} m apart at most`);
+        }
+
         /* ---------- SETTINGS: the graphics dialog (#70) ----------
            The gear opens it over the view; every row is a way of drawing the
            same world. A key pressed inside it is not a step, Escape closes it,
@@ -2282,7 +2329,7 @@ if (BROWSER_HALF) {
           P.setGfx('grassMode', 'classic'); const back = frame();
           return { was, open, rows, stepped, low, closed, saved, high, classic, lean, leanMode, back };
         });
-        check(gfx.open && gfx.rows === 14 && !gfx.stepped && gfx.closed,
+        check(gfx.open && gfx.rows === 15 && !gfx.stepped && gfx.closed,
               'SETTINGS: the gear opens every graphics setting over the view, keeps its keys, and Escape closes it',
               `${gfx.open ? 'open' : 'NOT open'}, ${gfx.rows} settings, a key inside it ${gfx.stepped ? 'MOVED the player' : 'moved nothing'}, `
               + `${gfx.closed ? 'closed' : 'still open'} on Escape`);
