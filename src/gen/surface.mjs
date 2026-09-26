@@ -14,7 +14,7 @@
  */
 import { V, CEIL, clamp } from './constants.mjs';
 import { MAT } from './materials.mjs';
-import { BIOMES, rouletteBiome } from './biomes.mjs';
+import { BIOMES, BIO, rouletteBiome } from './biomes.mjs';
 import { PAL, pickPal, shadeByte } from './palette.mjs';
 import { PASS } from './rng.mjs';
 
@@ -133,11 +133,11 @@ export function buildVoxels(w) {
       else if(FLG[k]&1){ topc=pickPal(b.bed,R); topm=b.mat.bed; }
       else if(FLG[k]&4){
         /* Roads and paths (#55 item 12). A road — region to region — is worn
-           earth, or gravel on the mesa and packed snow on the frost. A path —
+           earth, or gravel on the mesa and packed snow in the rime. A path —
            hub to site, or over a ford — lets a third of its columns show the
            ground it crosses, so it reads as fainter than the road it leaves. */
         if(!(FLG[k]&8)&&R()<0.35){ topc=pickPal(b.surf,R); topm=b.mat.surf; }
-        else if((FLG[k]&8)&&(b===BIOMES[1]||b===BIOMES[4])){ topc=pickPal(b.soil,R); topm=MAT.PATH; }
+        else if((FLG[k]&8)&&(b===BIOMES[BIO.MESA]||b===BIOMES[BIO.RIME])){ topc=pickPal(b.soil,R); topm=MAT.PATH; }
         else { topc=pickPal(PAL.TRODDEN,R); topm=MAT.PATH; }
       }
       else if(slope>0.9){ topc=pickPal(b.rock,R); topm=b.mat.rock; }
@@ -147,9 +147,9 @@ export function buildVoxels(w) {
       emit(x,hh-V/2,z,topc,topk,topm);
       /* accumulation: snow and ash settle on whatever faces up */
       if(!(FLG[k]&1)&&!(FLG[k]&4)){
-        var acc=(c.w[4]*0.95+c.w[3]*0.5)*(1-clamp(slope/1.1,0,1));
+        var acc=(c.w[BIO.RIME]*0.95+c.w[BIO.ASH]*0.5)*(1-clamp(slope/1.1,0,1));
         if(acc>0.40){
-          var snowy=c.w[4]>=c.w[3];
+          var snowy=c.w[BIO.RIME]>=c.w[BIO.ASH];
           var ac=snowy?pickPal(PAL.SNOWFALL,R):pickPal(PAL.ASHFALL,R), ak=0.9+R()*0.2;
           emit(x,hh+V/2,z,ac,ak,snowy?MAT.SNOW:MAT.ASH);
         }

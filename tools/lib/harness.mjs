@@ -92,12 +92,18 @@ export const someTileDone = () =>
   [...document.querySelectorAll('.wait')].some((w) => w.style.display === 'none');
 
 /** Seeds the golden-master baseline is measured against. */
+/* One seed per row of the biome table (#3): four climate anchors, forced to
+   their anchor with no scar; four scars, each forced over whatever climate
+   the seed has there; and one seed the climate and scar fields decide alone. */
 export const GOLDEN_SEEDS = [
   { nm: 'meadow', seed: 'ALDER-RUN', force: 0, size: 64, ox: 704, oz: 448 },
   { nm: 'mesa', seed: 'DRY-KETTLE', force: 1, size: 64, ox: 1408, oz: 896 },
-  { nm: 'fen', seed: 'BLACKREED', force: 2, size: 64, ox: 2112, oz: 1280 },
-  { nm: 'ash', seed: 'CINDERWAKE', force: 3, size: 64, ox: 2816, oz: 1728 },
-  { nm: 'frost', seed: 'HOARFROST-9', force: 4, size: 64, ox: 3520, oz: 2176 },
+  { nm: 'pine', seed: 'CLOUDPINE-2', force: 2, size: 64, ox: 2112, oz: 1280 },
+  { nm: 'thorn', seed: 'BRIARWICK', force: 3, size: 64, ox: 4224, oz: 2624 },
+  { nm: 'ash', seed: 'CINDERWAKE', force: 4, size: 64, ox: 2816, oz: 1728 },
+  { nm: 'rime', seed: 'HOARFROST-9', force: 5, size: 64, ox: 3520, oz: 2176 },
+  { nm: 'spore', seed: 'BLACKREED', force: 6, size: 64, ox: 4928, oz: 3072 },
+  { nm: 'glass', seed: 'SHARDFALL', force: 7, size: 64, ox: 5632, oz: 3520 },
   { nm: 'hero', seed: 'QUARTERSTONE', force: null, size: 64, ox: 0, oz: 0 },
 ];
 
@@ -170,7 +176,7 @@ export function measureWorld(d, name) {
 
      Foliage is exempt: a tree beside a road has branches over the road, and
      whether those branches should *collide* is a separate question. That means
-     MAT.SNOW as well as MAT.LEAF — a frost conifer's canopy is snow-capped per
+     MAT.SNOW as well as MAT.LEAF — a rime conifer's canopy is snow-capped per
      voxel, so half of it is filed under snow. Ground accumulation is also snow
      but lands on the terrain lattice, so it never reaches this test.
 

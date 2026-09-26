@@ -308,6 +308,6 @@ on the rules that keep every merge playable.
 
 ## What the plate now contradicts
 
-The plate predates the later decisions and disagrees with the record in six places — biome
-set, climate chart, cave treatment, voxel materials and rendering approach. They are listed at
-the end of `docs/DECISIONS.md`. Reconciling them is tracked in the issues, not here.
+The plate predates the later decisions. #3 reconciled its biome set and climate chart; it
+still disagrees with the record on cave treatment, voxel materials and rendering approach.
+They are listed at the end of `docs/DECISIONS.md`. Reconciling them is tracked in the issues, not here.

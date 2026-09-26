@@ -22,7 +22,7 @@
  * their grass is, the way they can disagree about a shadow setting.
  */
 import { V } from './constants.mjs';
-import { BIOMES, shadeR, shadeG, shadeB } from './biomes.mjs';
+import { BIOMES, BIO, shadeR, shadeG, shadeB } from './biomes.mjs';
 import { PASS } from './rng.mjs';
 
 /* ---------- patches (#55 item 14) ----------
@@ -68,8 +68,8 @@ export function buildGrass(w) {
     var want=dsum*3.2*dmul;
     /* Where this cell sits in the two patch fields, by world metre. */
     var wmx=Math.floor(x+w.OX), wmz=Math.floor(z+w.OZ), sw=G.sw|0;
-    var bloom=cq.w[0]>0.45?patchField(sw,wmx,wmz,0x5f1):0;
-    var turn=(cq.w[4]||0)>0.5?0:patchField(sw,wmx,wmz,0x2a7);
+    var bloom=cq.w[BIO.MEADOW]>0.45?patchField(sw,wmx,wmz,0x5f1):0;
+    var turn=cq.w[BIO.RIME]>0.5?0:patchField(sw,wmx,wmz,0x2a7);
     var flowerK=bloom>0.66?(bloom-0.66)/0.34:0, autumnK=turn>0.68?(turn-0.68)/0.32:0;
     var nb=Math.floor(want); if(R()<want-nb) nb++;
     for(var g2=0;g2<nb;g2++){

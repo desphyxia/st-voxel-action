@@ -997,16 +997,36 @@ if (BROWSER_HALF) {
         const live = P.machines[0];
         live.ai.state = QS.EST.DORMANT; live.ai.t = 0; live.ai.sideT = 0;
         live.hp = QS.SENTRY.hp; live.dead = null;
-        /* Just outside its reach, facing it — on open ground level with it.
-           Machines hold posts beside cover now (#6, #42), so "3 m west" can be
-           inside the very rise it is holding behind; the first of eight
-           directions that is standable and level is used, in a fixed order. */
-        let ox = -3, oz = 0;
-        for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]]) {
-          const px = m.x + dx * 3, pz = m.z + dz * 3, g = QS.placeOnGround(P.collider, px, pz, m.y + 1.2);
-          if (g.grounded && Math.abs(g.y - m.y) < 0.6 && !QS.embedded(P.collider, g)) { ox = dx * 3; oz = dz * 3; break; }
+        /* Staged on open ground. This checks that a telegraph can be seen and
+           that the fight loop closes, not how a machine's post is laid out —
+           and posts are chosen beside cover now (#6, #42), under canopies and
+           on knobs between ditches, where the tell is half hidden and the
+           straight walk used below to finish the fight meets a ledge. So the
+           machine and its post move to the nearest patch within 30 m that is
+           level and clear for 4 m all round (nothing overhead raises a sample),
+           searched in a fixed order; the character stands 3 m west of it. */
+        const clear = (cx, cz) => {
+          const c = QS.placeOnGround(P.collider, cx, cz, 40);
+          if (!c.grounded || QS.embedded(P.collider, c)) return null;
+          for (const d of [1, 2, 3, 4]) for (let k = 0; k < 8; k++) {
+            const q = QS.placeOnGround(P.collider, cx + Math.cos(k * Math.PI / 4) * d, cz + Math.sin(k * Math.PI / 4) * d, 40);
+            if (!q.grounded || Math.abs(q.y - c.y) > 0.3 || QS.embedded(P.collider, q)) return null;
+          }
+          return c;
+        };
+        let spot = null;
+        for (let r = 0; r <= 30 && !spot; r += 2) {
+          for (let k = 0; k < (r ? 16 : 1) && !spot; k++) {
+            const sx = m.x + Math.cos(k * Math.PI / 8) * r, sz = m.z + Math.sin(k * Math.PI / 8) * r, c = clear(sx, sz);
+            if (c) spot = { x: sx, y: c.y, z: sz };
+          }
         }
-        a.x = m.x + ox; a.z = m.z + oz; a.y = QS.placeOnGround(P.collider, a.x, a.z, m.y + 1.2).y;
+        if (spot) {
+          live.x = spot.x; live.y = spot.y; live.z = spot.z;
+          live.ai.post = { x: spot.x, y: spot.y, z: spot.z }; live.ai.path = null;
+        }
+        const ox = -3, oz = 0, mm = spot || { x: m.x, y: m.y, z: m.z };
+        a.x = mm.x + ox; a.z = mm.z + oz; a.y = QS.placeOnGround(P.collider, a.x, a.z, mm.y + 1.2).y;
         { const l = Math.hypot(ox, oz); a.faceX = -ox / l; a.faceZ = -oz / l; }
         a.vx = 0; a.vz = 0; a.hp = QS.PLAYER_HP; a.dead = null;
         QS.warpTo(P.cam, a.x, a.y, a.z);
@@ -1326,6 +1346,28 @@ if (BROWSER_HALF) {
       check(sky.fogMats > 0 && sky.fogged === sky.fogMats,
             'SKY: and the hand-written grass and water shaders are fogged like everything else',
             `${sky.fogged} of ${sky.fogMats} grass and water meshes take the scene's fog`);
+
+      /* ---------- SCAR: each scar is legible from the air over it (#32) ----------
+         A scar is read by more than colour (#11): each puts its own motes in
+         the air and leans the fog to its own tint, ash the most — "ashfall
+         blocks sight" — and ground no scar touches gets none of it. Asserted
+         on the mapping the build draws from, per scar at full strength. */
+      const air = await bp.evaluate(() => {
+        const P = window.QSPLAY, QS = window.QS, out = {};
+        for (const k of ['ASH', 'RIME', 'SPORE', 'GLASS']) {
+          const w = QS.BIOMES.map(() => 0); w[QS.BIO.MEADOW] = 0.15; w[QS.BIO[k]] = 0.85;
+          out[k] = P.scarAir(w, 1);
+        }
+        const clean = QS.BIOMES.map(() => 0); clean[QS.BIO.MEADOW] = 1;
+        out.none = P.scarAir(clean, 1);
+        return out;
+      });
+      const airModes = ['ASH', 'RIME', 'SPORE', 'GLASS'].map((k) => air[k].mode);
+      check(new Set(airModes).size === 4 && airModes.every(Boolean) && air.none.haze.mix === 0
+            && ['RIME', 'SPORE', 'GLASS'].every((k) => air[k].haze.mix > 0 && air.ASH.haze.far > air[k].haze.far),
+            'SCAR: each scar has its own air, ash thickest, and clean ground has none',
+            ['ASH', 'RIME', 'SPORE', 'GLASS'].map((k) => `${k.toLowerCase()} ${air[k].mode} haze ${air[k].haze.mix.toFixed(2)}/${air[k].haze.far.toFixed(2)}`).join(', ')
+            + `; meadow haze ${air.none.haze.mix}`);
 
       /* ---------- BUILD: a chunk the camera cannot see is not drawn ----------
          Grass was the only thing in a world node that was frustum-culled;

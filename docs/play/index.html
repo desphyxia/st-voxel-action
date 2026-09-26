@@ -526,7 +526,7 @@ function hyp(a, b) { return Math.sqrt(a * a + b * b); }
 
 const MAT = {
   AIR: 0, SOIL: 1, GRASS: 2, ROCK: 3, SAND: 4, SNOW: 5, ICE: 6, BASALT: 7,
-  ASH: 8, WOOD: 9, LEAF: 10, PEAT: 11, PATH: 12, MAGMA: 13, METAL: 14, LIGHT: 15,
+  ASH: 8, WOOD: 9, LEAF: 10, PEAT: 11, PATH: 12, MAGMA: 13, METAL: 14, LIGHT: 15, GLASS: 16, FUNGUS: 17,
 };
 
 /** Indexed by MAT. Order is the wire format — append only. */
@@ -547,6 +547,8 @@ const MATERIALS = [
   { id: 13, k: 'magma',  nm: 'Magma',    hard: 99,  dens: 1.2, burn: 1,   cond: 0.9, grip: 0.5,  step: 'none',   emit: 1, harm: 40 },
   { id: 14, k: 'metal',  nm: 'Metal',    hard: 1.5, dens: 1.6, burn: 0,   cond: 1,   grip: 1,    step: 'metal',  emit: 0, harm: 0 },
   { id: 15, k: 'light',  nm: 'Lit core', hard: 1.5, dens: 0.8, burn: 0,   cond: 1,   grip: 1,    step: 'metal',  emit: 1, harm: 0 },
+  { id: 16, k: 'glass',  nm: 'Glass',    hard: 1.0, dens: 1.2, burn: 0,   cond: 0.3, grip: 0.6,  step: 'glass',  emit: 0, harm: 0 },
+  { id: 17, k: 'fungus', nm: 'Fungus',   hard: 0.2, dens: 0.3, burn: 0.4, cond: 0.4, grip: 0.9,  step: 'soft',   emit: 0, harm: 0 },
 ];
 
 /** Wet ground conducts: what chain-frost needs, and why water level matters. */
@@ -594,19 +596,30 @@ const GROUPS = {
   MESA_SOIL:   [0xa9723f, 0x8f5f34],
   MESA_ROCK:   [0xb07a45, 0xc08a52, 0x9a6a3f, 0xd1a06a],
   MESA_BED:    [0xd8c08c, 0xc9ad7a],
-  FEN_SURF:    [0x3f6b46, 0x4a7a4e, 0x35603f, 0x577f4a],
-  FEN_SOIL:    [0x3a2f24, 0x2e251c],
-  FEN_ROCK:    [0x5b6058, 0x4c5149],
-  FEN_BED:     [0x4a4432, 0x3c3a2a],
+  PINE_SURF:   [0x4f7a5e, 0x5a866a, 0x466f55, 0x628e70],
+  PINE_SOIL:   [0x4a4036, 0x3d352d],
+  PINE_ROCK:   [0x7a7f84, 0x6a6f75, 0x898e92],
+  PINE_BED:    [0x8f969a, 0xa3a9ab],
+  THORN_SURF:  [0x6f6d3c, 0x7c7843, 0x625f35, 0x85804a],
+  THORN_SOIL:  [0x5e4630, 0x4f3a28],
+  THORN_ROCK:  [0x857a68, 0x756b5a, 0x93887a],
+  THORN_BED:   [0xb8a47e, 0xa89470],
   ASH_SURF:    [0x3a3532, 0x46403c, 0x2f2a28, 0x4d4642],
   ASH_SOIL:    [0x2b2726, 0x241f1e],
   ASH_ROCK:    [0x33302f, 0x3f3a38, 0x282524],
   ASH_BED:     [0x1e1a19, 0x272322],
-  FROST_SURF:  [0xdfe7ee, 0xe9eef4, 0xcfd9e2, 0xd7e0e8],
-  FROST_SOIL:  [0x8b95a0, 0x79838e],
-  FROST_ROCK:  [0x6b7480, 0x7c8590, 0x5d6670],
-  FROST_BED:   [0x9fc9d8, 0xb7dbe6],
-
+  RIME_SURF:   [0xdfe7ee, 0xe9eef4, 0xcfd9e2, 0xd7e0e8],
+  RIME_SOIL:   [0x8b95a0, 0x79838e],
+  RIME_ROCK:   [0x6b7480, 0x7c8590, 0x5d6670],
+  RIME_BED:    [0x2c3a46, 0x384a58],
+  SPORE_SURF:  [0x6d5a78, 0x7a6586, 0x5f4f6a, 0x86709a],
+  SPORE_SOIL:  [0x3a2f34, 0x2e252a],
+  SPORE_ROCK:  [0x5b5860, 0x4c4a52],
+  SPORE_BED:   [0x4a4036, 0x3c3530],
+  GLASS_SURF:  [0x2f3b3a, 0x3c4d4a, 0x243030, 0x4a615c],
+  GLASS_SOIL:  [0x5a5048, 0x4a423c],
+  GLASS_ROCK:  [0x33423f, 0x405450, 0x283533],
+  GLASS_BED:   [0x1d2828, 0x263434],
   /* ---- what settles on top, and what a route wears ---- */
   SNOWFALL:    [0xe7eef4, 0xdae3ec, 0xf1f6fa],
   ASHFALL:     [0x6b635c, 0x746c64, 0x5c554f],
@@ -625,12 +638,21 @@ const GROUPS = {
   BROAD_TRUNK:        [0x5a4130],
   BROAD_LEAF:         [0x4f7a3a, 0x628f45],
   BROAD_LEAF_PALE:    [0x8ea84b],
+  THORN_TRUNK:        [0x3a2c24, 0x46352a],
+  THORN_LEAF:         [0x4a5a2e, 0x3c4a26],
+  THORN_BERRY:        [0x8a2a2a],
+  FUNGUS_STALK:       [0xd8cfc0, 0xc9bfae],
+  FUNGUS_CAP:         [0x7a4f8a, 0x8e5e9e, 0x5f6f9a],
+  SHARD:              [0x9fd8d0, 0x7fc0c0, 0xcff0ea],
 
   /* ---- undergrowth and deadfall ---- */
   BUSH_COLD:   [0x6f8390, 0x8aa3ad],
   BUSH_BURNT:  [0x3b332e, 0x4a403a],
   BUSH_DRY:    [0x6f7f42, 0x87904a],
   BUSH_GREEN:  [0x3f6b34, 0x4e7d3e, 0x5d8c46],
+  BUSH_THORN:  [0x3f4a2a, 0x4a4430, 0x55502e],
+  BUSH_SPORE:  [0x7a5f86, 0x5f7a8a],
+  BUSH_GLASS:  [0x6f8f88, 0x86a8a0],
   STUMP_WOOD:  [0x5a4130],
   STUMP_CUT:   [0x8a6a4a],
   FALLEN_BARK: [0x4c3728],
@@ -659,6 +681,7 @@ const GROUPS = {
   EM_OBELISK: [0x9fe3ff],
   EM_HIVE:    [0xb7f04f],
   EM_WRECK:   [0xff9a3c],
+  EM_SPORE:   [0xb8f07a, 0x8fe8c8],
 };
 
 /** The flat table the renderer indexes. */
@@ -810,6 +833,22 @@ function placeStream(sw, pass, x, z) { return posStream(passWord(sw, pass), x, z
 
 
 
+/**
+ * Four biomes and four scars — `docs/DECISIONS.md` §5, issue #3.
+ *
+ * The first CLIMATE_N rows are the natural biomes, anchored at a point on the
+ * temperature and moisture chart. The rest are scars: the damage the three
+ * weapons did, painted as an overlay field of their own (src/gen/field.mjs)
+ * rather than placed on the chart. A scar has no t or m, and its rows leave
+ * base and hill unset, because a scar cuts across the land rather than
+ * replacing it — the ground keeps the shape the climate gave it, and what
+ * the scar changes is what it is made of, what grows on it and what stands in
+ * it. That is also why a cell's weights never go wholly to scars: the climate
+ * underneath keeps a share, and you can see what the land used to be.
+ *
+ * Boreal Fen and Frostmoor are gone. Their ground became Sporeverge and
+ * Rimewaste, which is what the decision says they overlapped with.
+ */
 const BIOMES = [
  {k:'meadow',nm:'Meadowlands',t:0.58,m:0.66,c:'#6b9a45',ds:'Broadleaf stands, meandering rivers, boulder fields. The tutorial biome and the one the palette is calibrated against.',mt:'base 3 m · hills 1–3 m · rivers common',
   surf:PAL.MEADOW_SURF,soil:PAL.MEADOW_SOIL,rock:PAL.MEADOW_ROCK,bed:PAL.MEADOW_BED,
@@ -819,19 +858,36 @@ const BIOMES = [
   surf:PAL.MESA_SURF,soil:PAL.MESA_SOIL,rock:PAL.MESA_ROCK,bed:PAL.MESA_BED,
   mat:{surf:MAT.SAND,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
   gr:{d:3.0,c:0xc0a760,dry:0xd8c07a,h:[0.30,0.25]},tree:{t:'scrub',d:0.25},base:6,hill:2,canyon:0.85,col:0.5},
- {k:'fen',nm:'Boreal Fen',t:0.40,m:0.90,c:'#4a7a4e',ds:'Peat shelves, standing water, black conifers and reed beds. Wide slow water, poor footing.',mt:'base 2 m · hills 1 m · water 4–8 m wide',
-  surf:PAL.FEN_SURF,soil:PAL.FEN_SOIL,rock:PAL.FEN_ROCK,bed:PAL.FEN_BED,
-  mat:{surf:MAT.GRASS,soil:MAT.PEAT,rock:MAT.ROCK,bed:MAT.PEAT},
-  gr:{d:8.7,c:0x5f8a48,dry:0x7d8a3e,h:[0.40,0.28]},tree:{t:'conifer',d:0.8},base:2,hill:1,canyon:0,col:0},
- {k:'ash',nm:'Ashfall Barrens',t:0.90,m:0.48,c:'#5a504a',ds:'Basalt columns, fissures and magma seams under a grey crust. Vertical cover everywhere, nothing to eat.',mt:'base 4 m · columns 2–4 m · magma seams',
+ {k:'pine',nm:'Cloudpine Highlands',t:0.20,m:0.62,c:'#4f7466',ds:'High granite shoulders under dark conifer stands, cold streams and blue-green turf. The tallest ground there is.',mt:'base 7 m · hills 2–4 m · tarns',
+  surf:PAL.PINE_SURF,soil:PAL.PINE_SOIL,rock:PAL.PINE_ROCK,bed:PAL.PINE_BED,
+  mat:{surf:MAT.GRASS,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
+  gr:{d:6.4,c:0x6f9a78,dry:0x9aa67a,h:[0.30,0.24]},tree:{t:'conifer',d:0.95},base:7,hill:4,canyon:0.2,col:0.15},
+ {k:'thorn',nm:'Thornwood',t:0.44,m:0.30,c:'#6b6a3a',ds:'Crooked hardwood in tangles, thorn thickets and dry brown turf. Close sightlines and no straight way through.',mt:'base 3 m · hills 1–2 m · thickets',
+  surf:PAL.THORN_SURF,soil:PAL.THORN_SOIL,rock:PAL.THORN_ROCK,bed:PAL.THORN_BED,
+  mat:{surf:MAT.GRASS,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
+  gr:{d:5.6,c:0x8a8a48,dry:0xa6904e,h:[0.34,0.26]},tree:{t:'thorn',d:1.1},base:3,hill:2,canyon:0.05,col:0.1},
+ {k:'ash',nm:'Ashfall Barrens',scar:true,c:'#5a504a',ds:'The tech weapon\'s burn: basalt columns, fissures and magma seams under a grey crust. Vertical cover everywhere, nothing to eat.',mt:'scar · columns 2–4 m · magma seams',
   surf:PAL.ASH_SURF,soil:PAL.ASH_SOIL,rock:PAL.ASH_ROCK,bed:PAL.ASH_BED,
   mat:{surf:MAT.ASH,soil:MAT.ASH,rock:MAT.BASALT,bed:MAT.BASALT},
-  gr:{d:2.5,c:0x6b5a50,dry:0xd2642a,h:[0.26,0.22]},tree:{t:'snag',d:0.3},base:4,hill:2,canyon:0.3,col:0.9},
- {k:'frost',nm:'Frostmoor',t:0.12,m:0.44,c:'#cfd9e2',ds:'Snow over hard rock, frozen shelves, wind-stripped ridges. Tracks show, and so do you.',mt:'base 5 m · hills 2–3 m · ice shelves',
-  surf:PAL.FROST_SURF,soil:PAL.FROST_SOIL,rock:PAL.FROST_ROCK,bed:PAL.FROST_BED,
+  gr:{d:2.5,c:0x6b5a50,dry:0xd2642a,h:[0.26,0.22]},tree:{t:'snag',d:0.3},canyon:0.3,col:0.9},
+ {k:'rime',nm:'Rimewaste',scar:true,c:'#cfd9e2',ds:'A magical winter that never lifted: snow over black ice, frozen shelves, trees caught mid-motion. Tracks show, and so do you.',mt:'scar · snow cover · black ice',
+  surf:PAL.RIME_SURF,soil:PAL.RIME_SOIL,rock:PAL.RIME_ROCK,bed:PAL.RIME_BED,
   mat:{surf:MAT.SNOW,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.ICE},
-  gr:{d:3.9,c:0xc8d6de,dry:0x9fb4bf,h:[0.28,0.23]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
+  gr:{d:3.9,c:0xc8d6de,dry:0x9fb4bf,h:[0.28,0.23]},tree:{t:'conifer',d:0.45},canyon:0.15,col:0.2},
+ {k:'spore',nm:'Sporeverge',scar:true,c:'#7a5f86',ds:'A biological bloom that got out: mycelium mats over peat, standing water, fungal towers with lit gills.',mt:'scar · fungal towers 3–7 m · wide slow water',
+  surf:PAL.SPORE_SURF,soil:PAL.SPORE_SOIL,rock:PAL.SPORE_ROCK,bed:PAL.SPORE_BED,
+  mat:{surf:MAT.FUNGUS,soil:MAT.PEAT,rock:MAT.ROCK,bed:MAT.PEAT},
+  gr:{d:4.2,c:0x8a7494,dry:0x9a8a5a,h:[0.30,0.26]},tree:{t:'fungus',d:0.7},hill:1,canyon:0,col:0},
+ {k:'glass',nm:'Glasslands',scar:true,c:'#5f8f88',ds:'Where two weapons met: ground fused to dark glass, shard fields, almost nothing growing.',mt:'scar · vitrified crust · shards 1–4 m',
+  surf:PAL.GLASS_SURF,soil:PAL.GLASS_SOIL,rock:PAL.GLASS_ROCK,bed:PAL.GLASS_BED,
+  mat:{surf:MAT.GLASS,soil:MAT.SOIL,rock:MAT.GLASS,bed:MAT.GLASS},
+  gr:{d:0.25,c:0x6f8f86,dry:0x8fa8a0,h:[0.22,0.18]},tree:{t:'shard',d:0.55},hill:1,canyon:0,col:0}
 ];
+
+/** How many rows lead the table as climate anchors; the rest are scars. */
+const CLIMATE_N = 4;
+/** Row indices by name, so nothing downstream counts positions. */
+const BIO = { MEADOW: 0, MESA: 1, PINE: 2, THORN: 3, ASH: 4, RIME: 5, SPORE: 6, GLASS: 7 };
 
 /** Picks one biome out of a blend, sharpened so blends still read as somewhere. */
 function rouletteBiome(w, r, pow) {
@@ -874,6 +930,11 @@ function shadeB(hex, k) { return ((hex & 255) / 255) * k; }
 /* Frequency, octaves and how many voxel steps the sub-metre relief spans. See
    `detail` below for what each one was measured at. DETAIL_LEVELS is an odd
    count centred on zero: 3 is +/-1 voxel, 5 is +/-2. */
+/* The scar overlay (#3): its frequency, the noise level a scar starts at, how
+   fast it reaches full strength past that, and the most of a cell all scars
+   together may take from the climate beneath. */
+const SCAR_FREQ = 0.0052, SCAR_AT = 0.66, SCAR_GAIN = 6, SCAR_MAX = 0.85;
+
 const DETAIL_FREQ = 0.16, DETAIL_OCT = 2, DETAIL_LEVELS = 3;
 
 function makeGen(seedStr,force){
@@ -889,21 +950,62 @@ function makeGen(seedStr,force){
   /* The pass-scoped forms every window pass draws through — see rng.mjs. */
   function prandIn(pass,x,z,salt){ return placeRand(sw,pass,x,z,salt); }
   function pstream(pass,x,z){ return placeStream(sw,pass,x,z); }
+  /* The scar overlay's noise comes from its own hash of the seed, for the
+     reason `sw` does: drawing four more values out of `h` would shift every
+     field below it and change every world's climate for no reason (#3). */
+  var hs=xmur3('scar:'+String(seedStr)), NS=[];
+  for(var qs=CLIMATE_N;qs<BIOMES.length;qs++) NS.push(makeNoise(hs()));
+  /**
+   * A cell's weights: the four climate anchors, then the four scars (#3).
+   *
+   * Climate is the blend of where this column sits on the temperature and
+   * moisture chart, as it always was, over the anchors only. Each scar is an
+   * independent low-frequency field, present where its noise clears a
+   * threshold and at full strength a little past it. The scars take their
+   * share out of the climate's, and never all of it: SCAR_MAX leaves the land
+   * underneath a share everywhere, which is what the decision means by being
+   * able to see what the land used to be.
+   *
+   * A forced climate row centres the chart on that anchor and lays no scars,
+   * so a plate of it shows the biome and not whatever scar crossed it. A
+   * forced scar leaves the climate to the seed and lays that one scar over
+   * nearly everything, holed where its noise dips so the land shows through.
+   */
   function climate(x,z){
-    var t,m,i,w=[],s=0;
-    if(force!=null){
+    var t,m,i,w=[],s=0,sc=[],S=0;
+    if(force!=null&&force<CLIMATE_N){
       t=BIOMES[force].t+(N.t.fbm(x*0.022,z*0.022,2)-0.5)*0.13;
       m=BIOMES[force].m+(N.m.fbm(x*0.021+40,z*0.021,2)-0.5)*0.13;
     }else{
       t=N.t.fbm(x*0.0068+wx,z*0.0068+wz,3); m=N.m.fbm(x*0.0061+wz,z*0.0061+wx,3);
       t=clamp((t-0.5)*2.1+0.5,0,1); m=clamp((m-0.5)*2.1+0.5,0,1);
     }
-    for(i=0;i<BIOMES.length;i++){var dt=t-BIOMES[i].t,dm=m-BIOMES[i].m;
+    for(i=0;i<CLIMATE_N;i++){var dt=t-BIOMES[i].t,dm=m-BIOMES[i].m;
       var e=exp(-(dt*dt+dm*dm)/0.055);w.push(e);s+=e;}
-    for(i=0;i<w.length;i++)w[i]/=s;
+    for(i=0;i<CLIMATE_N;i++)w[i]/=s;
+    for(i=CLIMATE_N;i<BIOMES.length;i++){
+      var v=0, f=NS[i-CLIMATE_N].fbm(x*SCAR_FREQ+11*i,z*SCAR_FREQ-7*i,3);
+      if(force==null) v=clamp((f-SCAR_AT)*SCAR_GAIN,0,1);
+      else if(force===i) v=clamp(0.9+(f-0.5)*2.4,0,1);
+      sc.push(v); S+=v;
+    }
+    var k=S>SCAR_MAX?SCAR_MAX/S:1, keep=1-S*k;
+    for(i=0;i<CLIMATE_N;i++) w[i]*=keep;
+    for(i=0;i<sc.length;i++) w.push(sc[i]*k);
     return w;
   }
-  function wsum(w,key){var s=0;for(var i=0;i<w.length;i++)s+=w[i]*BIOMES[i][key];return s;}
+  /**
+   * The weighted value of one row key. A scar row that leaves a key unset
+   * takes the climate's value for it instead, so a scar over mesa keeps the
+   * mesa's height and a scar over meadow keeps the meadow's (#3).
+   */
+  function wsum(w,key){
+    var s=0,cs=0,i;
+    for(i=0;i<CLIMATE_N;i++){ s+=w[i]*BIOMES[i][key]; cs+=w[i]; }
+    var under=cs>0?s/cs:0;
+    for(i=CLIMATE_N;i<w.length;i++){ var v=BIOMES[i][key]; s+=w[i]*(v==null?under:v); }
+    return s;
+  }
   /* whole-metre macro height */
   function macro(x,z,w){
     var base=wsum(w,'base'), hill=wsum(w,'hill');
@@ -986,14 +1088,17 @@ function makeGen(seedStr,force){
       else if(c.d<c.w/2+2) H-=Math.round(c.dp*(1-(c.d-c.w/2)/2));
     }
     H+=pillarAt(x,z,colw);
-    var r=riverAt(x,z), rw=r.w+Math.round(w[2]*3), water=false, pond=false, wl=0;
+    var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
     if(r.d<rw/2||riverCorner(x,z,rw)){ H=Math.min(H-1,riverBed(x,z,w)); water=true; }
     if(!water&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
     var magma=false;
-    if(w[3]>0.5){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
+    /* A river quenches a seam: no magma in or within two metres of one. The
+       burn is a scar now and crosses rivers the old ash biome never had, and
+       a seam's trench beside a river is dry ground below the water (#3). */
+    if(w[BIO.ASH]>0.5&&!water&&r.d>=rw/2+2){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
       if(f<0.022){ H-=1; magma=true; water=false; } }
     H=clamp(H,0,CEIL);
     if(water) wl=H+(pond?1.25:0.75);
@@ -1150,10 +1255,13 @@ function erode(w) {
 
 
 
+
 /** Region edge, metres. */
 const REGION = 64;
 /** Keep chosen sites this far off the region edge, in metres. */
 const MARGIN = 6;
+/** Metres of trail between lamps, measured along the region's own route. */
+const LAMP_SPACING = 40;
 /** One cell of slack so a cell on the region edge still has its neighbours. */
 const PAD = 1;
 /** Two sites closer than this, in cells (Manhattan), are one place. Was 10. */
@@ -1804,6 +1912,40 @@ function buildRegion(G, rx, rz) {
 
   recordGrades();
 
+  /* ---- lamps along the route (#47) ----
+     Decided here and not in the window, for the reason everything else moved
+     here in #16. The first version chose in props.mjs from the window's own
+     cells and surface, and a lamp whose search ran past a window's edge came
+     out differently in the window next door — a 2.5 m post on one side of a
+     chunk seam and not the other. The rule is unchanged: across the route's
+     own direction, read from the order it was laid in, 1.2 to 2 m out, the
+     first side on level ground that is neither trail, water nor magma, and if
+     neither side has room, the next few steps along. Level is now the cell's
+     whole-metre height, which is what this pass has. Each is [x, z, ex, ez]:
+     where it stands, and the trail cell it answers for, whose place seeds it. */
+  var lamps = [];
+  for (var lk = (LAMP_SPACING >> 1); lk < order.length; lk += LAMP_SPACING) {
+    var lp = null;
+    for (var sh = 0; sh < 6 && !lp && lk + sh < order.length; sh++) {
+      var le = lk + sh, lwx = order[le][0], lwz = order[le][1];
+      var lc = at(lwx - x0, lwz - z0);
+      if (!lc || lc.water || lc.magma) continue;
+      var ea = order[Math.max(0, le - 2)], eb = order[Math.min(order.length - 1, le + 2)];
+      var tx = eb[0] - ea[0], tz = eb[1] - ea[1], tl = Math.sqrt(tx * tx + tz * tz);
+      if (tl < 1e-9) continue;
+      var lnx = -tz / tl, lnz = tx / tl;
+      for (var sd = 0; sd < 2 && !lp; sd++) for (var dd = 0; dd < 3 && !lp; dd++) {
+        var off = (sd ? -1 : 1) * (1.2 + dd * 0.4), px = lwx + lnx * off, pz = lwz + lnz * off;
+        var pi = Math.round(px) - x0, pj = Math.round(pz) - z0;
+        if (pi < 0 || pj < 0 || pi >= N || pj >= N) continue;
+        var pc = at(pi, pj);
+        if (pc.water || pc.magma || pc.H !== lc.H || trail.has(key(x0 + pi, z0 + pj))) continue;
+        lp = [px, pz, lwx, lwz];
+      }
+    }
+    if (lp) lamps.push(lp);
+  }
+
   /* ---- one landmark, on the region's highest flat ground off the trail ---- */
   var lm = null, bi = null;
   for (i = lo; i < hi; i += 2) for (j = lo; j < hi; j += 2) {
@@ -1813,7 +1955,13 @@ function buildRegion(G, rx, rz) {
     if (!bi || cq4.H > bi.h) bi = { i: i, j: j, h: cq4.H, dom: cq4.dom };
   }
   if (bi) {
-    var kinds = (bi.dom === 3) ? [2, 0] : ((bi.dom === 1) ? [0, 3] : ((bi.dom === 4) ? [3, 0] : [1, 3]));
+    /* What stands on the high ground follows what the ground is: a wreck in
+       the burn and where the weapons met, stones on the mesa and in the rime,
+       a hive tree where the bloom got out, and a hive tree or stones in the
+       living biomes (#3). */
+    var kinds = (bi.dom === BIO.ASH) ? [2, 0] : (bi.dom === BIO.GLASS) ? [2, 3]
+              : (bi.dom === BIO.MESA) ? [0, 3] : (bi.dom === BIO.RIME) ? [3, 0]
+              : (bi.dom === BIO.SPORE) ? [1] : [1, 3];
     var kind = kinds[Math.abs(Math.round(rx * 0.37 + rz * 0.11)) % kinds.length];
     lm = { x: x0 + bi.i, z: z0 + bi.j, h: bi.h, kind: kind, dom: bi.dom };
   }
@@ -1885,7 +2033,7 @@ function buildRegion(G, rx, rz) {
   aff.sort(function (a, b) { return a.k < b.k ? -1 : (a.k > b.k ? 1 : (a.x - b.x || a.z - b.z)); });
 
   return {
-    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff, roads: roads,
+    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff, roads: roads, lamps: lamps,
     /* World-coordinate keys, every one of them. A window converts on the way in
        and on the way out; nothing in here knows a window exists. */
     trail: trail, order: order, grade: grade, bridges: bridges, landmark: lm,
@@ -2539,11 +2687,11 @@ function buildVoxels(w) {
       else if(FLG[k]&1){ topc=pickPal(b.bed,R); topm=b.mat.bed; }
       else if(FLG[k]&4){
         /* Roads and paths (#55 item 12). A road — region to region — is worn
-           earth, or gravel on the mesa and packed snow on the frost. A path —
+           earth, or gravel on the mesa and packed snow in the rime. A path —
            hub to site, or over a ford — lets a third of its columns show the
            ground it crosses, so it reads as fainter than the road it leaves. */
         if(!(FLG[k]&8)&&R()<0.35){ topc=pickPal(b.surf,R); topm=b.mat.surf; }
-        else if((FLG[k]&8)&&(b===BIOMES[1]||b===BIOMES[4])){ topc=pickPal(b.soil,R); topm=MAT.PATH; }
+        else if((FLG[k]&8)&&(b===BIOMES[BIO.MESA]||b===BIOMES[BIO.RIME])){ topc=pickPal(b.soil,R); topm=MAT.PATH; }
         else { topc=pickPal(PAL.TRODDEN,R); topm=MAT.PATH; }
       }
       else if(slope>0.9){ topc=pickPal(b.rock,R); topm=b.mat.rock; }
@@ -2553,9 +2701,9 @@ function buildVoxels(w) {
       emit(x,hh-V/2,z,topc,topk,topm);
       /* accumulation: snow and ash settle on whatever faces up */
       if(!(FLG[k]&1)&&!(FLG[k]&4)){
-        var acc=(c.w[4]*0.95+c.w[3]*0.5)*(1-clamp(slope/1.1,0,1));
+        var acc=(c.w[BIO.RIME]*0.95+c.w[BIO.ASH]*0.5)*(1-clamp(slope/1.1,0,1));
         if(acc>0.40){
-          var snowy=c.w[4]>=c.w[3];
+          var snowy=c.w[BIO.RIME]>=c.w[BIO.ASH];
           var ac=snowy?pickPal(PAL.SNOWFALL,R):pickPal(PAL.ASHFALL,R), ak=0.9+R()*0.2;
           emit(x,hh+V/2,z,ac,ak,snowy?MAT.SNOW:MAT.ASH);
         }
@@ -2605,8 +2753,6 @@ function buildVoxels(w) {
 
 
 
-/** Metres of trail between lamps, measured along the region's own route. */
-const LAMP_SPACING = 40;
 
 /** The stamp kit for one world: pure geometry, pushed into w's voxel arrays. */
 function makeStamps(w) {
@@ -2642,19 +2788,25 @@ function makeStamps(w) {
    * over the road. This is only used by things that are solid at body height.
    */
   function onTrail(px,pz){ return (surfAt(px,pz).f & 4) !== 0; }
+  /** Within a voxel of the trail: for stamps that stand on the ground beside
+      it, which a body walking the trail's edge would otherwise brush (#3). */
+  function nearTrail(px,pz){
+    for(var a=-V;a<=V;a+=V)for(var b=-V;b<=V;b+=V) if(onTrail(px+a,pz+b)) return true;
+    return false;
+  }
   function tree(px,pz,b,t,R){
     var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
     var th, r, ax, ay, az;
     if(t==='conifer'){
       th=3+R()*2;
-      if(!onTrail(px,pz)) for(y=0;y<th;y+=V) addVox(px,y0+y,pz,(b.k==='frost'?PAL.CONIFER_TRUNK_COLD.at:PAL.CONIFER_TRUNK.at),0.9+R()*0.2,MAT.WOOD);
+      if(!onTrail(px,pz)) for(y=0;y<th;y+=V) addVox(px,y0+y,pz,(b.k==='rime'?PAL.CONIFER_TRUNK_COLD.at:PAL.CONIFER_TRUNK.at),0.9+R()*0.2,MAT.WOOD);
       for(var lv=0;lv<5;lv++){
         var ly=y0+th*0.35+lv*(th*0.15), lr=(1.5-lv*0.24);
         for(ax=-lr;ax<=lr;ax+=V)for(az=-lr;az<=lr;az+=V){
           if(ax*ax+az*az>lr*lr) continue;
           /* hoisted so the material can follow the colour; the short-circuit,
              and so the number of R() calls, is unchanged. */
-          var capped=(b.k==='frost'&&R()<0.45);
+          var capped=(b.k==='rime'&&R()<0.45);
           addVox(px+ax,ly,pz+az,(capped?PAL.CONIFER_CAP.at:PAL.CONIFER_LEAF.at+(R()<0.5?0:1)),0.85+R()*0.3,
                  capped?MAT.SNOW:MAT.LEAF);
         }
@@ -2676,6 +2828,57 @@ function makeStamps(w) {
         for(var t2=0;t2<bl;t2+=V){ var bz2=pz+(R()-0.5)*0.3;
           if(onTrail(px+dirx*t2,bz2)) continue;
           addVox(px+dirx*t2,by+t2*0.4,bz2,PAL.SNAG_BRANCH.at,0.9,MAT.WOOD); } }
+    } else if(t==='thorn'){
+      /* Thornwood (#3): a crooked trunk that leans, and a few branches that
+         end in small dark clusters rather than one crown — so a stand of them
+         is a tangle you see through in pieces. */
+      th=2+R()*1.5;
+      var lx=(R()-0.5)*0.5, lz=(R()-0.5)*0.5;
+      for(y=0;y<th;y+=V){ var tx2=px+lx*y, tz2=pz+lz*y;
+        if(!onTrail(tx2,tz2)) addVox(tx2,y0+y,tz2,PAL.THORN_TRUNK.at+(R()<0.5?0:1),0.85+R()*0.25,MAT.WOOD); }
+      for(var tb2=0;tb2<4;tb2++){
+        var ba=R()*6.283, bl2=0.8+R()*0.7, bx=cos(ba), bz=sin(ba), bh=y0+th*(0.55+tb2*0.13);
+        var ox2=px+lx*(bh-y0), oz2=pz+lz*(bh-y0);
+        for(var t3=0;t3<bl2;t3+=V){ if(onTrail(ox2+bx*t3,oz2+bz*t3)) continue;
+          addVox(ox2+bx*t3,bh+t3*0.35,oz2+bz*t3,PAL.THORN_TRUNK.at,0.8+R()*0.2,MAT.WOOD); }
+        var cx3=ox2+bx*bl2, cy3=bh+bl2*0.35+0.2, cz3=oz2+bz*bl2, cr=0.45+R()*0.25;
+        for(ax=-cr;ax<=cr;ax+=V)for(ay=-cr*0.6;ay<=cr*0.6;ay+=V)for(az=-cr;az<=cr;az+=V){
+          if((ax*ax+az*az+ay*ay*2.2)/(cr*cr)>1-R()*0.35) continue;
+          if(R()<0.25) continue;
+          addVox(cx3+ax,cy3+ay,cz3+az,(R()<0.06?PAL.THORN_BERRY.at:PAL.THORN_LEAF.at+(R()<0.5?0:1)),0.8+R()*0.3,MAT.LEAF);
+        }
+      }
+    } else if(t==='fungus'){
+      /* Sporeverge (#3): a fungal tower, 3 to 7 m of pale stalk under a wide
+         dome, with a ring of lit gills under the rim. */
+      th=3+R()*4;
+      var sr=th>5?V:0;
+      for(y=0;y<th;y+=V)for(ax=-sr;ax<=sr;ax+=V)for(az=-sr;az<=sr;az+=V)
+        if(Math.abs(ax)+Math.abs(az)<=sr&&!onTrail(px+ax,pz+az))
+          addVox(px+ax,y0+y,pz+az,PAL.FUNGUS_STALK.at+(R()<0.5?0:1),0.85+R()*0.2,MAT.FUNGUS);
+      var rc=1.1+th*0.22, capc=PAL.FUNGUS_CAP.at+((R()*PAL.FUNGUS_CAP.n)|0);
+      for(ax=-rc;ax<=rc;ax+=V)for(az=-rc;az<=rc;az+=V){
+        var dd2=(ax*ax+az*az)/(rc*rc); if(dd2>1) continue;
+        var cy=y0+th+Math.round((1-dd2)*0.7/V)*V;
+        addVox(px+ax,cy,pz+az,capc,0.8+R()*0.3,MAT.FUNGUS);
+        if(dd2>0.72) addVox(px+ax,cy-V,pz+az,capc,0.7+R()*0.2,MAT.FUNGUS);
+      }
+      for(var gq=0;gq<6;gq++){ var ga=gq*1.047+R()*0.4, gr2=rc*0.6;
+        addEm(px+cos(ga)*gr2,y0+th-V,pz+sin(ga)*gr2,PAL.EM_SPORE.at+(R()<0.5?0:1),1,MAT.LIGHT); }
+    } else if(t==='shard'){
+      /* Glasslands (#3): a cluster of one to three leaning glass shards, 1 to
+         4 m, thick at the root and one voxel at the tip. */
+      var ns=1+((R()*3)|0);
+      for(var sq=0;sq<ns;sq++){
+        var sa=R()*6.283, sl=0.15+R()*0.3, shh=1+R()*3, sx3=px+(R()-0.5)*0.8, sz3=pz+(R()-0.5)*0.8;
+        for(y=0;y<shh;y+=V){
+          var qx=sx3+cos(sa)*sl*y, qz=sz3+sin(sa)*sl*y, thick=y<shh*0.5?V:0;
+          for(ax=0;ax<=thick;ax+=V)for(az=0;az<=thick;az+=V){
+            if(onTrail(qx+ax,qz+az)) continue;
+            addVox(qx+ax,y0+y,qz+az,PAL.SHARD.at+((R()*PAL.SHARD.n)|0),0.85+R()*0.3,MAT.GLASS);
+          }
+        }
+      }
     } else {
       th=2.5+R()*1.5;
       for(y=0;y<th;y+=V)for(ax=-V;ax<=V;ax+=V)for(az=-V;az<=V;az+=V)
@@ -2692,7 +2895,7 @@ function makeStamps(w) {
     var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
     for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
-      if(onTrail(px+ax,pz+az)) continue;
+      if(nearTrail(px+ax,pz+az)) continue;
       addVox(px+ax,y0+r*0.45+ay,pz+az,pickPal(b.rock,R),0.85+R()*0.3,b.mat.rock);
     }
   }
@@ -2701,7 +2904,7 @@ function makeStamps(w) {
       var sx=px+(R()-0.5)*2.4, sz=pz+(R()-0.5)*2.4, s=surfAt(sx,sz); if(s.f) continue;
       var n2=(R()<0.3)?2:1;
       for(var a=0;a<n2;a++)for(var b=0;b<n2;b++)for(var c2=0;c2<n2;c2++){
-        if(onTrail(sx+a*V,sz+b*V)) continue;
+        if(nearTrail(sx+a*V,sz+b*V)) continue;
         addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickPal(BIOMES[dom].rock,R),0.8+R()*0.3,BIOMES[dom].mat.rock);
       }
     }
@@ -2709,7 +2912,7 @@ function makeStamps(w) {
   function bush(px,pz,dom,R){
     var s=surfAt(px,pz); if(s.f) return;
     var r=0.35+R()*0.35;
-    var cols=(dom===4)?PAL.BUSH_COLD:(dom===3?PAL.BUSH_BURNT:(dom===1?PAL.BUSH_DRY:PAL.BUSH_GREEN));
+    var cols=[PAL.BUSH_GREEN,PAL.BUSH_DRY,PAL.BUSH_GREEN,PAL.BUSH_THORN,PAL.BUSH_BURNT,PAL.BUSH_COLD,PAL.BUSH_SPORE,PAL.BUSH_GLASS][dom];
     for(var ax=-r;ax<=r;ax+=V)for(var ay=0;ay<=r*1.5;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+((ay-r*0.65)*(ay-r*0.65))/(r*r*0.65)>1-R()*0.3) continue;
       if(onTrail(px+ax,pz+az)) continue;
@@ -2719,7 +2922,7 @@ function makeStamps(w) {
   function stump(px,pz,R){
     var s=surfAt(px,pz); if(s.f) return;
     for(var y2=0;y2<0.55;y2+=V)for(var ax=-V;ax<=V;ax+=V)for(var az=-V;az<=V;az+=V)
-      if(Math.abs(ax)+Math.abs(az)<=V)
+      if(Math.abs(ax)+Math.abs(az)<=V&&!onTrail(px+ax,pz+az))
         addVox(px+ax,s.y+y2+V/2,pz+az,((y2>0.3&&ax===0&&az===0)?PAL.STUMP_CUT.at:PAL.STUMP_WOOD.at),0.9+R()*0.2,MAT.WOOD);
   }
   function fallenTrunk(px,pz,R){
@@ -2793,8 +2996,14 @@ function makeStamps(w) {
   function deckBridge(px,pz,di,dj,len,y,R){
     for(var t2=-len/2;t2<=len/2;t2+=V)for(var b=-0.75;b<=0.75;b+=V)
       addVox(px+di*t2-dj*b,y,pz+dj*t2+di*b,(R()<0.25?PAL.DECK_WORN.at:PAL.DECK_PLANK.at),0.9+R()*0.2,MAT.WOOD);
-    for(var side=-1;side<=1;side+=2)for(var t3=-len/2;t3<=len/2;t3+=0.5)
-      addVox(px+di*t3-dj*side*0.75,y+0.5,pz+dj*t3+di*side*0.75,PAL.DECK_RAIL.at,0.95,MAT.WOOD);
+    /* Rails over the water only. Where a deck's end lies on a bank a rail is
+       a post across the trail beside it, and a high bank beside a narrow
+       river left a body no way off the deck (#3 moved one onto ash). */
+    for(var side=-1;side<=1;side+=2)for(var t3=-len/2;t3<=len/2;t3+=0.5){
+      var rx2=px+di*t3-dj*side*0.75, rz2=pz+dj*t3+di*side*0.75;
+      if(!(surfAt(rx2,rz2).f&1)) continue;
+      addVox(rx2,y+0.5,rz2,PAL.DECK_RAIL.at,0.95,MAT.WOOD);
+    }
   }
   return { addVox: addVox, addEm: addEm, surfAt: surfAt, onTrail: onTrail, tree: tree, boulder: boulder, scree: scree,
            bush: bush, stump: stump, fallenTrunk: fallenTrunk, fence: fence, lamp: lamp,
@@ -2813,7 +3022,12 @@ function scatterProps(w, kit) {
     var R=G.pstream(PASS.TREE,wx,wz);
     var px=-half+i+ (R()-0.5)*1.2, pz=-half+j+(R()-0.5)*1.2;
     var bb=BIOMES[cc.dom];
-    var td=0; for(var q=0;q<cc.w.length;q++) td+=cc.w[q]*BIOMES[q].tree.d;
+    /* Under a scar the land keeps its shape but not its woods: the climate's
+       trees thin as the scar's share rises and are gone where it is whole, so
+       a burn is snags and not a pine stand with a grey floor (#3). */
+    var scS=0; for(var q=CLIMATE_N;q<cc.w.length;q++) scS+=cc.w[q];
+    var live=clamp(1-scS/0.85,0,1), tw=[], td=0;
+    for(q=0;q<cc.w.length;q++){ var tv=cc.w[q]*BIOMES[q].tree.d*(q<CLIMATE_N?live:1); tw.push(tv); td+=tv; }
     /* The two caps below are per-window budgets, which is the wrong shape —
        whether a tree exists should not depend on how much world you are
        looking at. They are inert at every size the generator is run at (the
@@ -2825,7 +3039,6 @@ function scatterProps(w, kit) {
       /* Which kind of tree is a draw over what each biome present would plant
          here, not the dominant biome's: a border reads as the two woods
          mingling rather than a line where one species stops (#39). */
-      var tw=[]; for(q=0;q<cc.w.length;q++) tw.push(cc.w[q]*BIOMES[q].tree.d);
       var tb=BIOMES[rouletteBiome(tw,R,2)];
       if(treeN<260){ tree(px,pz,tb,tb.tree.t,R); treeN++; } else capped++;
     }
@@ -2911,34 +3124,14 @@ function placeClutter(w, kit) {
      hold. Three per window was a window-scale decision about a region-scale
      thing, and two views of the same trail lit it differently. */
   var regions=w.regions||[], rq, lk;
+  /* Lamps (#47) are decided by the region pass, in world coordinates, so a
+     window only stamps the ones that stand in it. */
   for(rq=0;rq<regions.length;rq++){
-    var ord=regions[rq].order;
-    for(lk=(LAMP_SPACING>>1);lk<ord.length;lk+=LAMP_SPACING){
-      /* At the edge of the route, facing it (#47). A lamp used to be offset
-         0.6 m diagonally from a trail cell and kept only if that happened to
-         miss the trail — so it existed or not by the trail's local shape, and
-         ash lost its only one when a river fix moved the route a cell. Now it
-         goes across the route's own direction, read from the order the region
-         laid it: 1.2 to 2 m out, the first side with level ground that is not
-         trail or water, and if neither side has room, the next few steps along. */
-      var lp=null;
-      for(var sh=0;sh<6&&!lp&&lk+sh<ord.length;sh++){
-        var le=lk+sh, lwx=ord[le][0], lwz=ord[le][1];
-        var li=lwx-OX+half, lj=lwz-OZ+half;
-        if(li<0||lj<0||li>M-1||lj>M-1) break;
-        if(cells[li*M+lj].water) continue;
-        var ea=ord[Math.max(0,le-2)], eb=ord[Math.min(ord.length-1,le+2)];
-        var tx=eb[0]-ea[0], tz=eb[1]-ea[1], tl=Math.sqrt(tx*tx+tz*tz);
-        if(tl<1e-9) continue;
-        var nx=-tz/tl, nz=tx/tl, cx0=-half+li, cz0=-half+lj, ty=surfAt(cx0,cz0).y;
-        for(var sd=0;sd<2&&!lp;sd++) for(var dd=0;dd<3&&!lp;dd++){
-          var off=(sd?-1:1)*(1.2+dd*0.4), px=cx0+nx*off, pz=cz0+nz*off;
-          if(px<-half+1||pz<-half+1||px>half-1||pz>half-1) continue;
-          var sp=surfAt(px,pz);
-          if(sp.f||Math.abs(sp.y-ty)>0.6) continue;
-          lp=lamp(px,pz,G.pstream(PASS.LAMP,lwx,lwz));
-        }
-      }
+    var rl=regions[rq].lamps||[];
+    for(lk=0;lk<rl.length;lk++){
+      var lpx=rl[lk][0]-OX, lpz=rl[lk][1]-OZ;
+      if(lpx<-half+1||lpz<-half+1||lpx>half-1||lpz>half-1) continue;
+      var lp=lamp(lpx,lpz,G.pstream(PASS.LAMP,rl[lk][2],rl[lk][3]));
       if(lp) lamps.push(lp);
     }
   }
@@ -3095,8 +3288,8 @@ function buildGrass(w) {
     var want=dsum*3.2*dmul;
     /* Where this cell sits in the two patch fields, by world metre. */
     var wmx=Math.floor(x+w.OX), wmz=Math.floor(z+w.OZ), sw=G.sw|0;
-    var bloom=cq.w[0]>0.45?patchField(sw,wmx,wmz,0x5f1):0;
-    var turn=(cq.w[4]||0)>0.5?0:patchField(sw,wmx,wmz,0x2a7);
+    var bloom=cq.w[BIO.MEADOW]>0.45?patchField(sw,wmx,wmz,0x5f1):0;
+    var turn=cq.w[BIO.RIME]>0.5?0:patchField(sw,wmx,wmz,0x2a7);
     var flowerK=bloom>0.66?(bloom-0.66)/0.34:0, autumnK=turn>0.68?(turn-0.68)/0.32:0;
     var nb=Math.floor(want); if(R()<want-nb) nb++;
     for(var g2=0;g2<nb;g2++){
@@ -3628,7 +3821,7 @@ function surfaceAt(w, gi, gj, y) {
       /* As surface.mjs (#55 item 12), draw for draw: the path's dither is the
          next draw after the roulette on the same stream. */
       if (!(flg & 8) && R() < 0.35) return { mat: b.mat.surf, pal: b.surf.at };
-      if ((flg & 8) && (b === BIOMES[1] || b === BIOMES[4])) return { mat: MAT.PATH, pal: b.soil.at };
+      if ((flg & 8) && (b === BIOMES[BIO.MESA] || b === BIOMES[BIO.RIME])) return { mat: MAT.PATH, pal: b.soil.at };
       return { mat: MAT.PATH, pal: PAL.TRODDEN.at };
     }
     var n0 = gi > 0 ? w.Hs[k - NZ] : hh - 2, n1 = gi < NX - 1 ? w.Hs[k + NZ] : hh - 2;
@@ -6393,8 +6586,8 @@ const REPATH_TIME = 0.5;
 /** Nodes a single search may open: bounded, because the host pays for it. */
 const PATH_NODES = 900;
 
-function makeSentry(col, x, z) {
-  const e = placeOnGround(col, x, z, undefined, SENTRY.rad);
+function makeSentry(col, x, z, fromY) {
+  const e = placeOnGround(col, x, z, fromY, SENTRY.rad);
   e.hp = SENTRY.hp; e.maxHp = SENTRY.hp;
   e.canVault = false;
   e.kind = 'sentry';
@@ -6624,27 +6817,36 @@ const POST_RANK = { cover: 0, vantage: 1, arena: 2 };
  */
 function postsFor(col, world) {
   const spawn = world.spawn, out = [];
-  const stand = (x, z) => {
-    const y = col.supportUnder(x, z, SENTRY.rad, Infinity);
-    return y !== -Infinity && !col.overlaps(x, z, SENTRY.rad, y + EPS, y + 1.8 - EPS);
+  /* Ground, not whatever is highest. Support used to be asked for from
+     infinitely high, and a post beside cover under a tree put its machine on
+     the canopy, 2.9 m over a character who could never reach it (#3 moved
+     one there). So support is sought from a step above the ground the post
+     was chosen on, and must be that ground. The answer is the height a
+     machine is placed from, returned as the post's third element. */
+  const stand = (x, z, h) => {
+    const y = col.supportUnder(x, z, SENTRY.rad, h + MOVE.step);
+    if (y === -Infinity || y < h - MOVE.step) return null;
+    return col.overlaps(x, z, SENTRY.rad, y + EPS, y + 1.8 - EPS) ? null : y;
   };
-  const ok = (x, z) => {
+  const ok = (x, z, h) => {
     const d = hyp(x - spawn[0], z - spawn[2]);
-    if (d < POST_MIN || d > POST_MAX || !stand(x, z)) return false;
-    for (const p of out) if (hyp(p[0] - x, p[1] - z) < POST_APART) return false;
-    return true;
+    if (d < POST_MIN || d > POST_MAX) return null;
+    for (const p of out) if (hyp(p[0] - x, p[1] - z) < POST_APART) return null;
+    return stand(x, z, h);
   };
   const cands = (world.affordances || []).filter((a) => a.k in POST_RANK).slice()
     .sort((a, b) => POST_RANK[a.k] - POST_RANK[b.k] || b.s - a.s || a.x - b.x || a.z - b.z);
   for (const a of cands) {
     if (out.length >= POSTS) break;
-    if (ok(a.x, a.z)) out.push([a.x, a.z]);
+    const y = ok(a.x, a.z, a.h);
+    if (y !== null) out.push([a.x, a.z, y]);
   }
   for (const [dx, dz] of [[14, 3], [-11, -13], [5, 19]]) {
     if (out.length >= POSTS) break;
     const x = spawn[0] + dx, z = spawn[2] + dz;
-    const y = col.supportUnder(x, z, SENTRY.rad, spawn[1] + MOVE.vault);
-    if (y !== -Infinity && ok(x, z)) out.push([x, z]);
+    const g = col.supportUnder(x, z, SENTRY.rad, spawn[1] + MOVE.vault);
+    const y = g === -Infinity ? null : ok(x, z, g);
+    if (y !== null) out.push([x, z, y]);
   }
   return out;
 }
@@ -6659,7 +6861,7 @@ function postsFor(col, world) {
 function makeEncounter(col, world, posts) {
   const spawn = world.spawn;
   const enemies = [];
-  for (const p of postsFor(col, world)) enemies.push(makeSentry(col, p[0], p[1]));
+  for (const p of postsFor(col, world)) enemies.push(makeSentry(col, p[0], p[1], p[2] + EPS));
   const targets = (posts || []).concat(enemies);
   const postCount = (posts || []).length;
   /* Derived from the same world the machines were placed in, and index-aligned
@@ -7807,7 +8009,7 @@ function makeGuest(opts) {
     },
   };
 }
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -8336,8 +8538,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
      space — so they drift with the wind past a walking character instead of
      travelling with the camera. What they are depends on the ground under the
      view and the weather: rain or snow when it falls, and otherwise pollen on
-     a meadow, dust on the mesa, embers over ash, spindrift on the frost and
-     fireflies over the fen at night. One shader for all of them; a mode is a
+     a meadow, dust on the mesa, ashfall by day and embers by night in the burn,
+     spindrift in the rime, spores in the bloom, glints off the glass and
+     fireflies over green ground at night. One shader for all of them; a mode is a
      handful of uniforms and a draw range. */
   var PART_N=900;
   var PART_MODES={
@@ -8348,7 +8551,30 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     embers:   {n:240,vel:[0,1.1,0],wind:0.6,col:[1.00,0.46,0.14],dia:0.08,op:0.90,wob:0.6,pulse:0.6,add:true},
     spindrift:{n:260,vel:[0,-0.3,0],wind:2.6,col:[0.94,0.96,1.00],dia:0.07,op:0.55,wob:0.4,pulse:0,add:false},
     fireflies:{n:150,vel:[0,0.02,0],wind:0.1,col:[0.80,1.00,0.42],dia:0.10,op:0.90,wob:1.2,pulse:1,add:true},
+    /* The scars' signatures (#32): a warning in the air, not decoration. Ash
+       falls thick and grey by day and blocks sight; spores rise and glow; the
+       glass throws glints off the ground. Rime keeps the spindrift. */
+    ashfall:  {n:560,vel:[0,-0.55,0],wind:1.0,col:[0.56,0.54,0.51],dia:0.10,op:0.80,wob:0.5,pulse:0,add:false},
+    spores:   {n:380,vel:[0,0.22,0],wind:0.35,col:[0.78,1.00,0.62],dia:0.09,op:0.85,wob:1.0,pulse:0.8,add:true},
+    glint:    {n:220,vel:[0,0,0],wind:0.15,col:[0.80,1.00,0.96],dia:0.06,op:1.00,wob:0.3,pulse:1,add:true},
   };
+  /* How much each scar thickens and tints the air (#32): the colour the fog
+     leans to and how much of the view it takes, at full strength. Ash takes
+     the most — "ashfall blocks sight" — and the glass the least. */
+  var SCAR_HAZE={ASH:{col:[0.40,0.38,0.36],mix:0.70,far:0.55},RIME:{col:[0.86,0.91,0.97],mix:0.40,far:0.25},
+                 SPORE:{col:[0.52,0.48,0.60],mix:0.60,far:0.40},GLASS:{col:[0.62,0.74,0.72],mix:0.30,far:0.15}};
+  var hazeMix=0, hazeFar=0, hazeCol=[0,0,0];
+  /** What the scars under a cell's weights do to the air: how far the fog
+      leans to their colour, how much of the view it takes, and that colour. */
+  function hazeFor(sw){
+    var mix=0, far=0, cr=0, cg=0, cb=0;
+    if(sw) for(var hk in SCAR_HAZE){
+      var hz=SCAR_HAZE[hk], hw=sw[QS.BIO[hk]]||0; if(hw<=0) continue;
+      mix+=hw*hz.mix; far+=hw*hz.far;
+      cr+=hw*hz.mix*hz.col[0]; cg+=hw*hz.mix*hz.col[1]; cb+=hw*hz.mix*hz.col[2];
+    }
+    return {mix:Math.min(mix,0.8), far:Math.min(far,0.6), col:mix>0?[cr/mix,cg/mix,cb/mix]:[0,0,0]};
+  }
   var PART_VS=['uniform float uTime; uniform vec3 uCenter; uniform vec3 uBox; uniform vec3 uOff;',
     'uniform float uWob; uniform float uSize; uniform float uPx; uniform float uPulse;',
     'attribute float aSeed; varying float vA;',
@@ -8384,13 +8610,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
   }
   /** Which motes the air holds, from the biome under the view and the sky. */
   function partMode(s,dom){
-    var cold=dom===4;
+    var B=QS.BIO, cold=dom===B.RIME, green=dom===B.MEADOW||dom===B.PINE||dom===B.THORN;
     if(s.rain>0.2) return cold?'snow':'rain';
-    if(dom===3) return 'embers';
-    if(dom===1) return 'dust';
+    if(dom===B.ASH) return s.day<0.35?'embers':'ashfall';
+    if(dom===B.SPORE) return 'spores';
+    if(dom===B.GLASS) return 'glint';
+    if(dom===B.MESA) return 'dust';
     if(cold) return 'spindrift';
-    if(s.day<0.35&&(dom===2||dom===0)) return 'fireflies';
-    return dom===0||dom===2?'pollen':'';
+    if(s.day<0.35&&(green||dom===B.SPORE)) return 'fireflies';
+    return green||dom===B.SPORE?'pollen':'';
+  }
+  /** The scars' weights under the view, for the haze. */
+  function scarsUnderView(){
+    try{
+      var g=built&&built.data&&built.data.G;
+      return g?g.cell(Math.round(cam.tx),Math.round(cam.tz)).w:null;
+    }catch(e){ return null; }
   }
   function domUnderView(){
     try{
@@ -8440,7 +8675,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       built.hemi.intensity=s.hemiI;
     }
     paintSky(s);
-    if(built.scene.fog) built.scene.fog.color.setRGB(s.fogCol[0],s.fogCol[1],s.fogCol[2]);
+    /* Scar haze (#32), eased like the snow so walking into a scar thickens
+       the air over a few steps rather than on one. */
+    var hzNow=hazeFor(plateMode?null:scarsUnderView()), mixTo=hzNow.mix, farTo=hzNow.far;
+    if(mixTo>0){ hazeCol[0]=hzNow.col[0]; hazeCol[1]=hzNow.col[1]; hazeCol[2]=hzNow.col[2]; }
+    hazeMix=force?mixTo:hazeMix+(mixTo-hazeMix)*0.25; hazeFar=force?farTo:hazeFar+(farTo-hazeFar)*0.25;
+    if(built.scene.fog) built.scene.fog.color.setRGB(s.fogCol[0]+(hazeCol[0]-s.fogCol[0])*hazeMix,
+      s.fogCol[1]+(hazeCol[1]-s.fogCol[1])*hazeMix,s.fogCol[2]+(hazeCol[2]-s.fogCol[2])*hazeMix);
     if(built.gmat){
       var gu=built.gmat.uniforms;
       gu.uSun.value.copy(sunDirV);
@@ -8454,7 +8695,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     built.scene.traverse(function(o){ if(o.userData.lamp) o.intensity=o.userData.lamp*s.lamps; });
     SKY_U.uCloud.value=s.cloud; SKY_U.uWet.value=s.wetness;
     var dom=plateMode?0:domUnderView();
-    var snowTo=dom===4?Math.min(1,s.wetness*1.3):0;
+    var snowTo=dom===QS.BIO.RIME?Math.min(1,s.wetness*1.3):0;
     skySnow=force?snowTo:skySnow+(snowTo-skySnow)*0.25;
     SKY_U.uSnow.value=skySnow;
     var p=built.parts;
@@ -8466,7 +8707,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
         u.uCol.value.setRGB(md.col[0],md.col[1],md.col[2]);
         u.uSize.value=md.dia; u.uStreak.value=md.streak||0; u.uWob.value=md.wob; u.uPulse.value=md.pulse;
         u.uOpacity.value=md.op*(mode==='rain'||mode==='snow'?Math.min(1,0.4+s.rain):1)
-          *(mode==='fireflies'?(1-s.day):1)*(mode==='embers'||mode==='fireflies'?1:0.6+0.4*s.day);
+          *(mode==='fireflies'?(1-s.day):1)*(mode==='embers'||mode==='fireflies'||mode==='spores'||mode==='glint'?1:0.6+0.4*s.day);
         p.userData.wind=md.wind;
         p.material.blending=md.add?THREE.AdditiveBlending:THREE.NormalBlending;
         var n=Math.round(md.n*(mode==='rain'||mode==='snow'?Math.min(1,0.3+s.rain):1));
@@ -8495,7 +8736,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
     var D=camera.position.distanceTo(camT), v=cam.view;
     if(built.scene.fog){
       built.scene.fog.near=D+0.15*v;
-      built.scene.fog.far=D+v*(3.6-1.6*Math.max(skyNow.rain,skyNow.cloud*0.6));
+      built.scene.fog.far=D+v*(3.6-1.6*Math.max(skyNow.rain,skyNow.cloud*0.6))*(1-hazeFar);
     }
     var p=built.parts;
     if(p&&p.visible){
@@ -11042,6 +11283,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
                        mode:skyMode,fix:skyFix,parts:built&&built.parts?(built.parts.visible?built.parts.userData.n:0):0,
                        fogNear:built&&built.scene.fog?built.scene.fog.near:0,
                        fogFar:built&&built.scene.fog?built.scene.fog.far:0,
+                       haze:hazeMix,
                        tone:renderer.toneMapping===THREE.ACESFilmicToneMapping,
                        sun:sunDirV.toArray()}; },
     /** Pin the hour by name ('auto','dawn','noon','dusk','night'), set the
@@ -11050,6 +11292,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,MAT
       if(sec!==undefined&&sec!==null){ skySec=sec; skyStepAt=-1; }
       skyCalm=!!calm;
       return setSky(Math.max(0,SKY_NAMES.indexOf(name||'auto')));
+    },
+    /* #32: what a cell's weights put in the air — the motes for its dominant
+       row at a given daylight, and the haze its scars lay over the view. */
+    scarAir:function(w,day){
+      var d=0,t=-1; for(var q=0;q<w.length;q++) if(w[q]>t){t=w[q];d=q;}
+      return {mode:partMode({rain:0,day:day},d),haze:hazeFor(w)};
     },
     /* Issue #29: the fixed pose the look baseline is made of. */
     plate:plate,

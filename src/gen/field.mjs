@@ -11,7 +11,7 @@
  * gone: `prandIn` and `pstream` are what a pass draws through now, and both
  * answer for a place rather than for a step in a walk.
  */
-import { BIOMES } from './biomes.mjs';
+import { BIOMES, CLIMATE_N, BIO } from './biomes.mjs';
 import { xmur3, makeNoise, posRand, placeRand, placeStream } from './rng.mjs';
 import { V, CEIL, clamp } from './constants.mjs';
 import { exp } from './exact.mjs';
@@ -19,6 +19,11 @@ import { exp } from './exact.mjs';
 /* Frequency, octaves and how many voxel steps the sub-metre relief spans. See
    `detail` below for what each one was measured at. DETAIL_LEVELS is an odd
    count centred on zero: 3 is +/-1 voxel, 5 is +/-2. */
+/* The scar overlay (#3): its frequency, the noise level a scar starts at, how
+   fast it reaches full strength past that, and the most of a cell all scars
+   together may take from the climate beneath. */
+const SCAR_FREQ = 0.0052, SCAR_AT = 0.66, SCAR_GAIN = 6, SCAR_MAX = 0.85;
+
 export const DETAIL_FREQ = 0.16, DETAIL_OCT = 2, DETAIL_LEVELS = 3;
 
 export function makeGen(seedStr,force){
@@ -34,21 +39,62 @@ export function makeGen(seedStr,force){
   /* The pass-scoped forms every window pass draws through — see rng.mjs. */
   function prandIn(pass,x,z,salt){ return placeRand(sw,pass,x,z,salt); }
   function pstream(pass,x,z){ return placeStream(sw,pass,x,z); }
+  /* The scar overlay's noise comes from its own hash of the seed, for the
+     reason `sw` does: drawing four more values out of `h` would shift every
+     field below it and change every world's climate for no reason (#3). */
+  var hs=xmur3('scar:'+String(seedStr)), NS=[];
+  for(var qs=CLIMATE_N;qs<BIOMES.length;qs++) NS.push(makeNoise(hs()));
+  /**
+   * A cell's weights: the four climate anchors, then the four scars (#3).
+   *
+   * Climate is the blend of where this column sits on the temperature and
+   * moisture chart, as it always was, over the anchors only. Each scar is an
+   * independent low-frequency field, present where its noise clears a
+   * threshold and at full strength a little past it. The scars take their
+   * share out of the climate's, and never all of it: SCAR_MAX leaves the land
+   * underneath a share everywhere, which is what the decision means by being
+   * able to see what the land used to be.
+   *
+   * A forced climate row centres the chart on that anchor and lays no scars,
+   * so a plate of it shows the biome and not whatever scar crossed it. A
+   * forced scar leaves the climate to the seed and lays that one scar over
+   * nearly everything, holed where its noise dips so the land shows through.
+   */
   function climate(x,z){
-    var t,m,i,w=[],s=0;
-    if(force!=null){
+    var t,m,i,w=[],s=0,sc=[],S=0;
+    if(force!=null&&force<CLIMATE_N){
       t=BIOMES[force].t+(N.t.fbm(x*0.022,z*0.022,2)-0.5)*0.13;
       m=BIOMES[force].m+(N.m.fbm(x*0.021+40,z*0.021,2)-0.5)*0.13;
     }else{
       t=N.t.fbm(x*0.0068+wx,z*0.0068+wz,3); m=N.m.fbm(x*0.0061+wz,z*0.0061+wx,3);
       t=clamp((t-0.5)*2.1+0.5,0,1); m=clamp((m-0.5)*2.1+0.5,0,1);
     }
-    for(i=0;i<BIOMES.length;i++){var dt=t-BIOMES[i].t,dm=m-BIOMES[i].m;
+    for(i=0;i<CLIMATE_N;i++){var dt=t-BIOMES[i].t,dm=m-BIOMES[i].m;
       var e=exp(-(dt*dt+dm*dm)/0.055);w.push(e);s+=e;}
-    for(i=0;i<w.length;i++)w[i]/=s;
+    for(i=0;i<CLIMATE_N;i++)w[i]/=s;
+    for(i=CLIMATE_N;i<BIOMES.length;i++){
+      var v=0, f=NS[i-CLIMATE_N].fbm(x*SCAR_FREQ+11*i,z*SCAR_FREQ-7*i,3);
+      if(force==null) v=clamp((f-SCAR_AT)*SCAR_GAIN,0,1);
+      else if(force===i) v=clamp(0.9+(f-0.5)*2.4,0,1);
+      sc.push(v); S+=v;
+    }
+    var k=S>SCAR_MAX?SCAR_MAX/S:1, keep=1-S*k;
+    for(i=0;i<CLIMATE_N;i++) w[i]*=keep;
+    for(i=0;i<sc.length;i++) w.push(sc[i]*k);
     return w;
   }
-  function wsum(w,key){var s=0;for(var i=0;i<w.length;i++)s+=w[i]*BIOMES[i][key];return s;}
+  /**
+   * The weighted value of one row key. A scar row that leaves a key unset
+   * takes the climate's value for it instead, so a scar over mesa keeps the
+   * mesa's height and a scar over meadow keeps the meadow's (#3).
+   */
+  function wsum(w,key){
+    var s=0,cs=0,i;
+    for(i=0;i<CLIMATE_N;i++){ s+=w[i]*BIOMES[i][key]; cs+=w[i]; }
+    var under=cs>0?s/cs:0;
+    for(i=CLIMATE_N;i<w.length;i++){ var v=BIOMES[i][key]; s+=w[i]*(v==null?under:v); }
+    return s;
+  }
   /* whole-metre macro height */
   function macro(x,z,w){
     var base=wsum(w,'base'), hill=wsum(w,'hill');
@@ -131,14 +177,17 @@ export function makeGen(seedStr,force){
       else if(c.d<c.w/2+2) H-=Math.round(c.dp*(1-(c.d-c.w/2)/2));
     }
     H+=pillarAt(x,z,colw);
-    var r=riverAt(x,z), rw=r.w+Math.round(w[2]*3), water=false, pond=false, wl=0;
+    var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
     if(r.d<rw/2||riverCorner(x,z,rw)){ H=Math.min(H-1,riverBed(x,z,w)); water=true; }
     if(!water&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
     var magma=false;
-    if(w[3]>0.5){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
+    /* A river quenches a seam: no magma in or within two metres of one. The
+       burn is a scar now and crosses rivers the old ash biome never had, and
+       a seam's trench beside a river is dry ground below the water (#3). */
+    if(w[BIO.ASH]>0.5&&!water&&r.d>=rw/2+2){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
       if(f<0.022){ H-=1; magma=true; water=false; } }
     H=clamp(H,0,CEIL);
     if(water) wl=H+(pond?1.25:0.75);

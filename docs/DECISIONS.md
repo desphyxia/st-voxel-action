@@ -228,10 +228,9 @@ generator workstream in its own right — not a content pass.
    supposed to be yours and anchor the persistence radius. Claimed sites need an exemption, or
    a weaker repopulation, or claiming means nothing.
 
-3. **"Eight biomes" is four biomes and four overlays.** Worth being precise in the generator
-   and the plate: the climate field has four anchors; the scar field paints four contamination
-   layers over them. The climate chart on the concept plate currently shows five anchors and is
-   simply wrong now.
+3. ~~**"Eight biomes" is four biomes and four overlays.**~~ Resolved (#3). The generator has a
+   climate field with four anchors and an independent scar field that paints four overlays over
+   them; the plate's chart shows four anchors and lists the scars as overlays.
 
 4. **Party scaling does not cover environmental danger.** Scars are still running, so their
    hazards are environmental rather than enemies. Scaling to party size does nothing for them —
@@ -242,10 +241,10 @@ generator workstream in its own right — not a content pass.
 
 ## What the current concept plate contradicts
 
-`docs/concept/index.html` predates most of this and is now wrong in six places: it ships five
-biomes including Boreal Fen and Frostmoor; its climate chart has five anchors and no scar
-overlay; it has no Cloudpine Highlands or Thornwood; it renders caves as though they mattered;
-its voxels carry colour only; and it draws instanced boxes rather than meshed chunks.
+`docs/concept/index.html` predates most of this. The biome set, the climate chart and the
+missing Cloudpine Highlands and Thornwood were reconciled by #3. It is still wrong in three
+places: it renders caves as though they mattered; it describes voxels as carrying colour only;
+and it draws instanced boxes rather than meshed chunks.
 
 The generator's *structure* is unaffected — chunking, whole-metre features, the detail pass,
 trails, reach, erosion, the water table, accumulation, the wind field and destructibility all

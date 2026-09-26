@@ -11,13 +11,11 @@
 import { V, DIRS4, clamp } from './constants.mjs';
 import { sin, cos, hyp } from './exact.mjs';
 import { MAT } from './materials.mjs';
-import { BIOMES, rouletteBiome } from './biomes.mjs';
+import { BIOMES, BIO, CLIMATE_N, rouletteBiome } from './biomes.mjs';
 import { PAL, pickPal, shadeByte } from './palette.mjs';
 import { PASS } from './rng.mjs';
 import { groundCellAt } from './ground.mjs';
 
-/** Metres of trail between lamps, measured along the region's own route. */
-const LAMP_SPACING = 40;
 
 /** The stamp kit for one world: pure geometry, pushed into w's voxel arrays. */
 export function makeStamps(w) {
@@ -53,19 +51,25 @@ export function makeStamps(w) {
    * over the road. This is only used by things that are solid at body height.
    */
   function onTrail(px,pz){ return (surfAt(px,pz).f & 4) !== 0; }
+  /** Within a voxel of the trail: for stamps that stand on the ground beside
+      it, which a body walking the trail's edge would otherwise brush (#3). */
+  function nearTrail(px,pz){
+    for(var a=-V;a<=V;a+=V)for(var b=-V;b<=V;b+=V) if(onTrail(px+a,pz+b)) return true;
+    return false;
+  }
   function tree(px,pz,b,t,R){
     var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
     var th, r, ax, ay, az;
     if(t==='conifer'){
       th=3+R()*2;
-      if(!onTrail(px,pz)) for(y=0;y<th;y+=V) addVox(px,y0+y,pz,(b.k==='frost'?PAL.CONIFER_TRUNK_COLD.at:PAL.CONIFER_TRUNK.at),0.9+R()*0.2,MAT.WOOD);
+      if(!onTrail(px,pz)) for(y=0;y<th;y+=V) addVox(px,y0+y,pz,(b.k==='rime'?PAL.CONIFER_TRUNK_COLD.at:PAL.CONIFER_TRUNK.at),0.9+R()*0.2,MAT.WOOD);
       for(var lv=0;lv<5;lv++){
         var ly=y0+th*0.35+lv*(th*0.15), lr=(1.5-lv*0.24);
         for(ax=-lr;ax<=lr;ax+=V)for(az=-lr;az<=lr;az+=V){
           if(ax*ax+az*az>lr*lr) continue;
           /* hoisted so the material can follow the colour; the short-circuit,
              and so the number of R() calls, is unchanged. */
-          var capped=(b.k==='frost'&&R()<0.45);
+          var capped=(b.k==='rime'&&R()<0.45);
           addVox(px+ax,ly,pz+az,(capped?PAL.CONIFER_CAP.at:PAL.CONIFER_LEAF.at+(R()<0.5?0:1)),0.85+R()*0.3,
                  capped?MAT.SNOW:MAT.LEAF);
         }
@@ -87,6 +91,57 @@ export function makeStamps(w) {
         for(var t2=0;t2<bl;t2+=V){ var bz2=pz+(R()-0.5)*0.3;
           if(onTrail(px+dirx*t2,bz2)) continue;
           addVox(px+dirx*t2,by+t2*0.4,bz2,PAL.SNAG_BRANCH.at,0.9,MAT.WOOD); } }
+    } else if(t==='thorn'){
+      /* Thornwood (#3): a crooked trunk that leans, and a few branches that
+         end in small dark clusters rather than one crown — so a stand of them
+         is a tangle you see through in pieces. */
+      th=2+R()*1.5;
+      var lx=(R()-0.5)*0.5, lz=(R()-0.5)*0.5;
+      for(y=0;y<th;y+=V){ var tx2=px+lx*y, tz2=pz+lz*y;
+        if(!onTrail(tx2,tz2)) addVox(tx2,y0+y,tz2,PAL.THORN_TRUNK.at+(R()<0.5?0:1),0.85+R()*0.25,MAT.WOOD); }
+      for(var tb2=0;tb2<4;tb2++){
+        var ba=R()*6.283, bl2=0.8+R()*0.7, bx=cos(ba), bz=sin(ba), bh=y0+th*(0.55+tb2*0.13);
+        var ox2=px+lx*(bh-y0), oz2=pz+lz*(bh-y0);
+        for(var t3=0;t3<bl2;t3+=V){ if(onTrail(ox2+bx*t3,oz2+bz*t3)) continue;
+          addVox(ox2+bx*t3,bh+t3*0.35,oz2+bz*t3,PAL.THORN_TRUNK.at,0.8+R()*0.2,MAT.WOOD); }
+        var cx3=ox2+bx*bl2, cy3=bh+bl2*0.35+0.2, cz3=oz2+bz*bl2, cr=0.45+R()*0.25;
+        for(ax=-cr;ax<=cr;ax+=V)for(ay=-cr*0.6;ay<=cr*0.6;ay+=V)for(az=-cr;az<=cr;az+=V){
+          if((ax*ax+az*az+ay*ay*2.2)/(cr*cr)>1-R()*0.35) continue;
+          if(R()<0.25) continue;
+          addVox(cx3+ax,cy3+ay,cz3+az,(R()<0.06?PAL.THORN_BERRY.at:PAL.THORN_LEAF.at+(R()<0.5?0:1)),0.8+R()*0.3,MAT.LEAF);
+        }
+      }
+    } else if(t==='fungus'){
+      /* Sporeverge (#3): a fungal tower, 3 to 7 m of pale stalk under a wide
+         dome, with a ring of lit gills under the rim. */
+      th=3+R()*4;
+      var sr=th>5?V:0;
+      for(y=0;y<th;y+=V)for(ax=-sr;ax<=sr;ax+=V)for(az=-sr;az<=sr;az+=V)
+        if(Math.abs(ax)+Math.abs(az)<=sr&&!onTrail(px+ax,pz+az))
+          addVox(px+ax,y0+y,pz+az,PAL.FUNGUS_STALK.at+(R()<0.5?0:1),0.85+R()*0.2,MAT.FUNGUS);
+      var rc=1.1+th*0.22, capc=PAL.FUNGUS_CAP.at+((R()*PAL.FUNGUS_CAP.n)|0);
+      for(ax=-rc;ax<=rc;ax+=V)for(az=-rc;az<=rc;az+=V){
+        var dd2=(ax*ax+az*az)/(rc*rc); if(dd2>1) continue;
+        var cy=y0+th+Math.round((1-dd2)*0.7/V)*V;
+        addVox(px+ax,cy,pz+az,capc,0.8+R()*0.3,MAT.FUNGUS);
+        if(dd2>0.72) addVox(px+ax,cy-V,pz+az,capc,0.7+R()*0.2,MAT.FUNGUS);
+      }
+      for(var gq=0;gq<6;gq++){ var ga=gq*1.047+R()*0.4, gr2=rc*0.6;
+        addEm(px+cos(ga)*gr2,y0+th-V,pz+sin(ga)*gr2,PAL.EM_SPORE.at+(R()<0.5?0:1),1,MAT.LIGHT); }
+    } else if(t==='shard'){
+      /* Glasslands (#3): a cluster of one to three leaning glass shards, 1 to
+         4 m, thick at the root and one voxel at the tip. */
+      var ns=1+((R()*3)|0);
+      for(var sq=0;sq<ns;sq++){
+        var sa=R()*6.283, sl=0.15+R()*0.3, shh=1+R()*3, sx3=px+(R()-0.5)*0.8, sz3=pz+(R()-0.5)*0.8;
+        for(y=0;y<shh;y+=V){
+          var qx=sx3+cos(sa)*sl*y, qz=sz3+sin(sa)*sl*y, thick=y<shh*0.5?V:0;
+          for(ax=0;ax<=thick;ax+=V)for(az=0;az<=thick;az+=V){
+            if(onTrail(qx+ax,qz+az)) continue;
+            addVox(qx+ax,y0+y,qz+az,PAL.SHARD.at+((R()*PAL.SHARD.n)|0),0.85+R()*0.3,MAT.GLASS);
+          }
+        }
+      }
     } else {
       th=2.5+R()*1.5;
       for(y=0;y<th;y+=V)for(ax=-V;ax<=V;ax+=V)for(az=-V;az<=V;az+=V)
@@ -103,7 +158,7 @@ export function makeStamps(w) {
     var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
     for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
-      if(onTrail(px+ax,pz+az)) continue;
+      if(nearTrail(px+ax,pz+az)) continue;
       addVox(px+ax,y0+r*0.45+ay,pz+az,pickPal(b.rock,R),0.85+R()*0.3,b.mat.rock);
     }
   }
@@ -112,7 +167,7 @@ export function makeStamps(w) {
       var sx=px+(R()-0.5)*2.4, sz=pz+(R()-0.5)*2.4, s=surfAt(sx,sz); if(s.f) continue;
       var n2=(R()<0.3)?2:1;
       for(var a=0;a<n2;a++)for(var b=0;b<n2;b++)for(var c2=0;c2<n2;c2++){
-        if(onTrail(sx+a*V,sz+b*V)) continue;
+        if(nearTrail(sx+a*V,sz+b*V)) continue;
         addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickPal(BIOMES[dom].rock,R),0.8+R()*0.3,BIOMES[dom].mat.rock);
       }
     }
@@ -120,7 +175,7 @@ export function makeStamps(w) {
   function bush(px,pz,dom,R){
     var s=surfAt(px,pz); if(s.f) return;
     var r=0.35+R()*0.35;
-    var cols=(dom===4)?PAL.BUSH_COLD:(dom===3?PAL.BUSH_BURNT:(dom===1?PAL.BUSH_DRY:PAL.BUSH_GREEN));
+    var cols=[PAL.BUSH_GREEN,PAL.BUSH_DRY,PAL.BUSH_GREEN,PAL.BUSH_THORN,PAL.BUSH_BURNT,PAL.BUSH_COLD,PAL.BUSH_SPORE,PAL.BUSH_GLASS][dom];
     for(var ax=-r;ax<=r;ax+=V)for(var ay=0;ay<=r*1.5;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+((ay-r*0.65)*(ay-r*0.65))/(r*r*0.65)>1-R()*0.3) continue;
       if(onTrail(px+ax,pz+az)) continue;
@@ -130,7 +185,7 @@ export function makeStamps(w) {
   function stump(px,pz,R){
     var s=surfAt(px,pz); if(s.f) return;
     for(var y2=0;y2<0.55;y2+=V)for(var ax=-V;ax<=V;ax+=V)for(var az=-V;az<=V;az+=V)
-      if(Math.abs(ax)+Math.abs(az)<=V)
+      if(Math.abs(ax)+Math.abs(az)<=V&&!onTrail(px+ax,pz+az))
         addVox(px+ax,s.y+y2+V/2,pz+az,((y2>0.3&&ax===0&&az===0)?PAL.STUMP_CUT.at:PAL.STUMP_WOOD.at),0.9+R()*0.2,MAT.WOOD);
   }
   function fallenTrunk(px,pz,R){
@@ -204,8 +259,14 @@ export function makeStamps(w) {
   function deckBridge(px,pz,di,dj,len,y,R){
     for(var t2=-len/2;t2<=len/2;t2+=V)for(var b=-0.75;b<=0.75;b+=V)
       addVox(px+di*t2-dj*b,y,pz+dj*t2+di*b,(R()<0.25?PAL.DECK_WORN.at:PAL.DECK_PLANK.at),0.9+R()*0.2,MAT.WOOD);
-    for(var side=-1;side<=1;side+=2)for(var t3=-len/2;t3<=len/2;t3+=0.5)
-      addVox(px+di*t3-dj*side*0.75,y+0.5,pz+dj*t3+di*side*0.75,PAL.DECK_RAIL.at,0.95,MAT.WOOD);
+    /* Rails over the water only. Where a deck's end lies on a bank a rail is
+       a post across the trail beside it, and a high bank beside a narrow
+       river left a body no way off the deck (#3 moved one onto ash). */
+    for(var side=-1;side<=1;side+=2)for(var t3=-len/2;t3<=len/2;t3+=0.5){
+      var rx2=px+di*t3-dj*side*0.75, rz2=pz+dj*t3+di*side*0.75;
+      if(!(surfAt(rx2,rz2).f&1)) continue;
+      addVox(rx2,y+0.5,rz2,PAL.DECK_RAIL.at,0.95,MAT.WOOD);
+    }
   }
   return { addVox: addVox, addEm: addEm, surfAt: surfAt, onTrail: onTrail, tree: tree, boulder: boulder, scree: scree,
            bush: bush, stump: stump, fallenTrunk: fallenTrunk, fence: fence, lamp: lamp,
@@ -224,7 +285,12 @@ export function scatterProps(w, kit) {
     var R=G.pstream(PASS.TREE,wx,wz);
     var px=-half+i+ (R()-0.5)*1.2, pz=-half+j+(R()-0.5)*1.2;
     var bb=BIOMES[cc.dom];
-    var td=0; for(var q=0;q<cc.w.length;q++) td+=cc.w[q]*BIOMES[q].tree.d;
+    /* Under a scar the land keeps its shape but not its woods: the climate's
+       trees thin as the scar's share rises and are gone where it is whole, so
+       a burn is snags and not a pine stand with a grey floor (#3). */
+    var scS=0; for(var q=CLIMATE_N;q<cc.w.length;q++) scS+=cc.w[q];
+    var live=clamp(1-scS/0.85,0,1), tw=[], td=0;
+    for(q=0;q<cc.w.length;q++){ var tv=cc.w[q]*BIOMES[q].tree.d*(q<CLIMATE_N?live:1); tw.push(tv); td+=tv; }
     /* The two caps below are per-window budgets, which is the wrong shape —
        whether a tree exists should not depend on how much world you are
        looking at. They are inert at every size the generator is run at (the
@@ -236,7 +302,6 @@ export function scatterProps(w, kit) {
       /* Which kind of tree is a draw over what each biome present would plant
          here, not the dominant biome's: a border reads as the two woods
          mingling rather than a line where one species stops (#39). */
-      var tw=[]; for(q=0;q<cc.w.length;q++) tw.push(cc.w[q]*BIOMES[q].tree.d);
       var tb=BIOMES[rouletteBiome(tw,R,2)];
       if(treeN<260){ tree(px,pz,tb,tb.tree.t,R); treeN++; } else capped++;
     }
@@ -322,34 +387,14 @@ export function placeClutter(w, kit) {
      hold. Three per window was a window-scale decision about a region-scale
      thing, and two views of the same trail lit it differently. */
   var regions=w.regions||[], rq, lk;
+  /* Lamps (#47) are decided by the region pass, in world coordinates, so a
+     window only stamps the ones that stand in it. */
   for(rq=0;rq<regions.length;rq++){
-    var ord=regions[rq].order;
-    for(lk=(LAMP_SPACING>>1);lk<ord.length;lk+=LAMP_SPACING){
-      /* At the edge of the route, facing it (#47). A lamp used to be offset
-         0.6 m diagonally from a trail cell and kept only if that happened to
-         miss the trail — so it existed or not by the trail's local shape, and
-         ash lost its only one when a river fix moved the route a cell. Now it
-         goes across the route's own direction, read from the order the region
-         laid it: 1.2 to 2 m out, the first side with level ground that is not
-         trail or water, and if neither side has room, the next few steps along. */
-      var lp=null;
-      for(var sh=0;sh<6&&!lp&&lk+sh<ord.length;sh++){
-        var le=lk+sh, lwx=ord[le][0], lwz=ord[le][1];
-        var li=lwx-OX+half, lj=lwz-OZ+half;
-        if(li<0||lj<0||li>M-1||lj>M-1) break;
-        if(cells[li*M+lj].water) continue;
-        var ea=ord[Math.max(0,le-2)], eb=ord[Math.min(ord.length-1,le+2)];
-        var tx=eb[0]-ea[0], tz=eb[1]-ea[1], tl=Math.sqrt(tx*tx+tz*tz);
-        if(tl<1e-9) continue;
-        var nx=-tz/tl, nz=tx/tl, cx0=-half+li, cz0=-half+lj, ty=surfAt(cx0,cz0).y;
-        for(var sd=0;sd<2&&!lp;sd++) for(var dd=0;dd<3&&!lp;dd++){
-          var off=(sd?-1:1)*(1.2+dd*0.4), px=cx0+nx*off, pz=cz0+nz*off;
-          if(px<-half+1||pz<-half+1||px>half-1||pz>half-1) continue;
-          var sp=surfAt(px,pz);
-          if(sp.f||Math.abs(sp.y-ty)>0.6) continue;
-          lp=lamp(px,pz,G.pstream(PASS.LAMP,lwx,lwz));
-        }
-      }
+    var rl=regions[rq].lamps||[];
+    for(lk=0;lk<rl.length;lk++){
+      var lpx=rl[lk][0]-OX, lpz=rl[lk][1]-OZ;
+      if(lpx<-half+1||lpz<-half+1||lpx>half-1||lpz>half-1) continue;
+      var lp=lamp(lpx,lpz,G.pstream(PASS.LAMP,rl[lk][2],rl[lk][3]));
       if(lp) lamps.push(lp);
     }
   }

@@ -19,6 +19,22 @@
 import { MAT } from './materials.mjs';
 import { PAL } from './palette.mjs';
 
+/**
+ * Four biomes and four scars — `docs/DECISIONS.md` §5, issue #3.
+ *
+ * The first CLIMATE_N rows are the natural biomes, anchored at a point on the
+ * temperature and moisture chart. The rest are scars: the damage the three
+ * weapons did, painted as an overlay field of their own (src/gen/field.mjs)
+ * rather than placed on the chart. A scar has no t or m, and its rows leave
+ * base and hill unset, because a scar cuts across the land rather than
+ * replacing it — the ground keeps the shape the climate gave it, and what
+ * the scar changes is what it is made of, what grows on it and what stands in
+ * it. That is also why a cell's weights never go wholly to scars: the climate
+ * underneath keeps a share, and you can see what the land used to be.
+ *
+ * Boreal Fen and Frostmoor are gone. Their ground became Sporeverge and
+ * Rimewaste, which is what the decision says they overlapped with.
+ */
 export const BIOMES = [
  {k:'meadow',nm:'Meadowlands',t:0.58,m:0.66,c:'#6b9a45',ds:'Broadleaf stands, meandering rivers, boulder fields. The tutorial biome and the one the palette is calibrated against.',mt:'base 3 m · hills 1–3 m · rivers common',
   surf:PAL.MEADOW_SURF,soil:PAL.MEADOW_SOIL,rock:PAL.MEADOW_ROCK,bed:PAL.MEADOW_BED,
@@ -28,19 +44,36 @@ export const BIOMES = [
   surf:PAL.MESA_SURF,soil:PAL.MESA_SOIL,rock:PAL.MESA_ROCK,bed:PAL.MESA_BED,
   mat:{surf:MAT.SAND,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
   gr:{d:3.0,c:0xc0a760,dry:0xd8c07a,h:[0.30,0.25]},tree:{t:'scrub',d:0.25},base:6,hill:2,canyon:0.85,col:0.5},
- {k:'fen',nm:'Boreal Fen',t:0.40,m:0.90,c:'#4a7a4e',ds:'Peat shelves, standing water, black conifers and reed beds. Wide slow water, poor footing.',mt:'base 2 m · hills 1 m · water 4–8 m wide',
-  surf:PAL.FEN_SURF,soil:PAL.FEN_SOIL,rock:PAL.FEN_ROCK,bed:PAL.FEN_BED,
-  mat:{surf:MAT.GRASS,soil:MAT.PEAT,rock:MAT.ROCK,bed:MAT.PEAT},
-  gr:{d:8.7,c:0x5f8a48,dry:0x7d8a3e,h:[0.40,0.28]},tree:{t:'conifer',d:0.8},base:2,hill:1,canyon:0,col:0},
- {k:'ash',nm:'Ashfall Barrens',t:0.90,m:0.48,c:'#5a504a',ds:'Basalt columns, fissures and magma seams under a grey crust. Vertical cover everywhere, nothing to eat.',mt:'base 4 m · columns 2–4 m · magma seams',
+ {k:'pine',nm:'Cloudpine Highlands',t:0.20,m:0.62,c:'#4f7466',ds:'High granite shoulders under dark conifer stands, cold streams and blue-green turf. The tallest ground there is.',mt:'base 7 m · hills 2–4 m · tarns',
+  surf:PAL.PINE_SURF,soil:PAL.PINE_SOIL,rock:PAL.PINE_ROCK,bed:PAL.PINE_BED,
+  mat:{surf:MAT.GRASS,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
+  gr:{d:6.4,c:0x6f9a78,dry:0x9aa67a,h:[0.30,0.24]},tree:{t:'conifer',d:0.95},base:7,hill:4,canyon:0.2,col:0.15},
+ {k:'thorn',nm:'Thornwood',t:0.44,m:0.30,c:'#6b6a3a',ds:'Crooked hardwood in tangles, thorn thickets and dry brown turf. Close sightlines and no straight way through.',mt:'base 3 m · hills 1–2 m · thickets',
+  surf:PAL.THORN_SURF,soil:PAL.THORN_SOIL,rock:PAL.THORN_ROCK,bed:PAL.THORN_BED,
+  mat:{surf:MAT.GRASS,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.SAND},
+  gr:{d:5.6,c:0x8a8a48,dry:0xa6904e,h:[0.34,0.26]},tree:{t:'thorn',d:1.1},base:3,hill:2,canyon:0.05,col:0.1},
+ {k:'ash',nm:'Ashfall Barrens',scar:true,c:'#5a504a',ds:'The tech weapon\'s burn: basalt columns, fissures and magma seams under a grey crust. Vertical cover everywhere, nothing to eat.',mt:'scar · columns 2–4 m · magma seams',
   surf:PAL.ASH_SURF,soil:PAL.ASH_SOIL,rock:PAL.ASH_ROCK,bed:PAL.ASH_BED,
   mat:{surf:MAT.ASH,soil:MAT.ASH,rock:MAT.BASALT,bed:MAT.BASALT},
-  gr:{d:2.5,c:0x6b5a50,dry:0xd2642a,h:[0.26,0.22]},tree:{t:'snag',d:0.3},base:4,hill:2,canyon:0.3,col:0.9},
- {k:'frost',nm:'Frostmoor',t:0.12,m:0.44,c:'#cfd9e2',ds:'Snow over hard rock, frozen shelves, wind-stripped ridges. Tracks show, and so do you.',mt:'base 5 m · hills 2–3 m · ice shelves',
-  surf:PAL.FROST_SURF,soil:PAL.FROST_SOIL,rock:PAL.FROST_ROCK,bed:PAL.FROST_BED,
+  gr:{d:2.5,c:0x6b5a50,dry:0xd2642a,h:[0.26,0.22]},tree:{t:'snag',d:0.3},canyon:0.3,col:0.9},
+ {k:'rime',nm:'Rimewaste',scar:true,c:'#cfd9e2',ds:'A magical winter that never lifted: snow over black ice, frozen shelves, trees caught mid-motion. Tracks show, and so do you.',mt:'scar · snow cover · black ice',
+  surf:PAL.RIME_SURF,soil:PAL.RIME_SOIL,rock:PAL.RIME_ROCK,bed:PAL.RIME_BED,
   mat:{surf:MAT.SNOW,soil:MAT.SOIL,rock:MAT.ROCK,bed:MAT.ICE},
-  gr:{d:3.9,c:0xc8d6de,dry:0x9fb4bf,h:[0.28,0.23]},tree:{t:'conifer',d:0.45},base:5,hill:3,canyon:0.15,col:0.2}
+  gr:{d:3.9,c:0xc8d6de,dry:0x9fb4bf,h:[0.28,0.23]},tree:{t:'conifer',d:0.45},canyon:0.15,col:0.2},
+ {k:'spore',nm:'Sporeverge',scar:true,c:'#7a5f86',ds:'A biological bloom that got out: mycelium mats over peat, standing water, fungal towers with lit gills.',mt:'scar · fungal towers 3–7 m · wide slow water',
+  surf:PAL.SPORE_SURF,soil:PAL.SPORE_SOIL,rock:PAL.SPORE_ROCK,bed:PAL.SPORE_BED,
+  mat:{surf:MAT.FUNGUS,soil:MAT.PEAT,rock:MAT.ROCK,bed:MAT.PEAT},
+  gr:{d:4.2,c:0x8a7494,dry:0x9a8a5a,h:[0.30,0.26]},tree:{t:'fungus',d:0.7},hill:1,canyon:0,col:0},
+ {k:'glass',nm:'Glasslands',scar:true,c:'#5f8f88',ds:'Where two weapons met: ground fused to dark glass, shard fields, almost nothing growing.',mt:'scar · vitrified crust · shards 1–4 m',
+  surf:PAL.GLASS_SURF,soil:PAL.GLASS_SOIL,rock:PAL.GLASS_ROCK,bed:PAL.GLASS_BED,
+  mat:{surf:MAT.GLASS,soil:MAT.SOIL,rock:MAT.GLASS,bed:MAT.GLASS},
+  gr:{d:0.25,c:0x6f8f86,dry:0x8fa8a0,h:[0.22,0.18]},tree:{t:'shard',d:0.55},hill:1,canyon:0,col:0}
 ];
+
+/** How many rows lead the table as climate anchors; the rest are scars. */
+export const CLIMATE_N = 4;
+/** Row indices by name, so nothing downstream counts positions. */
+export const BIO = { MEADOW: 0, MESA: 1, PINE: 2, THORN: 3, ASH: 4, RIME: 5, SPORE: 6, GLASS: 7 };
 
 /** Picks one biome out of a blend, sharpened so blends still read as somewhere. */
 export function rouletteBiome(w, r, pow) {

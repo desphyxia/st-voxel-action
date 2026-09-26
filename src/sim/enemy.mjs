@@ -77,8 +77,8 @@ export const REPATH_TIME = 0.5;
 /** Nodes a single search may open: bounded, because the host pays for it. */
 const PATH_NODES = 900;
 
-export function makeSentry(col, x, z) {
-  const e = placeOnGround(col, x, z, undefined, SENTRY.rad);
+export function makeSentry(col, x, z, fromY) {
+  const e = placeOnGround(col, x, z, fromY, SENTRY.rad);
   e.hp = SENTRY.hp; e.maxHp = SENTRY.hp;
   e.canVault = false;
   e.kind = 'sentry';
@@ -308,27 +308,36 @@ const POST_RANK = { cover: 0, vantage: 1, arena: 2 };
  */
 export function postsFor(col, world) {
   const spawn = world.spawn, out = [];
-  const stand = (x, z) => {
-    const y = col.supportUnder(x, z, SENTRY.rad, Infinity);
-    return y !== -Infinity && !col.overlaps(x, z, SENTRY.rad, y + EPS, y + 1.8 - EPS);
+  /* Ground, not whatever is highest. Support used to be asked for from
+     infinitely high, and a post beside cover under a tree put its machine on
+     the canopy, 2.9 m over a character who could never reach it (#3 moved
+     one there). So support is sought from a step above the ground the post
+     was chosen on, and must be that ground. The answer is the height a
+     machine is placed from, returned as the post's third element. */
+  const stand = (x, z, h) => {
+    const y = col.supportUnder(x, z, SENTRY.rad, h + MOVE.step);
+    if (y === -Infinity || y < h - MOVE.step) return null;
+    return col.overlaps(x, z, SENTRY.rad, y + EPS, y + 1.8 - EPS) ? null : y;
   };
-  const ok = (x, z) => {
+  const ok = (x, z, h) => {
     const d = hyp(x - spawn[0], z - spawn[2]);
-    if (d < POST_MIN || d > POST_MAX || !stand(x, z)) return false;
-    for (const p of out) if (hyp(p[0] - x, p[1] - z) < POST_APART) return false;
-    return true;
+    if (d < POST_MIN || d > POST_MAX) return null;
+    for (const p of out) if (hyp(p[0] - x, p[1] - z) < POST_APART) return null;
+    return stand(x, z, h);
   };
   const cands = (world.affordances || []).filter((a) => a.k in POST_RANK).slice()
     .sort((a, b) => POST_RANK[a.k] - POST_RANK[b.k] || b.s - a.s || a.x - b.x || a.z - b.z);
   for (const a of cands) {
     if (out.length >= POSTS) break;
-    if (ok(a.x, a.z)) out.push([a.x, a.z]);
+    const y = ok(a.x, a.z, a.h);
+    if (y !== null) out.push([a.x, a.z, y]);
   }
   for (const [dx, dz] of [[14, 3], [-11, -13], [5, 19]]) {
     if (out.length >= POSTS) break;
     const x = spawn[0] + dx, z = spawn[2] + dz;
-    const y = col.supportUnder(x, z, SENTRY.rad, spawn[1] + MOVE.vault);
-    if (y !== -Infinity && ok(x, z)) out.push([x, z]);
+    const g = col.supportUnder(x, z, SENTRY.rad, spawn[1] + MOVE.vault);
+    const y = g === -Infinity ? null : ok(x, z, g);
+    if (y !== null) out.push([x, z, y]);
   }
   return out;
 }
@@ -343,7 +352,7 @@ export function postsFor(col, world) {
 export function makeEncounter(col, world, posts) {
   const spawn = world.spawn;
   const enemies = [];
-  for (const p of postsFor(col, world)) enemies.push(makeSentry(col, p[0], p[1]));
+  for (const p of postsFor(col, world)) enemies.push(makeSentry(col, p[0], p[1], p[2] + EPS));
   const targets = (posts || []).concat(enemies);
   const postCount = (posts || []).length;
   /* Derived from the same world the machines were placed in, and index-aligned

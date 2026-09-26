@@ -24,7 +24,7 @@
 
 export const MAT = {
   AIR: 0, SOIL: 1, GRASS: 2, ROCK: 3, SAND: 4, SNOW: 5, ICE: 6, BASALT: 7,
-  ASH: 8, WOOD: 9, LEAF: 10, PEAT: 11, PATH: 12, MAGMA: 13, METAL: 14, LIGHT: 15,
+  ASH: 8, WOOD: 9, LEAF: 10, PEAT: 11, PATH: 12, MAGMA: 13, METAL: 14, LIGHT: 15, GLASS: 16, FUNGUS: 17,
 };
 
 /** Indexed by MAT. Order is the wire format — append only. */
@@ -45,6 +45,8 @@ export const MATERIALS = [
   { id: 13, k: 'magma',  nm: 'Magma',    hard: 99,  dens: 1.2, burn: 1,   cond: 0.9, grip: 0.5,  step: 'none',   emit: 1, harm: 40 },
   { id: 14, k: 'metal',  nm: 'Metal',    hard: 1.5, dens: 1.6, burn: 0,   cond: 1,   grip: 1,    step: 'metal',  emit: 0, harm: 0 },
   { id: 15, k: 'light',  nm: 'Lit core', hard: 1.5, dens: 0.8, burn: 0,   cond: 1,   grip: 1,    step: 'metal',  emit: 1, harm: 0 },
+  { id: 16, k: 'glass',  nm: 'Glass',    hard: 1.0, dens: 1.2, burn: 0,   cond: 0.3, grip: 0.6,  step: 'glass',  emit: 0, harm: 0 },
+  { id: 17, k: 'fungus', nm: 'Fungus',   hard: 0.2, dens: 0.3, burn: 0.4, cond: 0.4, grip: 0.9,  step: 'soft',   emit: 0, harm: 0 },
 ];
 
 /** Wet ground conducts: what chain-frost needs, and why water level matters. */

@@ -1921,7 +1921,7 @@ export function carveSuite() {
   clearEdits(w);
 
   /* What comes away is the material's business, not the swing's. */
-  const wa = buildWorld({ seed: 'CINDERWAKE', size: 64, force: 3, ox: 0, oz: 0 });
+  const wa = buildWorld({ seed: 'CINDERWAKE', size: 64, force: 4, ox: 0, oz: 0 });
   let bi = -1, bj = -1;
   for (let a = 8; a < wa.NX - 8 && bi < 0; a++) {
     for (let b = 8; b < wa.NZ - 8; b++) {
@@ -3228,7 +3228,7 @@ export function navSuite() {
   /* On real ground: the machines' posts, and a machine reaching a player on
      the far side of something it cannot climb. */
   {
-    let placed = 0, fromGround = 0, bad = [];
+    let placed = 0, fromGround = 0, bad = [], up = [];
     for (const s of GOLDEN_SEEDS) {
       const w = buildWorld(s), col = colliderForWorld(w), posts = EN.postsFor(col, w);
       placed += posts.length;
@@ -3237,8 +3237,16 @@ export function navSuite() {
         const d = hyp(p[0] - w.spawn[0], p[1] - w.spawn[2]);
         if (d < EN.SENTRY.sight) bad.push(`${s.nm} post ${i} ${d.toFixed(1)} m from spawn`);
         for (let q = 0; q < i; q++) if (hyp(p[0] - posts[q][0], p[1] - posts[q][1]) < 10) bad.push(`${s.nm} posts ${q},${i} close`);
+        /* On the ground, not on a canopy over it: the machine stands within a
+           step of the terrain's own surface at its post (#3 found one 2.9 m
+           up a tree, out of reach of anyone). */
+        const e = EN.makeSentry(col, p[0], p[1], p[2] + 1e-6);
+        const k = Math.round((p[0] + w.half) / V) * w.NZ + Math.round((p[1] + w.half) / V);
+        if (Math.abs(e.y - w.Hs[k]) > MOVE.step) up.push(`${s.nm} post ${i} at ${e.y.toFixed(2)} over ground ${w.Hs[k]}`);
       });
     }
+    say('and every machine stands on the ground at its post, not on what grows there',
+        up.length === 0 && placed > 0, up.length ? up.join('; ') : `${placed} machines within a step of the ground`);
     say('machines hold posts the ground offers, out of sight of the spawn and apart',
         bad.length === 0 && placed >= GOLDEN_SEEDS.length * 2 && fromGround >= placed * 0.8,
         bad.length ? bad.join('; ') : `${placed} posts over ${GOLDEN_SEEDS.length} seeds, ${fromGround} from the region's affordances`);

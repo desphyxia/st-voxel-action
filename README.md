@@ -66,11 +66,16 @@ have been built on.
 
 ### Biomes
 
-Temperature and moisture are sampled as two low-frequency fields. Each biome sits at a point
-in that space and every column is a weighted blend of all five, so palettes, densities and
+Temperature and moisture are sampled as two low-frequency fields. Each of four biomes sits at
+a point in that space and every column is a weighted blend of them, so palettes, densities and
 feature sets cross-fade rather than switch.
 
-Meadowlands · Redrock Mesa · Boreal Fen · Ashfall Barrens · Frostmoor
+Meadowlands · Redrock Mesa · Cloudpine Highlands · Thornwood
+
+Over the climate, four **scars** — the damage the old weapons did — are painted as a separate
+overlay field, so a scar cuts across whatever biomes lie under it and never quite hides them.
+
+Ashfall Barrens · Rimewaste · Sporeverge · Glasslands
 
 ## Gear
 

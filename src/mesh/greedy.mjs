@@ -31,7 +31,7 @@
  */
 import { V, CEIL, CHUNK, clamp } from '../gen/constants.mjs';
 import { MAT } from '../gen/materials.mjs';
-import { BIOMES, rouletteBiome } from '../gen/biomes.mjs';
+import { BIOMES, BIO, rouletteBiome } from '../gen/biomes.mjs';
 import { PAL } from '../gen/palette.mjs';
 import { PASS } from '../gen/rng.mjs';
 
@@ -227,7 +227,7 @@ export function surfaceAt(w, gi, gj, y) {
       /* As surface.mjs (#55 item 12), draw for draw: the path's dither is the
          next draw after the roulette on the same stream. */
       if (!(flg & 8) && R() < 0.35) return { mat: b.mat.surf, pal: b.surf.at };
-      if ((flg & 8) && (b === BIOMES[1] || b === BIOMES[4])) return { mat: MAT.PATH, pal: b.soil.at };
+      if ((flg & 8) && (b === BIOMES[BIO.MESA] || b === BIOMES[BIO.RIME])) return { mat: MAT.PATH, pal: b.soil.at };
       return { mat: MAT.PATH, pal: PAL.TRODDEN.at };
     }
     var n0 = gi > 0 ? w.Hs[k - NZ] : hh - 2, n1 = gi < NX - 1 ? w.Hs[k + NZ] : hh - 2;

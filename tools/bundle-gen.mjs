@@ -34,7 +34,7 @@ const MODULES = {
 };
 
 /** The generator's public surface: what the concept plate draws with. */
-const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'MAT', 'MATERIALS',
+const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'BIO', 'CLIMATE_N', 'MAT', 'MATERIALS',
                  'carvable', 'makeGen', 'buildWorld',
                  /* the colour table, so a renderer can resolve a voxel's palette
                     index and restyle without regenerating — issue #28 */

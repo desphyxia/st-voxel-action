@@ -32,11 +32,14 @@
  */
 import { MOVE, DIRS4, CEIL, clamp } from './constants.mjs';
 import { erodeAt } from './erosion.mjs';
+import { BIO } from './biomes.mjs';
 
 /** Region edge, metres. */
 export const REGION = 64;
 /** Keep chosen sites this far off the region edge, in metres. */
 const MARGIN = 6;
+/** Metres of trail between lamps, measured along the region's own route. */
+const LAMP_SPACING = 40;
 /** One cell of slack so a cell on the region edge still has its neighbours. */
 const PAD = 1;
 /** Two sites closer than this, in cells (Manhattan), are one place. Was 10. */
@@ -687,6 +690,40 @@ function buildRegion(G, rx, rz) {
 
   recordGrades();
 
+  /* ---- lamps along the route (#47) ----
+     Decided here and not in the window, for the reason everything else moved
+     here in #16. The first version chose in props.mjs from the window's own
+     cells and surface, and a lamp whose search ran past a window's edge came
+     out differently in the window next door — a 2.5 m post on one side of a
+     chunk seam and not the other. The rule is unchanged: across the route's
+     own direction, read from the order it was laid in, 1.2 to 2 m out, the
+     first side on level ground that is neither trail, water nor magma, and if
+     neither side has room, the next few steps along. Level is now the cell's
+     whole-metre height, which is what this pass has. Each is [x, z, ex, ez]:
+     where it stands, and the trail cell it answers for, whose place seeds it. */
+  var lamps = [];
+  for (var lk = (LAMP_SPACING >> 1); lk < order.length; lk += LAMP_SPACING) {
+    var lp = null;
+    for (var sh = 0; sh < 6 && !lp && lk + sh < order.length; sh++) {
+      var le = lk + sh, lwx = order[le][0], lwz = order[le][1];
+      var lc = at(lwx - x0, lwz - z0);
+      if (!lc || lc.water || lc.magma) continue;
+      var ea = order[Math.max(0, le - 2)], eb = order[Math.min(order.length - 1, le + 2)];
+      var tx = eb[0] - ea[0], tz = eb[1] - ea[1], tl = Math.sqrt(tx * tx + tz * tz);
+      if (tl < 1e-9) continue;
+      var lnx = -tz / tl, lnz = tx / tl;
+      for (var sd = 0; sd < 2 && !lp; sd++) for (var dd = 0; dd < 3 && !lp; dd++) {
+        var off = (sd ? -1 : 1) * (1.2 + dd * 0.4), px = lwx + lnx * off, pz = lwz + lnz * off;
+        var pi = Math.round(px) - x0, pj = Math.round(pz) - z0;
+        if (pi < 0 || pj < 0 || pi >= N || pj >= N) continue;
+        var pc = at(pi, pj);
+        if (pc.water || pc.magma || pc.H !== lc.H || trail.has(key(x0 + pi, z0 + pj))) continue;
+        lp = [px, pz, lwx, lwz];
+      }
+    }
+    if (lp) lamps.push(lp);
+  }
+
   /* ---- one landmark, on the region's highest flat ground off the trail ---- */
   var lm = null, bi = null;
   for (i = lo; i < hi; i += 2) for (j = lo; j < hi; j += 2) {
@@ -696,7 +733,13 @@ function buildRegion(G, rx, rz) {
     if (!bi || cq4.H > bi.h) bi = { i: i, j: j, h: cq4.H, dom: cq4.dom };
   }
   if (bi) {
-    var kinds = (bi.dom === 3) ? [2, 0] : ((bi.dom === 1) ? [0, 3] : ((bi.dom === 4) ? [3, 0] : [1, 3]));
+    /* What stands on the high ground follows what the ground is: a wreck in
+       the burn and where the weapons met, stones on the mesa and in the rime,
+       a hive tree where the bloom got out, and a hive tree or stones in the
+       living biomes (#3). */
+    var kinds = (bi.dom === BIO.ASH) ? [2, 0] : (bi.dom === BIO.GLASS) ? [2, 3]
+              : (bi.dom === BIO.MESA) ? [0, 3] : (bi.dom === BIO.RIME) ? [3, 0]
+              : (bi.dom === BIO.SPORE) ? [1] : [1, 3];
     var kind = kinds[Math.abs(Math.round(rx * 0.37 + rz * 0.11)) % kinds.length];
     lm = { x: x0 + bi.i, z: z0 + bi.j, h: bi.h, kind: kind, dom: bi.dom };
   }
@@ -768,7 +811,7 @@ function buildRegion(G, rx, rz) {
   aff.sort(function (a, b) { return a.k < b.k ? -1 : (a.k > b.k ? 1 : (a.x - b.x || a.z - b.z)); });
 
   return {
-    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff, roads: roads,
+    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff, roads: roads, lamps: lamps,
     /* World-coordinate keys, every one of them. A window converts on the way in
        and on the way out; nothing in here knows a window exists. */
     trail: trail, order: order, grade: grade, bridges: bridges, landmark: lm,
