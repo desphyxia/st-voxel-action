@@ -89,7 +89,7 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`14df60b`** (batches 5–7) at **version 33**; concept from
+Play is published from **`e82ac4e`** (the seed and coordinate label) at **version 34**; concept from
 **`14df60b`** at **version 26** — neither needed force, both having been published earlier in
 the same session. Before that, concept version 21 was forced on the user's word after the loop found
 the live page identical to **`0056e02`**.

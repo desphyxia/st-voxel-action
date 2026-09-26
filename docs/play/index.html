@@ -8759,6 +8759,105 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' #include <fog_fragment>',
     '}'].join('\n');
 
+  /* ---------- magma ----------
+     Magma used to be a glowing box on top of each seam column, lifted 2 cm
+     off the crust voxel the generator puts in the same place: the two cubes'
+     sides were one plane and their tops nearly so, and they fought over every
+     pixel. Now it is a surface of its own, like water — one sheet per world,
+     10 cm clear of the crust floor, so nothing shares a plane with it.
+
+     What it shows is molten rock under a skin: plates of dark crust drifting
+     on slow convection, glowing seams between them that widen where it runs
+     hot, the surface heaving, and now and then a bubble flaring. Hotter in the
+     middle of a seam than at its banks, where it cools against the rock. All
+     of it follows world position, so neighbouring chunks meet seamlessly. */
+  var MAGMA_LIFT=0.10;
+  var MAGMA_VS=['uniform float uTime; attribute float aHeat; varying vec2 vW; varying float vHeat;',
+    '#include <fog_pars_vertex>',
+    'void main(){ vec3 p=position; vec4 wp=modelMatrix*vec4(p,1.0); vW=wp.xz; vHeat=aHeat;',
+    ' p.y+=0.02*aHeat*(sin(uTime*0.8+wp.x*1.1+wp.z*0.6)+0.6*sin(uTime*1.3-wp.z*1.7+wp.x*0.4));',
+    ' vec4 mvPosition=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;',
+    ' #include <fog_vertex>',
+    '}'].join('\n');
+  var MAGMA_FS=['uniform float uTime; varying vec2 vW; varying float vHeat;',
+    '#include <fog_pars_fragment>',
+    'float mgH(vec2 p){ vec3 q=fract(vec3(p.xyx)*0.1031); q+=dot(q,q.yzx+33.33); return fract((q.x+q.y)*q.z); }',
+    'vec2 mgH2(vec2 p){ return vec2(mgH(p),mgH(p+vec2(17.31,4.77))); }',
+    'float mgN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);',
+    ' return mix(mix(mgH(i),mgH(i+vec2(1.0,0.0)),f.x),mix(mgH(i+vec2(0.0,1.0)),mgH(i+vec2(1.0,1.0)),f.x),f.y); }',
+    'float mgF(vec2 p){ float a=0.5,s=0.0; for(int i=0;i<3;i++){ s+=a*mgN(p); p=p*2.03+vec2(1.7,9.2); a*=0.5; } return s; }',
+    /* Crust plates: a cell pattern whose points wander, so the plates drift
+       and the seams between them open and close. Small near a seam. */
+    'float mgSeam(vec2 p){ vec2 i=floor(p), f=fract(p); float d1=8.0, d2=8.0;',
+    ' for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++){ vec2 g=vec2(float(x),float(y)), o=mgH2(i+g);',
+    '   o=0.5+0.42*sin(uTime*0.22+6.2831*o); vec2 r=g+o-f; float d=dot(r,r);',
+    '   if(d<d1){ d2=d1; d1=d; } else if(d<d2){ d2=d; } }',
+    ' return sqrt(d2)-sqrt(d1); }',
+    'vec3 mgRamp(float t){',
+    ' vec3 a=vec3(0.05,0.018,0.012), b=vec3(0.42,0.045,0.01), c=vec3(1.0,0.34,0.04), d=vec3(1.0,0.86,0.46);',
+    ' return t<0.34?mix(a,b,t/0.34):(t<0.68?mix(b,c,(t-0.34)/0.34):mix(c,d,(t-0.68)/0.32)); }',
+    'void main(){',
+    ' vec2 p=vW*0.55;',
+    ' vec2 w=vec2(mgF(p+vec2(uTime*0.035,0.0)),mgF(p+vec2(5.2,1.3)-vec2(0.0,uTime*0.03)));',
+    ' vec2 q=p+(w-0.5)*1.8;',
+    ' float heat=clamp(0.2+0.8*vHeat,0.0,1.0);',
+    ' float seam=1.0-smoothstep(0.03,0.15+0.17*heat,mgSeam(q*1.7));',
+    ' float n=mgF(q*3.1+vec2(uTime*0.11,-uTime*0.07));',
+    ' float plate=(1.0-seam)*(0.08+0.50*n*heat*heat);',
+    ' float pulse=0.86+0.14*sin(uTime*1.25+n*5.0+vW.x*0.37);',
+    ' float t=clamp((seam*(0.62+0.5*n)+plate)*heat*pulse,0.0,1.0);',
+    /* A bubble: a cell of the surface flares, swells and fades, rarely. */
+    ' vec2 bc=floor(vW*1.3); float ph=uTime*0.32+mgH(bc)*7.0, bt=fract(ph);',
+    ' float bub=step(0.94,mgH(bc+floor(ph)))*smoothstep(0.38,0.0,length(fract(vW*1.3)-0.5)*(0.6+bt))*(1.0-bt)*heat;',
+    ' t=max(t,bub);',
+    ' gl_FragColor=vec4(mgRamp(t)*1.3,1.0);',
+    ' #include <tonemapping_fragment>',
+    ' #include <fog_fragment>',
+    '}'].join('\n');
+  /** The magma of one world as one sheet: a quad per seam column, carrying
+      how far that column is from the bank (cooler there, hotter inside). */
+  function magmaSheet(data,keep){
+    var MM=QS.MAT.MAGMA, V=QS.V, cols=new Map(), list=[], i, q;
+    var key=function(ix,iz){ return (ix+32768)*65536+(iz+32768); };
+    for(i=0;i<data.mpos.length/3;i++){
+      if(data.mmat[i]!==MM) continue;
+      var ix=Math.round(data.mpos[i*3]/V), iz=Math.round(data.mpos[i*3+2]/V);
+      cols.set(key(ix,iz),-1); list.push([data.mpos[i*3],data.mpos[i*3+1],data.mpos[i*3+2],ix,iz]);
+    }
+    if(!list.length) return null;
+    /* Columns from the bank, counted inward to four. */
+    var queue=[], D4=[[1,0],[-1,0],[0,1],[0,-1]];
+    list.forEach(function(c){
+      for(q=0;q<4;q++) if(!cols.has(key(c[3]+D4[q][0],c[4]+D4[q][1]))){ cols.set(key(c[3],c[4]),0); queue.push(c); return; }
+    });
+    for(var h=0;h<queue.length;h++){
+      var cu=queue[h], dc=cols.get(key(cu[3],cu[4]));
+      if(dc>=4) continue;
+      for(q=0;q<4;q++){ var nk=key(cu[3]+D4[q][0],cu[4]+D4[q][1]);
+        if(cols.get(nk)===-1){ cols.set(nk,dc+1); queue.push([0,0,0,cu[3]+D4[q][0],cu[4]+D4[q][1]]); } }
+    }
+    var heatAt=function(ix,iz){ var d=cols.get(key(ix,iz)); return d===undefined?-1:(d<0?4:d)/4; };
+    /* A corner's heat is the mean of the columns that share it; rock counts cold. */
+    var corner=function(ix,iz,sx,sz){
+      var s=0; s+=heatAt(ix,iz); s+=heatAt(ix+sx,iz); s+=heatAt(ix,iz+sz); s+=heatAt(ix+sx,iz+sz);
+      return Math.max(0,s/4);
+    };
+    var pos=[], heat=[], idx=[];
+    list.forEach(function(c){
+      if(!keep(c[0],c[2])) return;
+      var y=c[1]+V/2+MAGMA_LIFT, b=pos.length/3;
+      pos.push(c[0]-V/2,y,c[2]-V/2, c[0]-V/2,y,c[2]+V/2, c[0]+V/2,y,c[2]+V/2, c[0]+V/2,y,c[2]-V/2);
+      heat.push(corner(c[3],c[4],-1,-1),corner(c[3],c[4],-1,1),corner(c[3],c[4],1,1),corner(c[3],c[4],1,-1));
+      idx.push(b,b+1,b+2,b,b+2,b+3);
+    });
+    if(!idx.length) return null;
+    var g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pos),3));
+    g.setAttribute('aHeat',new THREE.BufferAttribute(new Float32Array(heat),1));
+    g.setIndex(idx);
+    return g;
+  }
+
   /* ---------- the greedy mesh (issue #12) ----------
      Two renderers live here at once, on purpose. #12's bar is "parity or
      better with the plate's look, confirmed side by side", and side by side is
@@ -9518,7 +9617,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
 
     if(data.mpos.length){
       var msrc=[];
-      for(i=0;i<data.mpos.length/3;i++) if(keep(data.mpos[i*3],data.mpos[i*3+2])) msrc.push(i);
+      /* Everything that glows but magma is still a lit box; magma is a sheet. */
+      for(i=0;i<data.mpos.length/3;i++)
+        if(data.mmat[i]!==QS.MAT.MAGMA&&keep(data.mpos[i*3],data.mpos[i*3+2])) msrc.push(i);
+      var mg=magmaSheet(data,keep);
+      if(mg){ var mgm=new THREE.Mesh(mg,mats.magma); mgm.userData.kind='magma'; fitBounds(mgm,0.06); g.add(mgm); }
       if(msrc.length){
         var em=new THREE.InstancedMesh(boxGeo,new THREE.MeshBasicMaterial({vertexColors:true}),msrc.length);
         for(i=0;i<msrc.length;i++){ var mk=msrc[i];
@@ -9625,6 +9728,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
          falls from — and the two fought over every pixel: dark teeth through
          the sheet, or on some faces the rock winning outright. The offset
          decides it for the water without moving any geometry. */
+      magma:new THREE.ShaderMaterial({fog:true,
+        polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-2,
+        uniforms:{uTime:{value:0},fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0}},
+        vertexShader:MAGMA_VS,fragmentShader:MAGMA_FS}),
       water:new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,fog:true,
         polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-4,
         uniforms:{uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)},uLight:{value:1},
@@ -10867,6 +10974,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       for(var gq=0;gq<GRASS_PUSH;gq++) built.gmat.uniforms.uPush.value[gq].set(1e5,0,1e5);
     }
     if(built.wmat){ built.wmat.uniforms.uTime.value=tm; built.wmat.uniforms.uWind.value.copy(wind); }
+    if(built.mats&&built.mats.magma) built.mats.magma.uniforms.uTime.value=tm;
 
     /* The camera, from the world rather than from wherever play left it. */
     var tx=spec.x===undefined?0:spec.x, tz=spec.z===undefined?0:spec.z;
@@ -11692,6 +11800,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       setGrassPush(a); }
     SWAY_U.uSwayT.value=tm; SWAY_U.uSwayW.value.copy(wind);
     if(built.wmat){ built.wmat.uniforms.uTime.value=tm; built.wmat.uniforms.uWind.value.copy(wind); }
+    if(built.mats&&built.mats.magma) built.mats.magma.uniforms.uTime.value=tm;
 
     for(var q=0;q<postFlash.length;q++) if(postFlash[q]>0) postFlash[q]-=dt;
     if(toastT>0){ toastT-=dt; if(toastT<=0) toastEl.classList.remove('on'); }
@@ -11828,6 +11937,30 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Every bone of the player's rig and each machine's, as drawn (#33). */
     /* #34: whether the hero is the authored model, and how much of it. */
     get where(){ return whereText.replace(/<[^>]+>/g,''); },
+    /* Magma as the renderer holds it: its sheets, the least clearance any
+       quad has over the crust voxel under it, how many glowing boxes still
+       stand where magma is, and whether its clock runs. */
+    get magma(){
+      var out={sheets:0,quads:0,gap:Infinity,boxes:0,t:built&&built.mats&&built.mats.magma?built.mats.magma.uniforms.uTime.value:-1};
+      if(!built) return out;
+      var tops=new Map(), V=QS.V, d=built.data;
+      var worlds=streaming&&nodes?Object.keys(nodes).map(function(k){ return nodes[k].data; }):[d];
+      worlds.forEach(function(w){ if(!w||!w.mpos) return;
+        for(var i=0;i<w.mpos.length/3;i++) if(w.mmat[i]===QS.MAT.MAGMA)
+          tops.set(Math.round(w.mpos[i*3]/V)+','+Math.round(w.mpos[i*3+2]/V),w.mpos[i*3+1]+V/2); });
+      built.scene.traverse(function(o){
+        if(o.userData.kind==='magma'){ out.sheets++;
+          var P=o.geometry.attributes.position; out.quads+=P.count/4;
+          for(var v=0;v<P.count;v+=4){
+            var cx=(P.getX(v)+P.getX(v+2))/2, cz=(P.getZ(v)+P.getZ(v+2))/2, t=tops.get(Math.round(cx/V)+','+Math.round(cz/V));
+            if(t!==undefined) out.gap=Math.min(out.gap,P.getY(v)-t);
+          } }
+        if(o.userData.kind==='emissive'&&o.isInstancedMesh){ var m=new THREE.Matrix4(), e=new THREE.Vector3();
+          for(var k=0;k<o.count;k++){ o.getMatrixAt(k,m); e.setFromMatrixPosition(m);
+            if(tops.has(Math.round(e.x/V)+','+Math.round(e.z/V))&&Math.abs(e.y-(tops.get(Math.round(e.x/V)+','+Math.round(e.z/V))-V/2))<0.1) out.boxes++; } }
+      });
+      return out;
+    },
     get heroModel(){ var g=avatar.rig.mesh.geometry;
       return {authored:avatar.rig.authored,parts:QS.HERO_RIG.parts.length,
               verts:g.attributes.position.count,loaded:!!HERO_VOX}; },
@@ -11841,7 +11974,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        machines, posts, loot and what they carry (#62). Counted as three would
        issue them — visible all the way up, one per mesh, instanced or not. */
     get actorDraws(){
-      var WORLD=['terrain','props','boxes','emissive','water','grass'], n=0, list=[];
+      var WORLD=['terrain','props','boxes','emissive','magma','water','grass'], n=0, list=[];
       if(built) built.scene.traverse(function(o){
         if(!(o.isMesh||o.isInstancedMesh)||WORLD.indexOf(o.userData.kind)>=0) return;
         for(var p=o;p;p=p.parent) if(!p.visible) return;

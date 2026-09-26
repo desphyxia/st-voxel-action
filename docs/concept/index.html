@@ -4034,7 +4034,15 @@ function mixHex(h1,h2,t){
     if(data.mpos.length){
       var mn2=data.mpos.length/3;
       magma=new THREE.InstancedMesh(boxGeo,new THREE.MeshBasicMaterial({vertexColors:true}),mn2);
-      for(i=0;i<mn2;i++){ m4.makeTranslation(data.mpos[i*3],data.mpos[i*3+1]+0.02,data.mpos[i*3+2]); magma.setMatrixAt(i,m4);
+      /* A thin glowing slab lying 2 cm clear of the crust voxel beneath it. It
+         used to be a whole voxel lifted 2 cm into the same place, and the two
+         fought over every pixel of their shared sides and near-shared tops.
+         Magma is not a magma box; glowing things that are (a lamp) do not sit
+         in terrain, so only magma is flattened. */
+      for(i=0;i<mn2;i++){
+        if(data.mmat[i]===QS.MAT.MAGMA) m4.makeScale(1,0.3,1).setPosition(data.mpos[i*3],data.mpos[i*3+1]+QS.V*0.5+0.02+QS.V*0.15,data.mpos[i*3+2]);
+        else m4.makeTranslation(data.mpos[i*3],data.mpos[i*3+1]+0.02,data.mpos[i*3+2]);
+        magma.setMatrixAt(i,m4);
         c.setRGB(QS.palR(data.mpal[i],data.mshd[i]),QS.palG(data.mpal[i],data.mshd[i]),
                   QS.palB(data.mpal[i],data.mshd[i])); magma.setColorAt(i,c); }
       magma.instanceMatrix.needsUpdate=true; if(magma.instanceColor) magma.instanceColor.needsUpdate=true;

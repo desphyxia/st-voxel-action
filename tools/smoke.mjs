@@ -2468,6 +2468,50 @@ if (BROWSER_HALF) {
        a few percent and still catches a biome that stopped being drawn.
        tools/look.mjs is the same measurement with per-plate output and the
        --noise mode that says what the floor is. */
+    /* ---------- MAGMA: its own surface, clear of the rock, and alive ----------
+       Magma was a glowing box on the crust voxel in the same place, lifted
+       2 cm: the two cubes shared their sides and nearly their tops, and
+       z-fought. It is a sheet now. Asserted on the ash seed: every magma column
+       is one quad of the sheet, every quad stands clear of the crust under it,
+       no glowing box is left where magma is, and two moments of the same pose
+       differ over the magma — it moves. */
+    {
+      const ai = GOLDEN_SEEDS.findIndex((g) => g.nm === 'ash'), aw = worlds[ai], s = GOLDEN_SEEDS[ai];
+      let cols = 0, mx = 0, mz = 0;
+      for (let i = 0; i < aw.mmat.length; i++) if (aw.mmat[i] === 13) { cols++; if (cols === 1) { mx = aw.mpos[i * 3]; mz = aw.mpos[i * 3 + 2]; } }
+      const mp = await browser.newPage({ viewport: { width: 640, height: 400 } });
+      const mErr = [];
+      mp.on('pageerror', (e) => mErr.push(e.message));
+      await mp.goto(`file://${preparePage({ target: PLAY_TARGET, outDir: OUT, name: 'magma.html' })}?stream=0`,
+                    { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      await mp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      const mg = await mp.evaluate(([cfg, x, z]) => {
+        const P = window.QSPLAY, QS = window.QS, c = document.querySelector('#cv');
+        const frame = (t) => {
+          P.plate({ cfg, t, x, z, view: 5, yaw: QS.START_YAW });
+          const g = document.createElement('canvas'); g.width = c.width; g.height = c.height;
+          const x2 = g.getContext('2d'); x2.drawImage(c, 0, 0);
+          return x2.getImageData(0, 0, g.width, g.height).data;
+        };
+        const a = frame(12.5), b = frame(14.0);
+        let hot = 0, moved = 0;
+        for (let i = 0; i < a.length; i += 4) {
+          const isHot = a[i] > 150 && a[i] - a[i + 2] > 90;
+          if (isHot) hot++;
+          if ((isHot || (b[i] > 150 && b[i] - b[i + 2] > 90)) && Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) > 40) moved++;
+        }
+        return Object.assign({ hot, moved }, P.magma);
+      }, [{ seed: s.seed, size: s.size, force: s.force, ox: s.ox, oz: s.oz }, mx, mz]);
+      await mp.close();
+      check(mErr.length === 0 && mg.sheets >= 1 && mg.quads === cols && mg.gap >= 0.05 && mg.boxes === 0,
+            'MAGMA: a surface of its own, clear of the crust under it, with no box left to fight it',
+            `${mg.quads} quads for ${cols} magma columns in ${mg.sheets} sheet(s), ${mg.gap.toFixed(3)} m over the crust, `
+            + `${mg.boxes} boxes at magma${mErr.length ? '; ' + mErr[0] : ''}`);
+      check(mg.hot > 150 && mg.moved > mg.hot * 0.1,
+            'MAGMA: and it moves',
+            `${mg.hot} molten pixels in the frame, ${mg.moved} changed between two moments 1.5 s apart`);
+    }
+
     if (!QUICK) {
       if (!existsSync(LOOK_BASELINE)) {
         check(false, 'LOOK: baseline exists', 'run node tools/look.mjs --update to record');
