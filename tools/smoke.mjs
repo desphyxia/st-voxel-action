@@ -92,6 +92,7 @@ import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { chunkWorld } from '../src/gen/chunk.mjs';
+import { MOVE } from '../src/gen/constants.mjs';
 import { PALETTE, PAL, palR } from '../src/gen/palette.mjs';
 import { captureLook, compare, breaches, describe } from './lib/look.mjs';
 import { audit, worldFields, EXEMPT, ONE_SIDED } from './lib/consume.mjs';
@@ -503,6 +504,43 @@ if (NODE_HALF) {
         check(m.waterBodies === m.waterBodies8,
               `WATER: ${m.seed} every water body is properly joined`,
               `${m.waterBodies} bodies, ${m.waterBodies8} counting diagonals`);
+      }
+      /* A deck lands on dry ground at both ends, within a step of the deck
+         at both landings, and spans water between.
+         One was laid along a river with both ends in it (SCORCH-3, seen in
+         play at 47.5, 19) because the router took x whenever a crossing moved
+         on both axes, and others hung a metre over both banks from a water
+         level the built world never reached. Asserted on the golden windows
+         and on the streamed chunks around that crossing. */
+      {
+        const decks = [];
+        const judge = (w, name) => {
+          const NZ = w.NZ, half = w.half;
+          const at = (x, z) => {
+            const i = Math.round((x + half) / 0.25), j = Math.round((z + half) / 0.25);
+            return i < 0 || j < 0 || i >= w.NX || j >= NZ ? null : { y: w.Hs[i * NZ + j], wet: (w.FLG[i * NZ + j] & 1) !== 0 };
+          };
+          for (const [px, pz, di, dj, len, y] of w.bridges) {
+            const id = `${name} ${(px + w.OX).toFixed(1)},${(pz + w.OZ).toFixed(1)}`;
+            if (seen.has(id)) continue;
+            /* The tips, and the bank a metre in from each: the deck overhangs
+               its landing by that much, and it is the landing a foot finds. */
+            const tips = [-1, 1].map((sd) => at(px + di * sd * len / 2, pz + dj * sd * len / 2));
+            const lands = [-1, 1].map((sd) => at(px + di * sd * (len / 2 - 1), pz + dj * sd * (len / 2 - 1)));
+            if (tips.some((e) => !e)) continue;          /* judged in a window that holds all of it */
+            seen.add(id);
+            let wet = 0;
+            for (let t = -len / 2; t <= len / 2; t += 0.25) { const e = at(px + di * t, pz + dj * t); if (e && e.wet) wet++; }
+            const bad = tips.some((e) => e.wet) || lands.some((e) => e.wet || Math.abs(e.y - y) > MOVE.step) || wet === 0;
+            decks.push({ at: id, bad });
+          }
+        };
+        const seen = new Set();
+        worlds.forEach((w, i) => judge(w, GOLDEN_SEEDS[i].nm));
+        for (let cx = 0; cx <= 2; cx++) for (let cz = 0; cz <= 2; cz++) judge(chunkWorld('SCORCH-3', cx, cz), 'SCORCH-3');
+        const off = decks.filter((d) => d.bad);
+        check(decks.length >= 6 && off.length === 0, 'BRIDGE: every deck lands on dry ground at both ends, over water',
+              off.length ? off.slice(0, 4).map((d) => d.at).join('; ') : `${decks.length} decks`);
       }
     }
   }

@@ -1626,6 +1626,14 @@ function buildRegion(G, rx, rz) {
     }
   }
 
+  /* A deck is laid level with the higher bank. It used to be lifted half a
+     metre over the water level this pass reads, but that is the field's
+     smooth river level, before the window drains what its banks cannot hold
+     — it stood 0.75 m over a bank that the water in the built world sits far
+     below, and the deck hung in the air at both ends. Standing water never
+     tops its lower bank, so the higher one always clears it. */
+  function deckHeight(a, b) { return Math.max(a.H, b.H); }
+
   function addBridge(bx, bz, di, dj, len, y) {
     if (bridges.length >= MAX_CROSSINGS) return;
     for (var q = 0; q < bridges.length; q++) {
@@ -1654,18 +1662,61 @@ function buildRegion(G, rx, rz) {
       var len = w - st;
       if (len <= 12) {
         var pre = path[Math.max(0, st - 1)], post = path[Math.min(path.length - 1, w)];
-        var pc = cells[pre], qc = cells[post];
-        if (!pc.magma && !qc.magma && !pc.water && !qc.water) {
-          var pi0 = (pre / N) | 0, pj0 = pre % N, pi1 = (post / N) | 0, pj1 = post % N;
-          var di2 = (pi1 > pi0) ? 1 : ((pi1 < pi0) ? -1 : 0);
-          var dj2 = (pj1 > pj0) ? 1 : ((pj1 < pj0) ? -1 : 0);
-          if (di2 && dj2) dj2 = 0;
-          if (!di2 && !dj2) di2 = 1;
-          addBridge(x0 + (pi0 + pi1) / 2, z0 + (pj0 + pj1) / 2, di2, dj2, len + 3,
-                    Math.max(pc.H, qc.H, cells[path[st]].wl + 0.5));
+        var d = deckOver(path, st, w, pre, post);
+        if (d) {
+          /* The deck's line is trail, landings included: it need not be the
+             route's own cells, and nothing but the trail keeps a boulder off
+             a landing or levels one against the bank it meets. */
+          var si = Math.min(d.ai, d.bi), sj = Math.min(d.aj, d.bj), ui = d.bi - d.ai ? 1 : 0, uj = ui ? 0 : 1;
+          for (var t = -1; t <= d.len + 1; t++) {
+            var mi = si + ui * t, mj = sj + uj * t;
+            if (mi >= 0 && mj >= 0 && mi < N && mj < N && !at(mi, mj).magma) mark(x0 + mi, z0 + mj);
+          }
+          addBridge(x0 + (d.ai + d.bi) / 2, z0 + (d.aj + d.bj) / 2, d.di, d.dj, d.len + 2, deckHeight(d.a, d.b));
         }
       }
     }
+  }
+
+  /* The straight, axis-aligned deck that carries a route over the water it
+     crosses: dry bank to dry bank, within a step of each other, and landing
+     as near the route's own banks as it can.
+
+     It used to be laid between the route's last dry cell and its next, on
+     whichever axis it had moved in, taking x if both. A route is not a
+     straight line: one that crossed 6 m in z and drifted 1 m in x laid its
+     deck along the river with both ends in it, and one that crossed on a
+     diagonal clipped the water at an end. So every wet cell of the crossing
+     is tried as a place to lay a deck, on both axes, and the shortest that
+     lands on dry ground at both ends wins. None does — deep water with no
+     bank a step apart — and there is no bridge; the route wades. */
+  function deckOver(path, st, w, pre, post) {
+    var best = null, q, ax;
+    var pi = (pre / N) | 0, pj = pre % N, qi = (post / N) | 0, qj = post % N;
+    for (q = st; q < w; q++) {
+      var ci = (path[q] / N) | 0, cj = path[q] % N;
+      for (ax = 0; ax < 2; ax++) {
+        var di = ax ? 0 : 1, dj = ax ? 1 : 0, ai = ci, aj = cj, bi = ci, bj = cj, n;
+        for (n = 0; n < 14 && at(ai, aj).water; n++) { ai -= di; aj -= dj; if (ai < PAD || aj < PAD) break; }
+        for (n = 0; n < 14 && at(bi, bj).water; n++) { bi += di; bj += dj; if (bi >= N - PAD || bj >= N - PAD) break; }
+        if (ai < PAD || aj < PAD || bi >= N - PAD || bj >= N - PAD) continue;
+        var A = at(ai, aj), B = at(bi, bj);
+        if (A.water || B.water || A.magma || B.magma || Math.abs(A.H - B.H) > MOVE.step) continue;
+        var span = (bi - ai) + (bj - aj);
+        if (span > 13) continue;
+        /* How far the deck's ends are from where the route meets it, either
+           way round: a deck the trail cannot find is no crossing. */
+        var off = Math.min(Math.abs(ai - pi) + Math.abs(aj - pj) + Math.abs(bi - qi) + Math.abs(bj - qj),
+                           Math.abs(ai - qi) + Math.abs(aj - qj) + Math.abs(bi - pi) + Math.abs(bj - pj));
+        var score = span + off * 2;
+        if (!best || score < best.score) {
+          var fwd = Math.abs(ai - pi) + Math.abs(aj - pj) <= Math.abs(bi - pi) + Math.abs(bj - pj);
+          best = { score: score, ai: ai, aj: aj, bi: bi, bj: bj, a: A, b: B, len: span,
+                   di: fwd ? di : -di, dj: fwd ? dj : -dj };
+        }
+      }
+    }
+    return best;
   }
 
   function findFord() {
@@ -1740,8 +1791,7 @@ function buildRegion(G, rx, rz) {
         }
         gradePath(on); markPath(on);
         addBridge(x0 + (fd.ai + fd.bi) / 2, z0 + (fd.aj + fd.bj) / 2, fd.di, fd.dj, fd.len + 3,
-                  Math.max(at(fd.ai, fd.aj).H, at(fd.bi, fd.bj).H,
-                           at(fd.ai + fd.di, fd.aj + fd.dj).wl + 0.5));
+                  deckHeight(at(fd.ai, fd.aj), at(fd.bi, fd.bj)));
       }
     }
   }
