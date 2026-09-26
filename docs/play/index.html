@@ -8580,7 +8580,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     high:  {res:1.5, aa:true, shadows:'high',grass:1,   wind:true, clouds:true, parts:1,  water:'full',  sway:true, magma:true, lamps:4,detail:true}
   };
   var GFX_COARSE=!!(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches);
-  var GFX=Object.assign({preset:GFX_COARSE?'medium':'high'},GFX_PRESETS[GFX_COARSE?'medium':'high']);
+  /* grassMode sits outside the presets: it is the comparison #70 asked for,
+     Classic against Lean, and choosing a preset should not flip it. */
+  var GFX=Object.assign({preset:GFX_COARSE?'medium':'high',grassMode:'classic'},GFX_PRESETS[GFX_COARSE?'medium':'high']);
   try{
     var gfxSaved=JSON.parse(localStorage.getItem('qs.gfx')||'null');
     if(gfxSaved&&typeof gfxSaved==='object') for(var gk in GFX) if(gk in gfxSaved) GFX[gk]=gfxSaved[gk];
@@ -8731,7 +8733,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   function grassShare(view){ return view<=GRASS_FULL_VIEW?1:Math.max(GRASS_MIN,GRASS_FULL_VIEW/view); }
   /* GFX.grass is the share drawn (#70): the blades within a tile are in no
      order, so drawing the first n of them thins a field evenly. */
-  function grassCount(full,view){ return GFX.grass>0?Math.max(1,Math.round(full*grassShare(view)*GFX.grass)):0; }
+  function grassCount(full,view){ return GFX.grass>0?Math.max(1,Math.round(full*grassShareNow(view)*GFX.grass)):0; }
+  /* Lean thins by what a blade measures on screen rather than by zoom alone
+     (#70): below GRASS_PX pixels wide a blade costs a whole 2x2 block of
+     shading for a sliver of it, so fewer are drawn, each wider by the same
+     factor, and the field covers what it covered. Classic keeps the zoom rule. */
+  var GRASS_PX=2.5;
+  function grassShareNow(view){
+    if(GFX.grassMode!=='lean') return grassShare(view);
+    var ppm=renderer.domElement.height/(2*view), k=ppm*GRASS_W/GRASS_PX;
+    return Math.max(GRASS_MIN,Math.min(1,k,grassShare(view)));
+  }
   /* An integer mix of a blade's index: deterministic, and even enough that any
      prefix of a sorted tile is a fair sample of it. */
   function bladeMix(i){
@@ -8926,6 +8938,32 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' vec4 mvPosition=viewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;',
     ' #include <fog_vertex>',
     '}'].join('\n');
+  /* ---------- Lean grass (#70) ----------
+     The same blade, curve, wind and push as GRASS_VS, with the per-vertex
+     work that buys nothing at this camera taken out: a sin-free hash for the
+     tuft, its lean read from the hash instead of a cos and a sin of an angle,
+     the blade's twist taken as the small angle it is rather than a full
+     rotation, and no square root in the push test until a body is near. Six
+     transcendentals a vertex become two — the wind's own. The tufts' leans
+     come from a different hash, so they differ one by one and not in kind.
+     A setting, beside Classic, so the two can be compared on the device. */
+  var GRASS_VS_LEAN=[
+    ['float h11(vec2 q){ return fract(sin(dot(q,vec2(127.1,311.7)))*43758.545); }',
+     'float h11(vec2 q){ vec3 p=fract(vec3(q.xyx)*0.1031); p+=dot(p,p.yzx+33.33); return fract((p.x+p.y)*p.z); }'],
+    [' vec2 cid=floor(base.xz*2.0); float ca=h11(cid)*6.2831;',
+     ' vec2 cid=floor(base.xz*2.0); vec2 cv=vec2(h11(cid),h11(cid+7.7))*2.0-1.0;'],
+    ['vec3(cos(ca),0.0,sin(ca))', 'normalize(vec3(cv.x,0.0,cv.y)+vec3(1e-4))'],
+    ['   vec2 dq=base.xz-uPush[q].xz; float lq=length(dq);\n   if(lq<1.05){ float f=(1.0-lq/1.05)*t*t;',
+     '   vec2 dq=base.xz-uPush[q].xz; float d2=dot(dq,dq);\n   if(d2<1.1025){ float f=(1.0-sqrt(d2)/1.05)*t*t;'],
+    [' vN=normalize(rodr(normalize(cross(sv,tn)),tn,position.x*0.75));',
+     ' vec3 nb=normalize(cross(sv,tn)); vN=normalize(nb+sv*(position.x*0.75));']
+  ].reduce(function(src,r){
+    /* Every one must land: a replacement that silently misses would leave
+       Lean drawing Classic, and a comparison of two identical things. */
+    if(src.indexOf(r[0])<0) throw new Error('lean grass: no "'+r[0].slice(0,40)+'" in GRASS_VS');
+    return src.split(r[0]).join(r[1]);
+  },GRASS_VS);
+
   /* buildGrass flags 15% of blades dry in every world. The plate has drawn
      them since it was written and this renderer, written fresh in #21, never
      carried the attribute across — so the build had no dry blades at all, and
@@ -9969,7 +10007,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var gts=pre&&pre.grass?pre.grass:grassTiles(data.grass,org?QS.CHUNK/2:null,GRASS_TILE);
     for(i=0;i<gts.length;i++){
       var gt=gts[i], geo=bladeGeo.clone();
-      var grass=new THREE.InstancedMesh(geo,mats.grass,gt.n);
+      var grass=new THREE.InstancedMesh(geo,GFX.grassMode==='lean'?mats.grassLean:mats.grass,gt.n);
       grass.instanceMatrix=new THREE.InstancedBufferAttribute(gt.mat,16);
       geo.setAttribute('aPhase',new THREE.InstancedBufferAttribute(gt.ph,1));
       geo.setAttribute('aTint',new THREE.InstancedBufferAttribute(gt.ti,1));
@@ -10019,6 +10057,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
 
   /** The grass and water materials, shared across every chunk of one world. */
   function worldMaterials(){
+    var grassU;
     return {
       mesh:meshMaterial(),
       /* What the instanced prop boxes were drawn with, so culling their
@@ -10031,7 +10070,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
          lit by hand rather than by three's lights, because it is a
          ShaderMaterial and nothing injects them. */
       grass:new THREE.ShaderMaterial({side:THREE.DoubleSide,fog:true,
-        uniforms:{uTime:{value:0},uW:{value:GRASS_W},
+        uniforms:grassU={uTime:{value:0},uW:{value:GRASS_W},
                   uSunI:{value:1},uAmb:{value:new THREE.Color(0.60,0.60,0.60)},
                   uCloud:SKY_U.uCloud,uCloudOff:SKY_U.uCloudOff,uWet:SKY_U.uWet,uSnow:SKY_U.uSnow,
                   uCloudOn:SKY_U.uCloudOn,uDetail:SKY_U.uDetail,uWindAmt:GRASS_WIND,
@@ -10043,6 +10082,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
                     for(q=0;q<GRASS_PUSH;q++) a.push(new THREE.Vector3(1e5,0,1e5));
                     return a;})()}},
         vertexShader:GRASS_VS,fragmentShader:GRASS_FS}),
+      /* The Lean style (#70): its own program, the same uniforms object, so
+         everything that drives the grass drives both and a switch is only a
+         change of material on the tiles. */
+      grassLean:new THREE.ShaderMaterial({side:THREE.DoubleSide,fog:true,uniforms:grassU,
+        vertexShader:GRASS_VS_LEAN,fragmentShader:GRASS_FS}),
       /* Pulled a hair toward the camera in depth. A fall lies in exactly the
          plane of the cliff it pours down — the rock face of the column it
          falls from — and the two fought over every pixel: dark teeth through
@@ -10793,7 +10837,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     nd.g.traverse(function(o){
       if((o.isMesh||o.isInstancedMesh)&&o.geometry&&o.geometry!==boxGeo) o.geometry.dispose();
       if(o.isInstancedMesh&&o.material&&o.material.dispose
-         &&o.material!==built.mats.mesh&&o.material!==built.mats.grass
+         &&o.material!==built.mats.mesh&&o.material!==built.mats.grass&&o.material!==built.mats.grassLean
          &&o.material!==built.mats.water&&o.material!==built.mats.prop)
         o.material.dispose();
     });
@@ -11386,6 +11430,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var r=stage.getBoundingClientRect();
     vp.w=Math.max(1,r.width|0); vp.h=Math.max(1,r.height|0);
     renderer.setSize(vp.w,vp.h,false);
+    grassView=-1;   /* Lean grass thins by pixels per metre (#70) */
     var aspect=vp.w/vp.h;
     camera.left=-cam.view*aspect; camera.right=cam.view*aspect;
     camera.top=cam.view; camera.bottom=-cam.view;
@@ -12090,7 +12135,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     camera.top=cam.view; camera.bottom=-cam.view; camera.updateProjectionMatrix();
     if(cam.view!==grassView||worldRev!==grassRev){
       grassView=cam.view; grassRev=worldRev;
-      grassWide=1/grassShare(cam.view);
+      grassWide=1/grassShareNow(cam.view);
       if(built.gmat) built.gmat.uniforms.uW.value=GRASS_W*grassWide;
       built.scene.traverse(function(o){
         if(o.userData.kind==='grass'&&o.userData.full){ o.count=grassCount(o.userData.full,cam.view); fitGrass(o); }
@@ -12321,6 +12366,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     {k:'res',label:'Resolution',sub:'pixels drawn per screen point',opts:[[0.75,'0.75\u00d7'],[1,'1\u00d7'],[1.5,'1.5\u00d7'],[2,'2\u00d7']]},
     {k:'shadows',label:'Shadows',opts:[['off','Off'],['low','Low'],['high','High']]},
     {k:'grass',label:'Grass',opts:[[0,'Off'],[0.35,'Sparse'],[0.7,'Normal'],[1,'Full']]},
+    {k:'grassMode',label:'Grass style',sub:'lean: cheaper blades, fewer and wider when small',opts:[['classic','Classic'],['lean','Lean']]},
     {k:'grassLen',label:'Grass length',range:[5,120]},
     {k:'wind',label:'Grass wind',opts:[[false,'Still'],[true,'Gusts']]},
     {k:'clouds',label:'Cloud shadows',opts:[[false,'Off'],[true,'On']]},
@@ -12339,9 +12385,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /** Everything a setting touches, for one key or (no key) all of them. */
   function gfxApply(k){
     var all=!k;
-    if(all||k==='res'){ renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,GFX.res)); resize(); }
+    if(all||k==='res'){ renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,GFX.res)); resize(); grassView=-1; }
     if(all||k==='shadows') gfxShadows();
     if(all||k==='grass') grassView=-1;
+    if((all||k==='grassMode')&&built){
+      var gm=GFX.grassMode==='lean'?built.mats.grassLean:built.mats.grass;
+      built.scene.traverse(function(o){ if(o.userData.kind==='grass') o.material=gm; });
+      grassView=-1;
+    }
     if(all||k==='wind') GRASS_WIND.value=GFX.wind?1:0;
     if(all||k==='clouds') SKY_U.uCloudOn.value=GFX.clouds?1:0;
     if(all||k==='detail') SKY_U.uDetail.value=GFX.detail?1:0;

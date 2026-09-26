@@ -2230,9 +2230,24 @@ if (BROWSER_HALF) {
           let saved = null; try { saved = JSON.parse(localStorage.getItem('qs.gfx')).preset; } catch (e) { saved = 'unreadable'; }
           P.setGfx('high');
           const high = look();
-          return { was, open, rows, stepped, low, closed, saved, high };
+          /* Classic against Lean, the same pose drawn both ways: how many
+             grass triangles, and what the frame looks like — mean colour
+             over a sample of the canvas, read in the task that drew it. */
+          const gl = cv.getContext('webgl2') || cv.getContext('webgl');
+          const frame = () => {
+            P.frameOnce(); P.draw();
+            const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight, px = new Uint8Array(w * h * 4);
+            gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+            let r = 0, g = 0, b = 0, n = 0;
+            for (let i = 0; i < px.length; i += 4 * 97) { r += px[i]; g += px[i + 1]; b += px[i + 2]; n++; }
+            return { grass: P.draws.kinds.grass || 0, rgb: [r / n, g / n, b / n] };
+          };
+          const classic = frame();
+          P.setGfx('grassMode', 'lean'); const lean = frame(); const leanMode = P.gfx.grassMode;
+          P.setGfx('grassMode', 'classic'); const back = frame();
+          return { was, open, rows, stepped, low, closed, saved, high, classic, lean, leanMode, back };
         });
-        check(gfx.open && gfx.rows === 13 && !gfx.stepped && gfx.closed,
+        check(gfx.open && gfx.rows === 14 && !gfx.stepped && gfx.closed,
               'SETTINGS: the gear opens every graphics setting over the view, keeps its keys, and Escape closes it',
               `${gfx.open ? 'open' : 'NOT open'}, ${gfx.rows} settings, a key inside it ${gfx.stepped ? 'MOVED the player' : 'moved nothing'}, `
               + `${gfx.closed ? 'closed' : 'still open'} on Escape`);
@@ -2241,6 +2256,14 @@ if (BROWSER_HALF) {
               'SETTINGS: Low draws fewer blades at a lower resolution, is remembered, and High puts it all back',
               `grass ${gfx.low.grass.toLocaleString()} against ${gfx.high.grass.toLocaleString()} triangles, `
               + `canvas ${gfx.low.w} against ${gfx.high.w} px wide; remembered as ${gfx.saved}`);
+        {
+          const d = Math.max(...gfx.classic.rgb.map((v, i) => Math.abs(v - gfx.lean.rgb[i])));
+          check(gfx.leanMode === 'lean' && gfx.lean.grass > 0 && gfx.lean.grass <= gfx.classic.grass && d < 6
+                && gfx.back.grass === gfx.classic.grass,
+                'SETTINGS: Lean grass draws the same field as Classic, from no more triangles, and switches back',
+                `${gfx.lean.grass.toLocaleString()} against ${gfx.classic.grass.toLocaleString()} grass triangles; `
+                + `mean colour within ${d.toFixed(2)} of 255`);
+        }
 
         await bp.screenshot({ path: join(OUT, 'play.png') });
         await peerPage.screenshot({ path: join(OUT, 'play-guest.png') });
