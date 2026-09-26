@@ -2385,6 +2385,12 @@ const STEP = 0.4;
 const EASE = 0.25;
 /** Cells a lowered surface reaches: enough for EASE to climb back 2 m. */
 const SETTLE = 8;
+/** Cells either way along a line the crown test reads. */
+const CROWN = 6;
+/** Rounds of it: each can free a cell the last one read before cutting. */
+const CROWN_ROUNDS = 3;
+/** The least a crown's cut leaves between its surface and its bed. */
+const MIN_DEPTH = 0.75;
 
 function containWater(w) {
   var M = w.M, cells = w.cells, half = w.half, OX = w.OX, OZ = w.OZ, G = w.G, i, j, d;
@@ -2406,29 +2412,73 @@ function containWater(w) {
     }
     return { wl: c.wl, lim: lim };
   }
-  var R = SETTLE, S = M + 2 * R, caps = new Array(S * S);
+  /* Caps over a margin wide enough to settle every cell the crown test below
+     reads, and that test reaches CROWN cells past the window. */
+  var R = SETTLE, P = CROWN * CROWN_ROUNDS, T = M + 2 * P, S = T + 2 * R, caps = new Array(S * S);
   for (i = 0; i < S; i++) for (j = 0; j < S; j++) {
-    caps[i * S + j] = cap(-half + i - R + OX, -half + j - R + OZ);
+    caps[i * S + j] = cap(-half + i - R - P + OX, -half + j - R - P + OZ);
   }
-  var out = [];
-  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
-    var c0 = cells[i * M + j];
-    if (!c0.water) continue;
-    var own = caps[(i + R) * S + (j + R)], lim = own.lim;
+  /* Each water cell's settled level, over the window and its margin. */
+  var lvl = new Array(T * T);
+  for (i = 0; i < T; i++) for (j = 0; j < T; j++) {
+    var own = caps[(i + R) * S + (j + R)];
+    if (!own) { lvl[i * T + j] = null; continue; }
+    var lim = own.lim;
     for (var a = -R; a <= R; a++) for (var b = -R; b <= R; b++) {
       var n = caps[(i + R + a) * S + (j + R + b)];
       if (!n || n.lim >= n.wl || Math.abs(n.wl - own.wl) >= STEP) continue;
       var up = n.lim + EASE * Math.max(Math.abs(a), Math.abs(b));
       if (up < lim) lim = up;
     }
-    if (lim < c0.wl) out.push([c0, lim]);
+    lvl[i * T + j] = Math.min(lim, own.wl);
   }
-  /* Applied after every cap is read, so no cell's answer depends on the order
+  /* ---- no crown across a river ----
+     Settling pulls the water beside a low bank down and eases back up over a
+     few metres, so a narrow river with low banks on both sides was held down
+     at both edges and left standing in the middle: a strip up to a metre over
+     the water either side of it, falls down both flanks, and a deck laid
+     between the banks under water. Water that is higher than the water on
+     both sides of it along a line has nowhere to stand, so along each axis a
+     cell may stand no higher than the higher of the two lowest levels it
+     reaches through water on either side. A river falling steadily along its
+     course is untouched — one side is always higher — and only a hump is cut. */
+  /* Cutting one cell can free the one beside it, which was read before the
+     cut, so the test runs in rounds. Each reads CROWN cells further out than
+     the last, which is what the margin is for: every window starts from the
+     same levels over what it reads, and so reaches the same answer. */
+  var settled = lvl;
+  for (var round = 1; round <= CROWN_ROUNDS; round++) {
+    var next = lvl.slice(), e = CROWN * round;
+    for (i = e; i < T - e; i++) for (j = e; j < T - e; j++) {
+      var v0 = lvl[i * T + j];
+      if (v0 === null) continue;
+      for (var ax = 0; ax < 2; ax++) {
+        var di = ax ? 0 : 1, dj = ax ? 1 : 0, lo1 = Infinity, lo2 = Infinity, t, v;
+        for (t = 1; t <= CROWN; t++) { v = lvl[(i + di * t) * T + j + dj * t]; if (v === null) break; if (v < lo1) lo1 = v; }
+        for (t = 1; t <= CROWN; t++) { v = lvl[(i - di * t) * T + j - dj * t]; if (v === null) break; if (v < lo2) lo2 = v; }
+        if (lo1 < Infinity && lo2 < Infinity && Math.max(lo1, lo2) < v0) v0 = Math.max(lo1, lo2);
+      }
+      next[i * T + j] = v0;
+    }
+    lvl = next;
+  }
+  var out = [];
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    var c0 = cells[i * M + j];
+    if (!c0.water) continue;
+    var lim2 = lvl[(i + P) * T + j + P];
+    if (lim2 !== null && lim2 < c0.wl) out.push([c0, lim2, settled[(i + P) * T + j + P]]);
+  }
+  /* A bank that does not hold takes the bed down with the water, or the
+     river would drain to a film. A crown only ever levels water with the
+     water beside it, which already has a bed, so its own is carved no deeper
+     than it takes to stay a river: cutting every crown's bed by its full
+     depth took spore's unreachable ground from 1% to 3%. */  /* Applied after every cap is read, so no cell's answer depends on the order
      the window happened to walk them in. */
   for (d = 0; d < out.length; d++) {
-    var cw = out[d][0], nl = out[d][1], depth = cw.wl - cw.H;
+    var cw = out[d][0], nl = out[d][1], held = out[d][2], depth = cw.wl - cw.H;
     cw.wl = nl;
-    cw.H = Math.min(cw.H, Math.floor(nl - depth + 1e-9));
+    cw.H = Math.min(cw.H, Math.floor(held - depth + 1e-9), Math.floor(nl - Math.min(depth, MIN_DEPTH) + 1e-9));
   }
   w.contained = out.length;
 }

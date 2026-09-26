@@ -6,8 +6,8 @@
   "waterBodies8": 1,
   "lamps": 8,
   "lampsByTrail": 8,
-  "voxels": 129851,
-  "mats": 129851,
+  "voxels": 129842,
+  "mats": 129842,
   "matKinds": 8,
   "grass": 333424,
   "waterCells": 126,
@@ -17,15 +17,15 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0.1,
-  "digest": "7bc0d3d7",
+  "digest": "9099fa03",
   "parts": {
-   "vox": "a1495721",
+   "vox": "61146ab4",
    "magma": "c34a0791",
    "grass": "ff905fc9",
-   "water": "fc400b62",
-   "maps": "67568975",
+   "water": "3e93e012",
+   "maps": "66840403",
    "sites": "26085ae9",
-   "cells": "e58799cc"
+   "cells": "e909cd43"
   }
  },
  {
@@ -35,8 +35,8 @@
   "waterBodies8": 2,
   "lamps": 9,
   "lampsByTrail": 9,
-  "voxels": 109406,
-  "mats": 109406,
+  "voxels": 109384,
+  "mats": 109384,
   "matKinds": 8,
   "grass": 126505,
   "waterCells": 341,
@@ -46,15 +46,15 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 3.2,
-  "digest": "88bde116",
+  "digest": "d44b1b15",
   "parts": {
-   "vox": "8cbce07c",
+   "vox": "b510ef35",
    "magma": "8a624d5a",
    "grass": "41ccce2b",
-   "water": "c92f4f85",
-   "maps": "1c850c4b",
+   "water": "4a8a3fe6",
+   "maps": "6db695d7",
    "sites": "870b4b0f",
-   "cells": "a391125a"
+   "cells": "dec5e153"
   }
  },
  {
@@ -64,8 +64,8 @@
   "waterBodies8": 1,
   "lamps": 6,
   "lampsByTrail": 6,
-  "voxels": 136623,
-  "mats": 136623,
+  "voxels": 136532,
+  "mats": 136532,
   "matKinds": 8,
   "grass": 272658,
   "waterCells": 265,
@@ -75,15 +75,15 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0.1,
-  "digest": "17e388ea",
+  "digest": "75607b2d",
   "parts": {
-   "vox": "edf8b439",
+   "vox": "92ea2cc9",
    "magma": "19cd13bd",
    "grass": "95394beb",
-   "water": "964b3f31",
-   "maps": "5c3489db",
+   "water": "a608a1a6",
+   "maps": "6596b509",
    "sites": "7eab29f4",
-   "cells": "3bf79943"
+   "cells": "57601715"
   }
  },
  {
@@ -133,15 +133,15 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 6.3,
-  "digest": "2c5d4874",
+  "digest": "4d44029c",
   "parts": {
    "vox": "c3feb2f6",
    "magma": "e66eef88",
    "grass": "b89ee261",
-   "water": "31d17888",
+   "water": "65913448",
    "maps": "3315d69c",
    "sites": "6462a689",
-   "cells": "0e8968da"
+   "cells": "00410366"
   }
  },
  {
@@ -162,15 +162,15 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0.3,
-  "digest": "e65c51ae",
+  "digest": "09960d1d",
   "parts": {
    "vox": "d912e620",
    "magma": "2aecd9d0",
    "grass": "c49fb17f",
-   "water": "bd782672",
+   "water": "08ad58a6",
    "maps": "73216a84",
    "sites": "d2517bce",
-   "cells": "b1085be9"
+   "cells": "fbb35416"
   }
  },
  {
@@ -180,8 +180,8 @@
   "waterBodies8": 1,
   "lamps": 9,
   "lampsByTrail": 9,
-  "voxels": 116037,
-  "mats": 116037,
+  "voxels": 115777,
+  "mats": 115777,
   "matKinds": 10,
   "grass": 161872,
   "waterCells": 855,
@@ -191,15 +191,15 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 1,
-  "digest": "fc9fc665",
+  "digest": "0cfae563",
   "parts": {
-   "vox": "1b5e6434",
+   "vox": "f9ca04f2",
    "magma": "9216ed90",
    "grass": "a1ad719a",
-   "water": "b8e68d98",
-   "maps": "62529a5e",
+   "water": "0e140c22",
+   "maps": "a058dab2",
    "sites": "407bf95b",
-   "cells": "c4810bce"
+   "cells": "beb2f094"
   }
  },
  {
@@ -249,15 +249,15 @@
   "landmark": true,
   "overhang": true,
   "unreachPct": 0.6,
-  "digest": "c47960ee",
+  "digest": "bf9a97c7",
   "parts": {
    "vox": "2d9ed2c7",
    "magma": "4059160a",
    "grass": "1ec5e14c",
-   "water": "ea889314",
+   "water": "dafebc16",
    "maps": "f5040221",
    "sites": "b288f69a",
-   "cells": "ba76cb24"
+   "cells": "bcfc2957"
   }
  }
 ]

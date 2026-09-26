@@ -506,7 +506,7 @@ if (NODE_HALF) {
               `${m.waterBodies} bodies, ${m.waterBodies8} counting diagonals`);
       }
       /* A deck lands on dry ground at both ends, within a step of the deck
-         at both landings, and spans water between.
+         at both landings, and spans water between without dipping into it.
          One was laid along a river with both ends in it (SCORCH-3, seen in
          play at 47.5, 19) because the router took x whenever a crossing moved
          on both axes, and others hung a metre over both banks from a water
@@ -518,7 +518,7 @@ if (NODE_HALF) {
           const NZ = w.NZ, half = w.half;
           const at = (x, z) => {
             const i = Math.round((x + half) / 0.25), j = Math.round((z + half) / 0.25);
-            return i < 0 || j < 0 || i >= w.NX || j >= NZ ? null : { y: w.Hs[i * NZ + j], wet: (w.FLG[i * NZ + j] & 1) !== 0 };
+            return i < 0 || j < 0 || i >= w.NX || j >= NZ ? null : { y: w.Hs[i * NZ + j], wl: w.WL[i * NZ + j], wet: (w.FLG[i * NZ + j] & 1) !== 0 };
           };
           for (const [px, pz, di, dj, len, y] of w.bridges) {
             const id = `${name} ${(px + w.OX).toFixed(1)},${(pz + w.OZ).toFixed(1)}`;
@@ -529,9 +529,9 @@ if (NODE_HALF) {
             const lands = [-1, 1].map((sd) => at(px + di * sd * (len / 2 - 1), pz + dj * sd * (len / 2 - 1)));
             if (tips.some((e) => !e)) continue;          /* judged in a window that holds all of it */
             seen.add(id);
-            let wet = 0;
-            for (let t = -len / 2; t <= len / 2; t += 0.25) { const e = at(px + di * t, pz + dj * t); if (e && e.wet) wet++; }
-            const bad = tips.some((e) => e.wet) || lands.some((e) => e.wet || Math.abs(e.y - y) > MOVE.step) || wet === 0;
+            let wet = 0, under = false;
+            for (let t = -len / 2; t <= len / 2; t += 0.25) { const e = at(px + di * t, pz + dj * t); if (e && e.wet) { wet++; if (e.wl > y) under = true; } }
+            const bad = tips.some((e) => e.wet) || lands.some((e) => e.wet || Math.abs(e.y - y) > MOVE.step) || wet === 0 || under;
             decks.push({ at: id, bad });
           }
         };
@@ -691,6 +691,49 @@ if (NODE_HALF) {
         'WATER: and no pool stands above all the water around it (#67)',
         perchedAt.length ? `${perchedAt.length} perched: ${perchedAt.slice(0, 3).join('; ')}`
           : `none over ${worlds.length} seeds and 9 streamed chunks; a cell lifted a metre is found`);
+
+  /* No crown across a river. Settling held a narrow river down at both low
+     banks and left its middle standing, up to a metre over the water either
+     side of it — seen at SCORCH-3 (26.5, -13.5), falls down both flanks and a
+     deck under water at CHARLIE (77, 30). Along either axis, no water cell
+     stands half a metre over the lowest water on both sides of it within
+     six. The self-test raises one cell mid-river and requires it found. */
+  const crowns = (w) => {
+    const { M, cells } = w, found = [];
+    for (let i = 0; i < M; i++) for (let j = 0; j < M; j++) {
+      const c = cells[i * M + j]; if (!c.water) continue;
+      for (const [di, dj] of [[1, 0], [0, 1]]) {
+        const side = (sg) => {
+          let lo = Infinity;
+          for (let t = 1; t <= 6; t++) {
+            const a = i + sg * di * t, b = j + sg * dj * t;
+            if (a < 0 || b < 0 || a >= M || b >= M || !cells[a * M + b].water) break;
+            lo = Math.min(lo, cells[a * M + b].wl);
+          }
+          return lo;
+        };
+        const l1 = side(1), l2 = side(-1);
+        if (l1 < Infinity && l2 < Infinity && c.wl - Math.max(l1, l2) >= 0.5) { found.push(`${i},${j} +${(c.wl - Math.max(l1, l2)).toFixed(2)}`); break; }
+      }
+    }
+    return found;
+  };
+  const crownAt = [];
+  worlds.forEach((w, q) => crowns(w).forEach((p) => crownAt.push(`${GOLDEN_SEEDS[q].nm} ${p}`)));
+  for (let cx = 0; cx <= 1; cx++) for (let cz = -1; cz <= 0; cz++) {
+    crowns(chunkWorld('SCORCH-3', cx, cz)).forEach((p) => crownAt.push(`SCORCH-3 chunk ${cx},${cz} ${p}`));
+  }
+  const cp0 = { ...wp, cells: wp.cells.map((c) => ({ ...c })) };
+  let raised = false;
+  for (let k = 0; k < cp0.cells.length && !raised; k++) {
+    const i = (k / cp0.M) | 0, j = k % cp0.M;
+    if (i < 2 || i > cp0.M - 3 || !cp0.cells[k].water) continue;
+    if (cp0.cells[k - cp0.M].water && cp0.cells[k + cp0.M].water) { cp0.cells[k].wl += 0.75; raised = true; }
+  }
+  check(crownAt.length === 0 && raised && crowns(cp0).length >= 1,
+        'WATER: and no river stands higher in its middle than at both sides',
+        crownAt.length ? `${crownAt.length} crowned: ${crownAt.slice(0, 3).join('; ')}`
+          : `none over ${worlds.length} seeds and 4 streamed chunks; a cell raised mid-river is found`);
 
   check(joins > 0 && open.length === 0 && falls2 > 0,
         'WATER: one surface — every join between water columns is shared, or closed by a fall',
