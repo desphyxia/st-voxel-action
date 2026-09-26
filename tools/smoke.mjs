@@ -1570,7 +1570,7 @@ if (BROWSER_HALF) {
               'SKY: noon, dusk and night are three different lights, and night still has a picture in it',
               `mean luma ${sky.noon.toFixed(1)} at noon, ${sky.dusk.toFixed(1)} at dusk, ${sky.night.toFixed(1)} at night; `
               + `lamps ${sky.atNoon.lamps} / ${sky.atNight.lamps}; filmic tone mapping ${sky.atNoon.tone ? 'on' : 'OFF'}`);
-        check(sky.after.sec >= 59 && sky.redraws >= 4 && sky.redraws <= 9,
+        check(sky.after.sec >= 59 && sky.redraws >= 3 && sky.redraws <= 6,
               'SKY: the sun moves, in steps, and the shadow map follows it a few times a minute',
               `${sky.redraws} shadow redraws over ${sky.after.sec.toFixed(0)} s of simulated time `
               + `(sun now ${sky.after.sun.map((v) => v.toFixed(2)).join(',')})`);
@@ -2190,6 +2190,39 @@ if (BROWSER_HALF) {
               'NET: each window shows its partner\'s health without opening anything',
               `host sees ${hudH.who} at ${hudH.w}% (${hudH.want.toFixed(0)}), guest sees ${hudG.who} at ${hudG.w}% (${hudG.want.toFixed(0)})`);
 
+        /* ---------- SETTINGS: the graphics dialog (#70) ----------
+           The gear opens it over the view; every row is a way of drawing the
+           same world. A key pressed inside it is not a step, Escape closes it,
+           Low draws fewer blades at a lower resolution and High puts them
+           back, and the choice is remembered. */
+        const gfx = await bp.evaluate(() => {
+          const P = window.QSPLAY, dlg = document.getElementById('gfx'), cv = document.querySelector('#cv');
+          const look = () => { P.frameOnce(); return { grass: P.draws.kinds.grass || 0, w: cv.width, g: P.gfx }; };
+          const was = look();
+          document.getElementById('gfxbtn').click();
+          const open = !dlg.hidden, rows = dlg.querySelectorAll('.gfxrows .seg').length;
+          const b0 = dlg.querySelector('.gfxpre button'); b0.focus();
+          b0.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', key: 'w', bubbles: true }));
+          const stepped = P.input.down('moveUp');
+          [...dlg.querySelectorAll('.gfxpre button')].find((b) => b.textContent === 'low').click();
+          const low = look();
+          dlg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          const closed = dlg.hidden;
+          let saved = null; try { saved = JSON.parse(localStorage.getItem('qs.gfx')).preset; } catch (e) { saved = 'unreadable'; }
+          P.setGfx('high');
+          const high = look();
+          return { was, open, rows, stepped, low, closed, saved, high };
+        });
+        check(gfx.open && gfx.rows === 13 && !gfx.stepped && gfx.closed,
+              'SETTINGS: the gear opens every graphics setting over the view, keeps its keys, and Escape closes it',
+              `${gfx.open ? 'open' : 'NOT open'}, ${gfx.rows} settings, a key inside it ${gfx.stepped ? 'MOVED the player' : 'moved nothing'}, `
+              + `${gfx.closed ? 'closed' : 'still open'} on Escape`);
+        check(gfx.low.g.preset === 'low' && gfx.low.grass < gfx.high.grass * 0.5 && gfx.low.w < gfx.high.w
+              && gfx.low.g.shadows === 'off' && gfx.saved === 'low' && gfx.high.g.preset === 'high' && gfx.high.grass === gfx.was.grass,
+              'SETTINGS: Low draws fewer blades at a lower resolution, is remembered, and High puts it all back',
+              `grass ${gfx.low.grass.toLocaleString()} against ${gfx.high.grass.toLocaleString()} triangles, `
+              + `canvas ${gfx.low.w} against ${gfx.high.w} px wide; remembered as ${gfx.saved}`);
+
         await bp.screenshot({ path: join(OUT, 'play.png') });
         await peerPage.screenshot({ path: join(OUT, 'play-guest.png') });
         check(bErrors.length === 0, 'NET: no errors in either window', bErrors.slice(0, 3).join(' | '));
@@ -2522,7 +2555,35 @@ if (BROWSER_HALF) {
           }
           return out;
         });
-        await wp.evaluate(() => { window.QSPLAY.input.release('KeyW'); });
+        /* ---------- PERF: a streamed walk compiles nothing and redraws little (#70) ----------
+           On a phone the walk stuttered: every chunk brought lamp lights of its
+           own, each change in their count relinked every lit program (36 in a
+           minute), and the shadow map was drawn again every few metres and on
+           every chunk arrival. A minute of walking, drawn each second, with
+           the stream fed between: the point lights stay the pool, no program
+           is linked after the first frame, and the map is redrawn a handful of
+           times — every one of them for new ground coming into view. */
+        const walk = await wp.evaluate(async () => {
+          const P = window.QSPLAY, per = Math.round(1 / window.QS.TICK);
+          P.frameOnce(); P.frameOnce();
+          const a0 = { x: P.actor.x, z: P.actor.z }, prog0 = P.programs, why0 = P.shadowWhy, lights = new Set();
+          const keys = ['KeyW', 'KeyD', 'KeyW', 'KeyA'];
+          for (let i = 0; i < 60; i++) {
+            if (i % 15 === 14) { P.input.releaseAll(); P.input.press(keys[((i + 1) / 15) % 4]); }
+            P.run(per); await new Promise((r) => setTimeout(r, 40)); P.frameOnce(); lights.add(P.pointLights);
+          }
+          const why1 = P.shadowWhy, d = {};
+          for (const k of new Set([...Object.keys(why0), ...Object.keys(why1)])) d[k] = (why1[k] || 0) - (why0[k] || 0);
+          return { walked: Math.hypot(P.actor.x - a0.x, P.actor.z - a0.z), linked: P.programs - prog0,
+                   lights: [...lights], why: d, redraws: Object.values(d).reduce((s, v) => s + v, 0) };
+        });
+        check(walk.walked > 40 && walk.lights.length === 1 && walk.lights[0] === 4 && walk.linked === 0,
+              'PERF: a streamed walk holds its lights and compiles no program (#70)',
+              `${walk.walked.toFixed(0)} m walked; point lights ${walk.lights.join('/')}; ${walk.linked} programs linked after the first frame`);
+        check(walk.redraws <= 10 && !walk.why.world,
+              'PERF: and redraws the shadow map a handful of times a minute, for ground coming into view',
+              `${walk.redraws} redraws in 60 s: ${Object.entries(walk.why).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'}`);
+        await wp.evaluate(() => { window.QSPLAY.input.releaseAll(); });
 
         /* ---------- STREAM: the zoom stops before the loaded ground does (#31) ----------
            A streamed world's only edge is the ring of chunks around the players,

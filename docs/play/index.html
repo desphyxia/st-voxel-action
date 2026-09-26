@@ -223,6 +223,32 @@
   footer{border-top:1px solid var(--line);padding-top:16px;font-size:13px;color:var(--dim)}
   @media (max-width:700px){ .stage{aspect-ratio:4/3} }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+  /* Graphics settings (#70): inside the stage, so it works in fullscreen too. */
+  .gfx{position:absolute;inset:0;z-index:30;display:grid;place-items:center;background:rgba(6,8,11,.55);
+       padding:10px}
+  .gfx[hidden]{display:none}
+  .gfxp{width:min(480px,100%);max-height:100%;overflow:auto;background:rgba(13,16,20,.96);
+        border:1px solid var(--line2);border-radius:3px;padding:12px 14px;font-family:var(--mono);
+        font-size:11px;color:var(--muted);overscroll-behavior:contain}
+  .gfxtop{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .gfxtop h3{margin:0;font:500 12px/1.2 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--text)}
+  .gfxrate{flex:1;color:var(--dim);font-variant-numeric:tabular-nums}
+  .gfxp button{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+               color:var(--muted);background:rgba(10,13,17,.72);border:1px solid var(--line2);
+               border-radius:2px;padding:5px 8px;cursor:pointer;line-height:1.3;min-height:28px}
+  .gfxp button:hover{color:var(--text)}
+  .gfxp button:focus-visible{outline:2px solid var(--magic);outline-offset:2px}
+  .gfxp button[aria-pressed="true"]{color:var(--sand);border-color:var(--sand)}
+  .gfxpre{display:flex;gap:4px;margin-bottom:10px;align-items:center}
+  .gfxpre button{flex:1}
+  .gfxpre .cust{flex:0 0 auto;color:var(--dim);padding:0 4px}
+  .gfxrows{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;align-items:center}
+  .gfxrows .lab{color:var(--text);white-space:nowrap}
+  .gfxrows .lab small{display:block;color:var(--dim);font-size:10px}
+  .gfxrows .seg{display:flex;gap:3px;flex-wrap:wrap}
+  .gfxrows .seg button{flex:1 1 auto}
+  .gfxrows input[type=range]{width:100%;accent-color:var(--sand)}
+  .gfxnote{margin:12px 0 0;color:var(--dim);font-size:10px;line-height:1.5}
 </style>
 
 <div class="wrap">
@@ -249,6 +275,7 @@
           <button id="zoomin" type="button" title="Zoom in" aria-label="zoom in">+</button>
           <button id="meshtog" type="button" aria-pressed="true" title="Draw the terrain as a greedy mesh with baked occlusion. Off is the instanced boxes it replaced, kept so the two can be compared.">Mesh</button>
           <button id="streamtog" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window — a world with no edge, and a different world from the same seed">Stream</button>
+          <button id="gfxbtn" type="button" aria-haspopup="dialog" aria-controls="gfx" aria-label="Graphics settings" title="Graphics settings: resolution, shadows, grass, water and the rest">&#9881;&#65038;</button>
         </span>
       </div>
       <div class="where" id="where"></div>
@@ -263,6 +290,17 @@
       </div>
       <div class="dead" id="dead"><span id="deadmsg">dead</span></div>
       <div class="toast" id="toast"></div>
+      <div class="gfx" id="gfx" hidden>
+        <div class="gfxp" role="dialog" aria-modal="true" aria-labelledby="gfxh">
+          <div class="gfxtop"><h3 id="gfxh">Graphics</h3><span class="gfxrate" id="gfxrate"></span>
+            <button type="button" class="gfxdone" id="gfxdone">Done</button></div>
+          <div class="gfxpre" id="gfxpre" role="group" aria-label="Preset"></div>
+          <div class="gfxrows" id="gfxrows"></div>
+          <p class="gfxnote">Only how the world is drawn changes. What you need to play &mdash; the swing,
+            a machine&rsquo;s warning, loot, where everyone stands &mdash; is drawn the same at every setting.
+            Remembered in this browser.</p>
+        </div>
+      </div>
       <div class="fallback" id="fallback">This browser could not start WebGL, so there is nothing to play here.</div>
       <button class="exitfs" id="exitfs" type="button">Exit fullscreen · Esc</button>
       <div class="pad" id="pad">
@@ -290,6 +328,8 @@
         <b>Grass density</b> and <b>Grass length</b> tune the field: length is a uniform and follows
         the slider live, density is how many blades the generator makes and so regrows the world from
         the same seed when you let go of it.
+        The <b>gear</b> at the top of the view opens the graphics settings &mdash; resolution, shadows,
+        grass, water and the rest, with Low, Medium and High presets &mdash; for a slower device.
         <b>On a phone</b>, hold it sideways: your left thumb is a stick wherever you put it, and the
         buttons on the right cut, dodge and jump.
         Click the view first to give it the keyboard.</p>
@@ -8526,9 +8566,33 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     });
   })();
 
+  /* ---------- graphics settings (#70) ----------
+     How the world is drawn, never what it is: every setting here changes
+     pixels and nothing a simulation, a collider or the other window reads.
+     What a player must be able to see — the swing arc, a telegraph, loot,
+     where a character stands, the fog's reach and a scar's hazards — is not a
+     setting at all. High is the build as it was; a phone starts on Medium.
+     Remembered per browser, and a browser that refuses storage just gets the
+     defaults each time. */
+  var GFX_PRESETS={
+    low:   {res:0.75,aa:false,shadows:'off', grass:0.35,wind:false,clouds:false,parts:0,  water:'simple',sway:false,magma:false,lamps:0,detail:false},
+    medium:{res:1,   aa:false,shadows:'low', grass:0.7, wind:true, clouds:false,parts:0.4,water:'full',  sway:true, magma:true, lamps:2,detail:true},
+    high:  {res:1.5, aa:true, shadows:'high',grass:1,   wind:true, clouds:true, parts:1,  water:'full',  sway:true, magma:true, lamps:4,detail:true}
+  };
+  var GFX_COARSE=!!(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches);
+  var GFX=Object.assign({preset:GFX_COARSE?'medium':'high'},GFX_PRESETS[GFX_COARSE?'medium':'high']);
+  try{
+    var gfxSaved=JSON.parse(localStorage.getItem('qs.gfx')||'null');
+    if(gfxSaved&&typeof gfxSaved==='object') for(var gk in GFX) if(gk in gfxSaved) GFX[gk]=gfxSaved[gk];
+  }catch(e){}
+  /* What the renderer was made with: anti-aliasing is fixed for the life of a
+     WebGL context, so a change to it waits for the next load. */
+  var GFX_AA=!!GFX.aa;
+  function gfxSave(){ try{ localStorage.setItem('qs.gfx',JSON.stringify(GFX)); }catch(e){} }
+
   /* ---------- renderer ---------- */
   var renderer;
-  try{ renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:false}); }
+  try{ renderer=new THREE.WebGLRenderer({canvas:cv,antialias:GFX_AA,alpha:false}); }
   catch(e){ fb.style.display='grid'; return; }
   renderer.setClearColor(0x0b0f14,1);
   /* Batch 1 (#30, #31, #55): a filmic curve, so a sunlit snowfield keeps its
@@ -8537,8 +8601,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      a linear framebuffer, and re-authoring every colour for sRGB is its own
      change. */
   renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=0.92;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.5));
-  renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,GFX.res));
+  renderer.shadowMap.enabled=GFX.shadows!=='off';
+  renderer.shadowMap.type=GFX.shadows==='low'?THREE.PCFShadowMap:THREE.PCFSoftShadowMap;
   /* Issue #60. The shadow map covered the whole window at 2048 and was redrawn
      every frame, which drew every terrain and prop triangle a second time, on
      screen or not — for a world that only changes when it is built, carved,
@@ -8552,7 +8617,23 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      it cannot put the redraw back into every frame. */
   renderer.shadowMap.autoUpdate=false; renderer.shadowMap.needsUpdate=true;
   var worldRev=0, shadowKey='', shadowRenders=0, grassView=-1, grassRev=-1;
-  function worldChanged(){ worldRev++; }
+  function worldChanged(){ worldRev++; shadowPending.length=0; }
+  /* Chunks that arrived since the map was last drawn (#70). A chunk arrives
+     at the edge of the loaded ring, out of sight, so its arrival alone does
+     not redraw the map; it does once the chunk comes near enough the view for
+     its shadows to be seen, or when anything else redraws it first. */
+  var shadowPending=[], shadowWhy={}, shadowByChunk=false;
+  function shadowDue(){
+    if(!shadowPending.length) return;
+    var reach=viewReach(), h=QS.CHUNK/2;
+    for(var i=0;i<shadowPending.length;i++){
+      var nd=shadowPending[i], dx=Math.max(0,Math.abs(nd.cx*QS.CHUNK-cam.tx)-h),
+          dz=Math.max(0,Math.abs(nd.cz*QS.CHUNK-cam.tz)-h);
+      /* Drawn again anyway, so centred on where the view is now: one redraw
+         does for the chunk and for the box's next move. */
+      if(dx*dx+dz*dz<reach*reach){ worldChanged(); shadowByChunk=true; if(streaming) followSun(true); return; }
+    }
+  }
   (function(sm){
     var drawShadows=sm.render;
     sm.render=function(){
@@ -8648,7 +8729,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      (palette 92 to 121 against a bar of 90). */
   var GRASS_FULL_VIEW=13, GRASS_MIN=0.25, grassWide=1;
   function grassShare(view){ return view<=GRASS_FULL_VIEW?1:Math.max(GRASS_MIN,GRASS_FULL_VIEW/view); }
-  function grassCount(full,view){ return Math.max(1,Math.round(full*grassShare(view))); }
+  /* GFX.grass is the share drawn (#70): the blades within a tile are in no
+     order, so drawing the first n of them thins a field evenly. */
+  function grassCount(full,view){ return GFX.grass>0?Math.max(1,Math.round(full*grassShare(view)*GFX.grass)):0; }
   /* An integer mix of a blade's index: deterministic, and even enough that any
      prefix of a sorted tile is a fair sample of it. */
   function bladeMix(i){
@@ -8785,18 +8868,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      sun only — the sky's own light is still there under a cloud, which is
      what makes a cloud shadow read as a shadow and not as a hole. Wet ground
      darkens; snow settles on what faces up. */
-  var SKY_U={uCloud:{value:0},uCloudOff:{value:new THREE.Vector2()},uWet:{value:0},uSnow:{value:0}};
+  var GRASS_WIND={value:GFX.wind?1:0};
+  var SKY_U={uCloud:{value:0},uCloudOff:{value:new THREE.Vector2()},uWet:{value:0},uSnow:{value:0},
+             uCloudOn:{value:GFX.clouds?1:0},uDetail:{value:GFX.detail?1:0}};
   var SKY_GLSL=['uniform float uCloud; uniform vec2 uCloudOff; uniform float uWet; uniform float uSnow;',
+    /* The two graphics settings that live in every lit surface (#70). */
+    'uniform float uCloudOn; uniform float uDetail;',
     'float skyH(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }',
     'float skyN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);',
     ' return mix(mix(skyH(i),skyH(i+vec2(1.0,0.0)),f.x),mix(skyH(i+vec2(0.0,1.0)),skyH(i+vec2(1.0,1.0)),f.x),f.y); }',
-    'float skyCloud(vec2 xz){ vec2 p=xz*0.032+uCloudOff;',
+    'float skyCloud(vec2 xz){ if(uCloudOn<0.5) return 1.0; vec2 p=xz*0.032+uCloudOff;',
     ' float n=skyN(p)*0.65+skyN(p*2.3+vec2(7.0,3.0))*0.35;',
     ' float cov=smoothstep(1.3-uCloud*0.9,1.5-uCloud*0.9,n+0.25);',
     ' return 1.0-0.62*cov; }'].join('\n');
   var GRASS_VS=[
     'attribute float aPhase; attribute float aTint; attribute vec3 aCol; attribute vec3 aDry;',
-    'uniform float uTime; uniform float uW; uniform float uHeight; uniform vec2 uWind;',
+    'uniform float uTime; uniform float uW; uniform float uHeight; uniform vec2 uWind; uniform float uWindAmt;',
     'uniform vec3 uPush['+GRASS_PUSH+'];',
     'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD; varying vec3 vN;',
     'varying vec2 vGW; varying float vGust;',
@@ -8817,8 +8904,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' vec3 dir=normalize(mix(own,vec3(cos(ca),0.0,sin(ca)),0.68)+vec3(1e-5));',
     ' hh*=0.70+h11(cid+11.3)*0.60;',
     /* the wind: the blade's own shiver over a gust that crosses the field */
-    ' float gust=sin(dot(base.xz,uWind)*0.09-uTime*0.85);',
-    ' float w=sin(uTime*1.5+dot(base.xz,uWind)*0.5+aPhase)*0.45+gust*0.40;',
+    ' float gust=sin(dot(base.xz,uWind)*0.09-uTime*0.85)*uWindAmt;',
+    ' float w=(sin(uTime*1.5+dot(base.xz,uWind)*0.5+aPhase)*0.45)*uWindAmt+gust*0.40;',
     ' vGW=base.xz; vGust=gust;',
     ' float tilt=clamp(0.24+w*0.18,0.0,0.72);',
     ' vec3 up=vec3(0.0,1.0,0.0);',
@@ -8876,7 +8963,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' vP=p; vec4 mvPosition=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;',
     ' #include <fog_vertex>',
     '}'].join('\n');
-  var WATER_FS=['uniform float uTime; uniform vec2 uWind; uniform float uLight;',
+  var WATER_FS=['uniform float uTime; uniform vec2 uWind; uniform float uLight; uniform float uDetail;',
     'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
     '#include <fog_pars_fragment>',
     /* Value noise for the falls, sin-free like the terrain grain. */
@@ -8896,9 +8983,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Ripples carried along the flow, as noise moving with the water. They
        were bands, sin(dot(position, flow)), and wherever the flow turned the
        bands bunched into tight contour lines across the pool. */
-    ' float rip=flowN(vP.xz*1.4,fl,uTime*0.45)*0.65+flowN(vP.xz*3.2+vec2(3.1,7.7),fl,uTime*0.6)*0.35;',
+    /* Simple water (#70) keeps the depth, the foam and the falls and drops
+       the moving noise: the ripples, the glints and the foam's texture. */
+    ' float rip=0.5, g=0.0;',
+    ' if(uDetail>0.5){ rip=flowN(vP.xz*1.4,fl,uTime*0.45)*0.65+flowN(vP.xz*3.2+vec2(3.1,7.7),fl,uTime*0.6)*0.35;',
+    '   g=smoothstep(0.80,0.97,fallN(vP.xz*3.8+vec2(uTime*0.3,-uTime*0.2))); }',
     ' c+=vec3(0.05,0.09,0.09)*rip;',
-    ' float g=smoothstep(0.80,0.97,fallN(vP.xz*3.8+vec2(uTime*0.3,-uTime*0.2)));',
     /* Opaque with depth: at a flat 0.86 the bed's voxel edges showed through
        every pool as thin contour lines. Clear in the shallows, where seeing the
        bottom is the point, and solid once there is depth to it. */
@@ -8908,7 +8998,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        Moving, from the falls' own noise scrolling out along the flow. */
     ' float fo=vF<1.5?clamp(vF,0.0,1.0):0.0;',
     ' if(fo>0.01){',
-    '   float n=flowN(vP.xz*3.1,fl,uTime*0.7)*0.6+fallN(vP.xz*6.3-vec2(uTime*1.3,uTime*0.4))*0.4;',
+    '   float n=uDetail>0.5?flowN(vP.xz*3.1,fl,uTime*0.7)*0.6+fallN(vP.xz*6.3-vec2(uTime*1.3,uTime*0.4))*0.4:0.55;',
     '   c=mix(c,vec3(0.88,0.95,0.97),fo*(0.30+0.60*smoothstep(0.35,0.75,n))); a=mix(a,0.95,fo); }',
     /* ---------- a fall ----------
        It was evenly spaced horizontal bands, and they rose: fract(y*3 - t*2.6)
@@ -9150,7 +9240,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         +'  { float skNorth=smoothstep(0.55,0.9,-normalize(vSkyN).z);\n'
         +'    vec2 skM=floor(vSkyW.xz/2.0); float skP=fract(sin(dot(skM,vec2(12.9898,78.233)))*43758.5453);\n'
         +'    float skL=dot(diffuseColor.rgb,vec3(0.3,0.59,0.11));\n'
-        +'    float moss=skNorth*step(0.45,skP)*(1.0-smoothstep(0.55,0.75,skL))*(1.0-uSnow);\n'
+        +'    float moss=skNorth*step(0.45,skP)*(1.0-smoothstep(0.55,0.75,skL))*(1.0-uSnow)*uDetail;\n'
         +'    diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(0.66,0.86,0.46),moss*0.55); }\n'
         +'  diffuseColor.rgb=mix(diffuseColor.rgb,vec3(0.93,0.95,0.98),uSnow*smoothstep(0.55,0.92,skyUp));')
       .replace('#include <aomap_fragment>',
@@ -9287,9 +9377,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(skyFix!==null) return (skyFix-QS.DAWN_START)*QS.DAY_SECONDS;
     return skySec;
   }
+  /* Seconds between moves of the light: a twentieth of a degree a second over
+     a 1200 s day, so a step turns it 4.5 degrees. It was 8 s, and every step
+     is a whole shadow map drawn again (#70). */
+  var SUN_TURN=15;
   /**
    * Put the sky into the scene. Stepped — every two simulation seconds for
-   * colour and weather, every eight for where the light comes from — because
+   * colour and weather, every SUN_TURN for where the light comes from — because
    * a sun that moves redraws the shadow map (#60), and a shadow map redrawn
    * every frame is exactly what #60 took away. `force` is a world just built.
    */
@@ -9298,14 +9392,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* A pinned hour holds the sun still; the clock still turns the weather
        over, so the step is always the clock's. */
     var t=skySeconds(), fixed=plateMode||skyFix!==null;
-    var step=Math.floor(skySec/2), dstep=fixed?'at'+t:Math.floor(t/8);
+    var step=Math.floor(skySec/2), dstep=fixed?'at'+t:Math.floor(t/SUN_TURN);
     if(!force&&step===skyStepAt) return;
     skyStepAt=step;
     var seed=built.cfg?built.cfg.seed:'';
     var s=skyNow=QS.skyAt(t,seed,plateMode||skyCalm?SKY_CLEAR:QS.weatherAt(seed,skySec));
     if(force||dstep!==skyDirAt){
       skyDirAt=dstep;
-      var sd=fixed?s:QS.skyAt(dstep*8,seed,SKY_CLEAR);
+      var sd=fixed?s:QS.skyAt(dstep*SUN_TURN,seed,SKY_CLEAR);
       var moon=sd.moonI>sd.sunI*1.5, dv=moon?sd.moonDir:sd.sunDir;
       sunDirV.set(dv[0],dv[1],dv[2]).normalize();
     }
@@ -9359,7 +9453,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
           *(mode==='fireflies'?(1-s.day):1)*(mode==='embers'||mode==='fireflies'||mode==='spores'||mode==='glint'?1:0.6+0.4*s.day);
         p.userData.wind=md.wind;
         p.material.blending=md.add?THREE.AdditiveBlending:THREE.NormalBlending;
-        var n=Math.round(md.n*(mode==='rain'||mode==='snow'?Math.min(1,0.3+s.rain):1));
+        var n=Math.round(md.n*(mode==='rain'||mode==='snow'?Math.min(1,0.3+s.rain):1)*GFX.parts);
+        if(n<1) p.visible=false;
         p.geometry.setDrawRange(0,n); p.userData.n=n;
       }
     }
@@ -9635,7 +9730,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
              is picked by a band of world height, not by the voxel — 50 cm
              beds, the pick offset per 6 m of cliff so the bands do not line
              up across a whole canyon, and a slower shade that runs with them. */
-          +'  float qsRock=step(texture2D(uPal,vec2((vGroup.x+0.5)/uPalN,0.5)).a,0.9)*(1.0-step(0.5,abs(vSkyN.y)));\n'
+          +'  float qsRock=step(texture2D(uPal,vec2((vGroup.x+0.5)/uPalN,0.5)).a,0.9)*(1.0-step(0.5,abs(vSkyN.y)))*uDetail;\n'
           +'  float qsBand=floor(vWP.y/0.5+qsGrain(vec3(floor(vWP.x/6.0),7.0,floor(vWP.z/6.0)))*3.0);\n'
           +'  qsPick=mix(qsPick,mod(qsBand,vGroup.y),qsRock);\n'
           +'  qsShade=mix(qsShade,0.86+0.18*fract(qsBand*0.618)+0.04*qsGrain(qsCell),qsRock);\n'
@@ -9911,10 +10006,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         fitBounds(wm,0.08); g.add(wm);
       }
     }
-    (data.lamps||[]).filter(function(l){ return keep(l[0],l[2]); }).slice(0,3).forEach(function(l){
-      var pl=new THREE.PointLight(0xffb066,0.9,9,2); pl.position.set(l[0],l[1]+0.1,l[2]); g.add(pl);
-      pl.userData.lamp=0.9; pl.intensity=0.9*skyNow.lamps;
-    });
+    /* Where this node's lamps stand, local to it. The light they cast comes
+       from the scene's fixed pool (#70), not from lights of their own. */
+    g.userData.lamps=(data.lamps||[]).filter(function(l){ return keep(l[0],l[2]); })
+      .map(function(l){ return [l[0],l[1]+0.1,l[2]]; });
     return {g:g,vox:vox,props:props,propMesh:propMesh,mesh:terrainMesh,data:data,org:org,boxes:boxes};
   }
 
@@ -9935,6 +10030,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         uniforms:{uTime:{value:0},uW:{value:GRASS_W},
                   uSunI:{value:1},uAmb:{value:new THREE.Color(0.60,0.60,0.60)},
                   uCloud:SKY_U.uCloud,uCloudOff:SKY_U.uCloudOff,uWet:SKY_U.uWet,uSnow:SKY_U.uSnow,
+                  uCloudOn:SKY_U.uCloudOn,uDetail:SKY_U.uDetail,uWindAmt:GRASS_WIND,
                   fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0},
                   uHeight:{value:grassLen/GRASS_LEN_REF},
                   uWind:{value:new THREE.Vector2(0.72,0.69)},
@@ -9955,7 +10051,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       water:new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,fog:true,
         polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-4,
         uniforms:{uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)},uLight:{value:1},
-                  fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0}},
+                  uDetail:{value:GFX.water==='full'?1:0},fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0}},
         vertexShader:WATER_VS,fragmentShader:WATER_FS}),
     };
   }
@@ -9967,20 +10063,34 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     scene.fog=new THREE.Fog(0x9fb8cc,60,400);
     scene.background=skyTexture();
     var sun=new THREE.DirectionalLight(0xfff0d2,1.05);
-    sun.position.set(-16,26,12); sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+    sun.position.set(-16,26,12); sun.castShadow=GFX.shadows!=='off';
+    var sms=GFX.shadows==='low'?1024:2048; sun.shadow.mapSize.set(sms,sms);
     var sc=sun.shadow.camera, e=reach;
     sc.left=-e;sc.right=e;sc.top=e;sc.bottom=-e;sc.near=1;sc.far=200;
     sun.shadow.bias=-0.0006; sun.shadow.normalBias=0.04;
     scene.add(sun); scene.add(sun.target);
     var parts=makeParticles(); scene.add(parts);
-    return {scene:scene,sun:sun,hemi:hemi,parts:parts};
+    /* Lamp light, #70. Every chunk used to bring up to three PointLights of
+       its own, kept in the scene at noon with the lamps dark. A streamed walk
+       took the count from 16 to 48, and every change in it relinks every lit
+       program — 36 relinks in a minute of walking, each a stall a phone can
+       see — while between them every lit vertex paid for all 48. The scene
+       holds LAMP_POOL lights from the start instead, and placeLamps() moves
+       them to the lamps nearest the view each frame. The count never changes,
+       so nothing recompiles; a light with no lamp is parked out of reach. */
+    var lamps=[];
+    for(var li=0;li<LAMP_POOL;li++){
+      var pl=new THREE.PointLight(0xffb066,0,9,2); pl.position.set(0,-1000,0);
+      pl.userData.lamp=0; scene.add(pl); lamps.push(pl);
+    }
+    return {scene:scene,sun:sun,hemi:hemi,parts:parts,lamps:lamps};
   }
 
   function buildScene(data){
     var shell=sceneShell(data.half+4), mats=worldMaterials();
     var node=worldNode(data,mats,null);
     shell.scene.add(node.g);
-    return {scene:shell.scene,sun:shell.sun,hemi:shell.hemi,parts:shell.parts,mats:mats,
+    return {scene:shell.scene,sun:shell.sun,hemi:shell.hemi,parts:shell.parts,lamps:shell.lamps,mats:mats,
             gmat:mats.grass,wmat:mats.water,
             vox:node.vox,props:node.props,propMesh:node.propMesh,
             mesh:node.mesh,node:node};
@@ -10684,7 +10794,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         o.material.dispose();
     });
     built.scene.remove(nd.g);
-    delete nodes[k]; worldChanged();
+    /* No redraw: a chunk is let go well outside the view, and the shadow it
+       leaves in the map falls where nothing is looked at (#70). */
+    delete nodes[k];
   }
 
   /** Make the scene hold exactly the chunks the field holds. */
@@ -10698,7 +10810,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       var nd=worldNode(e.w,built.mats,QS.innerChunk(e.w),pre);
       nd.g.position.set(e.cx*QS.CHUNK,0,e.cz*QS.CHUNK);
       nd.cx=e.cx; nd.cz=e.cz; nd.ix=null; nd.hidden=[];
-      built.scene.add(nd.g); nodes[k]=nd; worldChanged();
+      built.scene.add(nd.g); nodes[k]=nd; shadowPending.push(nd);
     }
     for(var k2 in nodes) if(!want[k2]) dropNode(k2);
     /* A mesh whose chunk never became a node, because the players moved on
@@ -10988,17 +11100,74 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
 
   /* The sun's shadow box is a fixed span around the player rather than the
      whole world, because a streamed world does not have a whole. */
-  var SUN_STEP=4;
-  function followSun(){
+  /* The lamp-light pool (#70): LAMP_POOL lights in the scene always, of
+     which lampLights are lit — a setting, so fewer can be asked for without
+     the count the shaders were compiled for changing. */
+  var LAMP_POOL=4, LAMP_REACH=24, lampLights=Math.min(LAMP_POOL,GFX.lamps), lampNear=[];
+  function placeLamps(){
+    if(!built||!built.lamps) return;
+    var pool=built.lamps, want=skyNow.lamps>0?lampLights:0, cx=cam.tx, cz=cam.tz, i, k;
+    lampNear.length=0;
+    if(want>0){
+      var kids=built.scene.children;
+      for(k=0;k<kids.length;k++){
+        var ls=kids[k].userData.lamps; if(!ls||!ls.length) continue;
+        var o=kids[k].position;
+        for(i=0;i<ls.length;i++){
+          var x=ls[i][0]+o.x, z=ls[i][2]+o.z, dx=x-cx, dz=z-cz, d2=dx*dx+dz*dz;
+          if(d2<LAMP_REACH*LAMP_REACH) lampNear.push([d2,x,ls[i][1]+o.y,z]);
+        }
+      }
+      lampNear.sort(function(a,b){ return a[0]-b[0]; });
+    }
+    for(i=0;i<pool.length;i++){
+      var l=pool[i], at=i<want?lampNear[i]:null;
+      if(at){ l.position.set(at[1],at[2],at[3]); l.userData.lamp=0.9; l.intensity=0.9*skyNow.lamps; }
+      else if(l.userData.lamp){ l.position.set(0,-1000,0); l.userData.lamp=0; l.intensity=0; }
+    }
+  }
+
+  /* Every program a world will need, compiled before its first frame (#70).
+     A material is compiled the first time something drawn with it is in
+     view, so the first water, magma or loot to stream in paid for its program
+     in the middle of a walk. One throwaway object per world material, plain
+     and instanced, is compiled with the scene and then dropped. */
+  function warmPrograms(){
+    built.warm=true;
+    var ms=built.mats, g=new THREE.Group(), box=new THREE.BoxGeometry(0.01,0.01,0.01);
+    for(var k in ms){
+      var m=ms[k]; if(!m||!m.isMaterial) continue;
+      /* A shader written against instanceMatrix (the grass) only exists
+         instanced; compiling it plain is a compile error, not a warm-up. */
+      var b=new THREE.InstancedMesh(box,m,1); b.castShadow=b.receiveShadow=true; g.add(b);
+      if(!(m.vertexShader&&/instanceMatrix/.test(m.vertexShader))){
+        var a=new THREE.Mesh(box,m); a.castShadow=a.receiveShadow=true; g.add(a);
+      }
+    }
+    built.scene.add(g);
+    renderer.compile(built.scene,camera);
+    built.scene.remove(g); box.dispose();
+  }
+
+  /* The sun's shadow box, centred where the shadow map was last drawn from.
+     It is moved only when the view is about to leave it (#70): walking used
+     to move it every 4 m, and every move draws the whole map again. */
+  var SUN_BOX=72, sunAt=null;
+  /** How far from the camera target the view reaches on the ground, plus the
+      length of a shadow cast into it from just outside. Generous: an
+      isometric view is wider than it is deep, and this takes the corner. */
+  function viewReach(){
+    var w=cam.view*Math.max(vp.w/Math.max(vp.h,1),1), d=cam.view*1.8;
+    return Math.sqrt(w*w+d*d)+6;
+  }
+  function followSun(force){
     var a=player();
     if(!a||!built||!built.sun) return;
-    /* In 4 m steps rather than continuously: the shadow map is drawn again
-       whenever the sun moves (#60), and ±52 m of shadow camera covers the view
-       from anywhere inside a step. */
-    var sx=Math.round(a.x/SUN_STEP)*SUN_STEP, sz=Math.round(a.z/SUN_STEP)*SUN_STEP;
-    var sy=Math.round(a.y/SUN_STEP)*SUN_STEP;
-    built.sun.position.set(sx+sunDirV.x*80,sy+sunDirV.y*80,sz+sunDirV.z*80);
-    built.sun.target.position.set(sx,sy,sz);
+    if(force||!sunAt||Math.max(Math.abs(cam.tx-sunAt.x),Math.abs(cam.tz-sunAt.z))+viewReach()>SUN_BOX-4){
+      sunAt={x:Math.round(cam.tx),y:Math.round(a.y),z:Math.round(cam.tz)};
+    }
+    built.sun.position.set(sunAt.x+sunDirV.x*80,sunAt.y+sunDirV.y*80,sunAt.z+sunDirV.z*80);
+    built.sun.target.position.set(sunAt.x,sunAt.y,sunAt.z);
     built.sun.target.updateMatrixWorld();
   }
 
@@ -11079,12 +11248,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   function buildStreamFor(cfg){
     worldChanged();
     disposeWorld();
-    var mats=worldMaterials(), shell=sceneShell(52);
+    var mats=worldMaterials(), shell=sceneShell(SUN_BOX); sunAt=null;
     field=QS.makeChunkField(cfg.seed,cfg.force===undefined?null:cfg.force,
                             cfg.gdens===undefined?grassDens/GRASS_DENS_REF:cfg.gdens);
     stream=QS.makeStream(field,{loadR:1,keepR:STREAM_KEEP,flight:POOL_N});
     nodes={}; voxIndex=null; hidden.length=0; streamBuilt=0; streamMs=0;
-    built={scene:shell.scene,sun:shell.sun,hemi:shell.hemi,parts:shell.parts,mats:mats,gmat:mats.grass,wmat:mats.water,
+    built={scene:shell.scene,sun:shell.sun,hemi:shell.hemi,parts:shell.parts,lamps:shell.lamps,mats:mats,gmat:mats.grass,wmat:mats.water,
            vox:null,props:null,mesh:null,cfg:cfg,streamed:true};
     built.scene.add(avatar.g); built.scene.add(peerAvatar.g);
     col=field;
@@ -11185,7 +11354,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     tm=spec.t===undefined?12.5:spec.t;
     var wa=0.6+QS.sin(tm*0.06)*0.7;
     wind.set(QS.cos(wa),QS.sin(wa));
-    SWAY_U.uSwayT.value=tm; SWAY_U.uSwayW.value.copy(wind);
+    SWAY_U.uSwayT.value=tm; if(GFX.sway) SWAY_U.uSwayW.value.copy(wind); else SWAY_U.uSwayW.value.set(0,0);
     if(built.gmat){
       built.gmat.uniforms.uTime.value=tm; built.gmat.uniforms.uWind.value.copy(wind);
       /* The grass parts around whoever is standing in it. Nobody is standing
@@ -11194,7 +11363,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       for(var gq=0;gq<GRASS_PUSH;gq++) built.gmat.uniforms.uPush.value[gq].set(1e5,0,1e5);
     }
     if(built.wmat){ built.wmat.uniforms.uTime.value=tm; built.wmat.uniforms.uWind.value.copy(wind); }
-    if(built.mats&&built.mats.magma) built.mats.magma.uniforms.uTime.value=tm;
+    if(built.mats&&built.mats.magma) built.mats.magma.uniforms.uTime.value=GFX.magma?tm:0;
 
     /* The camera, from the world rather than from wherever play left it. */
     var tx=spec.x===undefined?0:spec.x, tz=spec.z===undefined?0:spec.z;
@@ -11924,8 +12093,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       });
     }
     skyFog();
+    placeLamps();
+    if(!built.warm) warmPrograms();
+    shadowDue();
     var sk=worldRev+'|'+plateMode+'|'+(built.sun?built.sun.position.x+','+built.sun.position.z:'');
-    if(sk!==shadowKey){ shadowKey=sk; renderer.shadowMap.needsUpdate=true; }
+    if(sk!==shadowKey){
+      var why=sk.split('|')[0]!==shadowKey.split('|')[0]?(shadowByChunk?'chunk':'world'):'sun';
+      shadowWhy[why]=(shadowWhy[why]||0)+1; shadowByChunk=false;
+      shadowKey=sk; renderer.shadowMap.needsUpdate=true;
+    }
     renderer.render(built.scene,camera);
   }
 
@@ -12018,9 +12194,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     wind.set(Math.cos(wa),Math.sin(wa));
     if(built.gmat){ built.gmat.uniforms.uTime.value=tm; built.gmat.uniforms.uWind.value.copy(wind);
       setGrassPush(a); }
-    SWAY_U.uSwayT.value=tm; SWAY_U.uSwayW.value.copy(wind);
+    SWAY_U.uSwayT.value=tm; if(GFX.sway) SWAY_U.uSwayW.value.copy(wind); else SWAY_U.uSwayW.value.set(0,0);
     if(built.wmat){ built.wmat.uniforms.uTime.value=tm; built.wmat.uniforms.uWind.value.copy(wind); }
-    if(built.mats&&built.mats.magma) built.mats.magma.uniforms.uTime.value=tm;
+    if(built.mats&&built.mats.magma) built.mats.magma.uniforms.uTime.value=GFX.magma?tm:0;
 
     for(var q=0;q<postFlash.length;q++) if(postFlash[q]>0) postFlash[q]-=dt;
     if(toastT>0){ toastT-=dt; if(toastT<=0) toastEl.classList.remove('on'); }
@@ -12133,6 +12309,138 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /* A handle for the smoke test, and for anyone poking at this in a console.
      `run` steps the simulation the same fixed way the loop does, which is what
      lets the gate assert the wiring exactly instead of waiting on wall clock. */
+  /* ---------- the graphics dialog (#70) ----------
+     Every row is a setting in GFX, applied live except anti-aliasing, which a
+     WebGL context cannot change after it is made. A preset is just a set of
+     values; touching any row makes the choice "custom". */
+  var GFX_ROWS=[
+    {k:'res',label:'Resolution',sub:'pixels drawn per screen point',opts:[[0.75,'0.75\u00d7'],[1,'1\u00d7'],[1.5,'1.5\u00d7'],[2,'2\u00d7']]},
+    {k:'shadows',label:'Shadows',opts:[['off','Off'],['low','Low'],['high','High']]},
+    {k:'grass',label:'Grass',opts:[[0,'Off'],[0.35,'Sparse'],[0.7,'Normal'],[1,'Full']]},
+    {k:'grassLen',label:'Grass length',range:[5,120]},
+    {k:'wind',label:'Grass wind',opts:[[false,'Still'],[true,'Gusts']]},
+    {k:'clouds',label:'Cloud shadows',opts:[[false,'Off'],[true,'On']]},
+    {k:'parts',label:'Particles',sub:'rain, snow, pollen, embers',opts:[[0,'Off'],[0.4,'Some'],[1,'All']]},
+    {k:'water',label:'Water',opts:[['simple','Simple'],['full','Full']]},
+    {k:'sway',label:'Tree sway',opts:[[false,'Off'],[true,'On']]},
+    {k:'magma',label:'Magma motion',opts:[[false,'Still'],[true,'Moving']]},
+    {k:'lamps',label:'Lamp light',opts:[[0,'Off'],[2,'2'],[4,'4']]},
+    {k:'detail',label:'Moss & strata',opts:[[false,'Off'],[true,'On']]},
+    {k:'aa',label:'Anti-aliasing',sub:'applies when the page is next loaded',opts:[[false,'Off'],[true,'On']]}
+  ];
+  var gfxEl=document.getElementById('gfx'), gfxBtn=document.getElementById('gfxbtn'),
+      gfxRows=document.getElementById('gfxrows'), gfxPre=document.getElementById('gfxpre'),
+      gfxRate=document.getElementById('gfxrate'), gfxTimer=null;
+
+  /** Everything a setting touches, for one key or (no key) all of them. */
+  function gfxApply(k){
+    var all=!k;
+    if(all||k==='res'){ renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,GFX.res)); resize(); }
+    if(all||k==='shadows') gfxShadows();
+    if(all||k==='grass') grassView=-1;
+    if(all||k==='wind') GRASS_WIND.value=GFX.wind?1:0;
+    if(all||k==='clouds') SKY_U.uCloudOn.value=GFX.clouds?1:0;
+    if(all||k==='detail') SKY_U.uDetail.value=GFX.detail?1:0;
+    if(all||k==='water'){ if(built&&built.wmat) built.wmat.uniforms.uDetail.value=GFX.water==='full'?1:0; }
+    if(all||k==='lamps') lampLights=Math.min(LAMP_POOL,GFX.lamps);
+    if((all||k==='parts')&&built) applySky(true);
+  }
+  /* Shadows off, or a smaller map with plain PCF, change what every lit
+     program is compiled with: marked for recompiling here, once, on a choice
+     the player made — and compiled before the next frame, not during play. */
+  function gfxShadows(){
+    var on=GFX.shadows!=='off', low=GFX.shadows==='low', n=low?1024:2048;
+    var type=low?THREE.PCFShadowMap:THREE.PCFSoftShadowMap;
+    var changed=renderer.shadowMap.enabled!==on||renderer.shadowMap.type!==type;
+    renderer.shadowMap.enabled=on; renderer.shadowMap.type=type;
+    if(!built||!built.sun) return;
+    var sun=built.sun; sun.castShadow=on;
+    if(sun.shadow.mapSize.x!==n){
+      sun.shadow.mapSize.set(n,n);
+      if(sun.shadow.map){ sun.shadow.map.dispose(); sun.shadow.map=null; }
+    }
+    if(changed){
+      built.scene.traverse(function(o){
+        var m=o.material; if(!m) return;
+        (Array.isArray(m)?m:[m]).forEach(function(q){ q.needsUpdate=true; });
+      });
+      for(var mk in built.mats) if(built.mats[mk]&&built.mats[mk].isMaterial) built.mats[mk].needsUpdate=true;
+      built.warm=false;
+    }
+    worldChanged();
+  }
+  function gfxMatch(){
+    for(var p in GFX_PRESETS){
+      var ok=true, pv=GFX_PRESETS[p];
+      for(var k in pv) if(pv[k]!==GFX[k]){ ok=false; break; }
+      if(ok) return p;
+    }
+    return 'custom';
+  }
+  function gfxSet(k,v){
+    if(k==='grassLen'){ setGrassLength(v/100); gfxSync(); return; }
+    GFX[k]=v; GFX.preset=gfxMatch(); gfxSave(); gfxApply(k); gfxSync();
+  }
+  function gfxPreset(p){
+    Object.assign(GFX,GFX_PRESETS[p]); GFX.preset=p; gfxSave(); gfxApply(); gfxSync();
+  }
+  function gfxButton(text,pressed,fn){
+    var b=document.createElement('button'); b.type='button'; b.textContent=text;
+    b.setAttribute('aria-pressed',pressed?'true':'false');
+    b.addEventListener('click',function(e){ e.stopPropagation(); fn(); });
+    return b;
+  }
+  /** Rebuilt from GFX on every change: thirteen rows, and it is never open
+      while anything is being timed. */
+  function gfxSync(){
+    gfxPre.textContent='';
+    ['low','medium','high'].forEach(function(p){
+      gfxPre.appendChild(gfxButton(p,GFX.preset===p,function(){ gfxPreset(p); }));
+    });
+    if(GFX.preset==='custom'){ var c=document.createElement('span'); c.className='cust'; c.textContent='custom'; gfxPre.appendChild(c); }
+    gfxRows.textContent='';
+    GFX_ROWS.forEach(function(row){
+      var lab=document.createElement('div'); lab.className='lab'; lab.textContent=row.label;
+      var sub=row.sub;
+      if(row.k==='aa'&&GFX.aa!==GFX_AA) sub='reload the page to apply';
+      if(sub){ var sm=document.createElement('small'); sm.textContent=sub; lab.appendChild(sm); }
+      var seg=document.createElement('div'); seg.className='seg'; seg.dataset.k=row.k;
+      if(row.range){
+        var r=document.createElement('input'); r.type='range'; r.min=row.range[0]; r.max=row.range[1]; r.step=1;
+        r.value=Math.round(grassLen*100); r.setAttribute('aria-label',row.label);
+        r.addEventListener('input',function(){ setGrassLength(+r.value/100); });
+        seg.appendChild(r);
+      } else row.opts.forEach(function(o){
+        seg.appendChild(gfxButton(o[1],GFX[row.k]===o[0],function(){ gfxSet(row.k,o[0]); }));
+      });
+      gfxRows.appendChild(lab); gfxRows.appendChild(seg);
+    });
+  }
+  function gfxRateNow(){ gfxRate.textContent=Math.round(fps)+' fps \u00b7 '+costMs.toFixed(1)+' ms'; }
+  function gfxOpen(on){
+    if(on===gfxOpen.on) return;
+    gfxOpen.on=on; gfxEl.hidden=!on; gfxBtn.setAttribute('aria-pressed',on?'true':'false');
+    if(on){
+      input.releaseAll(); gfxSync(); gfxRateNow(); gfxTimer=setInterval(gfxRateNow,500);
+      var first=gfxPre.querySelector('button'); if(first) first.focus();
+    } else { clearInterval(gfxTimer); gfxTimer=null; stage.focus(); }
+  }
+  gfxOpen.on=false;
+  gfxBtn.addEventListener('pointerdown',function(e){ e.stopPropagation(); });
+  gfxBtn.addEventListener('click',function(e){ e.stopPropagation(); gfxOpen(!gfxOpen.on); });
+  document.getElementById('gfxdone').addEventListener('click',function(e){ e.stopPropagation(); gfxOpen(false); });
+  /* Nothing inside reaches the stage: a tap on a row is not a swing, and a
+     key is not a step. The backdrop closes it. */
+  ['pointerdown','pointerup','pointermove','touchstart','contextmenu','wheel'].forEach(function(ev){
+    gfxEl.addEventListener(ev,function(e){ e.stopPropagation(); },{passive:ev!=='contextmenu'});
+  });
+  gfxEl.addEventListener('click',function(e){ e.stopPropagation(); if(e.target===gfxEl) gfxOpen(false); });
+  gfxEl.addEventListener('keydown',function(e){
+    e.stopPropagation();
+    if(e.key==='Escape'){ e.preventDefault(); gfxOpen(false); }
+  });
+  gfxEl.addEventListener('keyup',function(e){ e.stopPropagation(); });
+
   window.QSPLAY={
     get actor(){return player();}, get peer(){return other();},
     get cam(){return cam;}, get camera(){return camera;}, input:input,
@@ -12206,6 +12514,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     },
     /* How many times the shadow map has actually been drawn (#60). */
     get shadowRenders(){ return shadowRenders; },
+    /* #70: the graphics settings, as the dialog sees them, and the same doors
+       it uses — for the gate and for a console. */
+    get gfx(){ return Object.assign({aaLive:GFX_AA,lampsLit:lampNear.length?Math.min(lampLights,lampNear.length):0,
+                                     lampPool:built&&built.lamps?built.lamps.length:0},GFX); },
+    setGfx:function(k,v){ if(k in GFX_PRESETS) gfxPreset(k); else gfxSet(k,v); return this.gfx; },
+    openGfx:function(on){ gfxOpen(on!==false); return gfxOpen.on; },
+    /* Programs linked so far, and the scene's point lights: the two numbers a
+       streamed walk must hold still (#70). */
+    get programs(){ return renderer.info.programs?renderer.info.programs.length:0; },
+    get pointLights(){ var n=0; if(built) built.scene.traverse(function(o){ if(o.isPointLight) n++; }); return n; },
+    /* Why the map was drawn again, by cause, since the page loaded (#70). */
+    get shadowWhy(){ return Object.assign({},shadowWhy); },
     /* The player's blob, and every mesh in the scene that casts. */
     get blob(){ var b=avatar.blob; return {visible:b.visible,x:b.getWorldPosition(new THREE.Vector3()).x,
                   y:b.getWorldPosition(new THREE.Vector3()).y,z:b.getWorldPosition(new THREE.Vector3()).z}; },
