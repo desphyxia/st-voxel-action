@@ -8954,13 +8954,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   var WATER_VS=['uniform float uTime;','attribute float aDepth; attribute float aFoam; attribute vec2 aFlow;',
     'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
     '#include <fog_pars_vertex>',
-    'void main(){ vec3 p=position; vD=aDepth; vF=aFoam; vFl=aFlow;',
+    /* In world space, not the mesh's own: a streamed chunk's water is local
+       to its chunk, so a lift or a ripple read from `position` put the two
+       sides of a seam at different heights and phases — a dark crack down
+       every chunk edge a river crossed, seen at x 144 on QUARTERSTONE. */
+    'void main(){ vec3 p=(modelMatrix*vec4(position,1.0)).xyz; vD=aDepth; vF=aFoam; vFl=aFlow;',
     /* Everything ripples, falls included: the ripple is a function of where a
        vertex is, so a fall's lip moves with the pool above it and its base
        with the pool below, and neither edge can open. Falls used to hold still
        while the pools either side moved, a 3 cm hairline at every lip. */
     ' p.y+=(sin(uTime*1.25+p.z*0.8+p.x*0.5)*0.022+sin(uTime*2.15-p.z*1.5+p.x*0.35)*0.012);',
-    ' vP=p; vec4 mvPosition=modelViewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;',
+    ' vP=p; vec4 mvPosition=viewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;',
     ' #include <fog_vertex>',
     '}'].join('\n');
   var WATER_FS=['uniform float uTime; uniform vec2 uWind; uniform float uLight; uniform float uDetail;',

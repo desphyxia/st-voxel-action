@@ -173,6 +173,25 @@ check(stale.length === 0, `SYNC: ${TARGETS.length} pages carry the current src`,
         missing.length ? missing.join('; ') : `${want.length} attributes on ${TARGETS.length} pages`);
 }
 
+/* A streamed chunk's meshes are local to their chunk, so a shader that lifts
+   or patterns a vertex by `position` puts the two sides of a seam at
+   different heights and phases. The water did: a dark crack down every chunk
+   edge a river crossed (QUARTERSTONE, x 144). Every sheet that moves by where
+   it is has to read where it is in the world. */
+{
+  const page = readFileSync(PLAY_TARGET, 'utf8'), local = [];
+  for (const nm of ['WATER_VS', 'MAGMA_VS']) {
+    const at = page.indexOf(`var ${nm}=[`), body = at < 0 ? '' : page.slice(at, page.indexOf('].join', at));
+    const main = body.slice(body.indexOf('void main'));
+    const world = /modelMatrix\s*\*\s*vec4\(\s*(position|p)\s*,\s*1\.0\s*\)/.test(main);
+    /* Local is `p` read from `position` and then used to decide the lift. */
+    const liftLocal = /vec3 p=position;/.test(main) && /p\.y\+=[^']*\bp\.[xz]\b/.test(main);
+    if (!main || !world || liftLocal) local.push(nm);
+  }
+  check(local.length === 0, 'SEAM: water and magma move by where they are in the world, not in their chunk',
+        local.length ? `${local.join(', ')} read chunk-local position` : 'both read modelMatrix * position');
+}
+
 /* Issue #28: the point of moving colour out of the per-voxel record is that a
    biome can be restyled without regenerating. That is a claim about the data,
    so it is checkable without a browser: edit the table, resolve the same voxels
