@@ -12,6 +12,8 @@ node tools/bundle-gen.mjs --check # fail if the plate is out of date
 node tools/smoke.mjs             # the gate: sync, node, boot, parity, golden, render
 node tools/smoke.mjs --quick     # same without rendering (seconds)
 node tools/smoke.mjs --update    # re-record tools/baseline.json, deliberately
+node tools/smoke.mjs --browser --affected    # only the browser groups this diff can reach
+node tools/smoke.mjs --browser --only=build  # only the named groups; --list names them
 
 node tools/render-plate.mjs --diag     # generator stats per seed, no rendering
 node tools/render-plate.mjs --shots    # page screenshots

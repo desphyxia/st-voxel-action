@@ -23,3 +23,5 @@ node tools/smoke.mjs --node || {
   echo "pre-push: fix it, or SKIP_SMOKE=1 git push with a Smoke-Skipped trailer."
   exit 1
 }
+echo "pre-push: node half green. CI runs the whole browser half; to run only the"
+echo "pre-push: groups this change can reach first:  node tools/smoke.mjs --browser --affected"

@@ -105,7 +105,7 @@ is what actually holds.
 
 | Layer | What it does |
 | --- | --- |
-| `tools/smoke.mjs` | The assertions, in two halves. `--node` (seconds): bundle sync, pinned arithmetic, generation, the movement budget, the camera and input table, the lattice and what is on the ground, two networked sessions over a lossy wire, a five-minute soak per seed, golden-master, sanity invariants. `--browser` (minutes): boot, cross-engine math, plate/node parity, both renders, loot you can walk onto, and two windows playing together. |
+| `tools/smoke.mjs` | The assertions, in two halves. `--node` (seconds): bundle sync, pinned arithmetic, generation, the movement budget, the camera and input table, the lattice and what is on the ground, two networked sessions over a lossy wire, a five-minute soak per seed, golden-master, sanity invariants. `--browser` (minutes): boot, cross-engine math, plate/node parity, both renders, loot you can walk onto, and two windows playing together. The browser half is seven named groups; `--only=<groups>` runs some of them and `--affected` picks them from the diff against `origin/main` (`tools/lib/affected.mjs`), which is how it is run locally — CI runs them all. |
 | `tools/hooks/pre-push` | Runs `--node` before anything leaves the machine — genuinely seconds, so it survives contact with 1am. Install: `node tools/hooks/install.mjs` |
 | `.github/workflows/ci.yml` | Two required jobs in parallel on every push and PR: `checks` (the node half, under a minute) and `browser` (boot, parity, and both renders). |
 | This document | The bar, in the place a new session will look. |

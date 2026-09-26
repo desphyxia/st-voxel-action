@@ -228,6 +228,8 @@ This is enforced, not aspirational — see `docs/PROTOTYPE.md`.
 node tools/smoke.mjs            # everything
 node tools/smoke.mjs --node     # only what needs no browser — a few seconds
 node tools/smoke.mjs --browser  # only what does — minutes, software rendering
+node tools/smoke.mjs --browser --affected   # only the browser groups this change can reach
+node tools/smoke.mjs --browser --only=magma # only the groups named; --list names them
 node tools/smoke.mjs --quick    # everything but the render pass
 node tools/smoke.mjs --update   # re-record the golden baseline, deliberately
 node tools/hooks/install.mjs    # install the pre-push hook (once per clone)
@@ -235,6 +237,17 @@ node tools/hooks/install.mjs    # install the pre-push hook (once per clone)
 
 CI runs the two halves as two required jobs in parallel, so a regression in the half that
 matters comes back in well under a minute. The pre-push hook runs `--node` for the same reason.
+
+**Locally, do not run the whole browser half before every push.** It takes 25–30 minutes here in
+software rendering and ~17 on CI, and CI runs all of it on every push anyway. Run `--node`, then
+`--browser --affected` — which reads `git diff` against `origin/main`, prints which of the seven
+groups (`boot render build stream worker magma look`) each changed path can reach, and runs only
+those — or `--only=<groups>` for the one you are iterating on. Push, and let CI's browser job be
+the full gate; publishing already waits for it. Every browser run ends with how long each group
+took. The mapping is `tools/lib/affected.mjs`, and it is conservative: a path it has no rule for
+reaches every group. A page whose only change is its generated bundle is explained by the `src/`
+paths that moved it, so a change to `src/sim` runs `build stream worker` and not the look gate.
+Run the whole half locally only when a baseline is being re-recorded or CI has disagreed.
 
 The smoke test is the executable specification of what the prototype can do. **An issue that
 adds a player-facing verb must add an assertion covering it.** Internal systems only have to
