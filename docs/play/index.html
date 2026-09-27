@@ -67,13 +67,32 @@
   /* Where you are, always on (for bug reports): the seed, which kind of world
      it grew (a streamed world is a different world from the same seed), the
      ground under you and your world coordinates. Clicks pass through it. */
-  .where{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);font-family:var(--mono);
+  /* Between the bars in the bottom-left corner (12 + 190 px) and the frame
+     readout in the bottom-right one, never under either, and centred in the
+     view: the same margin both sides, the wider corner's. Cut with an
+     ellipsis rather than spilling into them. */
+  .where{position:absolute;left:214px;right:214px;bottom:10px;margin:0 auto;width:fit-content;
+         max-width:calc(100% - 428px);box-sizing:border-box;font-family:var(--mono);
          font-size:11px;letter-spacing:.04em;color:var(--muted);background:rgba(10,13,17,.62);
          border:1px solid var(--line);padding:3px 9px;pointer-events:none;white-space:nowrap;
+         overflow:hidden;text-overflow:ellipsis;
          font-variant-numeric:tabular-nums;z-index:2;display:none}
   .where b{color:var(--sand);font-weight:500}
   .where .bld{color:var(--dim)}
-  @media (max-width:560px){ .where{bottom:auto;top:60px;font-size:10px;max-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis} }
+  /* A phone, either way up: smaller, tighter, and the seed and build id
+     smaller again — they are for a bug report, not for reading at a glance. */
+  @media (max-width:900px),(pointer:coarse){
+    .where{font-size:9px;letter-spacing:0;padding:2px 5px;left:206px;right:206px;max-width:calc(100% - 412px)}
+    .where b,.where .bld{font-size:8px} }
+  /* With the touch buttons up the bottom-right corner is theirs, and the frame
+     readout that sat under Cut goes to the top right, below the toolbar. */
+  .stage.touch .fpsr{bottom:auto;top:44px}
+  @media (max-width:900px),(pointer:coarse){ .fpsr{font-size:9px;letter-spacing:0;padding:2px 5px} }
+  /* With the touch buttons up, the bottom-right corner is theirs out to Dodge
+     (122 + 62 px from the edge). */
+  .stage.touch .where{left:196px;right:196px;max-width:calc(100% - 392px)}
+  /* Too narrow to fit between them at all: above them, clear of the toolbar. */
+  @media (max-width:560px){ .where{bottom:auto;top:52px;left:8px;right:8px;max-width:calc(100% - 16px)} }
   .fpsr b{color:var(--sand);font-weight:500}
   .hud b{color:var(--text);font-weight:500}
   .hud .warn{color:var(--sand)}
@@ -9738,7 +9757,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     '  if(al>-0.6) return -1.0;',
     '  float pr=length(d-al*uCutF);',
     '  return 1.0-smoothstep(uCutR-1.0,uCutR,pr); }'].join('\n');
-  function skyHook(sh){
+  /* `cut`: the cutaway (#72) is for terrain only. What stands on it — trees,
+     rocks, ruins, the loot, the machines — is drawn whole: cutting a hole in
+     a tree beside the player showed the ground through the trunk. */
+  function skyHook(sh,cut){
     for(var k in SKY_U) sh.uniforms[k]=SKY_U[k];
     sh.vertexShader='varying vec3 vSkyW; varying vec3 vSkyN;\n'+sh.vertexShader.replace(
       '#include <begin_vertex>',
@@ -9747,7 +9769,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       +'  vSkyW=(modelMatrix*skyWP).xyz; vSkyN=normalize(mat3(modelMatrix)*objectNormal);');
     sh.fragmentShader='varying vec3 vSkyW; varying vec3 vSkyN;\n'+SKY_GLSL+'\n'+CUT_GLSL+'\n'+sh.fragmentShader
       .replace('#include <clipping_planes_fragment>',
-        '  if(qsCutAt(uCutA,vSkyW)>qsBayer(gl_FragCoord.xy)||qsCutAt(uCutB,vSkyW)>qsBayer(gl_FragCoord.xy)) discard;\n'
+        (cut?'  if(qsCutAt(uCutA,vSkyW)>qsBayer(gl_FragCoord.xy)||qsCutAt(uCutB,vSkyW)>qsBayer(gl_FragCoord.xy)) discard;\n':'')
         +'#include <clipping_planes_fragment>')
       .replace('#include <emissivemap_fragment>',
         '#include <emissivemap_fragment>\n'
@@ -10232,13 +10254,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         +'    float ph=dot(cl,vec2(1.7,2.3)), up=clamp((swp.y-1.0)*0.25,0.3,1.0);\n'
         +'    float s=sin(uSwayT*1.1+ph)*0.045+sin(uSwayT*3.3+ph*1.7)*0.012;\n'
         +'    transformed.xz+=uSwayW*(s*up); }');
-      skyHook(sh);
+      skyHook(sh,false);
     };
+    m.customProgramCacheKey=function(){ return 'sway'; };
     return m;
   }
-  function skyLambert(){
+  /* Three caches a program by its onBeforeCompile's source, which is the same
+     text either way here, so the key says which one this is. */
+  function skyLambert(cut){
     var m=new THREE.MeshLambertMaterial({vertexColors:true});
-    m.onBeforeCompile=skyHook; return m;
+    m.onBeforeCompile=function(sh){ skyHook(sh,!!cut); };
+    m.customProgramCacheKey=function(){ return cut?'sky-cut':'sky'; };
+    return m;
   }
   function meshMaterial(){
     var m=new THREE.MeshLambertMaterial({vertexColors:true});
@@ -10271,8 +10298,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
           +'  qsShade=mix(qsShade,0.86+0.18*fract(qsBand*0.618)+0.04*qsGrain(qsCell),qsRock);\n'
           +'  vec3 qsCol=texture2D(uPal,vec2((vGroup.x+qsPick+0.5)/uPalN,0.5)).rgb;\n'
           +'  diffuseColor.rgb*=qsCol*qsShade;');
-      skyHook(sh);
+      skyHook(sh,true);
     };
+    m.customProgramCacheKey=function(){ return 'terrain-cut'; };
     return m;
   }
 
@@ -10400,7 +10428,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       var src=[];
       for(var q=lo;q<hi;q++) if(keep(data.pos[q*3],data.pos[q*3+2])) src.push(q);
       if(!src.length) return null;
-      var im=new THREE.InstancedMesh(boxGeo,skyLambert(),src.length);
+      var im=new THREE.InstancedMesh(boxGeo,skyLambert(lo===0),src.length);
       for(var q2=0;q2<src.length;q2++){ var k2=src[q2];
         m4.makeTranslation(data.pos[k2*3],data.pos[k2*3+1],data.pos[k2*3+2]); im.setMatrixAt(q2,m4);
         col.setRGB(QS.palR(data.pal[k2],data.shd[k2]),QS.palG(data.pal[k2],data.shd[k2]),
@@ -12385,12 +12413,23 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       if(g){ var c=g.cell(Math.round(wx),Math.round(wz)); ground=QS.BIOMES[c.dom].nm; } }catch(e){}
     /* Coordinates straight after the seed: on a narrow screen the line is
        cut at its end, and these are what a bug report needs most. */
+    /* On a phone the line is short of room between the corners, and what it
+       drops is the mode and the biome — a screenshot shows the biome — so the
+       build id at its end is never the part cut off. */
+    var tight=stage.classList.contains('touch')||(stage.clientWidth||999)<900;
     var t='<b>'+escHtml(String(built.cfg.seed))+'</b> · x '+wx.toFixed(1)+'  y '+a.y.toFixed(2)+'  z '+wz.toFixed(1)
-      +' · '+(streaming?'streamed':'window')+(ground?' · '+ground:'')
+      +(tight?'':' · '+(streaming?'streamed':'window')+(ground?' · '+ground:''))
+      /* The world's time of day, for a screenshot of light or shadow that
+         looks wrong: 00:00 midnight, 12:00 noon. */
+      +' · '+dayClock()
       /* Last, and in every screenshot of the view: which code drew it. */
       +' · <span class="bld">'+escHtml(QS_LABEL)+'</span>';
     if(t!==whereText){ whereText=t; whereEl.innerHTML=t; }
     whereEl.style.display='block';
+  }
+  function dayClock(){
+    var m=Math.floor((((skyNow.phase%1)+1)%1)*1440), h=Math.floor(m/60); m-=h*60;
+    return (h<10?'0':'')+h+':'+(m<10?'0':'')+m;
   }
   function escHtml(v){ return v.replace(/[&<>"]/g,function(ch){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]; }); }
   function drawPeer(){
@@ -13844,13 +13883,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     setSilhouettes:function(on){ if(built) built.scene.traverse(function(o){ if(o.userData.kind==='silhouette') o.visible=!!on; }); return !!on; },
     /* A wall of the world's own prop material stood between the camera and
        the player, for the gate to hide them behind; false takes it away. */
+    /* A wall between the camera and the player: terrain unless asked for a
+       prop, which the cutaway must leave whole. */
     testWall:function(on){
-      if(testWallM){ built.scene.remove(testWallM); testWallM.geometry.dispose(); testWallM=null; worldChanged(); }
+      if(testWallM){ built.scene.remove(testWallM); testWallM.geometry.dispose();
+        if(testWallM.userData.own) testWallM.material.dispose(); testWallM=null; worldChanged(); }
       if(!on||!built) return null;
-      var a=player(); camera.getWorldDirection(cutF);
-      testWallM=new THREE.Mesh(new THREE.BoxGeometry(4,5,4),built.mats.prop);
+      var a=player(), prop=on==='prop'; camera.getWorldDirection(cutF);
+      testWallM=new THREE.Mesh(new THREE.BoxGeometry(4,5,4),prop?built.mats.prop:skyLambert(true));
       testWallM.position.set(a.x-cutF.x*4.5,a.y+1-cutF.y*4.5,a.z-cutF.z*4.5);
-      testWallM.userData.kind='terrain'; testWallM.castShadow=true; testWallM.receiveShadow=true;
+      testWallM.userData.kind=prop?'props':'terrain'; testWallM.userData.own=!prop;
+      testWallM.castShadow=true; testWallM.receiveShadow=true;
       built.scene.add(testWallM); worldChanged();
       return testWallM.position.toArray();
     },

@@ -919,7 +919,14 @@ if (BROWSER_HALF) {
           const P = window.QSPLAY; P.frameOnce();
           const el = document.getElementById('where'), a = P.actor, r = el.getBoundingClientRect();
           const c = document.querySelector('#cv').getBoundingClientRect();
-          return { text: P.where, shown: getComputedStyle(el).display !== 'none', seed: P.seed,
+          /* Every other overlay on screen, and whether the bar is over any. */
+          const hit = [];
+          for (const id of ['vitals', 'peervitals', 'fpsr', 'hud', 'tools', 'tAtk', 'tDod', 'tJmp']) {
+            const o = document.getElementById(id); if (!o || getComputedStyle(o).display === 'none') continue;
+            const q = o.getBoundingClientRect(); if (!q.width || !q.height) continue;
+            if (r.left < q.right && q.left < r.right && r.top < q.bottom && q.top < r.bottom) hit.push(id);
+          }
+          return { text: P.where, shown: getComputedStyle(el).display !== 'none', seed: P.seed, hit,
                    x: a.x, z: a.z, mid: Math.abs((r.left + r.right) / 2 - (c.left + c.right) / 2), low: c.bottom - r.bottom };
         });
         const wm = /x (-?[\d.]+)\s+y (-?[\d.]+)\s+z (-?[\d.]+)/.exec(where.text || '');
@@ -928,6 +935,9 @@ if (BROWSER_HALF) {
               && where.mid < 2 && where.low >= 0 && where.low < 30,
               'BUILD: the seed and where the player stands are shown at the middle bottom of the view',
               `"${where.text}", ${where.mid.toFixed(0)} px off centre, ${where.low.toFixed(0)} px above the bottom`);
+        check(where.shown && / · \d\d:\d\d · /.test(where.text) && where.hit.length === 0,
+              'BUILD: and the time of day, over none of the other overlays',
+              `"${(/ · (\d\d:\d\d) · /.exec(where.text) || [])[1] || 'no time'}"; ${where.hit.length ? 'over ' + where.hit.join(', ') : 'clear of every other overlay'}`);
         const hero = await bp.evaluate(() => window.QSPLAY.heroModel);
         check(hero.loaded && hero.authored === hero.parts, 'BUILD: the hero is the hand-authored .vox model, not boxes',
               `${hero.authored} of ${hero.parts} parts authored, ${hero.verts} vertices`);
@@ -2272,11 +2282,14 @@ if (BROWSER_HALF) {
           /* The fraction of pixels a change turns over by more than a shade. */
           const changed = (u, v) => { let c = 0, n = 0; for (let i = 0; i < u.px.length; i += 4) { n++;
             if (Math.abs(u.px[i] - v.px[i]) + Math.abs(u.px[i + 1] - v.px[i + 1]) + Math.abs(u.px[i + 2] - v.px[i + 2]) > 30) c++; } return c / n; };
-          const open = sample(false, true, true), cut = sample(true, true, true);
+          const open = sample(false, true, true), cut = sample(true, true, true), prop = sample('prop', true, true);
           const sil = sample(true, false, true), none = sample(true, false, false);
           P.testWall(false); P.setCut(true); P.setSilhouettes(true); P.frameOnce();
           let sils = 0; P.scene.traverse((o) => { if (o.userData.kind === 'silhouette') sils++; });
-          return { open: { mean: open.mean }, cut: { mean: cut.mean }, silShown: changed(sil, none),
+          /* A wall uncut, for scale: terrain with the cut off and no silhouette. */
+          const whole = sample(true, false, false);
+          return { open: { mean: open.mean }, cut: { mean: cut.mean }, prop: changed(prop, open), whole: changed(whole, open),
+                   propVsWhole: changed(prop, whole), silShown: changed(sil, none),
                    cutShown: changed(cut, sample(true, true, false)), sils };
         });
         {
@@ -2290,6 +2303,11 @@ if (BROWSER_HALF) {
                 'VISIBILITY: a wall in front of the player is cut away, and without the cut a silhouette shows through (#72)',
                 `cut region within ${d(vis.cut, vis.open).toFixed(1)} of no wall; the silhouette turns over ${(100 * vis.silShown).toFixed(1)}% `
                 + `of the region behind the wall and ${(100 * vis.cutShown).toFixed(1)}% with the cut open; ${vis.sils} silhouette meshes`);
+          /* The cut is for terrain only: the same wall made of what stands on
+             the ground — a tree, a rock, a ruin — is drawn whole. */
+          check(vis.whole > 0.2 && vis.prop > vis.whole * 0.8,
+                'VISIBILITY: and only terrain is cut: the same wall as a prop stays whole',
+                `a prop wall changes ${(100 * vis.prop).toFixed(0)}% of the region, as an uncut terrain wall changes ${(100 * vis.whole).toFixed(0)}%`);
         }
 
         /* ---------- BUILD ID: which code a screenshot came from ----------
