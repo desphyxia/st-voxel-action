@@ -59,6 +59,8 @@ export function buildGrass(w) {
     var n0b=i>0?Hs[k-NZ]:Hs[k], n1b=j>0?Hs[k-1]:Hs[k];
     if(Hs[k]-Math.min(n0b,n1b)>0.6) continue;
     var cq=cellAt(x,z), dsum=0,hbase=0,hvar=0,cr=0,cg=0,cb=0,dr=0,dg=0,db=0;
+    /* Nothing grows through ice (#76). */
+    if(cq.rime===1||cq.rime===3) continue;
     for(var q2=0;q2<cq.w.length;q2++){var B2=BIOMES[q2],w2b=cq.w[q2];
       dsum+=w2b*B2.gr.d; hbase+=w2b*B2.gr.h[0]; hvar+=w2b*B2.gr.h[1];
       cr+=w2b*shadeR(B2.gr.c,1); cg+=w2b*shadeG(B2.gr.c,1); cb+=w2b*shadeB(B2.gr.c,1);

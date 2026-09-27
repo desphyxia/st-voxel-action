@@ -40,8 +40,10 @@ export function cutSpans(w) {
     for(d0=0;d0<4;d0++){
       var ch=groundCellAt(w,wx+DIRS4[d0][0],wz+DIRS4[d0][1]);
       /* Not from a feature's face (#76): a mesa top or a column hung out over
-         its foot is a wider top, or a ledge where the gap was meant to be. */
-      if(ch.H-cl.H<2||ch.water||ch.hold||S()>0.17) continue;
+         its foot is a wider top, or a ledge where the gap was meant to be.
+         Nor from a glacier's skirt or over a crevasse: a rim hung from the
+         skirt is a shelf across the crevasse's end. */
+      if(ch.H-cl.H<2||ch.water||ch.hold||ch.rime||S()>0.17) continue;
       var out=1+((S()*2)|0), th=(S()<0.5?1:0.75), o;
       for(o=0;o<=out;o++){
         var ti=i-DIRS4[d0][0]*o, tj=j-DIRS4[d0][1]*o;

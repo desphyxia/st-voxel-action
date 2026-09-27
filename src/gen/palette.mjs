@@ -131,6 +131,9 @@ const GROUPS = {
   HERO_IRON:    [0x6b6660],
   HERO_STEEL:   [0xa9b0b6],
   HERO_MARK:    [0xd9a25e],
+
+  /* ---- the rime's ice sheets and crevasse walls (#76), last for the same reason ---- */
+  RIME_ICE:     [0x9cc3d6, 0xb3d3e2, 0x86b0c6, 0xc4dde8],
 };
 
 /** The flat table the renderer indexes. */

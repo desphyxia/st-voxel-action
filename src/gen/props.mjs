@@ -364,7 +364,8 @@ export function placeClutter(w, kit) {
       var di=DIRS4[dd][0], dj=DIRS4[dd][1];
       var c1=groundCellAt(w,wx0+di,wz0+dj);
       if(c0.H-c1.H<2) continue;
-      if(c0.hold||c0.mesa) break;
+      /* Nor into a crevasse (#76): a pile at its end wall is a way over it. */
+      if(c0.hold||c0.mesa||c0.rime||c1.rime) break;
       if(RS()<0.32) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((RS()*4)|0),RS);
       break;
     }

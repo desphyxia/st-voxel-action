@@ -516,19 +516,141 @@ export function makeGen(seedStr,force){
       }
     return null;
   }
+  /* Crevasse fields (#76, Rimewaste): a glacier — a level sheet of ice at
+     least six metres up, its skirt falling a metre a metre to the land round
+     it — cut clean across by two or three crevasses seven metres wide and
+     four deep: wider than a double jump clears, higher than one climbs (it
+     rises 2.4 m). Each is crossed by one snow bridge two metres wide at the
+     sheet's level. A body that steps or jumps in lives, and is not lost: at
+     each end a stair of 1 m steps climbs out onto the side it fell from and
+     never the far one, so the floor is a way back and not a way over. Both
+     ends, because the bridge stands on the floor and walls it in two. One
+     that double jumps at a crevasse and falls short falls 6.4 m from the top
+     of its arc, which kills: a crevasse is crossed at its bridge.
+
+     The rime is low, flat ground — three to five metres, mostly — and a
+     crevasse four deep in it would mostly have no floor. So the sheet stands on it
+     rather than being cut into it.
+
+     Placed like the others: a jittered spot per 56 m square where the rime
+     is more than half the climate, refused near a river, a gorge or another
+     feature. A field is up to 57 m long, longer than its square, so where
+     two would overlap the one with the higher draw keeps its place. */
+  var RIM_GRID=56, RIM_APRON=4, RIM_REACH=40, RIM_W=7, RIM_D=4, RIM_RAW=new Map(), RIM_SITES=new Map();
+  function rimeRaw(gx,gz){
+    var k=gx*131071+gz, s=RIM_RAW.get(k);
+    if(s!==undefined) return s;
+    s=null;
+    if(prand(gx,gz,0x8e10)<0.8) for(var t=0;t<4&&!s;t++) s=rimeTry(gx,gz,0x8e11+t*16);
+    if(s) s.pr=prand(gx,gz,0x8e0f);
+    RIM_RAW.set(k,s);
+    return s;
+  }
+  function rimeSite(gx,gz){
+    var k=gx*131071+gz, s=RIM_SITES.get(k);
+    if(s!==undefined) return s;
+    s=rimeRaw(gx,gz);
+    for(var a=-1;a<=1&&s;a++) for(var b=-1;b<=1&&s;b++){
+      if(!a&&!b) continue;
+      var o=rimeRaw(gx+a,gz+b);
+      if(o&&o.pr>s.pr&&o.x0<=s.x1&&s.x0<=o.x1&&o.z0<=s.z1&&s.z0<=o.z1) s=null;
+    }
+    RIM_SITES.set(k,s);
+    return s;
+  }
+  /* A site's own frame: along the sheet, where the crevasses follow one
+     another, and across it, the way each one runs. */
+  function rimeFrame(s,x,z){ var dx=x-s.cx, dz=z-s.cz; return s.ax?[dx,dz]:[dz,dx]; }
+  function rimeWorld(s,al,ac){ return s.ax?[s.cx+al,s.cz+ac]:[s.cx+ac,s.cz+al]; }
+  function rimeTry(gx,gz,salt){
+    var cx=gx*RIM_GRID+14+Math.floor(prand(gx,gz,salt)*28),
+        cz=gz*RIM_GRID+14+Math.floor(prand(gx,gz,salt+1)*28);
+    if(climate(cx,cz)[BIO.RIME]<=0.5) return null;
+    var n=2+Math.floor(prand(gx,gz,salt+2)*2), band=4+Math.floor(prand(gx,gz,salt+3)*3),
+        len=n*RIM_W+(n+1)*band, lh=Math.floor(len/2);
+    var s={cx:cx,cz:cz,ax:prand(gx,gz,salt+4)<0.5,n:n,band:band,lo:-lh,hi:len-lh-1,
+           wd:6+Math.floor(prand(gx,gz,salt+5)*5),cr:[],br:[]};
+    var hi=-1e9, lo=1e9, al, ac, p, h;
+    for(al=s.lo-RIM_APRON;al<=s.hi+RIM_APRON;al++) for(ac=-s.wd-RIM_APRON;ac<=s.wd+RIM_APRON;ac++){
+      p=rimeWorld(s,al,ac);
+      if(mesaWet(p[0],p[1])||mesaAt(p[0],p[1])||basaltAt(p[0],p[1])||cliffAt(p[0],p[1])||thornAt(p[0],p[1])) return null;
+      h=rawH(p[0],p[1]); if(h<lo) lo=h;
+      if(al>=s.lo&&al<=s.hi&&Math.abs(ac)<=s.wd&&h>hi) hi=h;
+    }
+    /* Level with the highest ground under it, and never under five metres; its
+       skirt has to reach the land within the apron. */
+    s.S=Math.max(Math.round(hi),RIM_D+1);
+    if(s.S+1>CEIL||s.S-Math.round(lo)>RIM_APRON) return null;
+    /* Crevasse k starts `band` metres past the one before; its bridge crosses
+       anywhere clear of the stairs at its ends. */
+    for(var k=0;k<n;k++){
+      s.cr.push(s.lo+band+k*(RIM_W+band));
+      s.br.push(-s.wd+3+Math.floor(prand(gx,gz,salt+10+k)*(2*s.wd-6)));
+    }
+    var c0=rimeWorld(s,s.lo-RIM_APRON-1,-s.wd-RIM_APRON-1), c1=rimeWorld(s,s.hi+RIM_APRON+1,s.wd+RIM_APRON+1);
+    s.x0=Math.min(c0[0],c1[0]); s.x1=Math.max(c0[0],c1[0]); s.z0=Math.min(c0[1],c1[1]); s.z1=Math.max(c0[1],c1[1]);
+    return s;
+  }
+  /* The sheet (1), a crevasse's floor (2), a bridge (3), a stair (4), the
+     skirt round it where nothing grows (5), whose height is a floor under
+     the ground rather than the ground itself. */
+  function rimeAt(x,z){
+    var skirt=null;
+    for(var gx=Math.floor((x-RIM_REACH)/RIM_GRID);gx<=Math.floor((x+RIM_REACH)/RIM_GRID);gx++)
+      for(var gz=Math.floor((z-RIM_REACH)/RIM_GRID);gz<=Math.floor((z+RIM_REACH)/RIM_GRID);gz++){
+        var s=rimeSite(gx,gz); if(!s) continue;
+        var f=rimeFrame(s,x,z), al=f[0], ac=f[1];
+        if(al<s.lo-RIM_APRON||al>s.hi+RIM_APRON||Math.abs(ac)>s.wd+RIM_APRON) continue;
+        if(al<s.lo||al>s.hi||Math.abs(ac)>s.wd){
+          var d=Math.max(s.lo-al,al-s.hi,Math.abs(ac)-s.wd,0);
+          skirt={kind:5,h:s.S-d}; continue;
+        }
+        for(var k=0;k<s.n;k++){
+          var o=al-s.cr[k];
+          if(o<0||o>=RIM_W) continue;
+          if(ac>=s.br[k]&&ac<=s.br[k]+1) return {kind:3,h:s.S};
+          /* A stair: against the near wall, two wide, a metre a step, its
+             top one under the sheet — a step out onto the near side, and
+             five metres of air from the far one. */
+          if(o<2&&Math.abs(ac)>=s.wd-2) return {kind:4,h:s.S-RIM_D+1+(Math.abs(ac)-(s.wd-2))};
+          return {kind:2,h:s.S-RIM_D};
+        }
+        return {kind:1,h:s.S};
+      }
+    return skirt;
+  }
+  function rimeIn(x0,z0,x1,z1){
+    var n=0;
+    for(var gx=Math.floor(x0/RIM_GRID);gx<=Math.floor(x1/RIM_GRID);gx++)
+      for(var gz=Math.floor(z0/RIM_GRID);gz<=Math.floor(z1/RIM_GRID);gz++){
+        var c=rimeSite(gx,gz); if(c&&c.cx>=x0&&c.cx<x1&&c.cz>=z0&&c.cz<z1) n++;
+      }
+    return n;
+  }
+  function rimeOver(x,z){
+    for(var gx=Math.floor((x-RIM_REACH)/RIM_GRID);gx<=Math.floor((x+RIM_REACH)/RIM_GRID);gx++)
+      for(var gz=Math.floor((z-RIM_REACH)/RIM_GRID);gz<=Math.floor((z+RIM_REACH)/RIM_GRID);gz++){
+        var s=rimeSite(gx,gz); if(!s) continue;
+        var f=rimeFrame(s,x,z);
+        if(f[0]>=s.lo-RIM_APRON&&f[0]<=s.hi+RIM_APRON&&Math.abs(f[1])<=s.wd+RIM_APRON) return s;
+      }
+    return null;
+  }
   /* one 1 m cell: everything sized in whole metres */
   function cell(x,z){
     var w=climate(x,z);
     var hm=macro(x,z,w), H=Math.round(hm);
     var cw=wsum(w,'canyon'), colw=wsum(w,'col');
-    var c=null, ms=mesaAt(x,z), bs=ms?null:basaltAt(x,z), cs=(ms||bs)?null:cliffAt(x,z), ts=(ms||bs||cs)?null:thornAt(x,z);
-    if(cw>0.28&&!ms&&!bs&&!cs&&!ts){ c=canyonAt(x,z);
+    var c=null, ms=mesaAt(x,z), bs=ms?null:basaltAt(x,z), cs=(ms||bs)?null:cliffAt(x,z), ts=(ms||bs||cs)?null:thornAt(x,z),
+        rs=(ms||bs||cs||ts)?null:rimeAt(x,z), ft=!!(ms||bs||cs||ts||rs);
+    if(cw>0.28&&!ft){ c=canyonAt(x,z);
       c.body=c.d<c.w/2&&canyonBody(x,z);
       if(c.body){ var taper=clamp((cw-0.28)/0.25,0,1); H-=Math.round(c.dp*taper*(1-c.br)); }
     }
-    if(!ms&&!bs&&!cs&&!ts) H+=pillarAt(x,z,colw);
+    if(!ft) H+=pillarAt(x,z,colw);
     else if(ms&&ms.h!==null) H=ms.h;
     else if(cs&&cs.h!==null) H=cs.kind===1?Math.max(H,cs.h):cs.h;
+    else if(rs) H=rs.kind===5?Math.max(H,rs.h):rs.h;
     var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
     var rl=null;
     /* The smooth level, but never above the ground the river runs through: a
@@ -536,7 +658,7 @@ export function makeGen(seedStr,force){
        the banks then pulled down and the bed was carved below the world to
        keep. Where the land is lower, the surface sits a quarter under it. */
     if(r.d<rw/2||riverCorner(x,z,rw)){ rl=Math.min(riverLevel(x,z,w),H-0.25); H=Math.min(H-1,Math.floor(rl-0.75+1e-9)); water=true; }
-    if(!water&&!(ms&&ms.h!==null)&&!bs&&!(cs&&cs.h!==null)&&!ts&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
+    if(!water&&!(ms&&ms.h!==null)&&!bs&&!(cs&&cs.h!==null)&&!ts&&!rs&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
@@ -555,12 +677,12 @@ export function makeGen(seedStr,force){
     H=clamp(H,0,CEIL);
     if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,
+    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,rime:rs?rs.kind:0,
       /* block: a route may not cross it — the thicket and its log's lane */
       block:!!(ts&&(ts.kind===2||ts.kind===3)),
       /* hold: a face the later passes keep as it is; bare: nothing grows here */
-      hold:!!(ms&&ms.kind<=2)||!!(bs&&bs.kind===1)||!!(cs&&(cs.kind===2||cs.kind===3)),
-      bare:!!(ms&&ms.kind>=2)||!!bs||!!(cs&&cs.kind>=2)||!!ts};
+      hold:!!(ms&&ms.kind<=2)||!!(bs&&bs.kind===1)||!!(cs&&(cs.kind===2||cs.kind===3))||!!(rs&&rs.kind<=4),
+      bare:!!(ms&&ms.kind>=2)||!!bs||!!(cs&&cs.kind>=2)||!!ts||!!rs};
   }
   function rawH(x,z){ return macro(x,z,climate(x,z)); }
   /* a column is a run of solid spans, not one height: this is what lets a
@@ -622,7 +744,7 @@ export function makeGen(seedStr,force){
       if(CELLS.size>=CELL_CAP) CELLS.clear();
       c=cell(x,z); CELLS.set(k,c);
     }
-    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,block:c.block,hold:c.hold,bare:c.bare};
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,rime:c.rime,block:c.block,hold:c.hold,bare:c.bare};
   }
   /* A world keeps its generator (w.G) for as long as it lives, and a streamed
      field holds sixteen of them — so the cache is let go when generation ends,
@@ -649,7 +771,7 @@ export function makeGen(seedStr,force){
       }
     return n;
   }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,thornOver:thornOver,thornIn:thornIn,cliffFrame:cliffFrame,
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,thornOver:thornOver,thornIn:thornIn,rimeOver:rimeOver,rimeIn:rimeIn,rimeFrame:rimeFrame,cliffFrame:cliffFrame,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 

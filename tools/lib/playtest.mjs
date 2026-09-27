@@ -3858,3 +3858,169 @@ export function thornSuite() {
   say('and round the golden thorn window too', gn >= 2, `${gn} thickets within 128 m of ${gt.seed}'s window`);
   return out;
 }
+
+/* Seeds with rime enough for crevasse fields in 600 m. */
+const RIME_SEEDS = ['QUARTERSTONE', 'ICEBOUND', 'COLDHARBOUR'];
+
+/**
+ * Crevasse fields (#76, Rimewaste): a glacier cut across by crevasses, each
+ * crossed by one snow bridge, with a stair out of it onto the side a body
+ * fell from.
+ *
+ * Over the cell field of each field's sheet, the floods of the mesa suite —
+ * up a double jump, down a fall, over one lower cell — from the first band of
+ * ice: with the bridges every band is reached; without them none past the
+ * first, the floors and stairs included. From every floor cell the ice is
+ * reached again. Then, on built windows and against the collider: a body
+ * walks bridge to bridge from one end to the other; double jumps at every
+ * crevasse from its near lip land nobody on the far side; and a body dropped
+ * on a floor either side of the bridge climbs a stair out.
+ */
+export function rimeSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const W = 7, D = 4;
+  const sites = [];
+  for (const seed of RIME_SEEDS) {
+    const G = makeGen(seed, null), seen = new Set();
+    for (let x = -300; x <= 300 && sites.filter((q) => q[0] === seed).length < 2; x += 4) for (let z = -300; z <= 300; z += 4) {
+      const s = G.rimeOver(x, z); if (!s || seen.has(s)) continue;
+      seen.add(s); sites.push([seed, s, G]); if (sites.filter((q) => q[0] === seed).length >= 2) break;
+    }
+  }
+  /* Which band of ice (0..n) an along-coordinate is on, or -1 in a crevasse. */
+  const bandOf = (s, al) => {
+    for (let k = 0; k < s.n; k++) { if (al < s.cr[k]) return k; if (al < s.cr[k] + W) return -1; }
+    return s.n;
+  };
+  const flat = [], cheats = [], traps = [];
+  for (const [seed, s, G] of sites) {
+    /* The sheet in its own frame: along a, across c. */
+    const A = s.hi - s.lo + 1, C = 2 * s.wd + 1, N = A * C;
+    const Hc = new Float32Array(N), kind = new Uint8Array(N);
+    for (let a = 0; a < A; a++) for (let c = 0; c < C; c++) {
+      const al = s.lo + a, ac = c - s.wd;
+      const [x, z] = s.ax ? [s.cx + al, s.cz + ac] : [s.cx + ac, s.cz + al];
+      const cl = G.cell(x, z); Hc[a * C + c] = cl.H; kind[a * C + c] = cl.rime;
+    }
+    const flood = (seeds, bridges, back) => {
+      const Hh = (k) => (!bridges && kind[k] === 3 ? s.S - D : Hc[k]);
+      const seen = new Uint8Array(N), q = [];
+      for (const k of seeds) { seen[k] = 1; q.push(k); }
+      for (let h = 0; h < q.length; h++) {
+        const k = q[h], a = (k / C) | 0, c = k % C;
+        for (const [da, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const a1 = a + da, c1 = c + dc; if (a1 < 0 || c1 < 0 || a1 >= A || c1 >= C) continue;
+          const p = a1 * C + c1;
+          if (!seen[p]) {
+            const dh = back ? Hh(k) - Hh(p) : Hh(p) - Hh(k);
+            if (dh <= MOVE.climb2 && dh >= -MOVE.fall) { seen[p] = 1; q.push(p); }
+          }
+          const a2 = a + 2 * da, c2 = c + 2 * dc; if (a2 < 0 || c2 < 0 || a2 >= A || c2 >= C) continue;
+          const p2 = a2 * C + c2; if (seen[p2]) continue;
+          if (Hh(p) <= Hh(k) - 1 && Math.abs(Hh(p2) - Hh(k)) <= MOVE.slope) { seen[p2] = 1; q.push(p2); }
+        }
+      }
+      return seen;
+    };
+    const band0 = [], ice = [];
+    for (let k = 0; k < N; k++) if (kind[k] === 1) { ice.push(k); if (bandOf(s, s.lo + ((k / C) | 0)) === 0) band0.push(k); }
+    const bands = (seen) => { const b = new Set(); for (const k of ice) if (seen[k]) b.add(bandOf(s, s.lo + ((k / C) | 0))); return b.size; };
+    const withB = bands(flood(band0, true, false)), without = bands(flood(band0, false, false));
+    if (withB !== s.n + 1) flat.push(`${seed} ${s.cx},${s.cz}: ${withB}/${s.n + 1} bands`);
+    if (without !== 1) cheats.push(`${seed} ${s.cx},${s.cz}: ${without} bands without bridges`);
+    /* From every floor and stair cell, some ice is reached: flooded back
+       from the ice, every one of them is in it. With the bridges standing —
+       one walls a floor in two, and each half needs its own way out. */
+    const home = flood(ice, true, true);
+    let lost = 0; for (let k = 0; k < N; k++) if ((kind[k] === 2 || kind[k] === 4) && !home[k]) lost++;
+    if (lost) traps.push(`${seed} ${s.cx},${s.cz}: ${lost} floor cells with no way out`);
+  }
+  say('crevasse fields stand in the rime', sites.length >= 5, `${sites.length} fields over ${RIME_SEEDS.length} seeds`);
+  say('and over the bridges every band of ice is reached from the first', flat.length === 0,
+      flat.length ? flat.join('; ') : `${sites.length} fields, every band reached`);
+  say('and without them none past the first, down in the crevasses or not', cheats.length === 0,
+      cheats.length ? cheats.join('; ') : `${sites.length} fields, one band each without bridges`);
+  say('and a body in a crevasse always has a way out', traps.length === 0,
+      traps.length ? traps.join('; ') : 'every floor and stair cell climbs back to the ice');
+
+  /* On built windows, against the collider. */
+  const walked = [], leapt = [], stuck = [], standing = [];
+  let leaps = 0, climbs = 0;
+  for (const [seed, s] of sites.slice(0, 4)) {
+    const w = buildWorld({ seed, size: 96, ox: s.cx, oz: s.cz }), col = colliderForWorld(w);
+    /* The window's own coordinates of a point in the site's frame. */
+    const at = (al, ac) => (s.ax ? [al, ac] : [ac, al]);
+    const fr = (b) => (s.ax ? [b.x, b.z] : [b.z, b.x]);
+    const steerTo = (b, al, ac, limit) => {
+      for (let t = 0; t < limit && !b.dead; t++) {
+        const [a, c] = fr(b), da = al - a, dc = ac - c, d = hyp(da, dc);
+        if (d < 0.3) return true;
+        const [mx, mz] = at(da / d, dc / d);
+        step(col, b, { mx, mz, jump: b.grounded && b.blocked });
+      }
+      return false;
+    };
+    /* Nothing stands in a crevasse: over its floor, clear of the stairs and
+       the bridge, the collider's ground is the floor, snow and all. A pile
+       of scree or a rim hung from the skirt is a way across or out. */
+    for (let k = 0; k < s.n; k++) for (let o = 0.125; o < W; o += 0.25) for (let ac = -s.wd + 0.125; ac < s.wd + 1; ac += 0.25) {
+      const cell = Math.round(ac);
+      if (Math.abs(cell) > s.wd || (o < 2 && Math.abs(cell) >= s.wd - 2) || (cell >= s.br[k] - 1 && cell <= s.br[k] + 2)) continue;
+      const [x, z] = at(s.cr[k] - 0.5 + o, ac), top = col.supportUnder(x, z, 0.01, CEIL * 2);
+      if (top > s.S - D + 0.5) { standing.push(`${seed} ${s.cx},${s.cz} crevasse ${k} at ${o.toFixed(2)},${ac.toFixed(2)}: ${top.toFixed(2)}`); break; }
+    }
+    /* Bridge to bridge, from the first band's middle to the last's. */
+    const p0 = at(s.lo + 2, s.br[0] + 1), body = placeOnGround(col, p0[0], p0[1]);
+    let ok = true;
+    for (let k = 0; k < s.n && ok; k++) {
+      const mid = s.br[k] + 1;
+      ok = steerTo(body, s.cr[k] - 2, mid, 900) && steerTo(body, s.cr[k] + W + 1.5, mid, 900);
+    }
+    if (!ok || body.y < s.S - 0.5) walked.push(`${seed} ${s.cx},${s.cz} stopped at ${fr(body).map((v) => v.toFixed(1))} y ${body.y.toFixed(2)}`);
+    /* A double jump at every crevasse from its near lip, a run-up of three
+       metres, at three places across it clear of the bridge and the stair. */
+    for (let k = 0; k < s.n; k++) for (const ac of [-s.wd + 1.5, 0.5, s.wd - 3.5]) {
+      if (ac >= s.br[k] - 1 && ac <= s.br[k] + 3) continue;
+      leaps++;
+      const q = at(s.cr[k] - 3.5, ac), b = placeOnGround(col, q[0], q[1]);
+      const dir = at(1, 0);
+      for (let t = 0; t < 150 && !b.dead; t++) {
+        const j = (b.grounded && t > 2) || (!b.grounded && b.airJumps > 0 && b.vy <= 0);
+        step(col, b, { mx: dir[0], mz: dir[1], jump: j });
+      }
+      const [a] = fr(b);
+      if (a >= s.cr[k] + W && b.y > s.S - 1) leapt.push(`${seed} ${s.cx},${s.cz} crevasse ${k} at ${ac}: landed ${a.toFixed(1)},${b.y.toFixed(2)}`);
+    }
+    /* Dropped on a floor either side of the bridge, clear of the stairs:
+       out by the stair at that end, onto the near band. */
+    for (let k = 0; k < s.n; k++) for (const e of [-1, 1]) {
+      const f = at(s.cr[k] + 4, e > 0 ? s.wd - 4 : -s.wd + 4), b = placeOnGround(col, f[0], f[1]);
+      const reach = steerTo(b, s.cr[k] + 3.5, e * (s.wd - 2.5), 600) && steerTo(b, s.cr[k] + 0.5, e * (s.wd - 2.5), 600);
+      /* Up the stair toward the end wall, jumping at each step; from its top a
+         jump back onto the ice beside it. */
+      const dirE = at(0, e), dirN = at(-1, 0);
+      let t = 0;
+      for (; t < 240 && !b.dead && e * fr(b)[1] < s.wd - 0.4; t++) step(col, b, { mx: dirE[0], mz: dirE[1], jump: b.grounded && b.blocked });
+      for (t = 0; t < 200 && !b.dead && !(b.grounded && fr(b)[0] < s.cr[k] - 0.5); t++) {
+        const j = (b.grounded && t > 2) || (!b.grounded && b.airJumps > 0 && b.vy <= 0);
+        step(col, b, { mx: dirN[0], mz: dirN[1], jump: j });
+      }
+      climbs++;
+      if (!reach || b.y < s.S - 0.5 || bandOf(s, Math.floor(fr(b)[0])) !== k)
+        stuck.push(`${seed} ${s.cx},${s.cz} crevasse ${k} end ${e}: ended at ${fr(b).map((v) => v.toFixed(1))} y ${b.y.toFixed(2)} against ice at ${s.S}`);
+    }
+  }
+  say('nothing stands in a crevasse on a built window: its floor is the floor', standing.length === 0,
+      standing.length ? standing.slice(0, 6).join('; ') : `${Math.min(4, sites.length)} fields, every crevasse clear`);
+  say('a body walks the bridges from one end of a field to the other', walked.length === 0,
+      walked.length ? walked.join('; ') : `${Math.min(4, sites.length)} fields crossed`);
+  say('and no double jump clears a crevasse', leapt.length === 0,
+      leapt.length ? leapt.slice(0, 6).join('; ') : `${leaps} double jumps from the near lip, none landed across`);
+  say('and a body dropped in one climbs a stair out, onto the side it fell from', stuck.length === 0,
+      stuck.length ? stuck.slice(0, 6).join('; ') : `${climbs} of ${climbs} climbed out`);
+  const gr = GOLDEN_SEEDS.find((g) => g.nm === 'rime'), gg = makeGen(gr.seed, gr.force);
+  const gn = gg.rimeIn(gr.ox - 128, gr.oz - 128, gr.ox + 128, gr.oz + 128);
+  say('and round the golden rime window too', gn >= 2, `${gn} fields within 128 m of ${gr.seed}'s window`);
+  return out;
+}

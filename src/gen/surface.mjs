@@ -182,13 +182,16 @@ export function buildVoxels(w) {
         else if((FLG[k]&8)&&(b===BIOMES[BIO.MESA]||b===BIOMES[BIO.RIME])){ topc=pickPal(b.soil,R); topm=MAT.PATH; }
         else { topc=pickPal(PAL.TRODDEN,R); topm=MAT.PATH; }
       }
+      /* Ice (#76): a crevasse field's sheet and bridges are bare ice, and so
+         is every wall it is cut with — the floor keeps the snow. */
+      else if(c.rime===1||c.rime===3){ topc=pickPal(PAL.RIME_ICE,R); topm=MAT.ICE; }
       else if(slope>0.9){ topc=pickPal(b.rock,R); topm=b.mat.rock; }
       else { topc=pickPal(b.surf,R); topm=b.mat.surf; }
       var topk=0.9+R()*0.2;
       TOPI[k]=pos.length/3;
       emit(x,hh-V/2,z,topc,topk,topm);
       /* accumulation: snow and ash settle on whatever faces up */
-      if(!(FLG[k]&1)&&!(FLG[k]&4)){
+      if(!(FLG[k]&1)&&!(FLG[k]&4)&&c.rime!==1&&c.rime!==3){
         var acc=(c.w[BIO.RIME]*0.95+c.w[BIO.ASH]*0.5)*(1-clamp(slope/1.1,0,1));
         if(acc>0.40){
           var snowy=c.w[BIO.RIME]>=c.w[BIO.ASH];
@@ -199,10 +202,11 @@ export function buildVoxels(w) {
       var bottom=Math.max(BOT[k],mn);
       for(y=hh-1.5*V;y>bottom-0.001;y-=V){
         var deep=(y<hh-1.25);
-        var sc=deep?pickPal(b.rock,R):pickPal(b.soil,R);
+        var ice=c.rime>=1&&c.rime<=4;
+        var sc=ice?pickPal(PAL.RIME_ICE,R):deep?pickPal(b.rock,R):pickPal(b.soil,R);
         var band=Math.floor(y/0.75)%2;
         var sk=(band?0.94:1.06)*(0.88+R()*0.2);
-        emit(x,y,z,sc,sk,deep?b.mat.rock:b.mat.soil);
+        emit(x,y,z,sc,sk,ice?MAT.ICE:deep?b.mat.rock:b.mat.soil);
       }
       /* the underside of an undercut rim, and the floor under it */
       if(BOT[k]>0.01){
