@@ -33,9 +33,11 @@ export function floodReach(w) {
       if(nc.magma) return;
       if(nc.water&&(nc.wl-nc.H)>1.5) return;
       if(mid2!==null){
+        /* Over one cell of anything lower — water, a drop, or magma: a jump
+           clears a metre of it, and a basalt field is crossed no other way
+           (#76). The landing is never magma; that is tested above. */
         var mc=cells[mid2];
-        if(mc.magma) return;
-        if(!(mc.water||mc.H<=cc.H-1)) return;
+        if(!(mc.water||mc.magma||mc.H<=cc.H-1)) return;
         if(Math.abs(nc.H-cc.H)>MOVE.slope) return;
       } else {
         var dh=nc.H-cc.H;

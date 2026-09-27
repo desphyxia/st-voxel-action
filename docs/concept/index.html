@@ -1191,18 +1191,93 @@ function makeGen(seedStr,force){
     }
     return apron?{h:null,kind:3}:null;
   }
+  /* Basalt column fields (#76, Ashfall): a pool of magma set a metre under
+     the lowest ground round it, and standing out of it on a 3 m lattice a
+     field of 2 x 2 m columns, a metre of magma between each: a run and a jump
+     from one lip lands on the next column's far half, where 1 m columns 2 m
+     apart were overshot every time. They are crossed a jump
+     at a time. Every column's top is the field's own base or a metre over it,
+     so any two a jump apart are within a metre of each other; a quarter of
+     them are missing, never on the two lines through the middle, so there is
+     always a way across and seldom only one.
+
+     Placed like a mesa: a jittered spot per 40 m square where the burn is
+     more than half the ground, refused near a river, a gorge or a mesa, and
+     drawn from the square's own coordinates. */
+  var BAS_GRID=40, BAS_APRON=3, BAS_REACH=24, BAS_SITES=new Map();
+  function basaltSite(gx,gz){
+    var k=gx*131071+gz, s=BAS_SITES.get(k);
+    if(s!==undefined) return s;
+    s=null;
+    if(prand(gx,gz,0x5a10)<0.75) for(var t=0;t<4&&!s;t++) s=basaltTry(gx,gz,0x5a11+t*16);
+    BAS_SITES.set(k,s);
+    return s;
+  }
+  function basaltTry(gx,gz,salt){
+    var cx=gx*BAS_GRID+10+Math.floor(prand(gx,gz,salt)*20),
+        cz=gz*BAS_GRID+10+Math.floor(prand(gx,gz,salt+1)*20);
+    if(climate(cx,cz)[BIO.ASH]<=0.5) return null;
+    var rx=6+Math.floor(prand(gx,gz,salt+2)*5), rz=6+Math.floor(prand(gx,gz,salt+3)*5);
+    var lo=1e9, dx, dz, ex, ez;
+    for(dx=-rx-BAS_APRON;dx<=rx+BAS_APRON;dx++) for(dz=-rz-BAS_APRON;dz<=rz+BAS_APRON;dz++){
+      if(mesaWet(cx+dx,cz+dz)||mesaAt(cx+dx,cz+dz)) return null;
+      ex=dx/rx; ez=dz/rz;
+      if(ex*ex+ez*ez<=1){ var h=rawH(cx+dx,cz+dz); if(h<lo) lo=h; }
+    }
+    var B=Math.round(rawH(cx,cz)), P=Math.min(Math.round(lo)-1,B-2);
+    if(P<1||B+1>CEIL) return null;
+    return {cx:cx,cz:cz,rx:rx,rz:rz,B:B,P:P,salt:salt};
+  }
+  /* A column (1), the pool (2), the rim round it where nothing grows (3). */
+  function basaltAt(x,z){
+    var apron=false;
+    for(var gx=Math.floor((x-BAS_REACH)/BAS_GRID);gx<=Math.floor((x+BAS_REACH)/BAS_GRID);gx++)
+      for(var gz=Math.floor((z-BAS_REACH)/BAS_GRID);gz<=Math.floor((z+BAS_REACH)/BAS_GRID);gz++){
+        var s=basaltSite(gx,gz); if(!s) continue;
+        var dx=x-s.cx, dz=z-s.cz, ex=dx/s.rx, ez=dz/s.rz;
+        if(ex*ex+ez*ez<=1){
+          /* 2 x 2 m columns on a 3 m lattice: two cells of rock, one of magma.
+             A block is one column, so it draws from its block's coordinates. */
+          var bx=Math.floor(dx/3), bz=Math.floor(dz/3), ix=dx-3*bx, iz=dz-3*bz;
+          if(ix<2&&iz<2&&(bx===0||bz===0||prand(bx+s.cx,bz+s.cz,s.salt+9)>=0.25))
+            return {kind:1,h:s.B+(prand(bx+s.cx,bz+s.cz,s.salt+10)<0.5?0:1)};
+          return {kind:2,h:s.P};
+        }
+        ex=dx/(s.rx+BAS_APRON); ez=dz/(s.rz+BAS_APRON);
+        if(ex*ex+ez*ez<=1) apron=true;
+      }
+    return apron?{kind:3,h:null}:null;
+  }
+  /* How many column fields are centred in a box, for --diag. */
+  function basaltIn(x0,z0,x1,z1){
+    var n=0;
+    for(var gx=Math.floor(x0/BAS_GRID);gx<=Math.floor(x1/BAS_GRID);gx++)
+      for(var gz=Math.floor(z0/BAS_GRID);gz<=Math.floor(z1/BAS_GRID);gz++){
+        var b=basaltSite(gx,gz); if(b&&b.cx>=x0&&b.cx<x1&&b.cz>=z0&&b.cz<z1) n++;
+      }
+    return n;
+  }
+  /* The column field over (x, z), for a test that wants to cross one. */
+  function basaltOver(x,z){
+    for(var gx=Math.floor((x-BAS_REACH)/BAS_GRID);gx<=Math.floor((x+BAS_REACH)/BAS_GRID);gx++)
+      for(var gz=Math.floor((z-BAS_REACH)/BAS_GRID);gz<=Math.floor((z+BAS_REACH)/BAS_GRID);gz++){
+        var s=basaltSite(gx,gz); if(!s) continue;
+        var ex=(x-s.cx)/s.rx, ez=(z-s.cz)/s.rz; if(ex*ex+ez*ez<=1) return s;
+      }
+    return null;
+  }
   /* one 1 m cell: everything sized in whole metres */
   function cell(x,z){
     var w=climate(x,z);
     var hm=macro(x,z,w), H=Math.round(hm);
     var cw=wsum(w,'canyon'), colw=wsum(w,'col');
-    var c=null, ms=mesaAt(x,z);
-    if(cw>0.28&&!ms){ c=canyonAt(x,z);
+    var c=null, ms=mesaAt(x,z), bs=ms?null:basaltAt(x,z);
+    if(cw>0.28&&!ms&&!bs){ c=canyonAt(x,z);
       c.body=c.d<c.w/2&&canyonBody(x,z);
       if(c.body){ var taper=clamp((cw-0.28)/0.25,0,1); H-=Math.round(c.dp*taper*(1-c.br)); }
     }
-    if(!ms) H+=pillarAt(x,z,colw);
-    else if(ms.h!==null) H=ms.h;
+    if(!ms&&!bs) H+=pillarAt(x,z,colw);
+    else if(ms&&ms.h!==null) H=ms.h;
     var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
     var rl=null;
     /* The smooth level, but never above the ground the river runs through: a
@@ -1210,7 +1285,7 @@ function makeGen(seedStr,force){
        the banks then pulled down and the bed was carved below the world to
        keep. Where the land is lower, the surface sits a quarter under it. */
     if(r.d<rw/2||riverCorner(x,z,rw)){ rl=Math.min(riverLevel(x,z,w),H-0.25); H=Math.min(H-1,Math.floor(rl-0.75+1e-9)); water=true; }
-    if(!water&&!(ms&&ms.h!==null)&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
+    if(!water&&!(ms&&ms.h!==null)&&!bs&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
@@ -1218,17 +1293,20 @@ function makeGen(seedStr,force){
     /* A river quenches a seam: no magma in or within two metres of one. The
        burn is a scar now and crosses rivers the old ash biome never had, and
        a seam's trench beside a river is dry ground below the water (#3). */
-    if(w[BIO.ASH]>0.5&&!water&&r.d>=rw/2+2){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
+    if(w[BIO.ASH]>0.5&&!water&&!bs&&r.d>=rw/2+2){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
       /* Level, like a river (#67): a seam used to be the ground less a metre,
          so it kept every bump under it and a basalt pillar standing in it
          carried magma up its top. Its bed is the large-scale shape of the
          land instead — no fine octave, no pillars, no canyon — so it flows
          through them. */
       if(f<0.022){ H=Math.min(H-1,riverBed(x,z,w)); magma=true; water=false; } }
+    if(bs&&bs.h!==null){ H=bs.h; magma=bs.kind===2; water=false; pond=false; }
     H=clamp(H,0,CEIL);
     if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0};
+    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,
+      /* hold: a face the later passes keep as it is; bare: nothing grows here */
+      hold:!!(ms&&ms.kind<=2)||!!(bs&&bs.kind===1), bare:!!(ms&&ms.kind>=2)||!!bs};
   }
   function rawH(x,z){ return macro(x,z,climate(x,z)); }
   /* a column is a run of solid spans, not one height: this is what lets a
@@ -1290,7 +1368,7 @@ function makeGen(seedStr,force){
       if(CELLS.size>=CELL_CAP) CELLS.clear();
       c=cell(x,z); CELLS.set(k,c);
     }
-    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa};
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,hold:c.hold,bare:c.bare};
   }
   /* A world keeps its generator (w.G) for as long as it lives, and a streamed
      field holds sixteen of them — so the cache is let go when generation ends,
@@ -1317,7 +1395,7 @@ function makeGen(seedStr,force){
       }
     return n;
   }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 /* ---------- src/gen/erosion.mjs ---------- */
@@ -1344,13 +1422,14 @@ function makeGen(seedStr,force){
 
 /** Erosion is decided by a cell and its four neighbours, and nothing else. */
 function erodeAt(G, x, z, c0) {
-  /* A mesa's walls gather no talus and are not cut back (#75): a metre of
-     scree at the foot of a four-metre wall is a wall a double jump climbs. */
-  if (c0.water || c0.magma || c0.mesa === 1 || c0.mesa === 2) return c0.H;
+  /* A feature's faces gather no talus and are not cut back (#75, #76): a
+     metre of scree at the foot of a four-metre wall is a wall a double jump
+     climbs. */
+  if (c0.water || c0.magma || c0.hold) return c0.H;
   var hi = 0, nearW = false, d0, cn;
   for (d0 = 0; d0 < 4; d0++) {
     cn = G.cell(x + DIRS4[d0][0], z + DIRS4[d0][1]);
-    if (cn.mesa === 1 || cn.mesa === 2) continue;
+    if (cn.hold) continue;
     if (cn.H - c0.H > hi) hi = cn.H - c0.H;
     if (cn.water) nearW = true;
   }
@@ -1451,7 +1530,7 @@ const PORT_SALT = 0x5300;
     which is the whole reason a port can be chosen from either side. */
 function baseCell(G, x, z) {
   var c = G.cell(x, z);
-  return { H: clamp(erodeAt(G, x, z, c), 0, CEIL), water: c.water, magma: c.magma, mesa: c.mesa };
+  return { H: clamp(erodeAt(G, x, z, c), 0, CEIL), water: c.water, magma: c.magma, hold: c.hold };
 }
 
 /** The port on one edge, as world [x, z], or null when the edge has nowhere a
@@ -1466,7 +1545,7 @@ function portOf(G, ex, ez, axis) {
     var ok = true, prev = null;
     for (s = -1; s <= 1 && ok; s++) {
       var c = axis ? baseCell(G, t, line + s) : baseCell(G, line + s, t);
-      if (c.water || c.magma || c.mesa === 1 || c.mesa === 2 || (prev && Math.abs(c.H - prev.H) > MOVE.slope)) ok = false;
+      if (c.water || c.magma || c.hold || (prev && Math.abs(c.H - prev.H) > MOVE.slope)) ok = false;
       prev = c;
     }
     if (ok) cands.push(t);
@@ -1628,7 +1707,7 @@ function buildRegion(G, rx, rz) {
       var cq = at(ci, cj);
       /* Not on a mesa (#75): a route from a site up there walks off the wall,
          and grading it cuts the top down to the trail. */
-      if (!cq || cq.water || cq.magma || cq.mesa === 1 || cq.mesa === 2 || Math.abs(cq.H - cp.H) > 1) return false;
+      if (!cq || cq.water || cq.magma || cq.hold || Math.abs(cq.H - cp.H) > 1) return false;
     }
     return true;
   }
@@ -1708,7 +1787,7 @@ function buildRegion(G, rx, rz) {
       var c = at(a, b);
       /* A route along a mesa's foot keeps its second lane off the wall (#75):
          levelled to the path, the lane cuts a notch the length of the route. */
-      if (c.magma || c.water || c.mesa === 1 || c.mesa === 2) continue;
+      if (c.magma || c.water || c.hold) continue;
       return a * N + b;
     }
     return -1;
@@ -1765,7 +1844,7 @@ function buildRegion(G, rx, rz) {
         /* A trail beside a mesa leaves its wall and its stones as they are
            (#75): graded to the verge, a stone is a step off the path and the
            way up no longer climbs a metre at a time. */
-        if (nc.mesa === 1 || nc.mesa === 2) continue;
+        if (nc.hold) continue;
         if (nc.H - hp > MOVE.slope) nc.H = hp + MOVE.slope; else if (hp - nc.H > MOVE.slope) nc.H = hp - MOVE.slope;
       }
     }
@@ -2109,7 +2188,7 @@ function buildRegion(G, rx, rz) {
           /* Never into a mesa (#75). This flood takes single steps, so it sees
              neither the stones' jumps nor the top they lead to, and would cut
              a stair into every mesa there is. The MESA suite proves the way up. */
-          if (sc.mesa === 1 || sc.mesa === 2) break;
+          if (sc.hold) break;
           h += MOVE.slope;
           if (sc.H <= h) break;
           sc.H = h; cut++;
@@ -2326,7 +2405,7 @@ function groundCellAt(w, x, z) {
   var H = clamp(erodeAt(w.G, x, z, c), 0, CEIL);
   var g = regionAt(w.G, regionOf(x), regionOf(z)).grade.get(cellKey(x, z));
   if (g !== undefined) H = g;
-  return { H: H, water: c.water, magma: c.magma, dom: c.dom, w: c.w };
+  return { H: H, water: c.water, magma: c.magma, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa };
 }
 /* ---------- src/gen/routes.mjs ---------- */
 /**
@@ -2465,7 +2544,7 @@ function cutSpans(w) {
     var cs=cells[i*M+j];
     /* A mesa and its stones are solid rock (#75): a cave in one is a room
        in the wall of a block that is meant to have one way up. */
-    cs.sp=(cs.water||cs.magma||cs.mesa===1||cs.mesa===2)?[[0,Math.max(cs.H,1)]]:G.spansFor(-half+i+OX,-half+j+OZ,cs.H);
+    cs.sp=(cs.water||cs.magma||cs.hold)?[[0,Math.max(cs.H,1)]]:G.spansFor(-half+i+OX,-half+j+OZ,cs.H);
   }
   for(i=0;i<M;i++)for(j=0;j<M;j++){
     var cl=cells[i*M+j], wx=-half+i+OX, wz=-half+j+OZ;
@@ -2475,7 +2554,9 @@ function cutSpans(w) {
     var S=G.pstream(PASS.SPAN,wx,wz);
     for(d0=0;d0<4;d0++){
       var ch=groundCellAt(w,wx+DIRS4[d0][0],wz+DIRS4[d0][1]);
-      if(ch.H-cl.H<2||ch.water||S()>0.17) continue;
+      /* Not from a feature's face (#76): a mesa top or a column hung out over
+         its foot is a wider top, or a ledge where the gap was meant to be. */
+      if(ch.H-cl.H<2||ch.water||ch.hold||S()>0.17) continue;
       var out=1+((S()*2)|0), th=(S()<0.5?1:0.75), o;
       for(o=0;o<=out;o++){
         var ti=i-DIRS4[d0][0]*o, tj=j-DIRS4[d0][1]*o;
@@ -2489,7 +2570,11 @@ function cutSpans(w) {
            hero seed, between two cells that were both graded, both marked and
            both at H=5. The route is a cutting whose shoulder was already pulled
            back; hanging the cliff back over it undoes that. */
-        if(tc.H>=ch.H-1||tc.water||(TRAIL&&TRAIL[ti*M+tj])) break;
+        /* Nor over magma. sampleGrid reads the last span as the column's top,
+           and for magma that top is the liquid's level: rock hung over a seam
+           or a basalt pool raised the magma to the rim, and a body standing
+           on the rim beside it burned (#76). */
+        if(tc.H>=ch.H-1||tc.water||tc.magma||(TRAIL&&TRAIL[ti*M+tj])) break;
         tc.sp.push([ch.H-th,ch.H]);
       }
       if(!ovhPos) ovhPos=[-half+i,cl.H+1.3,-half+j];
@@ -2925,7 +3010,7 @@ function sampleGrid(w) {
      (DECISIONS §3, "Faces and slopes"). */
   function slopeCorner(a,b,own){
     var c=cells[clamp(a,0,M-1)*M+clamp(b,0,M-1)];
-    if(c.water||c.magma||c.mesa===1||c.mesa===2) return own;
+    if(c.water||c.magma||c.hold) return own;
     var h=cellH(a,b);
     return Math.abs(h-own)>MOVE.slope?own:h;
   }
@@ -2973,7 +3058,7 @@ function sampleGrid(w) {
          stone stands a metre over the ground and would ramp like any other
          metre, and the lip every jump leaves from would go with it. A stone
          is flat, too — a jump lands on it, not on a bump. */
-      else if(c.mesa===1||c.mesa===2){ top=topsp[1]; if(c.mesa===2) d=0; }
+      else if(c.hold){ top=topsp[1]; if(c.mesa!==1) d=0; }
       else {
         var own=cellH(ci(x),ci(z)), rv=Math.round((slopeRamp(x,z,own)-own)/V)*V;
         top=topsp[1]+rv;
@@ -3382,7 +3467,7 @@ function scatterProps(w, kit) {
     /* Nothing grows on a mesa's stones or round its foot (#75): a trunk on a
        stone is in the way of the jump onto it, and a boulder at the wall is a
        second way up. */
-    if(cc.mesa>=2) continue;
+    if(cc.bare) continue;
     if(!cc.water&&!cc.magma&&R()<td*0.095){
       /* Which kind of tree is a draw over what each biome present would plant
          here, not the dominant biome's: a border reads as the two woods
@@ -3434,7 +3519,7 @@ function placeClutter(w, kit) {
       var di=DIRS4[dd][0], dj=DIRS4[dd][1];
       var c1=groundCellAt(w,wx0+di,wz0+dj);
       if(c0.H-c1.H<2) continue;
-      if(c0.mesa) break;
+      if(c0.hold||c0.mesa) break;
       if(RS()<0.32) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((RS()*4)|0),RS);
       break;
     }
@@ -3442,7 +3527,7 @@ function placeClutter(w, kit) {
   /* scattered clutter, kept off the trails */
   for(i=0;i<M;i++)for(j=0;j<M;j++){
     var cc2=cells[i*M+j];
-    if(cc2.water||cc2.magma||TRAIL[i*M+j]||cc2.mesa>=2) continue;
+    if(cc2.water||cc2.magma||TRAIL[i*M+j]||cc2.bare) continue;
     var R2=G.pstream(PASS.CLUTTER,-half+i+OX,-half+j+OZ);
     var px2=-half+i+(R2()-0.5)*0.8, pz2=-half+j+(R2()-0.5)*0.8, dm=cc2.dom, rv=R2();
     if(rv<0.032) bush(px2,pz2,dm,R2);
@@ -3693,9 +3778,11 @@ function floodReach(w) {
       if(nc.magma) return;
       if(nc.water&&(nc.wl-nc.H)>1.5) return;
       if(mid2!==null){
+        /* Over one cell of anything lower — water, a drop, or magma: a jump
+           clears a metre of it, and a basalt field is crossed no other way
+           (#76). The landing is never magma; that is tested above. */
         var mc=cells[mid2];
-        if(mc.magma) return;
-        if(!(mc.water||mc.H<=cc.H-1)) return;
+        if(!(mc.water||mc.magma||mc.H<=cc.H-1)) return;
         if(Math.abs(nc.H-cc.H)>MOVE.slope) return;
       } else {
         var dh=nc.H-cc.H;

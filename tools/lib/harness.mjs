@@ -291,6 +291,8 @@ export function measureWorld(d, name) {
        64 m and a mesa stands about one to every 110 m square of redrock, so
        one window says little and this says whether the seed makes them. */
     mesas: d.G && d.G.mesasIn ? d.G.mesasIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
+    /* Basalt column fields the same way (#76, Ashfall). */
+    basalt: d.G && d.G.basaltIn ? d.G.basaltIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     digest: hex(h),
     parts,
   };

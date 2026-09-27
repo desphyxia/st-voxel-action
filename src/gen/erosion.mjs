@@ -21,13 +21,14 @@ import { CEIL, DIRS4, clamp } from './constants.mjs';
 
 /** Erosion is decided by a cell and its four neighbours, and nothing else. */
 export function erodeAt(G, x, z, c0) {
-  /* A mesa's walls gather no talus and are not cut back (#75): a metre of
-     scree at the foot of a four-metre wall is a wall a double jump climbs. */
-  if (c0.water || c0.magma || c0.mesa === 1 || c0.mesa === 2) return c0.H;
+  /* A feature's faces gather no talus and are not cut back (#75, #76): a
+     metre of scree at the foot of a four-metre wall is a wall a double jump
+     climbs. */
+  if (c0.water || c0.magma || c0.hold) return c0.H;
   var hi = 0, nearW = false, d0, cn;
   for (d0 = 0; d0 < 4; d0++) {
     cn = G.cell(x + DIRS4[d0][0], z + DIRS4[d0][1]);
-    if (cn.mesa === 1 || cn.mesa === 2) continue;
+    if (cn.hold) continue;
     if (cn.H - c0.H > hi) hi = cn.H - c0.H;
     if (cn.water) nearW = true;
   }
