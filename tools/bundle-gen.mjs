@@ -55,7 +55,7 @@ const MESH_API = ['meshChunk', 'chunkOccupancy', 'innerChunk', 'openAir', 'surfa
 /** Everything the playable build needs on top of it: the simulation and the wire. */
 const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'colliderFromPacked', 'colliderForChunk', 'softProp',
                  'chunkAt', 'makeChunkField', 'makeStream', 'STREAM',
-                 'ACTOR', 'TICK', 'RUN', 'GRAVITY', 'JUMP_V', 'JUMP_APEX',
+                 'ACTOR', 'TICK', 'RUN', 'GRAVITY', 'JUMP_V', 'JUMP_APEX', 'AIR_JUMP_V', 'AIR_JUMP_COST',
                  'makeActor', 'placeOnGround', 'embedded', 'step', 'display', 'applyDisplay',
                  'PHASE', 'phase', 'swingProgress', 'dodging', 'invulnerable',
                  'STAMINA_MAX', 'SWING_COST', 'DODGE_COST', 'SWING_TIME', 'WINDUP', 'ACTIVE',

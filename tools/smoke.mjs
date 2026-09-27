@@ -442,17 +442,17 @@ if (NODE_HALF) {
 }
 
 const t1 = Date.now();
-let jumped = 0, vaulted = 0;
+let jumped = 0, climbed = 0, doubled = 0;
 for (let i = 0; NODE_HALF && i < worlds.length; i++) {
   const s = soak(worlds[i], GOLDEN_SEEDS[i].nm);
-  jumped += s.jumps; vaulted += s.vaults;
+  jumped += s.jumps; climbed += s.climbs; doubled += s.airJumps;
   /* Two more wanderers over the same ground. One walk per seed was certifying
      a property it could not establish: varying the walk finds overlaps on 3 of
      36 runs that the single walk never meets. They are all shallow landing
      frames, so this costs a second and buys the coverage the claim needs. */
   for (const suffix of ['/b', '/c']) {
     const alt = soak(worlds[i], GOLDEN_SEEDS[i].nm + suffix);
-    jumped += alt.jumps; vaulted += alt.vaults;
+    jumped += alt.jumps; climbed += alt.climbs; doubled += alt.airJumps;
     s.insideGrounded += alt.insideGrounded;
     s.insideTicks += alt.insideTicks;
     if (alt.insideDepth > s.insideDepth) s.insideDepth = alt.insideDepth;
@@ -484,8 +484,8 @@ for (let i = 0; NODE_HALF && i < worlds.length; i++) {
         `${s.travelled} m walked, ${s.displaced} m from spawn`);
 }
 if (NODE_HALF) {
-  check(jumped > 0 && vaulted > 0, 'PLAY: jumps and vaults happen on real terrain',
-        `${jumped} jumps, ${vaulted} vaults across ${worlds.length} seeds`);
+  check(jumped > 0 && climbed > 0 && doubled > 0, 'PLAY: jumps, climbs and double jumps happen on real terrain',
+        `${jumped} jumps, ${climbed} onto a face, ${doubled} double jumps across ${worlds.length} seeds`);
 }
 const playMs = Date.now() - t1;
 
@@ -566,7 +566,10 @@ if (NODE_HALF) {
             seen.add(id);
             let wet = 0, under = false;
             for (let t = -len / 2; t <= len / 2; t += 0.25) { const e = at(px + di * t, pz + dj * t); if (e && e.wet) { wet++; if (e.wl > y) under = true; } }
-            const bad = tips.some((e) => e.wet) || lands.some((e) => e.wet || Math.abs(e.y - y) > MOVE.step) || wet === 0 || under;
+            /* Within a jump of the deck (#73): a landing a metre below is a
+               free drop off and one jump on, which the budget now has a verb
+               for. It used to be the step, and the step was 1 m. */
+            const bad = tips.some((e) => e.wet) || lands.some((e) => e.wet || Math.abs(e.y - y) > MOVE.climb) || wet === 0 || under;
             decks.push({ at: id, bad });
           }
         };

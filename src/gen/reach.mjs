@@ -1,6 +1,6 @@
 /**
  * Reach and spawn. Floods the world from the spawn under the movement rules
- * from docs/DECISIONS.md §3 — step, vault, jump, fall — and marks everything
+ * from docs/DECISIONS.md §3 — walk, climb, jump, fall — and marks everything
  * the flood never touches. The plate draws that as the traversability overlay;
  * the smoke test asserts on it. A world with a large unreachable fraction is
  * a world with terrain a player cannot use.
@@ -36,10 +36,10 @@ export function floodReach(w) {
         var mc=cells[mid2];
         if(mc.magma) return;
         if(!(mc.water||mc.H<=cc.H-1)) return;
-        if(Math.abs(nc.H-cc.H)>MOVE.step) return;
+        if(Math.abs(nc.H-cc.H)>MOVE.slope) return;
       } else {
         var dh=nc.H-cc.H;
-        if(dh>MOVE.vault||dh< -MOVE.fall) return;
+        if(dh>MOVE.climb2||dh< -MOVE.fall) return;
       }
       REACH[nk]=1; queue.push(nk);
     }

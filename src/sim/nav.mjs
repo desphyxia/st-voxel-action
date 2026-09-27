@@ -10,8 +10,9 @@
  *
  *   walk    to a neighbour no more than a step up, or down by less than a
  *           fall that would hurt
- *   vault   onto a ledge above a step and within the vault height — only for
- *           a body that vaults (a sentry does not; it goes around)
+ *   climb   onto a face above a step: a jump for one up to MOVE.climb, a
+ *           double jump up to MOVE.climb2 (#73) — only for a body that jumps
+ *           (a sentry does not; it goes around)
  *   jump    across a gap to ground at about the same height, no wider than the
  *           jump budget — a link, not a neighbour
  *
@@ -41,7 +42,6 @@ function opts0(o) {
   return {
     rad: o.rad === undefined ? ACTOR.radius : o.rad,
     height: o.height === undefined ? ACTOR.height : o.height,
-    canVault: o.canVault !== false,
     canJump: o.canJump !== false,
     maxNodes: o.maxNodes || 6000,
   };
@@ -104,12 +104,14 @@ function edges(col, n, o, st) {
       continue;
     }
     if (diag) continue;
-    /* Blocked by something above a step: a vault, if this body vaults. */
-    if (o.canVault) {
-      const v = st(ni, nj, n.y, MOVE.vault);
-      if (v !== null && v - n.y > MOVE.step + EPS && v - n.y <= MOVE.vault + EPS
+    /* Blocked by a face above a step: a jump onto it, or a double jump, if
+       this body jumps. The double jump costs more, as it costs stamina. */
+    if (o.canJump) {
+      const v = st(ni, nj, n.y, MOVE.climb2);
+      if (v !== null && v - n.y > MOVE.step + EPS && v - n.y <= MOVE.climb2 + EPS
           && !col.overlaps(x, z, o.rad, n.y + EPS, v + o.height - EPS)) {
-        out.push({ i: ni, j: nj, y: v, cost: len + 2.5, kind: 'vault' });
+        const two = v - n.y > MOVE.climb + EPS;
+        out.push({ i: ni, j: nj, y: v, cost: len + (two ? 4 : 2.5), kind: two ? 'climb2' : 'climb' });
         continue;
       }
     }

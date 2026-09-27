@@ -336,7 +336,7 @@
       <div class="rotate" id="rotate"><span>Turn your phone sideways.<br>Quarterstone is played in landscape.</span></div>
     </div>
     <div class="bar">
-      <p class="cap"><b>WASD</b> to move, camera-relative · <b>Space</b> to jump · <b>click</b> or <b>F</b> to
+      <p class="cap"><b>WASD</b> to move, camera-relative · <b>Space</b> to jump, and again in the air to double-jump · <b>click</b> or <b>F</b> to
         swing · <b>Shift</b> to dodge · <b>Q</b>/<b>E</b> to turn the view · <b>R</b> to respawn · mouse or
         right stick to aim. <b>&minus;</b> and <b>+</b> at the top of the view zoom; <b>Info</b> shows the
         readout. Walk over a cache or a fallen machine to take what is in it, and seat it in
@@ -391,9 +391,10 @@
     <div class="card">
       <h2>The budget, and nothing else</h2>
       <dl class="budget" id="budget"></dl>
-      <p>Only run speed was chosen. Gravity, jump speed and airtime are solved from these numbers so that
-        a jump clears exactly the gap above and no further — which is why a 3–5 m canyon is still an
-        obstacle. Change the budget in <code>src/gen/constants.mjs</code> and the character and the terrain
+      <p>Only run speed and the jump's height were chosen. Gravity, jump speed and airtime are solved
+        from these numbers so that a jump clears exactly the gap above and no further, and a double
+        jump exactly its own — which is why a canyon wider than it is still an obstacle. Ground climbs
+        in quarter-metre steps you walk; a face of a metre is a jump, two a double jump, more a wall. Change the budget in <code>src/gen/constants.mjs</code> and the character and the terrain
         move together.</p>
     </div>
     <div class="card">
@@ -495,8 +496,24 @@ const CEIL = 16;
 /** Chunk edge, metres. */
 const CHUNK = 32;
 
-/** What a player can cross, in metres. */
-const MOVE = { step: 1, vault: 2, jump: 2.5, wade: 0.75, fall: 6 };
+/**
+ * What a player can cross, in metres (DECISIONS §3, revised 2026-09-27, #73).
+ *
+ * - `step`   walked up without a jump: two voxels, so the 0.25 m stairs that
+ *            ordinary ground climbs in are walked and a placed face is not.
+ * - `slope`  the cell-level difference that is ground rather than a face: a
+ *            1 m rise between cells is drawn as a ramp of 0.25 m steps
+ *            (src/gen/surface.mjs), so the generator's metre-grid rules still
+ *            treat it as walkable.
+ * - `climb`  the tallest face one jump lands on; `climb2` with the double jump.
+ *            Anything taller is a wall.
+ * - `jump`   the gap one jump clears; `jump2` with the double jump.
+ * - `jumpH`  how high the jump rises: `climb` plus room to arrive over the lip.
+ *            With `jump` it fixes gravity — see src/sim/actor.mjs.
+ * - `fall`   the tallest drop survived.
+ */
+const MOVE = { step: 0.5, slope: 1, climb: 1, climb2: 2, jump: 3, jump2: 4.4, jumpH: 1.4,
+                      wade: 0.75, fall: 6 };
 
 /** Four-neighbourhood, in cell space. Order matters: it is part of the seed. */
 const DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -1452,7 +1469,7 @@ function portOf(G, ex, ez, axis) {
     var ok = true, prev = null;
     for (s = -1; s <= 1 && ok; s++) {
       var c = axis ? baseCell(G, t, line + s) : baseCell(G, line + s, t);
-      if (c.water || c.magma || (prev && Math.abs(c.H - prev.H) > MOVE.step)) ok = false;
+      if (c.water || c.magma || (prev && Math.abs(c.H - prev.H) > MOVE.slope)) ok = false;
       prev = c;
     }
     if (ok) cands.push(t);
@@ -1503,7 +1520,7 @@ function makeGrid(G, rx, rz) {
 function passCost(a, b) {
   if (b.magma) return -1;
   var dh = b.H - a.H;
-  if (dh > MOVE.vault) return -1;
+  if (dh > MOVE.climb2) return -1;
   var c = 1 + (dh > 0 ? dh * 3.2 : (-dh) * 1.1);
   if (b.water) c += ((b.wl - b.H) > MOVE.wade) ? 34 : 6;
   if (b.sp && b.sp.length > 1) c += 2;            /* inert until spans precede routing */
@@ -1632,7 +1649,7 @@ function buildRegion(G, rx, rz) {
         if (seen[nk]) continue;
         var nc = cells[nk];
         if (nc.water || nc.magma) continue;
-        if (Math.abs(nc.H - cells[cu].H) > MOVE.vault) continue;
+        if (Math.abs(nc.H - cells[cu].H) > MOVE.climb2) continue;
         seen[nk] = 1; q.push(nk);
       }
     }
@@ -1702,14 +1719,14 @@ function buildRegion(G, rx, rz) {
       for (q = 1; q < path.length; q++) {
         A2 = cells[path[q - 1]]; B2 = cells[path[q]];
         if (A2.water || B2.water || fixed.has(path[q])) continue;
-        if (B2.H - A2.H > MOVE.step) B2.H = A2.H + MOVE.step;
-        else if (A2.H - B2.H > MOVE.step) B2.H = A2.H - MOVE.step;
+        if (B2.H - A2.H > MOVE.slope) B2.H = A2.H + MOVE.slope;
+        else if (A2.H - B2.H > MOVE.slope) B2.H = A2.H - MOVE.slope;
       }
       for (q = path.length - 2; q >= 0; q--) {
         A2 = cells[path[q + 1]]; B2 = cells[path[q]];
         if (A2.water || B2.water || fixed.has(path[q])) continue;
-        if (B2.H - A2.H > MOVE.step) B2.H = A2.H + MOVE.step;
-        else if (A2.H - B2.H > MOVE.step) B2.H = A2.H - MOVE.step;
+        if (B2.H - A2.H > MOVE.slope) B2.H = A2.H + MOVE.slope;
+        else if (A2.H - B2.H > MOVE.slope) B2.H = A2.H - MOVE.slope;
       }
     }
     /* Level across the width. markPath lays a second lane beside every step,
@@ -1744,7 +1761,7 @@ function buildRegion(G, rx, rz) {
         if (ni < 0 || nj < 0 || ni >= N || nj >= N) continue;
         var nc = at(ni, nj);
         if (!nc || nc.water || nc.magma || fixed.has(ni * N + nj)) continue;
-        if (nc.H - hp > MOVE.step) nc.H = hp + MOVE.step; else if (hp - nc.H > MOVE.step) nc.H = hp - MOVE.step;
+        if (nc.H - hp > MOVE.slope) nc.H = hp + MOVE.slope; else if (hp - nc.H > MOVE.slope) nc.H = hp - MOVE.slope;
       }
     }
   }
@@ -1835,7 +1852,7 @@ function buildRegion(G, rx, rz) {
         for (n = 0; n < 14 && at(bi, bj).water; n++) { bi += di; bj += dj; if (bi >= N - PAD || bj >= N - PAD) break; }
         if (ai < PAD || aj < PAD || bi >= N - PAD || bj >= N - PAD) continue;
         var A = at(ai, aj), B = at(bi, bj);
-        if (A.water || B.water || A.magma || B.magma || Math.abs(A.H - B.H) > MOVE.step) continue;
+        if (A.water || B.water || A.magma || B.magma || Math.abs(A.H - B.H) > MOVE.slope) continue;
         var span = (bi - ai) + (bj - aj);
         if (span > 13) continue;
         /* How far the deck's ends are from where the route meets it, either
@@ -1931,7 +1948,7 @@ function buildRegion(G, rx, rz) {
   }
 
   /* ---- level the marked route ----
-     gradePath caps the *path* at MOVE.step, but the trail mask is wider than
+     gradePath caps the *path* at MOVE.slope, but the trail mask is wider than
      the path: markPath adds a shoulder beside every step and a ford marks its
      own crossing, and neither was ever levelled against what it sits next to.
      That left cell-to-cell steps of 2 and 3 m inside the trail mask, which the
@@ -1975,8 +1992,8 @@ function buildRegion(G, rx, rz) {
           var nc2 = at(na, nb);
           if (!nc2 || nc2.water || nc2.magma) continue;
           var gap = c2.H - nc2.H;
-          if (gap > MOVE.step) { c2.H -= 1; moved++; }
-          else if (gap < -MOVE.step) { c2.H += 1; moved++; }
+          if (gap > MOVE.slope) { c2.H -= 1; moved++; }
+          else if (gap < -MOVE.slope) { c2.H += 1; moved++; }
         }
       }
       if (!moved) break;
@@ -2008,7 +2025,7 @@ function buildRegion(G, rx, rz) {
           var nc3 = cells[nk];
           if (nc3.water || nc3.magma || fixed.has(nk)) continue;
           dist.set(nk, dd + 1); bq.push(nk);
-          var lim = (dd + 1) * MOVE.step;
+          var lim = (dd + 1) * MOVE.slope;
           if (nc3.H > hp + lim) nc3.H = hp + lim; else if (nc3.H < hp - lim) nc3.H = hp - lim;
         }
       }
@@ -2020,7 +2037,7 @@ function buildRegion(G, rx, rz) {
      The reach pass used to report ground the movement budget cannot get onto
      and leave it there. Most of what it reports is behind magma, which a ramp
      cannot fix and is a design question; the rest is the top of a cliff over
-     ground you can walk — a terrace too tall to vault. That is repaired here:
+     ground you can walk — a terrace too tall to double-jump. That is repaired here:
      a staircase of whole-metre steps is cut down into the cliff top from the
      reachable ground at its foot, and recorded with the grading, so every
      window cuts the same one. In the region pass and not the window's, for
@@ -2047,7 +2064,7 @@ function buildRegion(G, rx, rz) {
           var nk = ni * N + nj, nc = cells[nk];
           if (R[nk] || nc.magma || (nc.water && (nc.wl - nc.H) > 1.5)) continue;
           var dh = nc.H - cc.H;
-          if (dh > MOVE.vault || dh < -MOVE.fall) continue;
+          if (dh > MOVE.climb2 || dh < -MOVE.fall) continue;
           R[nk] = 1; q.push(nk);
         }
       }
@@ -2068,7 +2085,7 @@ function buildRegion(G, rx, rz) {
             if (cb.magma || cb.water) continue;
             if (R[b]) {
               var rise = ca.H - cb.H;
-              if (rise > MOVE.vault && (!foot || rise < foot.rise
+              if (rise > MOVE.climb2 && (!foot || rise < foot.rise
                   || (rise === foot.rise && (a < foot.top || (a === foot.top && b < foot.base))))) {
                 foot = { top: a, base: b, rise: rise, di: -DIRS4[e][0], dj: -DIRS4[e][1] };
               }
@@ -2084,7 +2101,7 @@ function buildRegion(G, rx, rz) {
         for (var stepN = 0; stepN < 8 && si > PAD && sj > PAD && si < N - PAD - 1 && sj < N - PAD - 1; stepN++) {
           var sc = at(si, sj);
           if (sc.water || sc.magma || fixed.has(si * N + sj)) break;
-          h += MOVE.step;
+          h += MOVE.slope;
           if (sc.H <= h) break;
           sc.H = h; cut++;
           si += foot.di; sj += foot.dj;
@@ -2162,7 +2179,7 @@ function buildRegion(G, rx, rz) {
   var aff = [];
   if (lm) aff.push({ k: 'vantage', x: lm.x, z: lm.z, h: lm.h, s: 1 });
   var blocks = function (cp, cq) {
-    return !cq || cq.magma || (cq.water && (cq.wl - cq.H) > MOVE.wade) || Math.abs(cq.H - cp.H) > MOVE.step;
+    return !cq || cq.magma || (cq.water && (cq.wl - cq.H) > MOVE.wade) || Math.abs(cq.H - cp.H) > MOVE.slope;
   };
   /* Chokepoints: every crossing, and trail ground walled in on both sides —
      the one cell either way across the route is water, magma or a step the
@@ -2200,7 +2217,7 @@ function buildRegion(G, rx, rz) {
     taken.push(a); aff.push(a);
   });
   /* Cover: walkable ground with a rise beside it too tall to see over — the
-     vault height, which is also where a machine loses sight of you. Scored by
+     double-jump height, which is also where a machine loses sight of you. Scored by
      how many sides it covers; one per 8 m block, the most covered. */
   var coverBest = new Map();
   for (i = lo; i < hi; i += 2) for (j = lo; j < hi; j += 2) {
@@ -2208,7 +2225,7 @@ function buildRegion(G, rx, rz) {
     var cc = at(i, j), sides = 0;
     for (var d = 0; d < 4; d++) {
       var n1 = at(i + DIRS4[d][0], j + DIRS4[d][1]), n2 = at(i + 2 * DIRS4[d][0], j + 2 * DIRS4[d][1]);
-      if ((n1 && !n1.water && n1.H - cc.H >= MOVE.vault) || (n2 && !n2.water && n2.H - cc.H >= MOVE.vault)) sides++;
+      if ((n1 && !n1.water && n1.H - cc.H >= MOVE.climb2) || (n2 && !n2.water && n2.H - cc.H >= MOVE.climb2)) sides++;
     }
     if (!sides) continue;
     var ck = Math.floor(i / 8) * 1000 + Math.floor(j / 8), cv = coverBest.get(ck);
@@ -2881,6 +2898,27 @@ function sampleGrid(w) {
     var h1=rampH(a,b+1,own)*(1-tx)+rampH(a+1,b+1,own)*tx;
     return h0*(1-tz)+h1*tz;
   }
+  /* Ordinary ground, read between the cells the way a trail is (#73). A 1 m
+     step between two cells of dry ground is a slope, not a face: sampled
+     continuously it becomes four voxel columns of 0.25 m each, which the
+     controller walks. A neighbour that is water, magma, or more than
+     MOVE.slope away counts as this cell's own height, so a 2 m face stays a
+     face — a jump — and a riverbank does not tilt into the river. What is a
+     wall is decided by the generator, not left over from the metre grid
+     (DECISIONS §3, "Faces and slopes"). */
+  function slopeCorner(a,b,own){
+    var c=cells[clamp(a,0,M-1)*M+clamp(b,0,M-1)];
+    if(c.water||c.magma) return own;
+    var h=cellH(a,b);
+    return Math.abs(h-own)>MOVE.slope?own:h;
+  }
+  function slopeRamp(px,pz,own){
+    var fx=px+half, fz=pz+half;
+    var a=Math.floor(fx), b=Math.floor(fz), tx=fx-a, tz=fz-b;
+    var h0=slopeCorner(a,b,own)*(1-tx)+slopeCorner(a+1,b,own)*tx;
+    var h1=slopeCorner(a,b+1,own)*(1-tx)+slopeCorner(a+1,b+1,own)*tx;
+    return h0*(1-tz)+h1*tz;
+  }
   for(i=0;i<NX;i++){ x=-half+i*V+V/2;
     for(j=0;j<NZ;j++){ z=-half+j*V+V/2; k=i*NZ+j;
       c=cellAt(x,z);
@@ -2911,7 +2949,17 @@ function sampleGrid(w) {
          mesher, the collider, buildVoxels — is built out of 25 cm boxes. A
          difference of at most one voxel survives that rounding: rounding is
          monotone, so two values within V of each other land within V. */
-      var top=tr?Math.round(trailRamp(x,z)/V)*V:topsp[1];
+      var top;
+      if(tr) top=Math.round(trailRamp(x,z)/V)*V;
+      else if(c.water||c.magma) top=topsp[1];
+      else {
+        var own=cellH(ci(x),ci(z)), rv=Math.round((slopeRamp(x,z,own)-own)/V)*V;
+        top=topsp[1]+rv;
+        /* A ramped column is already a quarter of a metre off its cell; the
+           sub-metre relief on top of that turned the ramp's even staircase
+           into up-and-down chatter on rough ground. */
+        if(rv!==0) d=0;
+      }
       Hs[k]=clamp(top+d,0,CEIL); BOT[k]=topsp[0]; WL[k]=c.wl; DOM[k]=c.dom;
       FLG[k]=(c.water?1:0)|(c.magma?2:0)|(tr?4:0)|(tr===2?8:0);
     } }
@@ -3585,7 +3633,7 @@ function buildGrass(w) {
 /* ---------- src/gen/reach.mjs ---------- */
 /**
  * Reach and spawn. Floods the world from the spawn under the movement rules
- * from docs/DECISIONS.md §3 — step, vault, jump, fall — and marks everything
+ * from docs/DECISIONS.md §3 — walk, climb, jump, fall — and marks everything
  * the flood never touches. The plate draws that as the traversability overlay;
  * the smoke test asserts on it. A world with a large unreachable fraction is
  * a world with terrain a player cannot use.
@@ -3621,10 +3669,10 @@ function floodReach(w) {
         var mc=cells[mid2];
         if(mc.magma) return;
         if(!(mc.water||mc.H<=cc.H-1)) return;
-        if(Math.abs(nc.H-cc.H)>MOVE.step) return;
+        if(Math.abs(nc.H-cc.H)>MOVE.slope) return;
       } else {
         var dh=nc.H-cc.H;
-        if(dh>MOVE.vault||dh< -MOVE.fall) return;
+        if(dh>MOVE.climb2||dh< -MOVE.fall) return;
       }
       REACH[nk]=1; queue.push(nk);
     }
@@ -5604,7 +5652,7 @@ function speedScale(a) {
 }
 
 function canSwing(a) {
-  return !a.swing && !a.dodge && !a.vault && !a.swimming && a.stamina >= statsOf(a).swingCost;
+  return !a.swing && !a.dodge && !a.swimming && a.stamina >= statsOf(a).swingCost;
 }
 
 /**
@@ -5613,7 +5661,7 @@ function canSwing(a) {
  * "committed": once the blade is moving you are going to finish the motion.
  */
 function canDodge(a) {
-  if (a.dodge || a.vault || a.swimming || a.stamina < statsOf(a).dodgeCost) return false;
+  if (a.dodge || a.swimming || a.stamina < statsOf(a).dodgeCost) return false;
   return !a.swing || phase(a) === PHASE.RECOVER;
 }
 
@@ -5757,7 +5805,7 @@ function practicePosts(col, spawn) {
   const ring = [[3, 0], [-3, 1.5], [1.5, -3.5], [-2, -3]];
   for (const [dx, dz] of ring) {
     const x = spawn[0] + dx, z = spawn[2] + dz;
-    const y = col.supportUnder(x, z, 0.4, spawn[1] + MOVE.vault);
+    const y = col.supportUnder(x, z, 0.4, spawn[1] + MOVE.climb2);
     if (y === -Infinity) continue;
     out.push({ x, y, z, r: 0.45 });
   }
@@ -6155,7 +6203,7 @@ function standing(col, x, z, ceilY) {
 /**
  * Can the movement budget get there?
  *
- * The generator already floods the world under the step/vault/jump/fall rules
+ * The generator already floods the world under the walk/climb/jump/fall rules
  * and marks what it never touched (src/gen/reach.mjs). A cache on a ruin's roof
  * is a cache nobody collects, and the flood is the only thing that knows.
  */
@@ -6193,7 +6241,7 @@ function cacheSites(col, world) {
     return false;
   }
 
-  if (world.lmPos) place(world.lmPos[0], world.lmPos[2], world.lmPos[1] + MOVE.vault);
+  if (world.lmPos) place(world.lmPos[0], world.lmPos[2], world.lmPos[1] + MOVE.climb2);
 
   /* The ruin and the holding the trails were routed to: the two places in the
      window that are already *somewhere*, rather than somewhere with a lamp on
@@ -6208,7 +6256,7 @@ function cacheSites(col, world) {
      together at whichever end the route was laid from. */
   const stride = Math.max(1, Math.floor(lamps.length / CACHES));
   for (let i = 0; i < lamps.length && out.length < CACHES; i += stride) {
-    place(lamps[i][0], lamps[i][2], lamps[i][1] + MOVE.vault);
+    place(lamps[i][0], lamps[i][2], lamps[i][1] + MOVE.climb2);
   }
 
   /* What each one holds. Both walk their list from a seed-dependent start
@@ -6320,13 +6368,15 @@ function makeLootField(col, world, spoilCount, trad) {
  * The character controller, written against the published movement budget
  * (docs/DECISIONS.md §3) rather than against a feel that happens to emerge:
  *
- *   step up 1 m free · vault 2 m · clear a 2.5 m gap · survive a 6 m drop ·
- *   wade 0.75 m, swim deeper · magma is lethal
+ *   walk up 0.5 m · jump onto 1 m, double-jump onto 2 m · clear a 3 m gap,
+ *   4.4 m with the double jump · survive a 6 m drop · wade 0.75 m, swim
+ *   deeper · magma is lethal   (revised 2026-09-27, #73)
  *
- * Only run speed is chosen. Everything about the jump is solved from it, so
- * that a change to `MOVE` moves the character and the terrain together instead
- * of letting them drift apart. A canyon is 3-5 m wide because 2.5 m is what a
- * jump clears; if the jump quietly cleared 3.2 m, canyons would stop being
+ * Run speed and the jump's height are chosen; gravity and everything else
+ * about the jump are solved from them and the gap, so that a change to `MOVE`
+ * moves the character and the terrain together instead of letting them drift
+ * apart. A canyon is wider than a double jump clears because 4.4 m is what it
+ * clears; if the jump quietly cleared more, canyons would stop being
  * obstacles and nobody would notice for months.
  *
  * Fixed timestep, no randomness, no wall clock: the same inputs give the same
@@ -6347,8 +6397,7 @@ const TICK = 1 / 60;
 
 const ACTOR = { radius: 0.35, height: 1.8 };
 
-const GRAVITY = 22;
-/** The one free parameter: how fast it feels right to run. */
+/** How fast it feels right to run: the one number chosen by feel. */
 const RUN = 4.0;
 
 /**
@@ -6367,18 +6416,34 @@ const RUN = 4.0;
  * graph (#15) is handed this too: a jump link is only meaningful per radius.
  */
 function flightFor(rad) { return MOVE.jump - 2 * rad + RUN * TICK; }
-function jumpVFor(rad) { return (GRAVITY * (flightFor(rad) / RUN)) / 2; }
 const FLIGHT = flightFor(ACTOR.radius);
 const AIRTIME = FLIGHT / RUN;
+/**
+ * Gravity, solved: a jump that rises MOVE.jumpH and comes down again after
+ * AIRTIME. A ballistic arc of height h and duration T has g = 8h / T², and the
+ * 1 m face the jump is for (MOVE.climb) needs the rise to clear it with room
+ * to arrive over the lip. It comes out near 32 m/s² — a brisk jump, not a
+ * floaty one, which is the price of a jump that is both high and short.
+ */
+const GRAVITY = (8 * MOVE.jumpH) / (AIRTIME * AIRTIME);
+function jumpVFor(rad) { return (GRAVITY * (flightFor(rad) / RUN)) / 2; }
 const JUMP_V = (GRAVITY * AIRTIME) / 2;
 const JUMP_APEX = (JUMP_V * JUMP_V) / (2 * GRAVITY);
+/**
+ * The double jump (#73): one more push in the air, enough to rise a further
+ * MOVE.climb2 - MOVE.climb from wherever it is used — so pressed at the top
+ * of the first jump it reaches MOVE.jumpH + 1 m, onto a 2 m face with the
+ * same room the single jump has onto a 1 m one. It sets the rise rather than
+ * adding to it, so pressed early it gains less, never more.
+ */
+const AIR_JUMP_V = Math.sqrt(2 * GRAVITY * (MOVE.climb2 - MOVE.climb));
+/** What a double jump costs: height is a resource, like a swing. */
+const AIR_JUMP_COST = 15;
 
 const WADE_SPEED = RUN * 0.55;
 const SWIM_SPEED = RUN * 0.45;
 /** How much of the wanted velocity an airborne actor can claw back per tick. */
 const AIR_CONTROL = 0.12;
-/** A vault is a climb, not a jump: it takes time and cannot be steered. */
-const VAULT_TIME = 0.35;
 /** Terminal velocity, low enough that no fall tunnels a floor in one tick. */
 const TERMINAL = 45;
 
@@ -6397,10 +6462,10 @@ function makeActor(x, y, z, rad) {
     grounded: false,
     /** Highest point since the feet last left the ground: what a drop measures from. */
     apex: y,
-    /** null, or a scripted climb in progress. */
-    vault: null,
-    /** Set on the tick a vault starts, for anything counting verbs. */
-    vaults: 0,
+    /** Air jumps left before the feet touch ground again: one, or none. */
+    airJumps: 1,
+    /** Counted for anything tallying verbs: jumps from the ground, and in the air. */
+    jumps: 0, airJumped: 0,
     inWater: false, swimming: false,
     /** Where it is looking. Aim drives this when there is aim; otherwise the
         direction of travel does. Phase 0 uses it for nothing but the model's
@@ -6418,8 +6483,8 @@ function makeActor(x, y, z, rad) {
     hp: st.maxHp, maxHp: st.maxHp,
     /** Seconds of flinch left. The renderer's business, nobody else's. */
     hurtT: 0,
-    /** A heavy machine does not pull itself over a ledge — see src/sim/enemy.mjs. */
-    canVault: true,
+    /** A heavy machine does not leave the ground — see src/sim/enemy.mjs. */
+    canJump: true,
     stamina: st.maxStamina,
     /** Seconds before stamina starts coming back. */
     staminaHold: 0,
@@ -6450,9 +6515,9 @@ function placeOnGround(col, x, z, fromY, rad) {
 /**
  * The whole of an actor's state, as plain numbers.
  *
- * Everything `step` reads or writes, including the vault in progress — leave a
- * field out and a guest replaying from a snapshot diverges from the host mid
- * climb. The controller is deterministic, so restoring this and re-applying the
+ * Everything `step` reads or writes, including the air jump still in hand —
+ * leave a field out and a guest replaying from a snapshot diverges from the
+ * host in mid air. The controller is deterministic, so restoring this and re-applying the
  * same inputs reproduces the same trajectory exactly; that is the whole basis
  * of the reconciliation in src/net.
  */
@@ -6460,9 +6525,8 @@ function snapshot(a) {
   return {
     x: a.x, y: a.y, z: a.z, vx: a.vx, vy: a.vy, vz: a.vz,
     grounded: a.grounded, apex: a.apex,
-    vault: a.vault ? { t: a.vault.t, x0: a.vault.x0, y0: a.vault.y0, z0: a.vault.z0,
-                       x1: a.vault.x1, y1: a.vault.y1, z1: a.vault.z1 } : null,
-    vaults: a.vaults, inWater: a.inWater, swimming: a.swimming,
+    airJumps: a.airJumps, jumps: a.jumps, airJumped: a.airJumped,
+    inWater: a.inWater, swimming: a.swimming,
     faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
     hp: a.hp, maxHp: a.maxHp, hurtT: a.hurtT,
     stamina: a.stamina, staminaHold: a.staminaHold,
@@ -6481,9 +6545,9 @@ function snapshot(a) {
 function restore(a, s) {
   a.x = s.x; a.y = s.y; a.z = s.z; a.vx = s.vx; a.vy = s.vy; a.vz = s.vz;
   a.grounded = s.grounded; a.apex = s.apex;
-  a.vault = s.vault ? { t: s.vault.t, x0: s.vault.x0, y0: s.vault.y0, z0: s.vault.z0,
-                        x1: s.vault.x1, y1: s.vault.y1, z1: s.vault.z1 } : null;
-  a.vaults = s.vaults; a.inWater = s.inWater; a.swimming = s.swimming;
+  a.airJumps = s.airJumps === undefined ? 1 : s.airJumps;
+  a.jumps = s.jumps || 0; a.airJumped = s.airJumped || 0;
+  a.inWater = s.inWater; a.swimming = s.swimming;
   a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
   if (s.gear) { applyGearWire(a.gear, s.gear); a.st = a.gear.st; }
   a.hp = s.hp; a.maxHp = s.maxHp === undefined ? a.st.maxHp : s.maxHp;
@@ -6556,27 +6620,6 @@ function slide(col, a, nx, nz) {
   return true;
 }
 
-/** A ledge too tall to step onto but not too tall to climb. Starts the vault. */
-function tryVault(col, a, dx, dz) {
-  const r = a.rad, h = ACTOR.height;
-  if (!a.grounded || (dx === 0 && dz === 0)) return false;
-  if (a.swing || a.dodge) return false;        /* committed means committed */
-  if (a.canVault === false) return false;
-  const probe = 0.4;
-  const top = col.supportUnder(a.x + dx * probe, a.z + dz * probe, r, a.y + MOVE.vault + EPS);
-  if (!(top > a.y + MOVE.step + EPS) || top - a.y > MOVE.vault + EPS) return false;
-  /* Room to rise in place — a low ceiling makes a ledge unvaultable. */
-  if (col.overlaps(a.x, a.z, r, a.y + EPS, top + h - EPS)) return false;
-  /* Somewhere to land, and room to stand up once there. */
-  const lx = a.x + dx * (r + probe + 0.2), lz = a.z + dz * (r + probe + 0.2);
-  if (col.supportUnder(lx, lz, r, top + EPS) < top - 0.05) return false;
-  if (col.overlaps(lx, lz, r, top + EPS, top + h - EPS)) return false;
-  a.vault = { t: 0, x0: a.x, y0: a.y, z0: a.z, x1: lx, y1: top, z1: lz };
-  a.vaults++;
-  a.vx = 0; a.vz = 0; a.vy = 0;
-  return true;
-}
-
 /**
  * Advance one tick.
  *
@@ -6591,22 +6634,6 @@ function step(col, a, input, targets, dt = TICK) {
   a.ticks++;
   a.blocked = false;
   const r = a.rad, h = ACTOR.height;
-
-  /* A vault owns the actor until it finishes: all the way up, and only then
-     across. Overlapping the two looks better and puts the box inside the ledge
-     for a few ticks on the way through, which is indistinguishable from a
-     collision bug the first time someone sees it in a log. */
-  if (a.vault) {
-    const vt = a.vault;
-    vt.t += dt;
-    const u = clamp(vt.t / VAULT_TIME, 0, 1);
-    const uy = u < 0.5 ? u / 0.5 : 1, uh = u < 0.5 ? 0 : (u - 0.5) / 0.5;
-    a.x = vt.x0 + (vt.x1 - vt.x0) * uh;
-    a.z = vt.z0 + (vt.z1 - vt.z0) * uh;
-    a.y = vt.y0 + (vt.y1 - vt.y0) * uy;
-    if (u >= 1) { a.vault = null; a.grounded = true; a.apex = a.y; }
-    return a;
-  }
 
   /* Facing: aim if there is any, otherwise wherever it is going. Set before
      anything can return early, so a magma death still faces the right way. */
@@ -6650,11 +6677,25 @@ function step(col, a, input, targets, dt = TICK) {
     else { a.vx += (wx - a.vx) * AIR_CONTROL; a.vz += (wz - a.vz) * AIR_CONTROL; }
   }
 
-  if (input.jump && !a.swing && !a.dodge && (a.grounded || a.swimming)) {
-    const jv = a.rad === ACTOR.radius ? JUMP_V : jumpVFor(a.rad);
-    a.vy = a.swimming ? jv * 0.35 : jv;
-    a.grounded = false;
-    a.apex = a.y;
+  /* `input.jump` is a press, not a hold: one tick per press, which is what
+     lets the second press be a second jump rather than the first one held. */
+  if (a.grounded || a.swimming) a.airJumps = 1;
+  if (input.jump && !a.swing && !a.dodge && a.canJump !== false) {
+    if (a.grounded || a.swimming) {
+      const jv = a.rad === ACTOR.radius ? JUMP_V : jumpVFor(a.rad);
+      a.vy = a.swimming ? jv * 0.35 : jv;
+      a.grounded = false;
+      a.apex = a.y;
+      a.jumps++;
+    } else if (a.airJumps > 0 && a.stamina >= AIR_JUMP_COST) {
+      /* Allowed after walking off a ledge as well as after a jump: it is the
+         one air jump per time off the ground, whichever way you left it. */
+      a.vy = AIR_JUMP_V;
+      a.airJumps = 0;
+      a.airJumped++;
+      a.stamina -= AIR_JUMP_COST;
+      a.staminaHold = statsOf(a).staminaHold;
+    }
   }
 
   /* False for the tick a jump starts, which is what keeps the snap below from
@@ -6662,15 +6703,17 @@ function step(col, a, input, targets, dt = TICK) {
   const wasGrounded = a.grounded;
 
   /* ---- horizontal, one axis at a time so a wall is slid along, not stuck on ---- */
+  /* A face in the way stops the body; the jump is how it gets over (#73).
+     The wanted velocity is kept while airborne against a face, so a jump
+     pressed against a ledge carries onto it the moment the body clears the
+     lip, rather than having to be steered in again. */
   if (a.vx !== 0 && !slide(col, a, a.x + a.vx * dt, a.z)) {
     a.blocked = true;
-    if (!tryVault(col, a, Math.sign(a.vx), 0)) a.vx = 0;
-    if (a.vault) return a;
+    if (a.grounded) a.vx = 0;
   }
   if (a.vz !== 0 && !slide(col, a, a.x, a.z + a.vz * dt)) {
     a.blocked = true;
-    if (!tryVault(col, a, 0, Math.sign(a.vz))) a.vz = 0;
-    if (a.vault) return a;
+    if (a.grounded) a.vz = 0;
   }
 
   /* ---- vertical ---- */
@@ -6740,8 +6783,9 @@ function step(col, a, input, targets, dt = TICK) {
  *
  *   walk    to a neighbour no more than a step up, or down by less than a
  *           fall that would hurt
- *   vault   onto a ledge above a step and within the vault height — only for
- *           a body that vaults (a sentry does not; it goes around)
+ *   climb   onto a face above a step: a jump for one up to MOVE.climb, a
+ *           double jump up to MOVE.climb2 (#73) — only for a body that jumps
+ *           (a sentry does not; it goes around)
  *   jump    across a gap to ground at about the same height, no wider than the
  *           jump budget — a link, not a neighbour
  *
@@ -6771,7 +6815,6 @@ function opts0(o) {
   return {
     rad: o.rad === undefined ? ACTOR.radius : o.rad,
     height: o.height === undefined ? ACTOR.height : o.height,
-    canVault: o.canVault !== false,
     canJump: o.canJump !== false,
     maxNodes: o.maxNodes || 6000,
   };
@@ -6834,12 +6877,14 @@ function edges(col, n, o, st) {
       continue;
     }
     if (diag) continue;
-    /* Blocked by something above a step: a vault, if this body vaults. */
-    if (o.canVault) {
-      const v = st(ni, nj, n.y, MOVE.vault);
-      if (v !== null && v - n.y > MOVE.step + EPS && v - n.y <= MOVE.vault + EPS
+    /* Blocked by a face above a step: a jump onto it, or a double jump, if
+       this body jumps. The double jump costs more, as it costs stamina. */
+    if (o.canJump) {
+      const v = st(ni, nj, n.y, MOVE.climb2);
+      if (v !== null && v - n.y > MOVE.step + EPS && v - n.y <= MOVE.climb2 + EPS
           && !col.overlaps(x, z, o.rad, n.y + EPS, v + o.height - EPS)) {
-        out.push({ i: ni, j: nj, y: v, cost: len + 2.5, kind: 'vault' });
+        const two = v - n.y > MOVE.climb + EPS;
+        out.push({ i: ni, j: nj, y: v, cost: len + (two ? 4 : 2.5), kind: two ? 'climb2' : 'climb' });
         continue;
       }
     }
@@ -7000,8 +7045,8 @@ function navGraph(col, box, options) {
  *                not merely survival.
  *   Movement     It walks the same movement budget the player does, through
  *                the same `step`, so it steps up a metre, falls, drowns and
- *                burns exactly as a player would. It does **not** vault: a
- *                heavy machine goes around, which is what `canVault = false`
+ *                burns exactly as a player would. It does **not** jump or climb: a
+ *                heavy machine goes around, which is what `canJump = false`
  *                and the side-stepping below are for.
  *
  * No AI architecture, as the issue says — a state machine and a steering
@@ -7062,7 +7107,7 @@ const PATH_NODES = 900;
 function makeSentry(col, x, z, fromY) {
   const e = placeOnGround(col, x, z, fromY, SENTRY.rad);
   e.hp = SENTRY.hp; e.maxHp = SENTRY.hp;
-  e.canVault = false;
+  e.canJump = false;
   e.kind = 'sentry';
   e.ai = { state: EST.DORMANT, t: 0, side: 0, sideT: 0,
            /* Where it holds (#6), and the path it is following, if any (#15). */
@@ -7078,7 +7123,7 @@ function staggerable(st) {
 /**
  * Where to walk. Straight at the target while nothing is in the way; once a
  * wall or a drop is, along a path round it (#15) — worked out for its own
- * width, without vaults or jumps, because it does neither — and only when no
+ * width, without climbs or jumps, because it does neither — and only when no
  * path exists, sideways for a while. A machine that walks off a ledge to reach
  * you is not menacing, and one that hovers over the gap is worse.
  */
@@ -7095,7 +7140,7 @@ function steer(col, e, tx, tz, budget) {
     ai.pathT -= TICK;
     if (ai.pathT <= 0 && plan(budget)) {
       const p = findPath(col, e, { x: tx, z: tz },
-                         { rad: e.rad, canVault: false, canJump: false, maxNodes: PATH_NODES });
+                         { rad: e.rad, canJump: false, maxNodes: PATH_NODES });
       ai.path = p && p.length > 1 ? p : null; ai.wp = 1; ai.pathT = REPATH_TIME;
     }
   }
@@ -7117,7 +7162,7 @@ function steer(col, e, tx, tz, budget) {
   const cliff = g === -Infinity || e.y - g > MOVE.fall - 1;
   if ((cliff || e.blocked) && plan(budget)) {
     const p = findPath(col, e, { x: tx, z: tz },
-                       { rad: e.rad, canVault: false, canJump: false, maxNodes: PATH_NODES });
+                       { rad: e.rad, canJump: false, maxNodes: PATH_NODES });
     if (p && p.length > 1) {
       ai.path = p; ai.wp = 1; ai.pathT = REPATH_TIME;
       const first = followPath(e);
@@ -7317,7 +7362,7 @@ function postsFor(col, world) {
   for (const [dx, dz] of [[14, 3], [-11, -13], [5, 19]]) {
     if (out.length >= POSTS) break;
     const x = spawn[0] + dx, z = spawn[2] + dz;
-    const g = col.supportUnder(x, z, SENTRY.rad, spawn[1] + MOVE.vault);
+    const g = col.supportUnder(x, z, SENTRY.rad, spawn[1] + MOVE.climb2);
     const y = g === -Infinity ? null : ok(x, z, g);
     if (y !== null) out.push([x, z, y]);
   }
@@ -7544,10 +7589,9 @@ function poseHero(a, look) {
   p.hips.py = (s < 0 ? -s : s) * 0.035 * m;
   p.torso.rx = 0.1 * m;
 
-  if (a.vault) {
-    const u = easeInOut(a.vault.t / VAULT_TIME);
-    p.legL.rx = 1.0 * (1 - u) + 0.2; p.legR.rx = 0.5 * (1 - u);
-    p.torso.rx = 0.45 * (1 - u); p.armL.rx = -1.2 * (1 - u);
+  if (!a.grounded && a.airJumps === 0) {
+    /* The second jump reads as a tuck: knees up, arms thrown back. */
+    p.legL.rx = 1.1; p.legR.rx = 0.9; p.torso.rx = 0.35; p.armL.rx = 0.6; p.armL.rz = -0.5;
   } else if (!a.grounded) {
     p.legL.rx = 0.55; p.legR.rx = -0.25; p.armL.rx = -0.9; p.armL.rz = -0.3;
   }
@@ -8572,7 +8616,7 @@ const ASSETS={
   'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
   'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP8AAAD/'
 };
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,ASSETS:ASSETS};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,ASSETS:ASSETS};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -8588,9 +8632,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /* ---------- the budget, straight off the constants ---------- */
   (function(){
     var dl=document.getElementById('budget');
-    [['step up',MOVE.step+' m'],['vault',MOVE.vault+' m'],['jump a gap',MOVE.jump+' m'],
+    [['walk up',MOVE.step+' m'],['jump onto',MOVE.climb+' m'],['double-jump onto',MOVE.climb2+' m'],
+     ['jump a gap',MOVE.jump+' m'],['double-jump a gap',MOVE.jump2+' m'],
      ['survive a drop',MOVE.fall+' m'],['wade',MOVE.wade+' m'],['swim','deeper'],['magma','lethal'],
-     ['run',QS.RUN.toFixed(2)+' m/s'],['jump apex',QS.JUMP_APEX.toFixed(2)+' m']].forEach(function(r){
+     ['run',QS.RUN.toFixed(2)+' m/s'],['jump apex',QS.JUMP_APEX.toFixed(2)+' m'],['gravity',QS.GRAVITY.toFixed(1)+' m/s²']].forEach(function(r){
       dl.innerHTML+='<dt>'+r[0]+'</dt><dd>'+r[1]+'</dd>';
     });
   })();
@@ -12600,7 +12645,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     drawPeer();
     drawWhere(a);
     var state=a.dead?('dead · '+a.dead)
-      :(a.vault?'vaulting':(a.swimming?'swimming'
+      :((!a.grounded&&a.airJumps===0)?'double jump':(a.swimming?'swimming'
         :(a.inWater?'wading':(a.grounded?'grounded':'airborne'))));
     var spd=Math.sqrt(a.vx*a.vx+a.vz*a.vz);
     var net=!session?'solo'
@@ -12623,7 +12668,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       /* Steps are counted from where the view starts, not from zero: the
          snaps sit on START_YAW + n quarters, so dividing the raw angle by a
          quarter never lands on an integer. */
-      'view '+((Math.round((cam.yawTo-QS.START_YAW)/QS.QUARTER)%4+4)%4)+'/4   vaults '+a.vaults+
+      'view '+((Math.round((cam.yawTo-QS.START_YAW)/QS.QUARTER)%4+4)%4)+'/4   jumps '+a.jumps+'  double '+a.airJumped+
       '   deaths '+deaths+'\n'+
       /* What streaming costs, where you can see it. `last` is what the last
          chunk cost this thread — the length of the hitch, in one figure, and

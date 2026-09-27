@@ -51,7 +51,13 @@ const RIM = 19.9;
 const slab = (c, x0, x1, top) => c.addBox(x0, x1, -3, 3, top - 2, top);
 
 function march(col, a, ticks, jump) {
-  for (let t = 0; t < ticks && !a.dead; t++) step(col, a, { mx: 1, mz: 0, jump: jump ? jump(col, a) : false });
+  /* The highest ground it ever stood on: where a march ends is wherever the
+     last press left it, which can be in the air. */
+  a.stood = a.y;
+  for (let t = 0; t < ticks && !a.dead; t++) {
+    step(col, a, { mx: 1, mz: 0, jump: jump ? jump(col, a) : false });
+    if (a.grounded && a.y > a.stood) a.stood = a.y;
+  }
   return a;
 }
 
@@ -64,16 +70,26 @@ const atTheLip = (col, a, hx, hz) =>
   a.grounded && col.supportUnder(a.x + hx * RUN * TICK, a.z + hz * RUN * TICK,
                                  ACTOR.radius, a.y + EPS) === -Infinity;
 
-function ledge(h) {
+/* How a test presses jump: never; once, against the face; or once against it
+   and again at the top of that jump. One press a tick at most, as the input
+   layer delivers them. */
+const PRESS = {
+  none: () => false,
+  jump: (col, a) => a.grounded && a.blocked,
+  double: (col, a) => (a.grounded && a.blocked) || (!a.grounded && a.airJumps > 0 && a.vy <= 0),
+};
+
+function ledge(h, press) {
   const c = makeCollider(20, V);
   slab(c, -RIM, 0, 0); slab(c, 0.3, RIM, h);
-  return march(c.finish(), placeOnGround(c, -3, 0), 600);
+  return march(c.finish(), placeOnGround(c, -3, 0), 600, PRESS[press || 'none']);
 }
 
-function gap(g) {
+function gap(g, twice) {
   const c = makeCollider(20, V);
   slab(c, -RIM, 0, 0); slab(c, g, RIM, 0);
-  return march(c.finish(), placeOnGround(c, -5, 0), 900, (col, a) => atTheLip(col, a, 1, 0));
+  return march(c.finish(), placeOnGround(c, -5, 0), 900,
+               (col, a) => atTheLip(col, a, 1, 0) || (twice && !a.grounded && a.airJumps > 0 && a.vy <= 0));
 }
 
 function drop(d) {
@@ -98,15 +114,25 @@ export function budgetSuite() {
   const say = (label, ok, detail) => out.push({ label, ok, detail });
 
   const s1 = ledge(MOVE.step);
-  say(`steps ${MOVE.step} m free`, s1.y >= MOVE.step - 0.01 && s1.vaults === 0,
-      `y ${s1.y.toFixed(2)}, ${s1.vaults} vaults`);
+  say(`walks up ${MOVE.step} m without a jump`, s1.stood >= MOVE.step - 0.01 && s1.jumps === 0,
+      `stood at ${s1.stood.toFixed(2)}, ${s1.jumps} jumps`);
 
-  const v1 = ledge(MOVE.vault);
-  say(`vaults ${MOVE.vault} m`, v1.y >= MOVE.vault - 0.01 && v1.vaults === 1,
-      `y ${v1.y.toFixed(2)}, ${v1.vaults} vaults`);
+  const s2 = ledge(MOVE.step + 0.25);
+  say(`does not walk up ${MOVE.step + 0.25} m`, s2.stood < 0.1, `stood at ${s2.stood.toFixed(2)}`);
 
-  const v2 = ledge(MOVE.vault + 0.25);
-  say(`stops at ${(MOVE.vault + 0.25).toFixed(2)} m`, v2.y < 0.5, `y ${v2.y.toFixed(2)}`);
+  const c1 = ledge(MOVE.climb, 'jump');
+  say(`jumps onto ${MOVE.climb} m`, c1.stood >= MOVE.climb - 0.01 && c1.jumps >= 1 && c1.airJumped === 0,
+      `stood at ${c1.stood.toFixed(2)}, ${c1.jumps} jumps`);
+
+  const c2 = ledge(MOVE.climb + 0.5, 'jump');
+  say(`one jump does not reach ${MOVE.climb + 0.5} m`, c2.stood < 0.1, `stood at ${c2.stood.toFixed(2)}`);
+
+  const c3 = ledge(MOVE.climb2, 'double');
+  say(`double-jumps onto ${MOVE.climb2} m`, c3.stood >= MOVE.climb2 - 0.01 && c3.airJumped >= 1,
+      `stood at ${c3.stood.toFixed(2)}, ${c3.jumps} jumps, ${c3.airJumped} in the air`);
+
+  const c4 = ledge(MOVE.climb2 + 0.5, 'double');
+  say(`a double jump does not reach ${MOVE.climb2 + 0.5} m`, c4.stood < 0.1, `stood at ${c4.stood.toFixed(2)}`);
 
   const g1 = gap(MOVE.jump);
   say(`clears a ${MOVE.jump} m gap`, g1.dead === null && g1.x > MOVE.jump,
@@ -114,6 +140,13 @@ export function budgetSuite() {
 
   const g2 = gap(MOVE.jump + 0.5);
   say(`falls into a ${MOVE.jump + 0.5} m gap`, g2.dead === 'void', g2.dead || 'crossed it');
+
+  const g3 = gap(MOVE.jump2 - 0.1, true);
+  say(`double-jumps a ${(MOVE.jump2 - 0.1).toFixed(1)} m gap`, g3.dead === null && g3.x > MOVE.jump2 - 0.1,
+      `x ${g3.x.toFixed(2)}, ${g3.dead || 'alive'}, ${g3.airJumped} in the air`);
+
+  const g4 = gap(MOVE.jump2 + 0.5, true);
+  say(`falls into a ${MOVE.jump2 + 0.5} m gap even with a double jump`, g4.dead === 'void', g4.dead || 'crossed it');
 
   const d1 = drop(MOVE.fall);
   say(`survives a ${MOVE.fall} m drop`, d1.dead === null, d1.dead || 'alive');
@@ -148,6 +181,10 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
   const x0 = a.x, z0 = a.z;
 
   let hx = 1, hz = 0, hold = 0, jumps = 0, insideTicks = 0, turns = 0, sinceTurn = 99;
+  /* A face in the way is climbed if the budget allows (#73): a jump onto 1 m,
+     a jump and a second one at its top onto 2 m. `twice` is the second press
+     still owed. */
+  let climbs = 0, twice = false;
   let insideGrounded = 0, insideDepth = 0;
   let minY = a.y, maxY = a.y;
 
@@ -184,13 +221,29 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
     return true;
   };
 
+  /* How tall the face straight ahead is, if there is one within reach. */
+  const faceAhead = () => {
+    const px = a.x + hx * 0.45, pz = a.z + hz * 0.45;
+    const top = col.supportUnder(px, pz, ACTOR.radius, a.y + MOVE.climb2 + EPS);
+    if (top === -Infinity || top <= a.y + MOVE.step + EPS) return 0;
+    if (col.overlaps(px, pz, ACTOR.radius, top + EPS, top + ACTOR.height - EPS)) return 0;
+    if (col.liquidAt(px, pz).kind === LIQUID.MAGMA) return 0;
+    return top - a.y;
+  };
+
   for (let t = 0; t < ticks; t++) {
     let jump = false;
     sinceTurn++;
-    if (!a.vault) {
+    if (twice && !a.grounded && a.airJumps > 0 && a.vy <= 0) { jump = true; twice = false; }
+    if (a.grounded) twice = false;
+    {
       if (--hold <= 0) repick();
-      else if (a.blocked && sinceTurn > 8) veer();
-      if (a.grounded) {
+      else if (a.blocked && a.grounded && sinceTurn > 8) {
+        const f = faceAhead();
+        if (f > 0 && f <= MOVE.climb2 + EPS && arcIsClear()) { jump = true; jumps++; climbs++; twice = f > MOVE.climb + EPS; }
+        else veer();
+      }
+      if (a.grounded && !jump) {
         const near = probe(0.7);
         /* Any drop worth not taking on foot: a step down is free, anything
            deeper is a gap to jump or a reason to turn around. Using the fall
@@ -256,7 +309,7 @@ export function soak(world, name, ticks = SOAK_TICKS, onTick = null) {
     dead: a.dead,
     travelled: +a.travelled.toFixed(1),
     displaced: +Math.sqrt(dx * dx + dz * dz).toFixed(1),
-    vaults: a.vaults, jumps, turns,
+    climbs, airJumps: a.airJumped, jumps, turns,
     insideTicks, insideGrounded, insideDepth: +insideDepth.toFixed(4),
     minY: +minY.toFixed(2), maxY: +maxY.toFixed(2),
   };
@@ -436,7 +489,9 @@ function scripted(phase) {
   return (t) => {
     const a = t * 0.017 + phase;
     return { mx: cos(a), mz: sin(a),
-             jump: t % 131 === 0, attack: t % 73 === 0, dodge: t % 109 === 0 };
+             /* and a second press twelve ticks on, in the air: the double
+                jump (#73) goes through snapshot, restore and replay too. */
+             jump: t % 131 === 0 || t % 131 === 12, attack: t % 73 === 0, dodge: t % 109 === 0 };
   };
 }
 
@@ -522,8 +577,9 @@ export function netSuite() {
     const p = twoPlayers('meadow', makeLoopback({ latency: 6 }));
     run(p, 400, scripted(0), scripted(2));
     settle(p, 150);
-    const d = dist2(p.guest.me, p.host.peer);
-    say('117 ms of latency ends in agreement', d < 1e-9, `${d.toFixed(9)} m apart`);
+    const d = dist2(p.guest.me, p.host.peer), dj = p.host.peer.airJumped;
+    say('117 ms of latency ends in agreement, double jumps and all', d < 1e-9 && dj > 0 && p.guest.me.airJumped === dj,
+        `${d.toFixed(9)} m apart; ${dj} double jumps on the host, ${p.guest.me.airJumped} on the guest`);
   }
 
   /* 5. And over a bad one. A lost input is never re-sent — the host repeats
@@ -1050,7 +1106,7 @@ export function enemySuite() {
   {
     const c = makeCollider(20, V);
     c.addBox(-19.9, 0, -6, 6, -2, 0);
-    c.addBox(0.3, 19.9, -6, 6, -2, MOVE.vault);     /* a ledge a player vaults */
+    c.addBox(0.3, 19.9, -6, 6, -2, MOVE.climb);     /* a ledge a player jumps onto */
     c.finish();
     const p = placeOnGround(c, 6, 0);                /* up on the ledge */
     const e = EN.makeSentry(c, -3, 0);
@@ -1058,11 +1114,11 @@ export function enemySuite() {
     for (let t = 0; t < 900; t++) {
       EN.stepSentry(c, e, [p]);
       if (e.ai.sideT > 0) sidestepped = true;
-      if (e.vaults > 0) break;
+      if (e.jumps > 0) break;
     }
-    say('a sentry does not vault, it goes around',
-        e.vaults === 0 && e.y < MOVE.vault - 0.1 && sidestepped,
-        `${e.vaults} vaults, y ${e.y.toFixed(2)}, ${sidestepped ? 'stepped aside' : 'pressed into it'}`);
+    say('a sentry does not jump onto a ledge, it goes around',
+        e.jumps === 0 && e.y < MOVE.climb - 0.1 && sidestepped,
+        `${e.jumps} jumps, y ${e.y.toFixed(2)}, ${sidestepped ? 'stepped aside' : 'pressed into it'}`);
   }
 
   /* 9. A hit interrupts a machine that has not committed yet — but never one
@@ -1627,7 +1683,7 @@ export function networkSuite() {
         const [bx, bz] = before.split(',').map(Number), ax2 = axis ? px : px + 1, az2 = axis ? pz + 1 : pz;
         const hp = finalH(G, px, pz), hb = finalH(G, bx, bz), ha = finalH(G, ax2, az2);
         if (hp !== baseH(G, px, pz)) portBad.push(`${s.nm} ${shared[0]} moved ${baseH(G, px, pz)} -> ${hp}`);
-        else if (Math.abs(hp - hb) > MOVE.step || Math.abs(hp - ha) > MOVE.step) {
+        else if (Math.abs(hp - hb) > MOVE.slope || Math.abs(hp - ha) > MOVE.slope) {
           portBad.push(`${s.nm} ${shared[0]} steps ${hb} | ${hp} | ${ha}`);
         }
       }
@@ -2063,9 +2119,10 @@ export function trailSuite() {
       const top = sp[q][1];
       /* A cave floor six metres down has headroom and is not this trail; the
          top of a wall across the trail has headroom and standing on it is not
-         walking down the path. MOVE.vault is the highest the controller
-         climbs, and a deck bridge sits inside it — fen's is 1.38 m up. */
-      if (top > CEIL || top < surf - 0.5 || top > surf + MOVE.vault) continue;
+         walking down the path. MOVE.climb2 is the highest the controller
+         climbs (a double jump, #73), and a deck bridge sits inside it — fen's
+         is 1.38 m up. */
+      if (top > CEIL || top < surf - 0.5 || top > surf + MOVE.climb2) continue;
       if (!col.overlaps(x, z, ACTOR.radius, top + MOVE.step, top + ACTOR.height - EPS)) return true;
     }
     return false;
@@ -2814,7 +2871,12 @@ export function groundSuite() {
   /* A reversal every 6.7 m or less is chatter; the macro field manages 14 m and
      up. Set where it is because the measured spread across biomes is 0.06 to
      0.11 and mesa, the roughest, has to fit under it. */
-  const FLIP_BAR = 0.15;
+  /* 0.16 since the ramps (#73): ordinary ground now climbs a 1 m cell step
+     as four voxel columns, and where that meets a 2 m face the cells on
+     either side disagree about which neighbour is a slope, so the stair
+     turns back once more. Measured on ash, the roughest now, 0.151 against
+     0.143 before; the noise this bar exists to catch was 0.4. */
+  const FLIP_BAR = 0.16;
   /* Not zero, and the reason is worth keeping. The old field left 0.13% of
      columns standing alone — about 85 in a window. What is left is 0 to 3, and
      they are not attributable to `detail` at all: taking it out entirely
@@ -3181,7 +3243,7 @@ export function navSuite() {
   const out = [];
   const say = (label, ok, detail) => out.push({ label, ok, detail });
   const floor = () => { const c = makeCollider(20, V); c.addBox(-19.9, 19.9, -19.9, 19.9, -2, 0); return c; };
-  const P = { rad: ACTOR.radius }, S = { rad: EN.SENTRY.rad, canVault: false, canJump: false };
+  const P = { rad: ACTOR.radius }, S = { rad: EN.SENTRY.rad, canJump: false };
 
   /* A wall across the arena with a 1 m door, and a long way round. */
   {
@@ -3198,19 +3260,26 @@ export function navSuite() {
         `player ${pp ? lenOf(pp).toFixed(1) : '-'} m through the door; sentry ${sp ? lenOf(sp).toFixed(1) : '-'} m, round the end at z ${aroundZ ? aroundZ.toFixed(1) : '-'}`);
   }
 
-  /* A 1.5 m ledge: a vault for a body that vaults, nothing for one that does not. */
+  /* A 1 m face is a jump up, a 2 m face a double jump, for a body that jumps
+     (#73); a sentry, which does not, stops short of either. */
   {
-    const c = floor();
-    c.addBox(2, 19.9, -19.9, 19.9, 0, 1.5);
-    c.finish();
-    const pv = findPath(c, { x: 0, y: 0, z: 0 }, { x: 4, z: 0 }, P);
-    const sv = findPath(c, { x: 0, y: 0, z: 0 }, { x: 4, z: 0 }, S);
-    say('a ledge above a step is a vault for a player and not for a sentry',
-        pv && !pv.partial && pv.some((q) => q.kind === 'vault') && sv && sv.partial,
-        `player ${pv && pv.some((q) => q.kind === 'vault') ? 'vaults' : 'NO VAULT'}; sentry ${sv && sv.partial ? 'stops short' : 'CLIMBED'}`);
+    const up = (h) => {
+      const c = floor();
+      c.addBox(2, 19.9, -19.9, 19.9, 0, h);
+      c.finish();
+      return { p: findPath(c, { x: 0, y: 0, z: 0 }, { x: 4, z: 0 }, P),
+               s: findPath(c, { x: 0, y: 0, z: 0 }, { x: 4, z: 0 }, S) };
+    };
+    const kinds = (p) => (p ? p.map((q) => q.kind).filter((k) => k && k !== 'walk') : []);
+    const one = up(MOVE.climb), two = up(MOVE.climb2), wall = up(MOVE.climb2 + 0.5);
+    say('a 1 m face is a jump up and a 2 m face a double jump for a player, and neither for a sentry',
+        one.p && !one.p.partial && kinds(one.p).includes('climb') && two.p && !two.p.partial && kinds(two.p).includes('climb2')
+          && wall.p && wall.p.partial && one.s && one.s.partial && two.s && two.s.partial,
+        `player: 1 m ${kinds(one.p).join(',') || 'NONE'}, 2 m ${kinds(two.p).join(',') || 'NONE'}, `
+        + `2.5 m ${wall.p && wall.p.partial ? 'stops short' : 'CLIMBED'}; sentry ${one.s && one.s.partial && two.s && two.s.partial ? 'stops short' : 'CLIMBED'}`);
   }
 
-  /* A gap: 2 m is a jump link, 3 m is not — the budget is 2.5 m. */
+  /* A gap: one inside the jump budget is a jump link, one past it is not. */
   {
     const gap = (w) => {
       const c = makeCollider(20, V);
@@ -3220,9 +3289,9 @@ export function navSuite() {
       const g = navGraph(c, { x0: -3, x1: w + 3, z0: -1, z1: 1 }, P);
       return g.links.filter((l) => l.kind === 'jump').length;
     };
-    const j2 = gap(2), j3 = gap(3);
+    const j2 = gap(MOVE.jump - 0.5), j3 = gap(MOVE.jump + 0.5);
     say('a gap inside the jump budget is a jump link, and one past it is not',
-        j2 > 0 && j3 === 0, `2 m gap: ${j2} jump links; 3 m gap: ${j3}`);
+        j2 > 0 && j3 === 0, `${MOVE.jump - 0.5} m gap: ${j2} jump links; ${MOVE.jump + 0.5} m gap: ${j3}`);
   }
 
   /* On real ground: the machines' posts, and a machine reaching a player on

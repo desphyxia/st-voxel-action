@@ -95,7 +95,7 @@ function portOf(G, ex, ez, axis) {
     var ok = true, prev = null;
     for (s = -1; s <= 1 && ok; s++) {
       var c = axis ? baseCell(G, t, line + s) : baseCell(G, line + s, t);
-      if (c.water || c.magma || (prev && Math.abs(c.H - prev.H) > MOVE.step)) ok = false;
+      if (c.water || c.magma || (prev && Math.abs(c.H - prev.H) > MOVE.slope)) ok = false;
       prev = c;
     }
     if (ok) cands.push(t);
@@ -146,7 +146,7 @@ function makeGrid(G, rx, rz) {
 function passCost(a, b) {
   if (b.magma) return -1;
   var dh = b.H - a.H;
-  if (dh > MOVE.vault) return -1;
+  if (dh > MOVE.climb2) return -1;
   var c = 1 + (dh > 0 ? dh * 3.2 : (-dh) * 1.1);
   if (b.water) c += ((b.wl - b.H) > MOVE.wade) ? 34 : 6;
   if (b.sp && b.sp.length > 1) c += 2;            /* inert until spans precede routing */
@@ -275,7 +275,7 @@ function buildRegion(G, rx, rz) {
         if (seen[nk]) continue;
         var nc = cells[nk];
         if (nc.water || nc.magma) continue;
-        if (Math.abs(nc.H - cells[cu].H) > MOVE.vault) continue;
+        if (Math.abs(nc.H - cells[cu].H) > MOVE.climb2) continue;
         seen[nk] = 1; q.push(nk);
       }
     }
@@ -345,14 +345,14 @@ function buildRegion(G, rx, rz) {
       for (q = 1; q < path.length; q++) {
         A2 = cells[path[q - 1]]; B2 = cells[path[q]];
         if (A2.water || B2.water || fixed.has(path[q])) continue;
-        if (B2.H - A2.H > MOVE.step) B2.H = A2.H + MOVE.step;
-        else if (A2.H - B2.H > MOVE.step) B2.H = A2.H - MOVE.step;
+        if (B2.H - A2.H > MOVE.slope) B2.H = A2.H + MOVE.slope;
+        else if (A2.H - B2.H > MOVE.slope) B2.H = A2.H - MOVE.slope;
       }
       for (q = path.length - 2; q >= 0; q--) {
         A2 = cells[path[q + 1]]; B2 = cells[path[q]];
         if (A2.water || B2.water || fixed.has(path[q])) continue;
-        if (B2.H - A2.H > MOVE.step) B2.H = A2.H + MOVE.step;
-        else if (A2.H - B2.H > MOVE.step) B2.H = A2.H - MOVE.step;
+        if (B2.H - A2.H > MOVE.slope) B2.H = A2.H + MOVE.slope;
+        else if (A2.H - B2.H > MOVE.slope) B2.H = A2.H - MOVE.slope;
       }
     }
     /* Level across the width. markPath lays a second lane beside every step,
@@ -387,7 +387,7 @@ function buildRegion(G, rx, rz) {
         if (ni < 0 || nj < 0 || ni >= N || nj >= N) continue;
         var nc = at(ni, nj);
         if (!nc || nc.water || nc.magma || fixed.has(ni * N + nj)) continue;
-        if (nc.H - hp > MOVE.step) nc.H = hp + MOVE.step; else if (hp - nc.H > MOVE.step) nc.H = hp - MOVE.step;
+        if (nc.H - hp > MOVE.slope) nc.H = hp + MOVE.slope; else if (hp - nc.H > MOVE.slope) nc.H = hp - MOVE.slope;
       }
     }
   }
@@ -478,7 +478,7 @@ function buildRegion(G, rx, rz) {
         for (n = 0; n < 14 && at(bi, bj).water; n++) { bi += di; bj += dj; if (bi >= N - PAD || bj >= N - PAD) break; }
         if (ai < PAD || aj < PAD || bi >= N - PAD || bj >= N - PAD) continue;
         var A = at(ai, aj), B = at(bi, bj);
-        if (A.water || B.water || A.magma || B.magma || Math.abs(A.H - B.H) > MOVE.step) continue;
+        if (A.water || B.water || A.magma || B.magma || Math.abs(A.H - B.H) > MOVE.slope) continue;
         var span = (bi - ai) + (bj - aj);
         if (span > 13) continue;
         /* How far the deck's ends are from where the route meets it, either
@@ -574,7 +574,7 @@ function buildRegion(G, rx, rz) {
   }
 
   /* ---- level the marked route ----
-     gradePath caps the *path* at MOVE.step, but the trail mask is wider than
+     gradePath caps the *path* at MOVE.slope, but the trail mask is wider than
      the path: markPath adds a shoulder beside every step and a ford marks its
      own crossing, and neither was ever levelled against what it sits next to.
      That left cell-to-cell steps of 2 and 3 m inside the trail mask, which the
@@ -618,8 +618,8 @@ function buildRegion(G, rx, rz) {
           var nc2 = at(na, nb);
           if (!nc2 || nc2.water || nc2.magma) continue;
           var gap = c2.H - nc2.H;
-          if (gap > MOVE.step) { c2.H -= 1; moved++; }
-          else if (gap < -MOVE.step) { c2.H += 1; moved++; }
+          if (gap > MOVE.slope) { c2.H -= 1; moved++; }
+          else if (gap < -MOVE.slope) { c2.H += 1; moved++; }
         }
       }
       if (!moved) break;
@@ -651,7 +651,7 @@ function buildRegion(G, rx, rz) {
           var nc3 = cells[nk];
           if (nc3.water || nc3.magma || fixed.has(nk)) continue;
           dist.set(nk, dd + 1); bq.push(nk);
-          var lim = (dd + 1) * MOVE.step;
+          var lim = (dd + 1) * MOVE.slope;
           if (nc3.H > hp + lim) nc3.H = hp + lim; else if (nc3.H < hp - lim) nc3.H = hp - lim;
         }
       }
@@ -663,7 +663,7 @@ function buildRegion(G, rx, rz) {
      The reach pass used to report ground the movement budget cannot get onto
      and leave it there. Most of what it reports is behind magma, which a ramp
      cannot fix and is a design question; the rest is the top of a cliff over
-     ground you can walk — a terrace too tall to vault. That is repaired here:
+     ground you can walk — a terrace too tall to double-jump. That is repaired here:
      a staircase of whole-metre steps is cut down into the cliff top from the
      reachable ground at its foot, and recorded with the grading, so every
      window cuts the same one. In the region pass and not the window's, for
@@ -690,7 +690,7 @@ function buildRegion(G, rx, rz) {
           var nk = ni * N + nj, nc = cells[nk];
           if (R[nk] || nc.magma || (nc.water && (nc.wl - nc.H) > 1.5)) continue;
           var dh = nc.H - cc.H;
-          if (dh > MOVE.vault || dh < -MOVE.fall) continue;
+          if (dh > MOVE.climb2 || dh < -MOVE.fall) continue;
           R[nk] = 1; q.push(nk);
         }
       }
@@ -711,7 +711,7 @@ function buildRegion(G, rx, rz) {
             if (cb.magma || cb.water) continue;
             if (R[b]) {
               var rise = ca.H - cb.H;
-              if (rise > MOVE.vault && (!foot || rise < foot.rise
+              if (rise > MOVE.climb2 && (!foot || rise < foot.rise
                   || (rise === foot.rise && (a < foot.top || (a === foot.top && b < foot.base))))) {
                 foot = { top: a, base: b, rise: rise, di: -DIRS4[e][0], dj: -DIRS4[e][1] };
               }
@@ -727,7 +727,7 @@ function buildRegion(G, rx, rz) {
         for (var stepN = 0; stepN < 8 && si > PAD && sj > PAD && si < N - PAD - 1 && sj < N - PAD - 1; stepN++) {
           var sc = at(si, sj);
           if (sc.water || sc.magma || fixed.has(si * N + sj)) break;
-          h += MOVE.step;
+          h += MOVE.slope;
           if (sc.H <= h) break;
           sc.H = h; cut++;
           si += foot.di; sj += foot.dj;
@@ -805,7 +805,7 @@ function buildRegion(G, rx, rz) {
   var aff = [];
   if (lm) aff.push({ k: 'vantage', x: lm.x, z: lm.z, h: lm.h, s: 1 });
   var blocks = function (cp, cq) {
-    return !cq || cq.magma || (cq.water && (cq.wl - cq.H) > MOVE.wade) || Math.abs(cq.H - cp.H) > MOVE.step;
+    return !cq || cq.magma || (cq.water && (cq.wl - cq.H) > MOVE.wade) || Math.abs(cq.H - cp.H) > MOVE.slope;
   };
   /* Chokepoints: every crossing, and trail ground walled in on both sides —
      the one cell either way across the route is water, magma or a step the
@@ -843,7 +843,7 @@ function buildRegion(G, rx, rz) {
     taken.push(a); aff.push(a);
   });
   /* Cover: walkable ground with a rise beside it too tall to see over — the
-     vault height, which is also where a machine loses sight of you. Scored by
+     double-jump height, which is also where a machine loses sight of you. Scored by
      how many sides it covers; one per 8 m block, the most covered. */
   var coverBest = new Map();
   for (i = lo; i < hi; i += 2) for (j = lo; j < hi; j += 2) {
@@ -851,7 +851,7 @@ function buildRegion(G, rx, rz) {
     var cc = at(i, j), sides = 0;
     for (var d = 0; d < 4; d++) {
       var n1 = at(i + DIRS4[d][0], j + DIRS4[d][1]), n2 = at(i + 2 * DIRS4[d][0], j + 2 * DIRS4[d][1]);
-      if ((n1 && !n1.water && n1.H - cc.H >= MOVE.vault) || (n2 && !n2.water && n2.H - cc.H >= MOVE.vault)) sides++;
+      if ((n1 && !n1.water && n1.H - cc.H >= MOVE.climb2) || (n2 && !n2.water && n2.H - cc.H >= MOVE.climb2)) sides++;
     }
     if (!sides) continue;
     var ck = Math.floor(i / 8) * 1000 + Math.floor(j / 8), cv = coverBest.get(ck);

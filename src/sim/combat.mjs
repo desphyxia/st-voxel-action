@@ -126,7 +126,7 @@ export function speedScale(a) {
 }
 
 export function canSwing(a) {
-  return !a.swing && !a.dodge && !a.vault && !a.swimming && a.stamina >= statsOf(a).swingCost;
+  return !a.swing && !a.dodge && !a.swimming && a.stamina >= statsOf(a).swingCost;
 }
 
 /**
@@ -135,7 +135,7 @@ export function canSwing(a) {
  * "committed": once the blade is moving you are going to finish the motion.
  */
 export function canDodge(a) {
-  if (a.dodge || a.vault || a.swimming || a.stamina < statsOf(a).dodgeCost) return false;
+  if (a.dodge || a.swimming || a.stamina < statsOf(a).dodgeCost) return false;
   return !a.swing || phase(a) === PHASE.RECOVER;
 }
 
@@ -279,7 +279,7 @@ export function practicePosts(col, spawn) {
   const ring = [[3, 0], [-3, 1.5], [1.5, -3.5], [-2, -3]];
   for (const [dx, dz] of ring) {
     const x = spawn[0] + dx, z = spawn[2] + dz;
-    const y = col.supportUnder(x, z, 0.4, spawn[1] + MOVE.vault);
+    const y = col.supportUnder(x, z, 0.4, spawn[1] + MOVE.climb2);
     if (y === -Infinity) continue;
     out.push({ x, y, z, r: 0.45 });
   }

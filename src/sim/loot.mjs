@@ -88,7 +88,7 @@ function standing(col, x, z, ceilY) {
 /**
  * Can the movement budget get there?
  *
- * The generator already floods the world under the step/vault/jump/fall rules
+ * The generator already floods the world under the walk/climb/jump/fall rules
  * and marks what it never touched (src/gen/reach.mjs). A cache on a ruin's roof
  * is a cache nobody collects, and the flood is the only thing that knows.
  */
@@ -126,7 +126,7 @@ export function cacheSites(col, world) {
     return false;
   }
 
-  if (world.lmPos) place(world.lmPos[0], world.lmPos[2], world.lmPos[1] + MOVE.vault);
+  if (world.lmPos) place(world.lmPos[0], world.lmPos[2], world.lmPos[1] + MOVE.climb2);
 
   /* The ruin and the holding the trails were routed to: the two places in the
      window that are already *somewhere*, rather than somewhere with a lamp on
@@ -141,7 +141,7 @@ export function cacheSites(col, world) {
      together at whichever end the route was laid from. */
   const stride = Math.max(1, Math.floor(lamps.length / CACHES));
   for (let i = 0; i < lamps.length && out.length < CACHES; i += stride) {
-    place(lamps[i][0], lamps[i][2], lamps[i][1] + MOVE.vault);
+    place(lamps[i][0], lamps[i][2], lamps[i][1] + MOVE.climb2);
   }
 
   /* What each one holds. Both walk their list from a seed-dependent start

@@ -27,7 +27,7 @@
  * Trigonometry is src/gen/exact.mjs's, like everything in src/.
  */
 import { sin, hyp } from '../gen/exact.mjs';
-import { ACTOR, RUN, VAULT_TIME } from './actor.mjs';
+import { ACTOR, RUN } from './actor.mjs';
 import { WINDUP, ACTIVE, SWING_TIME, DODGE_TIME, HURT_TIME, REACH } from './combat.mjs';
 import { EST, TELEGRAPH_TIME, STRIKE_TIME, RECOVER_TIME } from './enemy.mjs';
 
@@ -151,10 +151,9 @@ export function poseHero(a, look) {
   p.hips.py = (s < 0 ? -s : s) * 0.035 * m;
   p.torso.rx = 0.1 * m;
 
-  if (a.vault) {
-    const u = easeInOut(a.vault.t / VAULT_TIME);
-    p.legL.rx = 1.0 * (1 - u) + 0.2; p.legR.rx = 0.5 * (1 - u);
-    p.torso.rx = 0.45 * (1 - u); p.armL.rx = -1.2 * (1 - u);
+  if (!a.grounded && a.airJumps === 0) {
+    /* The second jump reads as a tuck: knees up, arms thrown back. */
+    p.legL.rx = 1.1; p.legR.rx = 0.9; p.torso.rx = 0.35; p.armL.rx = 0.6; p.armL.rz = -0.5;
   } else if (!a.grounded) {
     p.legL.rx = 0.55; p.legR.rx = -0.25; p.armL.rx = -0.9; p.armL.rz = -0.3;
   }

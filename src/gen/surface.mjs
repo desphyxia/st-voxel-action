@@ -12,7 +12,7 @@
  * moved the multiply to draw time so a biome can be restyled without
  * regenerating: see src/gen/palette.mjs.
  */
-import { V, CEIL, clamp } from './constants.mjs';
+import { V, CEIL, MOVE, clamp } from './constants.mjs';
 import { MAT } from './materials.mjs';
 import { BIOMES, BIO, rouletteBiome } from './biomes.mjs';
 import { PAL, pickPal, shadeByte } from './palette.mjs';
@@ -54,7 +54,13 @@ export function sampleGrid(w) {
      once the banks held (#57). Beside water, the trail reads its own height. */
   function rampH(a,b,own){
     var c=cells[clamp(a,0,M-1)*M+clamp(b,0,M-1)];
-    return (c.water||c.magma)?own:cellH(a,b);
+    if(c.water||c.magma) return own;
+    /* Nor across a face (#73): blending towards a cell 3 m off smeared the
+       face into 0.75 m risers along the trail, which the old 1 m step walked
+       and the 0.5 m one does not. A route is graded to within a slope of
+       itself; what stands beyond that is beside it, not under it. */
+    var h=cellH(a,b);
+    return Math.abs(h-own)>MOVE.slope?own:h;
   }
   function trailRamp(px,pz){
     var fx=px+half, fz=pz+half;
@@ -62,6 +68,27 @@ export function sampleGrid(w) {
     var own=cellH(ci(px),ci(pz));
     var h0=rampH(a,b,own)*(1-tx)+rampH(a+1,b,own)*tx;
     var h1=rampH(a,b+1,own)*(1-tx)+rampH(a+1,b+1,own)*tx;
+    return h0*(1-tz)+h1*tz;
+  }
+  /* Ordinary ground, read between the cells the way a trail is (#73). A 1 m
+     step between two cells of dry ground is a slope, not a face: sampled
+     continuously it becomes four voxel columns of 0.25 m each, which the
+     controller walks. A neighbour that is water, magma, or more than
+     MOVE.slope away counts as this cell's own height, so a 2 m face stays a
+     face — a jump — and a riverbank does not tilt into the river. What is a
+     wall is decided by the generator, not left over from the metre grid
+     (DECISIONS §3, "Faces and slopes"). */
+  function slopeCorner(a,b,own){
+    var c=cells[clamp(a,0,M-1)*M+clamp(b,0,M-1)];
+    if(c.water||c.magma) return own;
+    var h=cellH(a,b);
+    return Math.abs(h-own)>MOVE.slope?own:h;
+  }
+  function slopeRamp(px,pz,own){
+    var fx=px+half, fz=pz+half;
+    var a=Math.floor(fx), b=Math.floor(fz), tx=fx-a, tz=fz-b;
+    var h0=slopeCorner(a,b,own)*(1-tx)+slopeCorner(a+1,b,own)*tx;
+    var h1=slopeCorner(a,b+1,own)*(1-tx)+slopeCorner(a+1,b+1,own)*tx;
     return h0*(1-tz)+h1*tz;
   }
   for(i=0;i<NX;i++){ x=-half+i*V+V/2;
@@ -94,7 +121,17 @@ export function sampleGrid(w) {
          mesher, the collider, buildVoxels — is built out of 25 cm boxes. A
          difference of at most one voxel survives that rounding: rounding is
          monotone, so two values within V of each other land within V. */
-      var top=tr?Math.round(trailRamp(x,z)/V)*V:topsp[1];
+      var top;
+      if(tr) top=Math.round(trailRamp(x,z)/V)*V;
+      else if(c.water||c.magma) top=topsp[1];
+      else {
+        var own=cellH(ci(x),ci(z)), rv=Math.round((slopeRamp(x,z,own)-own)/V)*V;
+        top=topsp[1]+rv;
+        /* A ramped column is already a quarter of a metre off its cell; the
+           sub-metre relief on top of that turned the ramp's even staircase
+           into up-and-down chatter on rough ground. */
+        if(rv!==0) d=0;
+      }
       Hs[k]=clamp(top+d,0,CEIL); BOT[k]=topsp[0]; WL[k]=c.wl; DOM[k]=c.dom;
       FLG[k]=(c.water?1:0)|(c.magma?2:0)|(tr?4:0)|(tr===2?8:0);
     } }

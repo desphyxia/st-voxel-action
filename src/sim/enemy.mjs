@@ -18,8 +18,8 @@
  *                not merely survival.
  *   Movement     It walks the same movement budget the player does, through
  *                the same `step`, so it steps up a metre, falls, drowns and
- *                burns exactly as a player would. It does **not** vault: a
- *                heavy machine goes around, which is what `canVault = false`
+ *                burns exactly as a player would. It does **not** jump or climb: a
+ *                heavy machine goes around, which is what `canJump = false`
  *                and the side-stepping below are for.
  *
  * No AI architecture, as the issue says — a state machine and a steering
@@ -80,7 +80,7 @@ const PATH_NODES = 900;
 export function makeSentry(col, x, z, fromY) {
   const e = placeOnGround(col, x, z, fromY, SENTRY.rad);
   e.hp = SENTRY.hp; e.maxHp = SENTRY.hp;
-  e.canVault = false;
+  e.canJump = false;
   e.kind = 'sentry';
   e.ai = { state: EST.DORMANT, t: 0, side: 0, sideT: 0,
            /* Where it holds (#6), and the path it is following, if any (#15). */
@@ -96,7 +96,7 @@ function staggerable(st) {
 /**
  * Where to walk. Straight at the target while nothing is in the way; once a
  * wall or a drop is, along a path round it (#15) — worked out for its own
- * width, without vaults or jumps, because it does neither — and only when no
+ * width, without climbs or jumps, because it does neither — and only when no
  * path exists, sideways for a while. A machine that walks off a ledge to reach
  * you is not menacing, and one that hovers over the gap is worse.
  */
@@ -113,7 +113,7 @@ function steer(col, e, tx, tz, budget) {
     ai.pathT -= TICK;
     if (ai.pathT <= 0 && plan(budget)) {
       const p = findPath(col, e, { x: tx, z: tz },
-                         { rad: e.rad, canVault: false, canJump: false, maxNodes: PATH_NODES });
+                         { rad: e.rad, canJump: false, maxNodes: PATH_NODES });
       ai.path = p && p.length > 1 ? p : null; ai.wp = 1; ai.pathT = REPATH_TIME;
     }
   }
@@ -135,7 +135,7 @@ function steer(col, e, tx, tz, budget) {
   const cliff = g === -Infinity || e.y - g > MOVE.fall - 1;
   if ((cliff || e.blocked) && plan(budget)) {
     const p = findPath(col, e, { x: tx, z: tz },
-                       { rad: e.rad, canVault: false, canJump: false, maxNodes: PATH_NODES });
+                       { rad: e.rad, canJump: false, maxNodes: PATH_NODES });
     if (p && p.length > 1) {
       ai.path = p; ai.wp = 1; ai.pathT = REPATH_TIME;
       const first = followPath(e);
@@ -335,7 +335,7 @@ export function postsFor(col, world) {
   for (const [dx, dz] of [[14, 3], [-11, -13], [5, 19]]) {
     if (out.length >= POSTS) break;
     const x = spawn[0] + dx, z = spawn[2] + dz;
-    const g = col.supportUnder(x, z, SENTRY.rad, spawn[1] + MOVE.vault);
+    const g = col.supportUnder(x, z, SENTRY.rad, spawn[1] + MOVE.climb2);
     const y = g === -Infinity ? null : ok(x, z, g);
     if (y !== null) out.push([x, z, y]);
   }

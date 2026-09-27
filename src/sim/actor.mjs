@@ -2,13 +2,15 @@
  * The character controller, written against the published movement budget
  * (docs/DECISIONS.md §3) rather than against a feel that happens to emerge:
  *
- *   step up 1 m free · vault 2 m · clear a 2.5 m gap · survive a 6 m drop ·
- *   wade 0.75 m, swim deeper · magma is lethal
+ *   walk up 0.5 m · jump onto 1 m, double-jump onto 2 m · clear a 3 m gap,
+ *   4.4 m with the double jump · survive a 6 m drop · wade 0.75 m, swim
+ *   deeper · magma is lethal   (revised 2026-09-27, #73)
  *
- * Only run speed is chosen. Everything about the jump is solved from it, so
- * that a change to `MOVE` moves the character and the terrain together instead
- * of letting them drift apart. A canyon is 3-5 m wide because 2.5 m is what a
- * jump clears; if the jump quietly cleared 3.2 m, canyons would stop being
+ * Run speed and the jump's height are chosen; gravity and everything else
+ * about the jump are solved from them and the gap, so that a change to `MOVE`
+ * moves the character and the terrain together instead of letting them drift
+ * apart. A canyon is wider than a double jump clears because 4.4 m is what it
+ * clears; if the jump quietly cleared more, canyons would stop being
  * obstacles and nobody would notice for months.
  *
  * Fixed timestep, no randomness, no wall clock: the same inputs give the same
@@ -30,8 +32,7 @@ export const TICK = 1 / 60;
 
 export const ACTOR = { radius: 0.35, height: 1.8 };
 
-export const GRAVITY = 22;
-/** The one free parameter: how fast it feels right to run. */
+/** How fast it feels right to run: the one number chosen by feel. */
 export const RUN = 4.0;
 
 /**
@@ -50,18 +51,34 @@ export const RUN = 4.0;
  * graph (#15) is handed this too: a jump link is only meaningful per radius.
  */
 export function flightFor(rad) { return MOVE.jump - 2 * rad + RUN * TICK; }
-export function jumpVFor(rad) { return (GRAVITY * (flightFor(rad) / RUN)) / 2; }
 const FLIGHT = flightFor(ACTOR.radius);
 export const AIRTIME = FLIGHT / RUN;
+/**
+ * Gravity, solved: a jump that rises MOVE.jumpH and comes down again after
+ * AIRTIME. A ballistic arc of height h and duration T has g = 8h / T², and the
+ * 1 m face the jump is for (MOVE.climb) needs the rise to clear it with room
+ * to arrive over the lip. It comes out near 32 m/s² — a brisk jump, not a
+ * floaty one, which is the price of a jump that is both high and short.
+ */
+export const GRAVITY = (8 * MOVE.jumpH) / (AIRTIME * AIRTIME);
+export function jumpVFor(rad) { return (GRAVITY * (flightFor(rad) / RUN)) / 2; }
 export const JUMP_V = (GRAVITY * AIRTIME) / 2;
 export const JUMP_APEX = (JUMP_V * JUMP_V) / (2 * GRAVITY);
+/**
+ * The double jump (#73): one more push in the air, enough to rise a further
+ * MOVE.climb2 - MOVE.climb from wherever it is used — so pressed at the top
+ * of the first jump it reaches MOVE.jumpH + 1 m, onto a 2 m face with the
+ * same room the single jump has onto a 1 m one. It sets the rise rather than
+ * adding to it, so pressed early it gains less, never more.
+ */
+export const AIR_JUMP_V = Math.sqrt(2 * GRAVITY * (MOVE.climb2 - MOVE.climb));
+/** What a double jump costs: height is a resource, like a swing. */
+export const AIR_JUMP_COST = 15;
 
 export const WADE_SPEED = RUN * 0.55;
 export const SWIM_SPEED = RUN * 0.45;
 /** How much of the wanted velocity an airborne actor can claw back per tick. */
 export const AIR_CONTROL = 0.12;
-/** A vault is a climb, not a jump: it takes time and cannot be steered. */
-export const VAULT_TIME = 0.35;
 /** Terminal velocity, low enough that no fall tunnels a floor in one tick. */
 export const TERMINAL = 45;
 
@@ -80,10 +97,10 @@ export function makeActor(x, y, z, rad) {
     grounded: false,
     /** Highest point since the feet last left the ground: what a drop measures from. */
     apex: y,
-    /** null, or a scripted climb in progress. */
-    vault: null,
-    /** Set on the tick a vault starts, for anything counting verbs. */
-    vaults: 0,
+    /** Air jumps left before the feet touch ground again: one, or none. */
+    airJumps: 1,
+    /** Counted for anything tallying verbs: jumps from the ground, and in the air. */
+    jumps: 0, airJumped: 0,
     inWater: false, swimming: false,
     /** Where it is looking. Aim drives this when there is aim; otherwise the
         direction of travel does. Phase 0 uses it for nothing but the model's
@@ -101,8 +118,8 @@ export function makeActor(x, y, z, rad) {
     hp: st.maxHp, maxHp: st.maxHp,
     /** Seconds of flinch left. The renderer's business, nobody else's. */
     hurtT: 0,
-    /** A heavy machine does not pull itself over a ledge — see src/sim/enemy.mjs. */
-    canVault: true,
+    /** A heavy machine does not leave the ground — see src/sim/enemy.mjs. */
+    canJump: true,
     stamina: st.maxStamina,
     /** Seconds before stamina starts coming back. */
     staminaHold: 0,
@@ -133,9 +150,9 @@ export function placeOnGround(col, x, z, fromY, rad) {
 /**
  * The whole of an actor's state, as plain numbers.
  *
- * Everything `step` reads or writes, including the vault in progress — leave a
- * field out and a guest replaying from a snapshot diverges from the host mid
- * climb. The controller is deterministic, so restoring this and re-applying the
+ * Everything `step` reads or writes, including the air jump still in hand —
+ * leave a field out and a guest replaying from a snapshot diverges from the
+ * host in mid air. The controller is deterministic, so restoring this and re-applying the
  * same inputs reproduces the same trajectory exactly; that is the whole basis
  * of the reconciliation in src/net.
  */
@@ -143,9 +160,8 @@ export function snapshot(a) {
   return {
     x: a.x, y: a.y, z: a.z, vx: a.vx, vy: a.vy, vz: a.vz,
     grounded: a.grounded, apex: a.apex,
-    vault: a.vault ? { t: a.vault.t, x0: a.vault.x0, y0: a.vault.y0, z0: a.vault.z0,
-                       x1: a.vault.x1, y1: a.vault.y1, z1: a.vault.z1 } : null,
-    vaults: a.vaults, inWater: a.inWater, swimming: a.swimming,
+    airJumps: a.airJumps, jumps: a.jumps, airJumped: a.airJumped,
+    inWater: a.inWater, swimming: a.swimming,
     faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
     hp: a.hp, maxHp: a.maxHp, hurtT: a.hurtT,
     stamina: a.stamina, staminaHold: a.staminaHold,
@@ -164,9 +180,9 @@ export function snapshot(a) {
 export function restore(a, s) {
   a.x = s.x; a.y = s.y; a.z = s.z; a.vx = s.vx; a.vy = s.vy; a.vz = s.vz;
   a.grounded = s.grounded; a.apex = s.apex;
-  a.vault = s.vault ? { t: s.vault.t, x0: s.vault.x0, y0: s.vault.y0, z0: s.vault.z0,
-                        x1: s.vault.x1, y1: s.vault.y1, z1: s.vault.z1 } : null;
-  a.vaults = s.vaults; a.inWater = s.inWater; a.swimming = s.swimming;
+  a.airJumps = s.airJumps === undefined ? 1 : s.airJumps;
+  a.jumps = s.jumps || 0; a.airJumped = s.airJumped || 0;
+  a.inWater = s.inWater; a.swimming = s.swimming;
   a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
   if (s.gear) { applyGearWire(a.gear, s.gear); a.st = a.gear.st; }
   a.hp = s.hp; a.maxHp = s.maxHp === undefined ? a.st.maxHp : s.maxHp;
@@ -239,27 +255,6 @@ function slide(col, a, nx, nz) {
   return true;
 }
 
-/** A ledge too tall to step onto but not too tall to climb. Starts the vault. */
-function tryVault(col, a, dx, dz) {
-  const r = a.rad, h = ACTOR.height;
-  if (!a.grounded || (dx === 0 && dz === 0)) return false;
-  if (a.swing || a.dodge) return false;        /* committed means committed */
-  if (a.canVault === false) return false;
-  const probe = 0.4;
-  const top = col.supportUnder(a.x + dx * probe, a.z + dz * probe, r, a.y + MOVE.vault + EPS);
-  if (!(top > a.y + MOVE.step + EPS) || top - a.y > MOVE.vault + EPS) return false;
-  /* Room to rise in place — a low ceiling makes a ledge unvaultable. */
-  if (col.overlaps(a.x, a.z, r, a.y + EPS, top + h - EPS)) return false;
-  /* Somewhere to land, and room to stand up once there. */
-  const lx = a.x + dx * (r + probe + 0.2), lz = a.z + dz * (r + probe + 0.2);
-  if (col.supportUnder(lx, lz, r, top + EPS) < top - 0.05) return false;
-  if (col.overlaps(lx, lz, r, top + EPS, top + h - EPS)) return false;
-  a.vault = { t: 0, x0: a.x, y0: a.y, z0: a.z, x1: lx, y1: top, z1: lz };
-  a.vaults++;
-  a.vx = 0; a.vz = 0; a.vy = 0;
-  return true;
-}
-
 /**
  * Advance one tick.
  *
@@ -274,22 +269,6 @@ export function step(col, a, input, targets, dt = TICK) {
   a.ticks++;
   a.blocked = false;
   const r = a.rad, h = ACTOR.height;
-
-  /* A vault owns the actor until it finishes: all the way up, and only then
-     across. Overlapping the two looks better and puts the box inside the ledge
-     for a few ticks on the way through, which is indistinguishable from a
-     collision bug the first time someone sees it in a log. */
-  if (a.vault) {
-    const vt = a.vault;
-    vt.t += dt;
-    const u = clamp(vt.t / VAULT_TIME, 0, 1);
-    const uy = u < 0.5 ? u / 0.5 : 1, uh = u < 0.5 ? 0 : (u - 0.5) / 0.5;
-    a.x = vt.x0 + (vt.x1 - vt.x0) * uh;
-    a.z = vt.z0 + (vt.z1 - vt.z0) * uh;
-    a.y = vt.y0 + (vt.y1 - vt.y0) * uy;
-    if (u >= 1) { a.vault = null; a.grounded = true; a.apex = a.y; }
-    return a;
-  }
 
   /* Facing: aim if there is any, otherwise wherever it is going. Set before
      anything can return early, so a magma death still faces the right way. */
@@ -333,11 +312,25 @@ export function step(col, a, input, targets, dt = TICK) {
     else { a.vx += (wx - a.vx) * AIR_CONTROL; a.vz += (wz - a.vz) * AIR_CONTROL; }
   }
 
-  if (input.jump && !a.swing && !a.dodge && (a.grounded || a.swimming)) {
-    const jv = a.rad === ACTOR.radius ? JUMP_V : jumpVFor(a.rad);
-    a.vy = a.swimming ? jv * 0.35 : jv;
-    a.grounded = false;
-    a.apex = a.y;
+  /* `input.jump` is a press, not a hold: one tick per press, which is what
+     lets the second press be a second jump rather than the first one held. */
+  if (a.grounded || a.swimming) a.airJumps = 1;
+  if (input.jump && !a.swing && !a.dodge && a.canJump !== false) {
+    if (a.grounded || a.swimming) {
+      const jv = a.rad === ACTOR.radius ? JUMP_V : jumpVFor(a.rad);
+      a.vy = a.swimming ? jv * 0.35 : jv;
+      a.grounded = false;
+      a.apex = a.y;
+      a.jumps++;
+    } else if (a.airJumps > 0 && a.stamina >= AIR_JUMP_COST) {
+      /* Allowed after walking off a ledge as well as after a jump: it is the
+         one air jump per time off the ground, whichever way you left it. */
+      a.vy = AIR_JUMP_V;
+      a.airJumps = 0;
+      a.airJumped++;
+      a.stamina -= AIR_JUMP_COST;
+      a.staminaHold = statsOf(a).staminaHold;
+    }
   }
 
   /* False for the tick a jump starts, which is what keeps the snap below from
@@ -345,15 +338,17 @@ export function step(col, a, input, targets, dt = TICK) {
   const wasGrounded = a.grounded;
 
   /* ---- horizontal, one axis at a time so a wall is slid along, not stuck on ---- */
+  /* A face in the way stops the body; the jump is how it gets over (#73).
+     The wanted velocity is kept while airborne against a face, so a jump
+     pressed against a ledge carries onto it the moment the body clears the
+     lip, rather than having to be steered in again. */
   if (a.vx !== 0 && !slide(col, a, a.x + a.vx * dt, a.z)) {
     a.blocked = true;
-    if (!tryVault(col, a, Math.sign(a.vx), 0)) a.vx = 0;
-    if (a.vault) return a;
+    if (a.grounded) a.vx = 0;
   }
   if (a.vz !== 0 && !slide(col, a, a.x, a.z + a.vz * dt)) {
     a.blocked = true;
-    if (!tryVault(col, a, 0, Math.sign(a.vz))) a.vz = 0;
-    if (a.vault) return a;
+    if (a.grounded) a.vz = 0;
   }
 
   /* ---- vertical ---- */
