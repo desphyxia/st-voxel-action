@@ -1571,9 +1571,14 @@ if (BROWSER_HALF) {
           P.setSky('dusk', 0, true); const dusk = lum();
           P.setSky('night', 0, true); const night = lum(), atNight = P.sky;
           P.setSky('auto', 0);
-          const per = Math.round(1 / QS.TICK), s0 = P.shadowRenders;
+          const per = Math.round(1 / QS.TICK), turn = P.sunTurn, s0 = P.shadowRenders;
           for (let i = 0; i < 60; i++) { P.run(per); P.frameOnce(); }
           const redraws = P.shadowRenders - s0, after = P.sky;
+          /* Low shadows, the phones' setting: longer steps, fewer redraws. */
+          const shadowsWas = P.gfx.shadows; P.setGfx('shadows', 'low');
+          const lowTurn = P.sunTurn, l0 = P.shadowRenders;
+          for (let i = 0; i < 60; i++) { P.run(per); P.frameOnce(); }
+          const lowRedraws = P.shadowRenders - l0; P.setGfx('shadows', shadowsWas); P.frameOnce();
           const S = QS.SPELL_SECONDS; let t = -1;
           for (let k = 0; k < 400 && t < 0; k++) if (QS.weatherAt(P.seed, (k + 0.5) * S).rain > 0.5) t = (k + 0.5) * S;
           P.setSky('auto', t); P.frameOnce(); const wet = P.sky;
@@ -1582,17 +1587,26 @@ if (BROWSER_HALF) {
             if ((k === 'grass' || k === 'water') && o.material) fog.push(o.material.fog === true && 'fogNear' in o.material.uniforms); });
           P.setSky('noon', 0, true); P.frameOnce();
           P.pause(false);
-          return { noon, dusk, night, atNoon, atNight, redraws, after, wet, t,
+          return { noon, dusk, night, atNoon, atNight, redraws, after, wet, t, turn, lowTurn, lowRedraws,
                    fogged: fog.filter(Boolean).length, fogMats: fog.length };
         });
         check(sky.atNoon.tone && sky.night < sky.noon * 0.55 && sky.night > 12 && sky.dusk < sky.noon && sky.dusk > sky.night,
               'SKY: noon, dusk and night are three different lights, and night still has a picture in it',
               `mean luma ${sky.noon.toFixed(1)} at noon, ${sky.dusk.toFixed(1)} at dusk, ${sky.night.toFixed(1)} at night; `
               + `lamps ${sky.atNoon.lamps} / ${sky.atNight.lamps}; filmic tone mapping ${sky.atNoon.tone ? 'on' : 'OFF'}`);
-        check(sky.after.sec >= 59 && sky.redraws >= 3 && sky.redraws <= 6,
-              'SKY: the sun moves, in steps, and the shadow map follows it a few times a minute',
-              `${sky.redraws} shadow redraws over ${sky.after.sec.toFixed(0)} s of simulated time `
-              + `(sun now ${sky.after.sun.map((v) => v.toFixed(2)).join(',')})`);
+        /* One redraw a step, give or take the step the minute began inside;
+           a step small enough not to be seen at High, and Low's longer steps
+           costing fewer redraws. */
+        {
+          const want = (turn) => [Math.floor(60 / turn) - 1, Math.ceil(60 / turn) + 1];
+          const [h0, h1] = want(sky.turn), [l0, l1] = want(sky.lowTurn);
+          check(sky.after.sec >= 59 && sky.turn <= 2 && sky.redraws >= h0 && sky.redraws <= h1
+                && sky.lowTurn > sky.turn && sky.lowRedraws >= l0 && sky.lowRedraws <= l1,
+                'SKY: the sun moves in steps too small to see, and the shadow map follows each one',
+                `${sky.redraws} shadow redraws in ${sky.after.sec.toFixed(0)} s at a ${sky.turn} s step `
+                + `(${(sky.turn * 0.3).toFixed(1)}°); ${sky.lowRedraws} at Low's ${sky.lowTurn} s `
+                + `(sun now ${sky.after.sun.map((v) => v.toFixed(2)).join(',')})`);
+        }
         check(sky.t > 0 && (sky.wet.mode === 'rain' || sky.wet.mode === 'snow') && sky.wet.parts > 0 && sky.wet.wet > 0.5 && sky.wet.fogFar > sky.wet.fogNear,
               'SKY: rain falls, the ground darkens with it, and the fog comes in',
               `at ${sky.t} s: ${sky.wet.mode} with ${sky.wet.parts} drops, wetness ${sky.wet.wet.toFixed(2)}, `
@@ -2700,14 +2714,14 @@ if (BROWSER_HALF) {
           }
           const why1 = P.shadowWhy, d = {};
           for (const k of new Set([...Object.keys(why0), ...Object.keys(why1)])) d[k] = (why1[k] || 0) - (why0[k] || 0);
-          return { walked: Math.hypot(P.actor.x - a0.x, P.actor.z - a0.z), linked: P.programs - prog0,
+          return { turn: P.sunTurn, walked: Math.hypot(P.actor.x - a0.x, P.actor.z - a0.z), linked: P.programs - prog0,
                    lights: [...lights], why: d, redraws: Object.values(d).reduce((s, v) => s + v, 0) };
         });
         check(walk.walked > 40 && walk.lights.length === 1 && walk.lights[0] === 4 && walk.linked === 0,
               'PERF: a streamed walk holds its lights and compiles no program (#70)',
               `${walk.walked.toFixed(0)} m walked; point lights ${walk.lights.join('/')}; ${walk.linked} programs linked after the first frame`);
-        check(walk.redraws <= 10 && !walk.why.world,
-              'PERF: and redraws the shadow map a handful of times a minute, for ground coming into view',
+        check((walk.why.chunk || 0) <= 10 && (walk.why.sun || 0) <= Math.ceil(60 / walk.turn) + 1 && !walk.why.world,
+              'PERF: and redraws the shadow map for ground coming into view a handful of times a minute, and once a sun step',
               `${walk.redraws} redraws in 60 s: ${Object.entries(walk.why).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'}`);
         await wp.evaluate(() => { window.QSPLAY.input.releaseAll(); });
 

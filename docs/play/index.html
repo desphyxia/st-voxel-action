@@ -9506,13 +9506,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(skyFix!==null) return (skyFix-QS.DAWN_START)*QS.DAY_SECONDS;
     return skySec;
   }
-  /* Seconds between moves of the light: a twentieth of a degree a second over
-     a 1200 s day, so a step turns it 4.5 degrees. It was 8 s, and every step
-     is a whole shadow map drawn again (#70). */
-  var SUN_TURN=15;
+  /* Seconds between moves of the light, by the Shadows setting. The sun
+     turns 0.3 degrees a second over a 1200 s day, and every step is a whole
+     shadow map drawn again (#70) — and every shadow in view shifting at once.
+     At 15 s that was 4.5 degrees, a jump anyone could see. High steps 0.6
+     degrees, too little to catch, for 30 redraws a minute; Low, the phones'
+     setting, 1.8 degrees for 10; with no shadow map a step costs nothing, so
+     the light itself moves every second. */
+  var SUN_TURNS={high:2,low:6,off:1};
+  function sunTurn(){ return SUN_TURNS[GFX.shadows]||6; }
   /**
    * Put the sky into the scene. Stepped — every two simulation seconds for
-   * colour and weather, every SUN_TURN for where the light comes from — because
+   * colour and weather, every sunTurn() for where the light comes from — because
    * a sun that moves redraws the shadow map (#60), and a shadow map redrawn
    * every frame is exactly what #60 took away. `force` is a world just built.
    */
@@ -9521,14 +9526,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* A pinned hour holds the sun still; the clock still turns the weather
        over, so the step is always the clock's. */
     var t=skySeconds(), fixed=plateMode||skyFix!==null;
-    var step=Math.floor(skySec/2), dstep=fixed?'at'+t:Math.floor(t/SUN_TURN);
+    var step=Math.floor(skySec/2), dstep=fixed?'at'+t:sunTurn()+':'+Math.floor(t/sunTurn());
     if(!force&&step===skyStepAt) return;
     skyStepAt=step;
     var seed=built.cfg?built.cfg.seed:'';
     var s=skyNow=QS.skyAt(t,seed,plateMode||skyCalm?SKY_CLEAR:QS.weatherAt(seed,skySec));
     if(force||dstep!==skyDirAt){
       skyDirAt=dstep;
-      var sd=fixed?s:QS.skyAt(dstep*SUN_TURN,seed,SKY_CLEAR);
+      var sd=fixed?s:QS.skyAt(Math.floor(t/sunTurn())*sunTurn(),seed,SKY_CLEAR);
       var moon=sd.moonI>sd.sunI*1.5, dv=moon?sd.moonDir:sd.sunDir;
       sunDirV.set(dv[0],dv[1],dv[2]).normalize();
     }
@@ -13244,6 +13249,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get fpsShown(){ return !!fpsEl&&!fpsEl.classList.contains('off'); },
     get fpsText(){ return fpsEl?fpsEl.textContent:''; },
     get view(){ return cam.view; },
+    /* Seconds between the sun's steps at the current Shadows setting. */
+    get sunTurn(){ return sunTurn(); },
     get seed(){ return built?built.cfg.seed:null; },
     /* Batch 1 (#30, #31, #55): the hour, the weather and what is in the air. */
     get sky(){ return {sec:skySec,phase:skyNow.phase,day:skyNow.day,sunI:skyNow.sunI,lamps:skyNow.lamps,
