@@ -32,6 +32,20 @@ export { V, CEIL, CHUNK, MOVE, clamp } from './constants.mjs';
 export { BIOMES } from './biomes.mjs';
 export { makeGen } from './field.mjs';
 
+/** Every mesa whose top is centred inside the window, once each (#75). */
+function findMesas(w) {
+  var out = [], seen = new Set(), M = w.M, half = w.half, i, j;
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    if (w.cells[i * M + j].mesa !== 1) continue;
+    var s = w.G.mesaOver(-half + i + w.OX, -half + j + w.OZ);
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    var lx = s.cx - w.OX, lz = s.cz - w.OZ;
+    if (Math.abs(lx) <= half - 2 && Math.abs(lz) <= half - 2) out.push([lx, s.T, lz]);
+  }
+  w.mesas = out;
+}
+
 /** The cell grid: one 1 m cell per lattice point, sampled from the fields. */
 function seedCells(cfg) {
   var S = cfg.size, force = (cfg.force === undefined ? null : cfg.force);
@@ -78,6 +92,7 @@ export function buildWorld(cfg) {
   buildGrass(w);
   buildWaterGeometry(w);
   floodReach(w);               /* what the movement budget can actually reach */
+  findMesas(w);                /* the tops worth climbing to, for the caches */
   chooseSpawn(w);
   w.G.forget();                /* the field cache is for building, not for keeping (#58) */
   return {
@@ -93,6 +108,9 @@ export function buildWorld(cfg) {
        holding stand on them (props.mjs), which makes them the places worth
        putting something in — see src/sim/loot.mjs. */
     sites: w.sites,
+    /* The mesas centred in this window (#75), as [x, top, z] in its own frame:
+       each is a cache's first choice, the reason to climb the stones. */
+    mesas: w.mesas,
     /* Chokepoints, arenas, vantage points and cover, as the region pass found
        them (#42) — what places an encounter or a set-piece reads. */
     affordances: w.affordances,

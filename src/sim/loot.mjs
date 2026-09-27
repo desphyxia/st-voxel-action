@@ -109,9 +109,10 @@ export function cacheSites(col, world) {
   const spawn = world.spawn, out = [];
   const ring = [[5.5, 0], [0, 5.5], [-5.5, 0], [0, -5.5], [4, 4], [-4, -4]];
 
-  function place(cx, cz, ceilY) {
-    for (let r = 0; r < ring.length; r++) {
-      const x = cx + ring[r][0], z = cz + ring[r][1];
+  function place(cx, cz, ceilY, around) {
+    const rg = around || ring;
+    for (let r = 0; r < rg.length; r++) {
+      const x = cx + rg[r][0], z = cz + rg[r][1];
       if (hyp(x - spawn[0], z - spawn[2]) < CACHE_MIN_WALK) continue;
       if (!reachable(world, x, z)) continue;
       const y = standing(col, x, z, ceilY);
@@ -124,6 +125,14 @@ export function cacheSites(col, world) {
       return true;
     }
     return false;
+  }
+
+  /* A mesa's top first (#75): its stones are a climb, and a climb wants a
+     reason. On the top itself, near the middle — a top can be eight metres
+     across, which the ring above would step straight off. */
+  const mesas = world.mesas || [], onTop = [[0, 0], [1.5, 0], [0, 1.5], [-1.5, 0], [0, -1.5]];
+  for (let i = 0; i < mesas.length && out.length < CACHES; i++) {
+    place(mesas[i][0], mesas[i][2], mesas[i][1] + MOVE.climb2, onTop);
   }
 
   if (world.lmPos) place(world.lmPos[0], world.lmPos[2], world.lmPos[1] + MOVE.climb2);

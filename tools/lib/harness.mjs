@@ -287,6 +287,10 @@ export function measureWorld(d, name) {
     landmark: !!d.lmPos,
     overhang: !!d.ovhPos,
     unreachPct: +(100 * unreach / d.unreach.length).toFixed(1),
+    /* Mesas centred within 128 m of the window's middle (#75): a window is
+       64 m and a mesa stands about one to every 110 m square of redrock, so
+       one window says little and this says whether the seed makes them. */
+    mesas: d.G && d.G.mesasIn ? d.G.mesasIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     digest: hex(h),
     parts,
   };

@@ -1442,7 +1442,17 @@ function makeGen(seedStr,force){
       }
     return null;
   }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,
+  /* How many mesas are centred in a box, straight from the site grid: what
+     --diag counts, over more ground than one window holds (#75). */
+  function mesasIn(x0,z0,x1,z1){
+    var n=0;
+    for(var gx=Math.floor(x0/MESA_GRID);gx<=Math.floor(x1/MESA_GRID);gx++)
+      for(var gz=Math.floor(z0/MESA_GRID);gz<=Math.floor(z1/MESA_GRID);gz++){
+        var m=mesaSite(gx,gz); if(m&&m.cx>=x0&&m.cx<x1&&m.cz>=z0&&m.cz<z1) n++;
+      }
+    return n;
+  }
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 /* ---------- src/gen/erosion.mjs ---------- */
@@ -3907,6 +3917,20 @@ function chooseSpawn(w) {
 
 
 
+/** Every mesa whose top is centred inside the window, once each (#75). */
+function findMesas(w) {
+  var out = [], seen = new Set(), M = w.M, half = w.half, i, j;
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    if (w.cells[i * M + j].mesa !== 1) continue;
+    var s = w.G.mesaOver(-half + i + w.OX, -half + j + w.OZ);
+    if (!s || seen.has(s)) continue;
+    seen.add(s);
+    var lx = s.cx - w.OX, lz = s.cz - w.OZ;
+    if (Math.abs(lx) <= half - 2 && Math.abs(lz) <= half - 2) out.push([lx, s.T, lz]);
+  }
+  w.mesas = out;
+}
+
 /** The cell grid: one 1 m cell per lattice point, sampled from the fields. */
 function seedCells(cfg) {
   var S = cfg.size, force = (cfg.force === undefined ? null : cfg.force);
@@ -3953,6 +3977,7 @@ function buildWorld(cfg) {
   buildGrass(w);
   buildWaterGeometry(w);
   floodReach(w);               /* what the movement budget can actually reach */
+  findMesas(w);                /* the tops worth climbing to, for the caches */
   chooseSpawn(w);
   w.G.forget();                /* the field cache is for building, not for keeping (#58) */
   return {
@@ -3968,6 +3993,9 @@ function buildWorld(cfg) {
        holding stand on them (props.mjs), which makes them the places worth
        putting something in — see src/sim/loot.mjs. */
     sites: w.sites,
+    /* The mesas centred in this window (#75), as [x, top, z] in its own frame:
+       each is a cache's first choice, the reason to climb the stones. */
+    mesas: w.mesas,
     /* Chokepoints, arenas, vantage points and cover, as the region pass found
        them (#42) — what places an encounter or a set-piece reads. */
     affordances: w.affordances,
@@ -6376,9 +6404,10 @@ function cacheSites(col, world) {
   const spawn = world.spawn, out = [];
   const ring = [[5.5, 0], [0, 5.5], [-5.5, 0], [0, -5.5], [4, 4], [-4, -4]];
 
-  function place(cx, cz, ceilY) {
-    for (let r = 0; r < ring.length; r++) {
-      const x = cx + ring[r][0], z = cz + ring[r][1];
+  function place(cx, cz, ceilY, around) {
+    const rg = around || ring;
+    for (let r = 0; r < rg.length; r++) {
+      const x = cx + rg[r][0], z = cz + rg[r][1];
       if (hyp(x - spawn[0], z - spawn[2]) < CACHE_MIN_WALK) continue;
       if (!reachable(world, x, z)) continue;
       const y = standing(col, x, z, ceilY);
@@ -6391,6 +6420,14 @@ function cacheSites(col, world) {
       return true;
     }
     return false;
+  }
+
+  /* A mesa's top first (#75): its stones are a climb, and a climb wants a
+     reason. On the top itself, near the middle — a top can be eight metres
+     across, which the ring above would step straight off. */
+  const mesas = world.mesas || [], onTop = [[0, 0], [1.5, 0], [0, 1.5], [-1.5, 0], [0, -1.5]];
+  for (let i = 0; i < mesas.length && out.length < CACHES; i++) {
+    place(mesas[i][0], mesas[i][2], mesas[i][1] + MOVE.climb2, onTop);
   }
 
   if (world.lmPos) place(world.lmPos[0], world.lmPos[2], world.lmPos[1] + MOVE.climb2);

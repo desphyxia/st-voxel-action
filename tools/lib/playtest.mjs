@@ -3481,6 +3481,10 @@ export function mesaSuite() {
   }
   const all = (f) => rows.every(f), tell = (f) => rows.map((r) => `${r.seed} ${f(r)}`).join('; ');
   say('mesas stand in the redrock', all((r) => r.whole >= 4), tell((r) => `${r.whole} whole mesas`));
+  /* And on the golden redrock seed, which is what --diag counts. */
+  const gm = GOLDEN_SEEDS.find((g) => g.nm === 'mesa'), gw = makeGen(gm.seed, gm.force);
+  const gn = gw.mesasIn(gm.ox - 128, gm.oz - 128, gm.ox + 128, gm.oz + 128);
+  say('and round the golden redrock window too', gn >= 3, `${gn} mesas within 128 m of ${gm.seed}'s window`);
   say('walled all round: no top is within a double jump of the ground at its foot',
       all((r) => r.low === 0), tell((r) => `${r.low} of ${r.walls} wall edges within ${MOVE.climb2} m`));
   say('and climbed by its stones: every top is reached, and left, from the ground',
@@ -3528,7 +3532,7 @@ export function mesaSuite() {
      them towards the top: a jump at each face and at each lip, and never a
      second one in the air. */
   const pick = built.map(([seed, G, t]) => [seed, G.mesaOver(t.cx, t.cz)]).find(([, m]) => m && m.st.length >= 2);
-  let climbed = 'no built mesa with two stones or more';
+  let climbed = 'no built mesa with two stones or more', cached = climbed;
   if (pick) {
     const [seed, m] = pick, r = m.dx ? m.rx : m.rz, far = m.st[m.st.length - 1] + 4;
     const cw = buildWorld({ seed, size: 64, ox: m.cx, oz: m.cz }), cc = colliderForWorld(cw);
@@ -3542,10 +3546,15 @@ export function mesaSuite() {
       step(cc, b, { mx: -m.dx, mz: -m.dz, jump: j });
     }
     const on = cw.G.cell(Math.round(b.x) + m.cx, Math.round(b.z) + m.cz);
+    const caches = LO.cacheSites(cc, cw), up = caches.filter((q) => cw.G.cell(Math.round(q.x) + m.cx, Math.round(q.z) + m.cz).mesa === 1);
+    cached = { ok: up.length === 1 && up[0].y >= m.T - 0.5,
+      detail: `${caches.length} caches in the window, ${up.length} on the top${up.length ? ` at ${up[0].y.toFixed(2)} against a top at ${m.T}` : ''}` };
     climbed = { ok: on.mesa === 1 && !b.dead && b.airJumped === 0 && jumps >= m.st.length,
       detail: `${seed} ${m.cx},${m.cz}, ${m.st.length} stones: ended ${(b.y - (m.T - m.st.length)).toFixed(2)} m over the last stone on ${['open ground', 'the top', 'a stone', 'the apron'][on.mesa || 0]}, ${jumps} jumps, ${b.airJumped} in the air` };
   }
   say('a body climbs the stones onto the top, one jump each and none in the air',
       climbed.ok === true, climbed.detail || climbed);
+  say('and finds a cache up there: the reason to climb',
+      cached.ok === true, cached.detail || cached);
   return out;
 }

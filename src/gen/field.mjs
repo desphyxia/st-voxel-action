@@ -404,7 +404,17 @@ export function makeGen(seedStr,force){
       }
     return null;
   }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,
+  /* How many mesas are centred in a box, straight from the site grid: what
+     --diag counts, over more ground than one window holds (#75). */
+  function mesasIn(x0,z0,x1,z1){
+    var n=0;
+    for(var gx=Math.floor(x0/MESA_GRID);gx<=Math.floor(x1/MESA_GRID);gx++)
+      for(var gz=Math.floor(z0/MESA_GRID);gz<=Math.floor(z1/MESA_GRID);gz++){
+        var m=mesaSite(gx,gz); if(m&&m.cx>=x0&&m.cx<x1&&m.cz>=z0&&m.cz<z1) n++;
+      }
+    return n;
+  }
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 
