@@ -2667,8 +2667,12 @@ if (BROWSER_HALF) {
              line with some still queued: every draw below would then add one,
              and the two frames compared differ by a chunk arriving at the edge
              of the view, whatever the cull does. That is what failed on CI. */
+          /* A few seconds of it, not until the queue is empty: on CI the queue
+             never empties while the view holds still, and 900 frames of waiting
+             for it cost six minutes and the job its time limit. Two frames
+             agreeing, below, is what decides. */
           let pumped = 0;
-          for (; pumped < 900 && P.chunks.pending > 0; pumped++) P.frameOnce();
+          for (; pumped < 60 && P.chunks.pending > 0; pumped++) P.frameOnce();
           P.pause(true);
           const c = document.querySelector('#cv');
           const gl = c.getContext('webgl') || c.getContext('webgl2');
