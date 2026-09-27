@@ -2632,6 +2632,48 @@ if (BROWSER_HALF) {
                                   : 'no worker started; the stream ran on the main thread');
         }
         await sp.screenshot({ path: join(OUT, 'play-streamed.png') });
+
+        /* ---------- PLACE: a code for a world and a spot in it ----------
+           Share place puts a code for the seed, the streaming and where the
+           player stands in the field under the view (and on the clipboard,
+           where the page is allowed it). Go to place takes a code to its spot
+           — 200 m off through ground not yet loaded — and back, carrying what
+           the character holds; a code for another seed and a window grows
+           that world first; and something that is not a code moves nothing. */
+        const place = await sp.evaluate(() => {
+          const P = window.QSPLAY, a0 = P.actor, home = { x: a0.x, y: a0.y, z: a0.z };
+          const enc = (t) => 'QS1-' + btoa(t).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          document.getElementById('placeshare').click();
+          const field = document.getElementById('placein').value, code = P.placeCode(), read = P.readPlace(code);
+          const gear = P.actor.gear;
+          const far = { x: home.x + 200, z: home.z - 40 };
+          const wentFar = P.goPlace(enc(`1|${far.x}|${far.z}|${P.seed}`)), atFar = { x: P.actor.x, z: P.actor.z, grounded: P.actor.grounded };
+          document.getElementById('placein').value = code;
+          document.getElementById('placego').click();
+          const back = { x: P.actor.x, y: P.actor.y, z: P.actor.z, sameGear: P.actor.gear === gear };
+          const bad = P.goPlace('not a code'), afterBad = { x: P.actor.x, z: P.actor.z };
+          const other = P.goPlace(enc('0|3|-5|PLACE-TEST'));
+          const there = { seed: P.seed, streaming: P.streaming, x: P.actor.x, z: P.actor.z, grounded: P.actor.grounded };
+          return { home, field, code, read, wentFar, far, atFar, back, bad, afterBad, other, there };
+        });
+        {
+          const q = place, d = (u, v) => Math.hypot(u.x - v.x, u.z - v.z);
+          check(q.field === q.code && q.read && q.read.stream && d(q.read, q.home) < 0.08 && /^QS1-/.test(q.code),
+                'PLACE: Share place puts a code for this world and this spot under the view',
+                `${q.code} → ${q.read ? `${q.read.seed}, ${q.read.stream ? 'streamed' : 'window'}, at ${q.read.x}, ${q.read.z}` : 'UNREADABLE'}`);
+          check(q.wentFar && q.atFar.grounded && d(q.atFar, q.far) < 0.01 && d(q.back, q.home) < 0.08
+                && Math.abs(q.back.y - q.home.y) < 0.3 && q.back.sameGear,
+                'PLACE: Go to place takes a code to its spot, through ground not yet loaded, and back',
+                `${d(q.atFar, q.far).toFixed(3)} m from a spot 200 m off (${q.atFar.grounded ? 'standing' : 'NOT standing'}); `
+                + `back within ${d(q.back, q.home).toFixed(3)} m, y ${q.back.y.toFixed(2)} against ${q.home.y.toFixed(2)}, `
+                + `${q.back.sameGear ? 'same pack' : 'pack LOST'}`);
+          check(!q.bad && d(q.afterBad, q.back) === 0 && q.other && q.there.seed === 'PLACE-TEST' && !q.there.streaming
+                && d(q.there, { x: 3, z: -5 }) < 0.01 && q.there.grounded,
+                'PLACE: a code for another world grows it first, and a bad code moves nothing',
+                `bad code ${q.bad ? 'ACCEPTED' : 'refused'}; then ${q.there.seed}, ${q.there.streaming ? 'streamed' : 'window'}, `
+                + `at ${q.there.x.toFixed(1)}, ${q.there.z.toFixed(1)}, ${q.there.grounded ? 'standing' : 'NOT standing'}`);
+        }
+        check(sErrors.length === 0, 'PLACE: and no errors going there', sErrors.slice(0, 3).join(' | '));
         await sp.close();
       }
 

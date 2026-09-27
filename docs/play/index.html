@@ -133,6 +133,7 @@
   .seedbox input{font-family:var(--mono);font-size:12px;color:var(--sand);background:transparent;
                  border:0;border-left:1px solid var(--line);padding:7px 9px;width:13ch}
   .seedbox input:focus{outline:2px solid var(--magic);outline-offset:-2px}
+  .seedbox input#placein{width:22ch}
   button.ctl{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;
              color:var(--muted);background:var(--ink2);border:1px solid var(--line);border-radius:2px;
              padding:7px 11px;cursor:pointer}
@@ -345,6 +346,10 @@
         replaces the one 64 m window with 32 m chunks that load and unload as you walk, so the
         world has no edge. It is off by default, and it grows a <i>different</i> world from the
         same seed, because a 40 m window and a 64 m one disagree about the ground between them.
+        <b>Share place</b> copies a code for this world and where you stand in it &mdash; the
+        seed, whether it streams, and the spot &mdash; to send to a friend; paste one into
+        <b>Place</b> and <b>Go to place</b> takes you there, growing that world first if it is
+        not this one.
         <b>Grass density</b> and <b>Grass length</b> tune the field: length is a uniform and follows
         the slider live, density is how many blades the generator makes and so regrows the world from
         the same seed when you let go of it.
@@ -356,6 +361,9 @@
       <span class="seedbox"><label for="seedin">Seed</label><input id="seedin" value="QUARTERSTONE" spellcheck="false" autocomplete="off"></span>
       <button class="ctl" id="regen" type="button">Generate</button>
       <button class="ctl" id="respawn" type="button">Respawn</button>
+      <button class="ctl" id="placeshare" type="button" title="Copy a code for this world and where you stand in it, to send to a friend">Share place</button>
+      <span class="seedbox"><label for="placein">Place</label><input id="placein" placeholder="paste a code" spellcheck="false" autocomplete="off"></span>
+      <button class="ctl" id="placego" type="button" title="Go to the world and the spot a place code names">Go to place</button>
       <button class="ctl" id="hostbtn" type="button">Host a game</button>
       <button class="ctl" id="meshbtn" type="button" aria-pressed="true" title="Draw the terrain as a greedy mesh with baked occlusion. Off is the instanced boxes it replaced, kept so the two can be compared.">Mesh: on</button>
       <button class="ctl" id="streambtn" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window. A world with no edge, from the same seed — and a different world, because the generator is not size-invariant.">Streaming: off</button>
@@ -12142,6 +12150,75 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   document.getElementById('regen').addEventListener('click',doGen);
   seedin.addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.stopPropagation(); doGen(); } });
 
+  /* ---------- a place to send a friend ----------
+     A code names a world and a spot in it: the seed, whether the world
+     streams — the same seed streamed is different ground, so it is part of
+     which world — and x and z to the decimetre. Height is not sent: the
+     ground under the spot decides it, which is also what makes a code
+     useless for putting someone inside a cliff. Base64url over a line of
+     text, so a seed of any characters survives, behind a version tag. */
+  function placeCode(){
+    var a=player(); if(!a||!built||!built.cfg) return '';
+    var t=(streaming?1:0)+'|'+(Math.round(a.x*10)/10)+'|'+(Math.round(a.z*10)/10)+'|'+built.cfg.seed;
+    return 'QS1-'+btoa(unescape(encodeURIComponent(t))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  }
+  function readPlace(code){
+    var m=/^QS1-([A-Za-z0-9_-]+)$/.exec(String(code||'').trim()); if(!m) return null;
+    var t;
+    try{ var b=m[1].replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4) b+='=';
+         t=decodeURIComponent(escape(atob(b))); }catch(e){ return null; }
+    var f=t.split('|'); if(f.length<4) return null;
+    var x=Number(f[1]), z=Number(f[2]), seed=f.slice(3).join('|');
+    if((f[0]!=='0'&&f[0]!=='1')||!isFinite(x)||!isFinite(z)||!seed) return null;
+    return {stream:f[0]==='1',x:x,z:z,seed:seed};
+  }
+  /* Ground under a spot a streamed world has not reached yet: the chunks
+     around it are built here, the way a new world settles its first nine. */
+  function settleAround(x,z){
+    if(!streaming||!stream||!field) return;
+    stream.radius(1,STREAM_KEEP); stream.want([{x:x,z:z}]);
+    for(;;){ var j=stream.next(); if(!j) break;
+      stream.deliver(j.cx,j.cz,QS.chunkWorld(field.seed,j.cx,j.cz,field.force,field.gdens)); }
+    stream.radius(STREAM_LOAD,STREAM_KEEP);
+    reconcileNodes();
+  }
+  function goPlace(code){
+    var p=readPlace(code);
+    if(!p){ says2('that is not a place code'); return false; }
+    /* The host decides where everyone is, and a world cannot change under a
+       game in progress. */
+    if(session){ says2('leave the game first'); return false; }
+    if(p.stream!==streaming){ streaming=p.stream; syncStreamBtn(); regen(p.seed); }
+    else if(!built||!built.cfg||built.cfg.seed!==p.seed) regen(p.seed);
+    seedin.value=p.seed;
+    settleAround(p.x,p.z);
+    var g=QS.placeOnGround(col,p.x,p.z), a=player();
+    /* The same character, moved: what it carries comes with it. */
+    a.x=g.x; a.z=g.z; a.vx=a.vy=a.vz=0; a.dead=null;
+    if(g.grounded){ a.y=g.y; a.apex=g.y; a.grounded=true; }
+    else { a.y=Math.max(a.y,30); a.apex=a.y; a.grounded=false; }
+    QS.warpTo(cam,a.x,a.y,a.z);
+    deadEl.style.display='none';
+    says2('at '+p.x.toFixed(1)+', '+p.z.toFixed(1)+' in '+p.seed+(p.stream?' (streamed)':''));
+    return true;
+  }
+  var placein=document.getElementById('placein');
+  document.getElementById('placeshare').addEventListener('click',function(){
+    var code=placeCode(); if(!code) return;
+    /* In the field as well as on the clipboard: a framed page can be refused
+       the clipboard, and the code is then selected there to copy by hand. */
+    placein.value=code;
+    function byHand(){ placein.focus(); placein.select(); says2('select the code under the view and copy it'); }
+    try{
+      if(navigator.clipboard&&navigator.clipboard.writeText)
+        navigator.clipboard.writeText(code).then(function(){ says2('place code copied \u2014 send it to a friend'); },byHand);
+      else byHand();
+    }catch(e){ byHand(); }
+  });
+  function doPlace(){ if(goPlace(placein.value)) stage.focus(); }
+  document.getElementById('placego').addEventListener('click',doPlace);
+  placein.addEventListener('keydown',function(e){ e.stopPropagation(); if(e.key==='Enter') doPlace(); });
+
   /* ---------- the loop ---------- */
   function aimHeading(a){
     var st=input.aim, h=QS.aimFromStick(cam,st.x,st.y);
@@ -13251,6 +13328,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get view(){ return cam.view; },
     /* Seconds between the sun's steps at the current Shadows setting. */
     get sunTurn(){ return sunTurn(); },
+    /* A place code for where the player stands, and going to one. */
+    placeCode:placeCode, goPlace:goPlace, readPlace:readPlace,
     get seed(){ return built?built.cfg.seed:null; },
     /* Batch 1 (#30, #31, #55): the hour, the weather and what is in the air. */
     get sky(){ return {sec:skySec,phase:skyNow.phase,day:skyNow.day,sunI:skyNow.sunI,lamps:skyNow.lamps,
