@@ -2235,7 +2235,7 @@ if (BROWSER_HALF) {
                                                  report: window.QSPLAY.reportText().split('\n')[0] }));
           const want = srcHash(readFileSync(PLAY_TARGET, 'utf8'));
           check(bid.b.src === want && /^(file|dev|pages) [0-9a-f]{7}$/.test(bid.b.label) && bid.where.endsWith(bid.b.label)
-                && bid.report.includes('src ' + want),
+                && bid.report.startsWith('Quarterstone report · ' + bid.b.label + ' · '),
                 'BUILD ID: the view and the report name the code that drew them, as the file hashes',
                 `"${bid.where.slice(-24)}"; page ${bid.b.src}, file ${want}; report "${bid.report.slice(0, 60)}"`);
         }

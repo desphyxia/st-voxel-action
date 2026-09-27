@@ -8650,7 +8650,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     :(/github\.io$/.test(location.hostname)?'pages ':location.protocol==='file:'?'file ':'dev ')+QS_SRC;
   var REC_KEY='qs.flight', REC_PREV=null;
   try{ REC_PREV=JSON.parse(localStorage.getItem(REC_KEY)||'null'); }catch(e){}
-  var REC={v:1,build:QS_BUILD,src:QS_SRC,started:new Date().toISOString(),clean:false,
+  var REC={v:1,id:QS_LABEL,build:QS_BUILD,src:QS_SRC,started:new Date().toISOString(),clean:false,
            ua:navigator.userAgent,dpr:window.devicePixelRatio||1,
            screen:[screen.width,screen.height],touch:GFX_COARSE,events:[],trail:[],snap:null,
            /* Where the page was served from: the artifact is stamped with its
@@ -13228,13 +13228,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   }
   setInterval(recTick,1000);
   function reportOf(r){
-    return {what:'Quarterstone report',build:r.build,src:r.src,started:r.started,made:new Date().toISOString(),
+    /* `id` is what the view's location bar showed — the same words a
+       screenshot of that session carries — so a report and a screenshot can
+       be matched by eye. A record left by an older build has none. */
+    return {what:'Quarterstone report',id:r.id||('build '+r.build),build:r.build,src:r.src,started:r.started,made:new Date().toISOString(),
             endedCleanly:r.clean,from:r.from,peak:r.peak,ua:r.ua,dpr:r.dpr,screen:r.screen,touch:r.touch,
             now:r.snap,trail:r.trail,events:r.events,settings:r===REC?Object.assign({},GFX):undefined};
   }
   function reportText(r){
     var o=reportOf(r||REC);
-    return 'Quarterstone report · build '+o.build+(o.src?' · src '+o.src:'')+' · '+o.made+'\n'+JSON.stringify(o,null,1);
+    return 'Quarterstone report · '+o.id+' · '+o.made+'\n'+JSON.stringify(o,null,1);
   }
   var crashEl=document.getElementById('crash'), crashTxt=document.getElementById('crashtxt'),
       crashMsg=document.getElementById('crashmsg'), crashHead=document.getElementById('crashh'),
