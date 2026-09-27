@@ -288,18 +288,93 @@ export function makeGen(seedStr,force){
     }
     return apron?{h:null,kind:3}:null;
   }
+  /* Basalt column fields (#76, Ashfall): a pool of magma set a metre under
+     the lowest ground round it, and standing out of it on a 3 m lattice a
+     field of 2 x 2 m columns, a metre of magma between each: a run and a jump
+     from one lip lands on the next column's far half, where 1 m columns 2 m
+     apart were overshot every time. They are crossed a jump
+     at a time. Every column's top is the field's own base or a metre over it,
+     so any two a jump apart are within a metre of each other; a quarter of
+     them are missing, never on the two lines through the middle, so there is
+     always a way across and seldom only one.
+
+     Placed like a mesa: a jittered spot per 40 m square where the burn is
+     more than half the ground, refused near a river, a gorge or a mesa, and
+     drawn from the square's own coordinates. */
+  var BAS_GRID=40, BAS_APRON=3, BAS_REACH=24, BAS_SITES=new Map();
+  function basaltSite(gx,gz){
+    var k=gx*131071+gz, s=BAS_SITES.get(k);
+    if(s!==undefined) return s;
+    s=null;
+    if(prand(gx,gz,0x5a10)<0.75) for(var t=0;t<4&&!s;t++) s=basaltTry(gx,gz,0x5a11+t*16);
+    BAS_SITES.set(k,s);
+    return s;
+  }
+  function basaltTry(gx,gz,salt){
+    var cx=gx*BAS_GRID+10+Math.floor(prand(gx,gz,salt)*20),
+        cz=gz*BAS_GRID+10+Math.floor(prand(gx,gz,salt+1)*20);
+    if(climate(cx,cz)[BIO.ASH]<=0.5) return null;
+    var rx=6+Math.floor(prand(gx,gz,salt+2)*5), rz=6+Math.floor(prand(gx,gz,salt+3)*5);
+    var lo=1e9, dx, dz, ex, ez;
+    for(dx=-rx-BAS_APRON;dx<=rx+BAS_APRON;dx++) for(dz=-rz-BAS_APRON;dz<=rz+BAS_APRON;dz++){
+      if(mesaWet(cx+dx,cz+dz)||mesaAt(cx+dx,cz+dz)) return null;
+      ex=dx/rx; ez=dz/rz;
+      if(ex*ex+ez*ez<=1){ var h=rawH(cx+dx,cz+dz); if(h<lo) lo=h; }
+    }
+    var B=Math.round(rawH(cx,cz)), P=Math.min(Math.round(lo)-1,B-2);
+    if(P<1||B+1>CEIL) return null;
+    return {cx:cx,cz:cz,rx:rx,rz:rz,B:B,P:P,salt:salt};
+  }
+  /* A column (1), the pool (2), the rim round it where nothing grows (3). */
+  function basaltAt(x,z){
+    var apron=false;
+    for(var gx=Math.floor((x-BAS_REACH)/BAS_GRID);gx<=Math.floor((x+BAS_REACH)/BAS_GRID);gx++)
+      for(var gz=Math.floor((z-BAS_REACH)/BAS_GRID);gz<=Math.floor((z+BAS_REACH)/BAS_GRID);gz++){
+        var s=basaltSite(gx,gz); if(!s) continue;
+        var dx=x-s.cx, dz=z-s.cz, ex=dx/s.rx, ez=dz/s.rz;
+        if(ex*ex+ez*ez<=1){
+          /* 2 x 2 m columns on a 3 m lattice: two cells of rock, one of magma.
+             A block is one column, so it draws from its block's coordinates. */
+          var bx=Math.floor(dx/3), bz=Math.floor(dz/3), ix=dx-3*bx, iz=dz-3*bz;
+          if(ix<2&&iz<2&&(bx===0||bz===0||prand(bx+s.cx,bz+s.cz,s.salt+9)>=0.25))
+            return {kind:1,h:s.B+(prand(bx+s.cx,bz+s.cz,s.salt+10)<0.5?0:1)};
+          return {kind:2,h:s.P};
+        }
+        ex=dx/(s.rx+BAS_APRON); ez=dz/(s.rz+BAS_APRON);
+        if(ex*ex+ez*ez<=1) apron=true;
+      }
+    return apron?{kind:3,h:null}:null;
+  }
+  /* How many column fields are centred in a box, for --diag. */
+  function basaltIn(x0,z0,x1,z1){
+    var n=0;
+    for(var gx=Math.floor(x0/BAS_GRID);gx<=Math.floor(x1/BAS_GRID);gx++)
+      for(var gz=Math.floor(z0/BAS_GRID);gz<=Math.floor(z1/BAS_GRID);gz++){
+        var b=basaltSite(gx,gz); if(b&&b.cx>=x0&&b.cx<x1&&b.cz>=z0&&b.cz<z1) n++;
+      }
+    return n;
+  }
+  /* The column field over (x, z), for a test that wants to cross one. */
+  function basaltOver(x,z){
+    for(var gx=Math.floor((x-BAS_REACH)/BAS_GRID);gx<=Math.floor((x+BAS_REACH)/BAS_GRID);gx++)
+      for(var gz=Math.floor((z-BAS_REACH)/BAS_GRID);gz<=Math.floor((z+BAS_REACH)/BAS_GRID);gz++){
+        var s=basaltSite(gx,gz); if(!s) continue;
+        var ex=(x-s.cx)/s.rx, ez=(z-s.cz)/s.rz; if(ex*ex+ez*ez<=1) return s;
+      }
+    return null;
+  }
   /* one 1 m cell: everything sized in whole metres */
   function cell(x,z){
     var w=climate(x,z);
     var hm=macro(x,z,w), H=Math.round(hm);
     var cw=wsum(w,'canyon'), colw=wsum(w,'col');
-    var c=null, ms=mesaAt(x,z);
-    if(cw>0.28&&!ms){ c=canyonAt(x,z);
+    var c=null, ms=mesaAt(x,z), bs=ms?null:basaltAt(x,z);
+    if(cw>0.28&&!ms&&!bs){ c=canyonAt(x,z);
       c.body=c.d<c.w/2&&canyonBody(x,z);
       if(c.body){ var taper=clamp((cw-0.28)/0.25,0,1); H-=Math.round(c.dp*taper*(1-c.br)); }
     }
-    if(!ms) H+=pillarAt(x,z,colw);
-    else if(ms.h!==null) H=ms.h;
+    if(!ms&&!bs) H+=pillarAt(x,z,colw);
+    else if(ms&&ms.h!==null) H=ms.h;
     var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
     var rl=null;
     /* The smooth level, but never above the ground the river runs through: a
@@ -307,7 +382,7 @@ export function makeGen(seedStr,force){
        the banks then pulled down and the bed was carved below the world to
        keep. Where the land is lower, the surface sits a quarter under it. */
     if(r.d<rw/2||riverCorner(x,z,rw)){ rl=Math.min(riverLevel(x,z,w),H-0.25); H=Math.min(H-1,Math.floor(rl-0.75+1e-9)); water=true; }
-    if(!water&&!(ms&&ms.h!==null)&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
+    if(!water&&!(ms&&ms.h!==null)&&!bs&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
@@ -315,17 +390,20 @@ export function makeGen(seedStr,force){
     /* A river quenches a seam: no magma in or within two metres of one. The
        burn is a scar now and crosses rivers the old ash biome never had, and
        a seam's trench beside a river is dry ground below the water (#3). */
-    if(w[BIO.ASH]>0.5&&!water&&r.d>=rw/2+2){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
+    if(w[BIO.ASH]>0.5&&!water&&!bs&&r.d>=rw/2+2){ var f=Math.abs(N.s.fbm(x*0.03+7,z*0.03+7,2)-0.5);
       /* Level, like a river (#67): a seam used to be the ground less a metre,
          so it kept every bump under it and a basalt pillar standing in it
          carried magma up its top. Its bed is the large-scale shape of the
          land instead — no fine octave, no pillars, no canyon — so it flows
          through them. */
       if(f<0.022){ H=Math.min(H-1,riverBed(x,z,w)); magma=true; water=false; } }
+    if(bs&&bs.h!==null){ H=bs.h; magma=bs.kind===2; water=false; pond=false; }
     H=clamp(H,0,CEIL);
     if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0};
+    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,
+      /* hold: a face the later passes keep as it is; bare: nothing grows here */
+      hold:!!(ms&&ms.kind<=2)||!!(bs&&bs.kind===1), bare:!!(ms&&ms.kind>=2)||!!bs};
   }
   function rawH(x,z){ return macro(x,z,climate(x,z)); }
   /* a column is a run of solid spans, not one height: this is what lets a
@@ -387,7 +465,7 @@ export function makeGen(seedStr,force){
       if(CELLS.size>=CELL_CAP) CELLS.clear();
       c=cell(x,z); CELLS.set(k,c);
     }
-    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa};
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,hold:c.hold,bare:c.bare};
   }
   /* A world keeps its generator (w.G) for as long as it lives, and a streamed
      field holds sixteen of them — so the cache is let go when generation ends,
@@ -414,7 +492,7 @@ export function makeGen(seedStr,force){
       }
     return n;
   }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 

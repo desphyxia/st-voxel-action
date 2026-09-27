@@ -3558,3 +3558,100 @@ export function mesaSuite() {
       cached.ok === true, cached.detail || cached);
   return out;
 }
+
+/* Seeds with burn enough for several column fields in 600 m. */
+const BASALT_SEEDS = ['DUSKWARD', 'CINDERFALL'];
+
+/**
+ * Basalt column fields (#76, Ashfall): crossed a jump at a time over magma.
+ *
+ * Over the cell field of each seed, a flood under the budget's moves — a step
+ * up of at most a double jump, a drop of at most a fall, and a jump over one
+ * lower cell (magma included) onto ground within a slope of the take-off —
+ * seeded from all the dry ground that is not a column. Every column on the
+ * two lines through a field must be reached, and left; no two columns touch,
+ * so every one of those moves across the field is a jump. On a built window,
+ * a body walks a line through one from rim to rim.
+ */
+export function basaltSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const rows = [];
+  let pickSeed = null, pick = null;
+  for (const seed of BASALT_SEEDS) {
+    const G = makeGen(seed, null), R = 300, N = 2 * R;
+    const S = new Float32Array(N * N), kind = new Uint8Array(N * N), dry = new Uint8Array(N * N), mag = new Uint8Array(N * N);
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const c = G.cell(i - R, j - R), k = i * N + j;
+      S[k] = c.water ? c.wl : c.H; kind[k] = c.basalt || 0; mag[k] = c.magma ? 1 : 0;
+      dry[k] = c.magma || (c.water && c.wl - c.H > 1.5) ? 0 : 1;
+    }
+    const flood = (back) => {
+      const seen = new Uint8Array(N * N), q = [];
+      for (let k = 0; k < N * N; k++) if (dry[k] && kind[k] !== 1) { seen[k] = 1; q.push(k); }
+      for (let h = 0; h < q.length; h++) {
+        const k = q[h], i = (k / N) | 0, j = k % N;
+        for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ii = i + a, jj = j + b; if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
+          const p = ii * N + jj;
+          if (!seen[p] && dry[p]) {
+            const dh = back ? S[k] - S[p] : S[p] - S[k];
+            if (dh <= MOVE.climb2 && dh >= -MOVE.fall) { seen[p] = 1; q.push(p); }
+          }
+          const i2 = i + 2 * a, j2 = j + 2 * b; if (i2 < 0 || j2 < 0 || i2 >= N || j2 >= N) continue;
+          const p2 = i2 * N + j2; if (seen[p2] || !dry[p2]) continue;
+          if ((mag[p] || S[p] <= S[k] - 1) && Math.abs(S[p2] - S[k]) <= MOVE.slope) { seen[p2] = 1; q.push(p2); }
+        }
+      }
+      return seen;
+    };
+    const into = flood(false), outOf = flood(true);
+    /* Fields wholly inside the sample, found through the generator's own record. */
+    const fields = new Map();
+    for (let k = 0; k < N * N; k++) {
+      if (kind[k] !== 1) continue;
+      const i = (k / N) | 0, j = k % N, s = G.basaltOver(i - R, j - R);
+      if (!s || Math.abs(s.cx) > R - 16 || Math.abs(s.cz) > R - 16) continue;
+      if (!fields.has(s)) fields.set(s, { spine: 0, reached: 0, left: 0, cols: 0, touch: 0 });
+      const f = fields.get(s); f.cols++;
+      /* Touching another column, not its own block: a different block's cell. */
+      for (const [a, b] of [[1, 0], [0, 1]]) if (kind[(i + a) * N + j + b] === 1
+          && (Math.floor((i + a - R - s.cx) / 3) !== Math.floor((i - R - s.cx) / 3) || Math.floor((j + b - R - s.cz) / 3) !== Math.floor((j - R - s.cz) / 3))) f.touch++;
+      if (Math.floor((i - R - s.cx) / 3) === 0 || Math.floor((j - R - s.cz) / 3) === 0) { f.spine++; if (into[k]) f.reached++; if (outOf[k]) f.left++; }
+    }
+    let whole = 0, crossed = 0, touching = 0;
+    for (const [s, f] of fields) {
+      whole++; touching += f.touch;
+      if (f.reached === f.spine && f.left === f.spine) crossed++;
+      if (!pick && s.rx >= 7) { pick = s; pickSeed = seed; }
+    }
+    rows.push({ seed, whole, crossed, touching });
+  }
+  const tell = (f) => rows.map((r) => `${r.seed} ${f(r)}`).join('; ');
+  say('column fields stand in the burn', rows.every((r) => r.whole >= 3), tell((r) => `${r.whole} whole fields`));
+  say('no two columns touch: every step across is a jump over magma', rows.every((r) => r.touching === 0),
+      tell((r) => `${r.touching} touching`));
+  say('and every field is crossed: each column on its two lines is reached, and left',
+      rows.every((r) => r.crossed === r.whole), tell((r) => `${r.crossed}/${r.whole}`));
+  const gb = GOLDEN_SEEDS.find((g) => g.nm === 'ash'), gg = makeGen(gb.seed, gb.force);
+  const gn = gg.basaltIn(gb.ox - 128, gb.oz - 128, gb.ox + 128, gb.oz + 128);
+  say('and round the golden ash window too', gn >= 2, `${gn} fields within 128 m of ${gb.seed}'s window`);
+
+  /* A body crosses one: along its line from rim to rim, a jump at each lip. */
+  let crossed = 'no field wide enough';
+  if (pick) {
+    const cw = buildWorld({ seed: pickSeed, size: 64, ox: pick.cx, oz: pick.cz }), cc = colliderForWorld(cw);
+    const b = placeOnGround(cc, -pick.rx - 2, 0.5);
+    const drops = () => cc.supportUnder(b.x + RUN * TICK, b.z, ACTOR.radius, b.y + EPS) < b.y - MOVE.step;
+    let jumps = 0;
+    for (let t = 0; t < 1200 && !b.dead && b.x < pick.rx + 2; t++) {
+      const j = b.grounded && (b.blocked || drops());
+      if (j) jumps++;
+      step(cc, b, { mx: 1, mz: 0, jump: j });
+    }
+    crossed = { ok: !b.dead && b.x >= pick.rx + 2 && jumps >= Math.floor(2 * pick.rx / 3),
+      detail: `${pickSeed} ${pick.cx},${pick.cz}, ${2 * pick.rx + 1} m across: ended at ${b.x.toFixed(1)}, ${b.dead || 'alive'}, ${jumps} jumps` };
+  }
+  say('a body crosses one from rim to rim, a jump at each lip', crossed.ok === true, crossed.detail || crossed);
+  return out;
+}

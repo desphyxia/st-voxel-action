@@ -80,7 +80,7 @@ const PORT_SALT = 0x5300;
     which is the whole reason a port can be chosen from either side. */
 function baseCell(G, x, z) {
   var c = G.cell(x, z);
-  return { H: clamp(erodeAt(G, x, z, c), 0, CEIL), water: c.water, magma: c.magma, mesa: c.mesa };
+  return { H: clamp(erodeAt(G, x, z, c), 0, CEIL), water: c.water, magma: c.magma, hold: c.hold };
 }
 
 /** The port on one edge, as world [x, z], or null when the edge has nowhere a
@@ -95,7 +95,7 @@ function portOf(G, ex, ez, axis) {
     var ok = true, prev = null;
     for (s = -1; s <= 1 && ok; s++) {
       var c = axis ? baseCell(G, t, line + s) : baseCell(G, line + s, t);
-      if (c.water || c.magma || c.mesa === 1 || c.mesa === 2 || (prev && Math.abs(c.H - prev.H) > MOVE.slope)) ok = false;
+      if (c.water || c.magma || c.hold || (prev && Math.abs(c.H - prev.H) > MOVE.slope)) ok = false;
       prev = c;
     }
     if (ok) cands.push(t);
@@ -257,7 +257,7 @@ function buildRegion(G, rx, rz) {
       var cq = at(ci, cj);
       /* Not on a mesa (#75): a route from a site up there walks off the wall,
          and grading it cuts the top down to the trail. */
-      if (!cq || cq.water || cq.magma || cq.mesa === 1 || cq.mesa === 2 || Math.abs(cq.H - cp.H) > 1) return false;
+      if (!cq || cq.water || cq.magma || cq.hold || Math.abs(cq.H - cp.H) > 1) return false;
     }
     return true;
   }
@@ -337,7 +337,7 @@ function buildRegion(G, rx, rz) {
       var c = at(a, b);
       /* A route along a mesa's foot keeps its second lane off the wall (#75):
          levelled to the path, the lane cuts a notch the length of the route. */
-      if (c.magma || c.water || c.mesa === 1 || c.mesa === 2) continue;
+      if (c.magma || c.water || c.hold) continue;
       return a * N + b;
     }
     return -1;
@@ -394,7 +394,7 @@ function buildRegion(G, rx, rz) {
         /* A trail beside a mesa leaves its wall and its stones as they are
            (#75): graded to the verge, a stone is a step off the path and the
            way up no longer climbs a metre at a time. */
-        if (nc.mesa === 1 || nc.mesa === 2) continue;
+        if (nc.hold) continue;
         if (nc.H - hp > MOVE.slope) nc.H = hp + MOVE.slope; else if (hp - nc.H > MOVE.slope) nc.H = hp - MOVE.slope;
       }
     }
@@ -738,7 +738,7 @@ function buildRegion(G, rx, rz) {
           /* Never into a mesa (#75). This flood takes single steps, so it sees
              neither the stones' jumps nor the top they lead to, and would cut
              a stair into every mesa there is. The MESA suite proves the way up. */
-          if (sc.mesa === 1 || sc.mesa === 2) break;
+          if (sc.hold) break;
           h += MOVE.slope;
           if (sc.H <= h) break;
           sc.H = h; cut++;

@@ -312,7 +312,7 @@ export function scatterProps(w, kit) {
     /* Nothing grows on a mesa's stones or round its foot (#75): a trunk on a
        stone is in the way of the jump onto it, and a boulder at the wall is a
        second way up. */
-    if(cc.mesa>=2) continue;
+    if(cc.bare) continue;
     if(!cc.water&&!cc.magma&&R()<td*0.095){
       /* Which kind of tree is a draw over what each biome present would plant
          here, not the dominant biome's: a border reads as the two woods
@@ -364,7 +364,7 @@ export function placeClutter(w, kit) {
       var di=DIRS4[dd][0], dj=DIRS4[dd][1];
       var c1=groundCellAt(w,wx0+di,wz0+dj);
       if(c0.H-c1.H<2) continue;
-      if(c0.mesa) break;
+      if(c0.hold||c0.mesa) break;
       if(RS()<0.32) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((RS()*4)|0),RS);
       break;
     }
@@ -372,7 +372,7 @@ export function placeClutter(w, kit) {
   /* scattered clutter, kept off the trails */
   for(i=0;i<M;i++)for(j=0;j<M;j++){
     var cc2=cells[i*M+j];
-    if(cc2.water||cc2.magma||TRAIL[i*M+j]||cc2.mesa>=2) continue;
+    if(cc2.water||cc2.magma||TRAIL[i*M+j]||cc2.bare) continue;
     var R2=G.pstream(PASS.CLUTTER,-half+i+OX,-half+j+OZ);
     var px2=-half+i+(R2()-0.5)*0.8, pz2=-half+j+(R2()-0.5)*0.8, dm=cc2.dom, rv=R2();
     if(rv<0.032) bush(px2,pz2,dm,R2);

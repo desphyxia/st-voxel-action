@@ -18,6 +18,7 @@
   "overhang": true,
   "unreachPct": 0.1,
   "mesas": 0,
+  "basalt": 0,
   "digest": "ece3c422",
   "parts": {
    "vox": "e200ff7b",
@@ -48,6 +49,7 @@
   "overhang": true,
   "unreachPct": 3,
   "mesas": 7,
+  "basalt": 0,
   "digest": "7dc08686",
   "parts": {
    "vox": "4bf907c0",
@@ -78,6 +80,7 @@
   "overhang": true,
   "unreachPct": 0.1,
   "mesas": 0,
+  "basalt": 0,
   "digest": "ba998dd9",
   "parts": {
    "vox": "20cb7ce6",
@@ -108,6 +111,7 @@
   "overhang": false,
   "unreachPct": 0,
   "mesas": 0,
+  "basalt": 0,
   "digest": "640f040c",
   "parts": {
    "vox": "50fa8018",
@@ -126,27 +130,28 @@
   "waterBodies8": 2,
   "lamps": 5,
   "lampsByTrail": 5,
-  "voxels": 124353,
-  "mats": 124353,
+  "voxels": 124620,
+  "mats": 124620,
   "matKinds": 10,
-  "grass": 172197,
+  "grass": 170043,
   "waterCells": 290,
-  "trailCells": 246,
+  "trailCells": 247,
   "wetTrail": 4,
   "bridges": 2,
   "landmark": true,
   "overhang": true,
-  "unreachPct": 6.3,
+  "unreachPct": 6.7,
   "mesas": 0,
-  "digest": "d7049e80",
+  "basalt": 9,
+  "digest": "389e268c",
   "parts": {
-   "vox": "8033d444",
-   "magma": "2c865108",
-   "grass": "05924049",
+   "vox": "e3499f9a",
+   "magma": "c38ee1d8",
+   "grass": "8b024bff",
    "water": "ee5a777a",
-   "maps": "ebf1a3b0",
-   "sites": "c9b31e09",
-   "cells": "00410366"
+   "maps": "6ac3bb73",
+   "sites": "c00e3a64",
+   "cells": "22e54e54"
   }
  },
  {
@@ -168,6 +173,7 @@
   "overhang": true,
   "unreachPct": 0.3,
   "mesas": 0,
+  "basalt": 0,
   "digest": "48b26054",
   "parts": {
    "vox": "ccdd4274",
@@ -198,6 +204,7 @@
   "overhang": true,
   "unreachPct": 1,
   "mesas": 1,
+  "basalt": 0,
   "digest": "cc72ae63",
   "parts": {
    "vox": "13647a45",
@@ -228,6 +235,7 @@
   "overhang": false,
   "unreachPct": 0,
   "mesas": 0,
+  "basalt": 0,
   "digest": "7aa6f09b",
   "parts": {
    "vox": "90b47d8b",
@@ -258,6 +266,7 @@
   "overhang": true,
   "unreachPct": 0.6,
   "mesas": 0,
+  "basalt": 0,
   "digest": "760e97aa",
   "parts": {
    "vox": "89438365",
