@@ -20,6 +20,7 @@
   "mesas": 0,
   "basalt": 0,
   "cliffs": 0,
+  "thickets": 0,
   "digest": "ece3c422",
   "parts": {
    "vox": "e200ff7b",
@@ -52,6 +53,7 @@
   "mesas": 7,
   "basalt": 0,
   "cliffs": 0,
+  "thickets": 0,
   "digest": "a42cf953",
   "parts": {
    "vox": "9ac607e2",
@@ -84,6 +86,7 @@
   "mesas": 0,
   "basalt": 0,
   "cliffs": 12,
+  "thickets": 0,
   "digest": "97814b9a",
   "parts": {
    "vox": "36a50a7c",
@@ -102,12 +105,12 @@
   "waterBodies8": 0,
   "lamps": 10,
   "lampsByTrail": 10,
-  "voxels": 98617,
-  "mats": 98617,
+  "voxels": 111010,
+  "mats": 111010,
   "matKinds": 8,
-  "grass": 262213,
+  "grass": 263998,
   "waterCells": 0,
-  "trailCells": 450,
+  "trailCells": 424,
   "wetTrail": 0,
   "bridges": 0,
   "landmark": true,
@@ -116,15 +119,16 @@
   "mesas": 0,
   "basalt": 0,
   "cliffs": 0,
-  "digest": "640f040c",
+  "thickets": 6,
+  "digest": "c7c1b9dc",
   "parts": {
-   "vox": "50fa8018",
-   "magma": "30b5e767",
-   "grass": "cf007ddf",
+   "vox": "02352bb2",
+   "magma": "a50bf7f5",
+   "grass": "fec8c05e",
    "water": "ea6207e5",
-   "maps": "1e7c857a",
-   "sites": "f6912df1",
-   "cells": "7873664a"
+   "maps": "aa311ba8",
+   "sites": "f2d5c112",
+   "cells": "806ba8fa"
   }
  },
  {
@@ -148,6 +152,7 @@
   "mesas": 0,
   "basalt": 9,
   "cliffs": 0,
+  "thickets": 0,
   "digest": "e3be9924",
   "parts": {
    "vox": "619d371f",
@@ -180,6 +185,7 @@
   "mesas": 0,
   "basalt": 0,
   "cliffs": 0,
+  "thickets": 0,
   "digest": "48b26054",
   "parts": {
    "vox": "ccdd4274",
@@ -212,6 +218,7 @@
   "mesas": 1,
   "basalt": 0,
   "cliffs": 0,
+  "thickets": 0,
   "digest": "cc72ae63",
   "parts": {
    "vox": "13647a45",
@@ -244,6 +251,7 @@
   "mesas": 0,
   "basalt": 0,
   "cliffs": 0,
+  "thickets": 0,
   "digest": "7aa6f09b",
   "parts": {
    "vox": "90b47d8b",
@@ -276,6 +284,7 @@
   "mesas": 0,
   "basalt": 0,
   "cliffs": 1,
+  "thickets": 0,
   "digest": "71447536",
   "parts": {
    "vox": "20b90e07",

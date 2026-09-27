@@ -496,3 +496,54 @@ export function placeLandmark(w, kit) {
   })();
   w.lmPos = lmPos;
 }
+
+/**
+ * Thickets and their logs (#76, Thornwood), stamped over the cells the field
+ * marked. The thicket is wood, not foliage — leaves are walked through — and
+ * its top is flat, 3.5 m over the highest ground round it (field.mjs) and at
+ * least 3.25 m over the ground under it: over a double jump from the ground
+ * anywhere near it, and from the log. Every cell of it is roofed; a cell on its edge,
+ * or beside the log's lane, is wall all the way down. The interior under the
+ * roof is never reached, so it is left empty. The log is a squared beam a
+ * metre high and a metre wide along its lane, running a metre past the
+ * thicket at each end.
+ */
+export var THICKET_H = 3.25;
+export function placeThickets(w, kit) {
+  var M = w.M, cells = w.cells, half = w.half, G = w.G, OX = w.OX, OZ = w.OZ,
+      addVox = kit.addVox, surfAt = kit.surfAt, i, j;
+  function thornAt(a, b) {
+    if (a >= 0 && b >= 0 && a < M && b < M) return cells[a * M + b].thorn;
+    return groundCellAt(w, -half + a + OX, -half + b + OZ).thorn;
+  }
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    var c = cells[i * M + j], k = c.thorn;
+    if (k !== 2 && k !== 3) continue;
+    var R = G.pstream(PASS.THICKET, -half + i + OX, -half + j + OZ);
+    var edge = false;
+    if (k === 2) for (var d = 0; d < 4 && !edge; d++) if (thornAt(i + DIRS4[d][0], j + DIRS4[d][1]) !== 2) edge = true;
+    /* Beside the log's lane, the column nearest it is left out. A prop voxel
+       is snapped to the nearest terrain column, and on a tie the wall's
+       innermost one landed in the lane and closed it to anyone walking the
+       log. A 25 cm slot is too narrow to step into. */
+    var lx0 = k === 2 && thornAt(i - 1, j) === 3, lx1 = k === 2 && thornAt(i + 1, j) === 3,
+        lz0 = k === 2 && thornAt(i, j - 1) === 3, lz1 = k === 2 && thornAt(i, j + 1) === 3;
+    for (var ax = -0.5 + V / 2; ax < 0.5; ax += V) for (var az = -0.5 + V / 2; az < 0.5; az += V) {
+      if ((lx0 && ax < -0.25) || (lx1 && ax > 0.25) || (lz0 && az < -0.25) || (lz1 && az > 0.25)) continue;
+      var px = -half + i + ax, pz = -half + j + az, s = surfAt(px, pz), y;
+      if (k === 3) {
+        for (y = 0; y < 1; y += V) addVox(px, s.y + y + V / 2, pz,
+          (y > 0.7 && R() < 0.25 ? PAL.FALLEN_MOSS.at : PAL.FALLEN_BARK.at), 0.8 + R() * 0.3, MAT.WOOD);
+        continue;
+      }
+      /* Up to the site's flat top, from the ground at the edges and from two
+         voxels under it everywhere else. */
+      var yTop = Math.max(c.thornTop, s.y + THICKET_H);
+      for (y = edge ? s.y : yTop - 2 * V; y < yTop; y += V) {
+        var top = y >= yTop - 2 * V;
+        addVox(px, y + V / 2, pz, top || R() < 0.5 ? pickPal(PAL.BUSH_THORN, R) : PAL.FALLEN_BARK.at,
+               0.7 + R() * 0.4, MAT.WOOD);
+      }
+    }
+  }
+}

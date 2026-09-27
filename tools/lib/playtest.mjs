@@ -3768,3 +3768,93 @@ export function cliffSuite() {
   say('a body climbs a ledge line onto the band, a jump at each ledge', climbed.ok === true, climbed.detail || climbed);
   return out;
 }
+
+/* Seeds with thorn enough for thickets in 600 m. */
+const THORN_SEEDS = ['CINDERFALL', 'EMBERFALL'];
+
+/**
+ * Thickets (#76, Thornwood): a patch nobody gets into or over, and a log
+ * through it that is the way across.
+ *
+ * On built windows round the first few thickets of each seed — props and
+ * all, since the thicket *is* props — the collider's own heights, a voxel at
+ * a time, flooded from the window's edge under the budget: up a double jump,
+ * down a fall. No column of thicket is reached, top or inside; the log is.
+ * Then a body walks the log's line from open ground to open ground, a jump
+ * onto it and none needed after.
+ */
+export function thornSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const sites = [];
+  for (const seed of THORN_SEEDS) {
+    const G = makeGen(seed, null), seen = new Set();
+    for (let x = -300; x <= 300 && sites.filter((q) => q[0] === seed).length < 3; x += 4) for (let z = -300; z <= 300; z += 4) {
+      const s = G.thornOver(x, z); if (!s || seen.has(s)) continue;
+      seen.add(s); sites.push([seed, s]); if (sites.filter((q) => q[0] === seed).length >= 3) break;
+    }
+  }
+  /* A double jump at the thicket: pressed at the wall and again at the top
+     of the rise, still pushing in. It has worked if the body ends up over the
+     thicket's ground — on it or in it. */
+  const tries = (w, col, x, z, dx, dz, inside, top) => {
+    /* On the ground, not on whatever stands highest there: beside a tree
+       that is the tree, and a run in from a treetop is not what is asked. */
+    const g = w.cells[Math.round(x + 32) * w.M + Math.round(z + 32)].H;
+    const b = placeOnGround(col, x, z, g + 1.5); b.top = top;
+    for (let t = 0; t < 150 && !b.dead; t++) {
+      const j = (b.grounded && t > 2) || (!b.grounded && b.airJumps > 0 && b.vy <= 0);
+      step(col, b, { mx: dx, mz: dz, jump: j });
+    }
+    if (!inside(b.x, b.z)) return null;
+    /* In it: thicket over its head. On it: standing near its top. Against its
+       outer wall, neither — which is where the offset prop lattice leaves a
+       body an ellipse test would call inside. */
+    const over = col.supportUnder(b.x, b.z, 0.01, CEIL * 2);
+    return over > b.y + 1.5 || b.y > b.top - 1 ? b : null;
+  };
+  let got = [], attempts = 0, crossed = [], H = 0;
+  for (const [seed, s] of sites) {
+    const w = buildWorld({ seed, size: 64, ox: s.cx, oz: s.cz }), col = colliderForWorld(w);
+    /* Over the thicket's own ground, a quarter-metre in from its edge, and
+       not on the log's lane. */
+    const inside = (x, z) => {
+      const ex = x / (s.rx - 0.25), ez = z / (s.rz - 0.25);
+      return ex * ex + ez * ez <= 1 && (s.ax ? Math.abs(z) > 0.75 : Math.abs(x) > 0.75);
+    };
+    /* From outside, at twelve points round it, running straight in. */
+    for (let a = 0; a < 12; a++) {
+      const u = cos(a * Math.PI / 6), v = sin(a * Math.PI / 6);
+      const x = u * (s.rx + 1.5), z = v * (s.rz + 1.5);
+      if (s.ax ? Math.abs(z) < 1.5 : Math.abs(x) < 1.5) continue;
+      attempts++;
+      const b = tries(w, col, x, z, -u, -v, inside, s.top);
+      if (b) got.push(`${seed} ${s.cx},${s.cz} from ${x.toFixed(0)},${z.toFixed(0)} to ${b.x.toFixed(1)},${b.y.toFixed(1)},${b.z.toFixed(1)}`);
+    }
+    /* From the log, at every other metre along it, off to each side. */
+    const r = s.ax ? s.rx : s.rz;
+    for (let t = -r + 1; t <= r - 1; t += 2) for (const side of [-1, 1]) {
+      const x = s.ax ? t : 0, z = s.ax ? 0 : t, dx = s.ax ? 0 : side, dz = s.ax ? side : 0;
+      attempts++;
+      const b = tries(w, col, x, z, dx, dz, inside, s.top);
+      if (b) got.push(`${seed} ${s.cx},${s.cz} off the log at ${t} to ${b.x.toFixed(1)},${b.y.toFixed(1)},${b.z.toFixed(1)}`);
+    }
+    /* Along the log, from open ground to open ground. */
+    const at = (t) => (s.ax ? [t, 0] : [0, t]), dir = s.ax ? [1, 0] : [0, 1];
+    const p0 = at(-r - 3), body = placeOnGround(col, p0[0], p0[1]);
+    for (let t = 0; t < 900 && !body.dead && (s.ax ? body.x : body.z) < r + 3; t++) {
+      step(col, body, { mx: dir[0], mz: dir[1], jump: body.grounded && body.blocked });
+    }
+    const end = s.ax ? body.x : body.z;
+    if (body.dead || end < r + 3) crossed.push(`${seed} ${s.cx},${s.cz} stopped at ${end.toFixed(1)} of ${r + 3}`);
+    else H++;
+  }
+  say('thickets stand in the thorn, and no double jump gets into one or onto it', sites.length >= 6 && got.length === 0,
+      got.length ? got.slice(0, 6).join('; ') : `${sites.length} thickets built, ${attempts} double jumps at them from outside and off their logs, none got in`);
+  say('and a body walks its log from one side to the other', crossed.length === 0,
+      crossed.length ? crossed.join('; ') : `${H}/${sites.length} crossed along the log`);
+  const gt = GOLDEN_SEEDS.find((g) => g.nm === 'thorn'), gg = makeGen(gt.seed, gt.force);
+  const gn = gg.thornIn(gt.ox - 128, gt.oz - 128, gt.ox + 128, gt.oz + 128);
+  say('and round the golden thorn window too', gn >= 2, `${gn} thickets within 128 m of ${gt.seed}'s window`);
+  return out;
+}

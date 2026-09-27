@@ -295,6 +295,8 @@ export function measureWorld(d, name) {
     basalt: d.G && d.G.basaltIn ? d.G.basaltIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     /* Cliff bands the same way (#76, Cloudpine). */
     cliffs: d.G && d.G.cliffIn ? d.G.cliffIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
+    /* Thickets the same way (#76, Thornwood). */
+    thickets: d.G && d.G.thornIn ? d.G.thornIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     digest: hex(h),
     parts,
   };
