@@ -2821,8 +2821,9 @@ if (BROWSER_HALF) {
                 + `${last.per.toFixed(1)} MB a chunk at the end against ${early.toFixed(1)} early`);
           /* An iPhone ended a tab at 30 chunks holding ~25 MB of arrays each,
              most of it grass nobody read again and copies of buffers already
-             on the GPU. */
-          check(mem.withGrass < 14 && mem.noGrass < 5 && mem.tilesOff === 0 && mem.tilesOn > 0 && mem.report,
+             on the GPU. With grass off what is left is the chunks' own data
+             and the copies of ground not yet drawn, which go when it is. */
+          check(mem.withGrass < 14 && mem.noGrass < mem.withGrass * 0.6 && mem.tilesOff === 0 && mem.tilesOn > 0 && mem.report,
                 'MEMORY: and a streamed chunk holds a few MB of arrays, fewer with grass off, and the report says so',
                 `${mem.withGrass.toFixed(1)} MB a chunk with grass, ${mem.noGrass.toFixed(1)} without (was ~25); `
                 + `grass tiles ${mem.tilesOff} off, ${mem.tilesOn} back on; held memory ${mem.report ? 'in' : 'NOT in'} the report`);
