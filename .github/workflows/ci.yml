@@ -39,7 +39,11 @@ jobs:
   browser:
     name: Browser
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The whole browser half runs in software rendering and has grown with the
+    # gate: 21 minutes at 45a1d74, 29.5 at 4d5ec85, and on 4d5ec85's PR one
+    # run of a commit passed at 29.4 while its twin was cancelled at 30. The
+    # limit is for a hang, not for a slow runner; 45 leaves room for one.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
