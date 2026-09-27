@@ -24,7 +24,7 @@ import { layRoutes } from './routes.mjs';
 import { cutSpans } from './spans.mjs';
 import { drainPerched, containWater, fillWaterTable, flowField, buildWaterGeometry } from './water.mjs';
 import { sampleGrid, buildVoxels } from './surface.mjs';
-import { makeStamps, scatterProps, placeClutter, placeLandmark } from './props.mjs';
+import { makeStamps, scatterProps, placeClutter, placeLandmark, placeThickets } from './props.mjs';
 import { buildGrass } from './grass.mjs';
 import { floodReach, chooseSpawn } from './reach.mjs';
 
@@ -86,6 +86,7 @@ export function buildWorld(cfg) {
      is usually right is the kind of thing that breaks quietly. */
   w.propStart = w.pos.length / 3;
   var kit = makeStamps(w);
+  placeThickets(w, kit);        /* Thornwood's thickets and their logs, before anything grows */
   scatterProps(w, kit);        /* trees, boulders, canyon arcs */
   placeClutter(w, kit);        /* scree, clutter, the sites, lamps, bridges */
   placeLandmark(w, kit);       /* one landmark, visible three chunks away */

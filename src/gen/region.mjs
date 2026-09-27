@@ -81,7 +81,7 @@ const PORT_SALT = 0x5300;
 function baseCell(G, x, z) {
   var c = G.cell(x, z);
   return { H: clamp(erodeAt(G, x, z, c), 0, CEIL), water: c.water, magma: c.magma, hold: c.hold,
-           feat: !!(c.mesa || c.basalt || c.cliff) };
+           feat: !!(c.mesa || c.basalt || c.cliff || c.thorn) };
 }
 
 /** The port on one edge, as world [x, z], or null when the edge has nowhere a
@@ -148,8 +148,10 @@ function makeGrid(G, rx, rz) {
 
 function passCost(a, b) {
   /* A route never crosses a feature's face (#76): a trail along a ledge line
-     is graded level and the ledges go with it. */
-  if (b.magma || b.hold) return -1;
+     is graded level and the ledges go with it. Nor a thicket, nor the two
+     metres round one: the thicket is props on a quarter-metre offset from
+     the ground, and a trail at its foot had thorn standing in it. */
+  if (b.magma || b.hold || b.block || b.thorn) return -1;
   var dh = b.H - a.H;
   if (dh > MOVE.climb2) return -1;
   var c = 1 + (dh > 0 ? dh * 3.2 : (-dh) * 1.1);
@@ -264,7 +266,7 @@ function buildRegion(G, rx, rz) {
          site on a mesa walked off the wall, and grading it cut the top down
          to the trail. A landmark on a cliff band's back slope hung a
          twelve-metre tree over its ledge line. */
-      if (!cq || cq.water || cq.magma || cq.mesa || cq.basalt || cq.cliff || Math.abs(cq.H - cp.H) > 1) return false;
+      if (!cq || cq.water || cq.magma || cq.mesa || cq.basalt || cq.cliff || cq.thorn || Math.abs(cq.H - cp.H) > 1) return false;
     }
     return true;
   }
@@ -344,7 +346,7 @@ function buildRegion(G, rx, rz) {
       var c = at(a, b);
       /* A route along a mesa's foot keeps its second lane off the wall (#75):
          levelled to the path, the lane cuts a notch the length of the route. */
-      if (c.magma || c.water || c.hold) continue;
+      if (c.magma || c.water || c.hold || c.block) continue;
       return a * N + b;
     }
     return -1;

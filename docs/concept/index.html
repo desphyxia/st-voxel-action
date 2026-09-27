@@ -787,7 +787,7 @@ function posStream(sw, x, z, salt) {
  */
 const PASS = {
   SPAN: 1, VOX: 2, GRASS: 3, TREE: 4, CLUTTER: 5, SCREE: 6,
-  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12,
+  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12, THICKET: 13,
 };
 
 /** The seed word a pass draws under. */
@@ -1348,17 +1348,88 @@ function makeGen(seedStr,force){
       }
     return null;
   }
+  /* Thickets (#76, Thornwood): a patch of thorn too dense to push through
+     and too tall to jump, 3.25 m, with a fallen log lying through the middle
+     of it in the one lane it crushed — a metre high, jumped onto at one end
+     and walked along to the other. The thicket itself is props (props.mjs);
+     what the cells carry is where it stands, so routes go round it and the
+     floods can see it.
+
+     A jittered spot per 64 m square where the thorn is more than half the
+     climate — sparser than the others: every thicket is a route's detour,
+     and at one per 40 m square the golden thorn window kept 38 trail cells of
+     450 — refused near a river, a gorge or another feature. */
+  var THN_GRID=64, THN_APRON=2, THN_REACH=20, THN_SITES=new Map();
+  function thornSite(gx,gz){
+    var k=gx*131071+gz, s=THN_SITES.get(k);
+    if(s!==undefined) return s;
+    s=null;
+    if(prand(gx,gz,0x7d10)<0.6) for(var t=0;t<4&&!s;t++) s=thornTry(gx,gz,0x7d11+t*16);
+    THN_SITES.set(k,s);
+    return s;
+  }
+  function thornTry(gx,gz,salt){
+    var cx=gx*THN_GRID+14+Math.floor(prand(gx,gz,salt)*36),
+        cz=gz*THN_GRID+14+Math.floor(prand(gx,gz,salt+1)*36);
+    if(climate(cx,cz)[BIO.THORN]<=0.5) return null;
+    var rx=4+Math.floor(prand(gx,gz,salt+2)*4), rz=4+Math.floor(prand(gx,gz,salt+3)*4);
+    var hi=-1e9;
+    for(var dx=-rx-THN_APRON-1;dx<=rx+THN_APRON+1;dx++) for(var dz=-rz-THN_APRON-1;dz<=rz+THN_APRON+1;dz++){
+      var x=cx+dx, z=cz+dz;
+      if(mesaWet(x,z)||mesaAt(x,z)||basaltAt(x,z)||cliffAt(x,z)) return null;
+      var h=rawH(x,z); if(h>hi) hi=h;
+    }
+    /* The top is flat, 3.5 m over the highest ground round it. A roof that
+       followed the ground under it was 3.25 m over a hollow and a double
+       jump from the rise beside it cleared it. The half metre over the
+       field's own height is for the ramps and the relief the surface adds. */
+    if(Math.round(hi)+4>CEIL) return null;
+    /* The log lies along the longer axis. */
+    return {cx:cx,cz:cz,rx:rx,rz:rz,ax:rx>=rz,top:Math.round(hi)+3.5};
+  }
+  /* The thicket (2), the log's lane (3), the ground round it where nothing
+     else grows (4). */
+  function thornAt(x,z){
+    var apron=false;
+    for(var gx=Math.floor((x-THN_REACH)/THN_GRID);gx<=Math.floor((x+THN_REACH)/THN_GRID);gx++)
+      for(var gz=Math.floor((z-THN_REACH)/THN_GRID);gz<=Math.floor((z+THN_REACH)/THN_GRID);gz++){
+        var s=thornSite(gx,gz); if(!s) continue;
+        var dx=x-s.cx, dz=z-s.cz, ex=dx/s.rx, ez=dz/s.rz, e=ex*ex+ez*ez;
+        /* The log runs a metre past the thicket at each end, onto open ground. */
+        if(s.ax?(dz===0&&Math.abs(dx)<=s.rx+1):(dx===0&&Math.abs(dz)<=s.rz+1)) return {kind:3,top:s.top};
+        if(e<=1) return {kind:2,top:s.top};
+        ex=dx/(s.rx+THN_APRON); ez=dz/(s.rz+THN_APRON);
+        if(ex*ex+ez*ez<=1) apron=true;
+      }
+    return apron?{kind:4}:null;
+  }
+  function thornIn(x0,z0,x1,z1){
+    var n=0;
+    for(var gx=Math.floor(x0/THN_GRID);gx<=Math.floor(x1/THN_GRID);gx++)
+      for(var gz=Math.floor(z0/THN_GRID);gz<=Math.floor(z1/THN_GRID);gz++){
+        var c=thornSite(gx,gz); if(c&&c.cx>=x0&&c.cx<x1&&c.cz>=z0&&c.cz<z1) n++;
+      }
+    return n;
+  }
+  function thornOver(x,z){
+    for(var gx=Math.floor((x-THN_REACH)/THN_GRID);gx<=Math.floor((x+THN_REACH)/THN_GRID);gx++)
+      for(var gz=Math.floor((z-THN_REACH)/THN_GRID);gz<=Math.floor((z+THN_REACH)/THN_GRID);gz++){
+        var s=thornSite(gx,gz); if(!s) continue;
+        var ex=(x-s.cx)/(s.rx+THN_APRON), ez=(z-s.cz)/(s.rz+THN_APRON); if(ex*ex+ez*ez<=1) return s;
+      }
+    return null;
+  }
   /* one 1 m cell: everything sized in whole metres */
   function cell(x,z){
     var w=climate(x,z);
     var hm=macro(x,z,w), H=Math.round(hm);
     var cw=wsum(w,'canyon'), colw=wsum(w,'col');
-    var c=null, ms=mesaAt(x,z), bs=ms?null:basaltAt(x,z), cs=(ms||bs)?null:cliffAt(x,z);
-    if(cw>0.28&&!ms&&!bs&&!cs){ c=canyonAt(x,z);
+    var c=null, ms=mesaAt(x,z), bs=ms?null:basaltAt(x,z), cs=(ms||bs)?null:cliffAt(x,z), ts=(ms||bs||cs)?null:thornAt(x,z);
+    if(cw>0.28&&!ms&&!bs&&!cs&&!ts){ c=canyonAt(x,z);
       c.body=c.d<c.w/2&&canyonBody(x,z);
       if(c.body){ var taper=clamp((cw-0.28)/0.25,0,1); H-=Math.round(c.dp*taper*(1-c.br)); }
     }
-    if(!ms&&!bs&&!cs) H+=pillarAt(x,z,colw);
+    if(!ms&&!bs&&!cs&&!ts) H+=pillarAt(x,z,colw);
     else if(ms&&ms.h!==null) H=ms.h;
     else if(cs&&cs.h!==null) H=cs.kind===1?Math.max(H,cs.h):cs.h;
     var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
@@ -1368,7 +1439,7 @@ function makeGen(seedStr,force){
        the banks then pulled down and the bed was carved below the world to
        keep. Where the land is lower, the surface sits a quarter under it. */
     if(r.d<rw/2||riverCorner(x,z,rw)){ rl=Math.min(riverLevel(x,z,w),H-0.25); H=Math.min(H-1,Math.floor(rl-0.75+1e-9)); water=true; }
-    if(!water&&!(ms&&ms.h!==null)&&!bs&&!(cs&&cs.h!==null)&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
+    if(!water&&!(ms&&ms.h!==null)&&!bs&&!(cs&&cs.h!==null)&&!ts&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
@@ -1387,10 +1458,12 @@ function makeGen(seedStr,force){
     H=clamp(H,0,CEIL);
     if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,
+    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,
+      /* block: a route may not cross it — the thicket and its log's lane */
+      block:!!(ts&&(ts.kind===2||ts.kind===3)),
       /* hold: a face the later passes keep as it is; bare: nothing grows here */
       hold:!!(ms&&ms.kind<=2)||!!(bs&&bs.kind===1)||!!(cs&&(cs.kind===2||cs.kind===3)),
-      bare:!!(ms&&ms.kind>=2)||!!bs||!!(cs&&cs.kind>=2)};
+      bare:!!(ms&&ms.kind>=2)||!!bs||!!(cs&&cs.kind>=2)||!!ts};
   }
   function rawH(x,z){ return macro(x,z,climate(x,z)); }
   /* a column is a run of solid spans, not one height: this is what lets a
@@ -1452,7 +1525,7 @@ function makeGen(seedStr,force){
       if(CELLS.size>=CELL_CAP) CELLS.clear();
       c=cell(x,z); CELLS.set(k,c);
     }
-    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,hold:c.hold,bare:c.bare};
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,block:c.block,hold:c.hold,bare:c.bare};
   }
   /* A world keeps its generator (w.G) for as long as it lives, and a streamed
      field holds sixteen of them — so the cache is let go when generation ends,
@@ -1479,7 +1552,7 @@ function makeGen(seedStr,force){
       }
     return n;
   }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,cliffFrame:cliffFrame,
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,thornOver:thornOver,thornIn:thornIn,cliffFrame:cliffFrame,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 /* ---------- src/gen/erosion.mjs ---------- */
@@ -1615,7 +1688,7 @@ const PORT_SALT = 0x5300;
 function baseCell(G, x, z) {
   var c = G.cell(x, z);
   return { H: clamp(erodeAt(G, x, z, c), 0, CEIL), water: c.water, magma: c.magma, hold: c.hold,
-           feat: !!(c.mesa || c.basalt || c.cliff) };
+           feat: !!(c.mesa || c.basalt || c.cliff || c.thorn) };
 }
 
 /** The port on one edge, as world [x, z], or null when the edge has nowhere a
@@ -1682,8 +1755,10 @@ function makeGrid(G, rx, rz) {
 
 function passCost(a, b) {
   /* A route never crosses a feature's face (#76): a trail along a ledge line
-     is graded level and the ledges go with it. */
-  if (b.magma || b.hold) return -1;
+     is graded level and the ledges go with it. Nor a thicket, nor the two
+     metres round one: the thicket is props on a quarter-metre offset from
+     the ground, and a trail at its foot had thorn standing in it. */
+  if (b.magma || b.hold || b.block || b.thorn) return -1;
   var dh = b.H - a.H;
   if (dh > MOVE.climb2) return -1;
   var c = 1 + (dh > 0 ? dh * 3.2 : (-dh) * 1.1);
@@ -1798,7 +1873,7 @@ function buildRegion(G, rx, rz) {
          site on a mesa walked off the wall, and grading it cut the top down
          to the trail. A landmark on a cliff band's back slope hung a
          twelve-metre tree over its ledge line. */
-      if (!cq || cq.water || cq.magma || cq.mesa || cq.basalt || cq.cliff || Math.abs(cq.H - cp.H) > 1) return false;
+      if (!cq || cq.water || cq.magma || cq.mesa || cq.basalt || cq.cliff || cq.thorn || Math.abs(cq.H - cp.H) > 1) return false;
     }
     return true;
   }
@@ -1878,7 +1953,7 @@ function buildRegion(G, rx, rz) {
       var c = at(a, b);
       /* A route along a mesa's foot keeps its second lane off the wall (#75):
          levelled to the path, the lane cuts a notch the length of the route. */
-      if (c.magma || c.water || c.hold) continue;
+      if (c.magma || c.water || c.hold || c.block) continue;
       return a * N + b;
     }
     return -1;
@@ -2496,7 +2571,7 @@ function groundCellAt(w, x, z) {
   var H = clamp(erodeAt(w.G, x, z, c), 0, CEIL);
   var g = regionAt(w.G, regionOf(x), regionOf(z)).grade.get(cellKey(x, z));
   if (g !== undefined) H = g;
-  return { H: H, water: c.water, magma: c.magma, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa };
+  return { H: H, water: c.water, magma: c.magma, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa, thorn: c.thorn };
 }
 /* ---------- src/gen/routes.mjs ---------- */
 /**
@@ -3742,6 +3817,57 @@ function placeLandmark(w, kit) {
   })();
   w.lmPos = lmPos;
 }
+
+/**
+ * Thickets and their logs (#76, Thornwood), stamped over the cells the field
+ * marked. The thicket is wood, not foliage — leaves are walked through — and
+ * its top is flat, 3.5 m over the highest ground round it (field.mjs) and at
+ * least 3.25 m over the ground under it: over a double jump from the ground
+ * anywhere near it, and from the log. Every cell of it is roofed; a cell on its edge,
+ * or beside the log's lane, is wall all the way down. The interior under the
+ * roof is never reached, so it is left empty. The log is a squared beam a
+ * metre high and a metre wide along its lane, running a metre past the
+ * thicket at each end.
+ */
+var THICKET_H = 3.25;
+function placeThickets(w, kit) {
+  var M = w.M, cells = w.cells, half = w.half, G = w.G, OX = w.OX, OZ = w.OZ,
+      addVox = kit.addVox, surfAt = kit.surfAt, i, j;
+  function thornAt(a, b) {
+    if (a >= 0 && b >= 0 && a < M && b < M) return cells[a * M + b].thorn;
+    return groundCellAt(w, -half + a + OX, -half + b + OZ).thorn;
+  }
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    var c = cells[i * M + j], k = c.thorn;
+    if (k !== 2 && k !== 3) continue;
+    var R = G.pstream(PASS.THICKET, -half + i + OX, -half + j + OZ);
+    var edge = false;
+    if (k === 2) for (var d = 0; d < 4 && !edge; d++) if (thornAt(i + DIRS4[d][0], j + DIRS4[d][1]) !== 2) edge = true;
+    /* Beside the log's lane, the column nearest it is left out. A prop voxel
+       is snapped to the nearest terrain column, and on a tie the wall's
+       innermost one landed in the lane and closed it to anyone walking the
+       log. A 25 cm slot is too narrow to step into. */
+    var lx0 = k === 2 && thornAt(i - 1, j) === 3, lx1 = k === 2 && thornAt(i + 1, j) === 3,
+        lz0 = k === 2 && thornAt(i, j - 1) === 3, lz1 = k === 2 && thornAt(i, j + 1) === 3;
+    for (var ax = -0.5 + V / 2; ax < 0.5; ax += V) for (var az = -0.5 + V / 2; az < 0.5; az += V) {
+      if ((lx0 && ax < -0.25) || (lx1 && ax > 0.25) || (lz0 && az < -0.25) || (lz1 && az > 0.25)) continue;
+      var px = -half + i + ax, pz = -half + j + az, s = surfAt(px, pz), y;
+      if (k === 3) {
+        for (y = 0; y < 1; y += V) addVox(px, s.y + y + V / 2, pz,
+          (y > 0.7 && R() < 0.25 ? PAL.FALLEN_MOSS.at : PAL.FALLEN_BARK.at), 0.8 + R() * 0.3, MAT.WOOD);
+        continue;
+      }
+      /* Up to the site's flat top, from the ground at the edges and from two
+         voxels under it everywhere else. */
+      var yTop = Math.max(c.thornTop, s.y + THICKET_H);
+      for (y = edge ? s.y : yTop - 2 * V; y < yTop; y += V) {
+        var top = y >= yTop - 2 * V;
+        addVox(px, y + V / 2, pz, top || R() < 0.5 ? pickPal(PAL.BUSH_THORN, R) : PAL.FALLEN_BARK.at,
+               0.7 + R() * 0.4, MAT.WOOD);
+      }
+    }
+  }
+}
 /* ---------- src/gen/grass.mjs ---------- */
 /**
  * Grass. One blade cloud per world: position, phase, tint, scale, yaw and two
@@ -4014,6 +4140,7 @@ function buildWorld(cfg) {
      is usually right is the kind of thing that breaks quietly. */
   w.propStart = w.pos.length / 3;
   var kit = makeStamps(w);
+  placeThickets(w, kit);        /* Thornwood's thickets and their logs, before anything grows */
   scatterProps(w, kit);        /* trees, boulders, canyon arcs */
   placeClutter(w, kit);        /* scree, clutter, the sites, lamps, bridges */
   placeLandmark(w, kit);       /* one landmark, visible three chunks away */
