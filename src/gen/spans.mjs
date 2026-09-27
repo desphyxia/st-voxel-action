@@ -27,7 +27,9 @@ export function cutSpans(w) {
   var ovhPos=null;
   for(i=0;i<M;i++)for(j=0;j<M;j++){
     var cs=cells[i*M+j];
-    cs.sp=(cs.water||cs.magma)?[[0,Math.max(cs.H,1)]]:G.spansFor(-half+i+OX,-half+j+OZ,cs.H);
+    /* A mesa and its stones are solid rock (#75): a cave in one is a room
+       in the wall of a block that is meant to have one way up. */
+    cs.sp=(cs.water||cs.magma||cs.mesa===1||cs.mesa===2)?[[0,Math.max(cs.H,1)]]:G.spansFor(-half+i+OX,-half+j+OZ,cs.H);
   }
   for(i=0;i<M;i++)for(j=0;j<M;j++){
     var cl=cells[i*M+j], wx=-half+i+OX, wz=-half+j+OZ;

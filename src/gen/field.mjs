@@ -13,7 +13,7 @@
  */
 import { BIOMES, CLIMATE_N, BIO } from './biomes.mjs';
 import { xmur3, makeNoise, posRand, placeRand, placeStream } from './rng.mjs';
-import { V, CEIL, clamp } from './constants.mjs';
+import { V, CEIL, DIRS4, clamp } from './constants.mjs';
 import { exp } from './exact.mjs';
 
 /* Frequency, octaves and how many voxel steps the sub-metre relief spans. See
@@ -200,17 +200,106 @@ export function makeGen(seedStr,force){
     }
     return 0;
   }
+  /* Mesas (#75): a flat-topped block of rock, walled all round, with one way
+     up — a line of 2 m stepping stones stepping down from its edge a metre at
+     a time, a metre of ground between each. One jump climbs each stone; a
+     double jump never reaches the top from the ground, because the top stands
+     at least four metres over everything within three of its wall.
+
+     A site per 48 m square, jittered, where the redrock dominates. Everything
+     about it is drawn from the square's own coordinates, so a window and a
+     chunk that both touch it build the same mesa. The site is computed once
+     and kept: it reads the field over its footprint to find the top, and
+     every cell within reach of it asks. */
+  /* The apron is wide enough that a tree outside it cannot hang a canopy
+     within a jump of the wall. MESA_REACH is the farthest a site's apron can
+     stand from the square it belongs to. */
+  var MESA_GRID=48, MESA_APRON=7, MESA_REACH=48, MESA_SITES=new Map();
+  function mesaSite(gx,gz){
+    var k=gx*131071+gz, s=MESA_SITES.get(k);
+    if(s!==undefined) return s;
+    s=null;
+    /* Three tries at a spot in the square, so a river through the first one
+       moves the mesa rather than losing it. */
+    if(prand(gx,gz,0x3e5a)<0.7) for(var t=0;t<6&&!s;t++) s=mesaTry(gx,gz,0x3e5b+t*16);
+    MESA_SITES.set(k,s);
+    return s;
+  }
+  function mesaTry(gx,gz,salt){
+    var cx=gx*MESA_GRID+12+Math.floor(prand(gx,gz,salt)*24),
+        cz=gz*MESA_GRID+12+Math.floor(prand(gx,gz,salt+1)*24);
+    if(climate(cx,cz)[BIO.MESA]<=0.5) return null;
+    var rx=4+Math.floor(prand(gx,gz,salt+2)*7), rz=4+Math.floor(prand(gx,gz,salt+3)*7);
+    var hi=-1e9, dx, dz, n, p, q;
+    for(dx=-rx-3;dx<=rx+3;dx++) for(dz=-rz-3;dz<=rz+3;dz++){
+      var hh=rawH(cx+dx,cz+dz); if(hh>hi) hi=hh;
+    }
+    var T=Math.round(hi)+4+Math.floor(prand(gx,gz,salt+4)*3);
+    if(T>CEIL-2) return null;
+    var dir=DIRS4[Math.floor(prand(gx,gz,salt+5)*4)], r=dir[0]?rx:rz, st=[];
+    /* Stone n stands (r+2+3(n-1)) .. (r+3+3(n-1)) out from the centre along
+       dir, two wide across it, its top T-n. It is the last one when it stands
+       within a jump of the ground under it. */
+    for(n=1;n<=8;n++){
+      var a0=r+2+3*(n-1), top=T-n, g=-1e9;
+      for(q=0;q<2;q++) for(p=0;p<2;p++){
+        var gh=Math.round(rawH(cx+dir[0]*(a0+q)+(dir[0]?0:p), cz+dir[1]*(a0+q)+(dir[1]?0:p)));
+        if(gh>g) g=gh;
+      }
+      if(top<=g) break;
+      st.push(a0);
+      if(top-g<=1) break;
+    }
+    /* A river through the rock would cut the top in two, and the half without
+       the stones would be out of reach for good; a gorge through the apron
+       would stop against it in a wall, a pocket with no way out, and one
+       under the stones would leave the last of them out of reach. So a river
+       or a gorge anywhere near the block or its stones rules the spot out. */
+    for(dx=-rx-MESA_APRON;dx<=rx+MESA_APRON;dx++) for(dz=-rz-MESA_APRON;dz<=rz+MESA_APRON;dz++) if(mesaWet(cx+dx,cz+dz)) return null;
+    for(n=r+1;n<=r+MESA_APRON+3*st.length;n++) for(p=-MESA_APRON;p<=MESA_APRON+1;p++){
+      if(mesaWet(cx+dir[0]*n+(dir[0]?0:p), cz+dir[1]*n+(dir[1]?0:p))) return null;
+    }
+    return {cx:cx,cz:cz,rx:rx,rz:rz,T:T,dx:dir[0],dz:dir[1],st:st};
+  }
+  function mesaWet(x,z){
+    if(riverAt(x,z).d<6) return true;
+    var c=canyonAt(x,z);
+    return c.d<c.w/2+2&&wsum(climate(x,z),'canyon')>0.28;
+  }
+  /* What a mesa makes of this cell: its top, a stone, the apron round it where
+     no basalt column may stand (a column beside a wall is a second way up),
+     or nothing. */
+  function mesaAt(x,z){
+    var gx0=Math.floor((x-MESA_REACH)/MESA_GRID), gx1=Math.floor((x+MESA_REACH)/MESA_GRID),
+        gz0=Math.floor((z-MESA_REACH)/MESA_GRID), gz1=Math.floor((z+MESA_REACH)/MESA_GRID), apron=false;
+    for(var gx=gx0;gx<=gx1;gx++) for(var gz=gz0;gz<=gz1;gz++){
+      var s=mesaSite(gx,gz); if(!s) continue;
+      var dx=x-s.cx, dz=z-s.cz;
+      var ex=dx/s.rx, ez=dz/s.rz, e=ex*ex*ex*ex+ez*ez*ez*ez;
+      if(e<=1) return {h:s.T,kind:1};
+      /* along and across the stones' line */
+      var al=dx*s.dx+dz*s.dz, ac=s.dx?dz:dx;
+      if(ac>=0&&ac<=1&&al>0){
+        for(var n=0;n<s.st.length;n++) if(al>=s.st[n]&&al<=s.st[n]+1) return {h:s.T-n-1,kind:2};
+      }
+      var lim=(s.dx?s.rx:s.rz)+MESA_APRON+3*s.st.length;
+      if(Math.abs(dx)<=s.rx+MESA_APRON&&Math.abs(dz)<=s.rz+MESA_APRON) apron=true;
+      else if(al>0&&al<=lim&&ac>=-MESA_APRON&&ac<=MESA_APRON+1) apron=true;
+    }
+    return apron?{h:null,kind:3}:null;
+  }
   /* one 1 m cell: everything sized in whole metres */
   function cell(x,z){
     var w=climate(x,z);
     var hm=macro(x,z,w), H=Math.round(hm);
     var cw=wsum(w,'canyon'), colw=wsum(w,'col');
-    var c=null;
-    if(cw>0.28){ c=canyonAt(x,z);
+    var c=null, ms=mesaAt(x,z);
+    if(cw>0.28&&!ms){ c=canyonAt(x,z);
       c.body=c.d<c.w/2&&canyonBody(x,z);
       if(c.body){ var taper=clamp((cw-0.28)/0.25,0,1); H-=Math.round(c.dp*taper*(1-c.br)); }
     }
-    H+=pillarAt(x,z,colw);
+    if(!ms) H+=pillarAt(x,z,colw);
+    else if(ms.h!==null) H=ms.h;
     var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
     var rl=null;
     /* The smooth level, but never above the ground the river runs through: a
@@ -218,7 +307,7 @@ export function makeGen(seedStr,force){
        the banks then pulled down and the bed was carved below the world to
        keep. Where the land is lower, the surface sits a quarter under it. */
     if(r.d<rw/2||riverCorner(x,z,rw)){ rl=Math.min(riverLevel(x,z,w),H-0.25); H=Math.min(H-1,Math.floor(rl-0.75+1e-9)); water=true; }
-    if(!water&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
+    if(!water&&!(ms&&ms.h!==null)&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
@@ -236,7 +325,7 @@ export function makeGen(seedStr,force){
     H=clamp(H,0,CEIL);
     if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw};
+    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0};
   }
   function rawH(x,z){ return macro(x,z,climate(x,z)); }
   /* a column is a run of solid spans, not one height: this is what lets a
@@ -298,13 +387,24 @@ export function makeGen(seedStr,force){
       if(CELLS.size>=CELL_CAP) CELLS.clear();
       c=cell(x,z); CELLS.set(k,c);
     }
-    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw};
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa};
   }
   /* A world keeps its generator (w.G) for as long as it lives, and a streamed
      field holds sixteen of them — so the cache is let go when generation ends,
      and whatever reads the field afterwards starts from empty. */
   function forget(){ CELLS.clear(); }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,
+  /* The mesa whose top covers (x, z), for a test that wants to walk its
+     stones: centre, radii, top, the stones' direction and where each stands. */
+  function mesaOver(x,z){
+    for(var gx=Math.floor((x-MESA_REACH)/MESA_GRID);gx<=Math.floor((x+MESA_REACH)/MESA_GRID);gx++)
+      for(var gz=Math.floor((z-MESA_REACH)/MESA_GRID);gz<=Math.floor((z+MESA_REACH)/MESA_GRID);gz++){
+        var m=mesaSite(gx,gz); if(!m) continue;
+        var ex=(x-m.cx)/m.rx, ez=(z-m.cz)/m.rz;
+        if(ex*ex*ex*ex+ez*ez*ez*ez<=1) return m;
+      }
+    return null;
+  }
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 

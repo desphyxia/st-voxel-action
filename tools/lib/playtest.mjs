@@ -3394,3 +3394,158 @@ export function canyonSuite() {
       rows.map((r) => `${r.seed} ${r.floor} floor cells: ${(100 * r.reached / r.floor).toFixed(1)}% reached, ${(100 * r.left / r.floor).toFixed(1)}% left`).join('; '));
   return out;
 }
+
+/* Seeds with redrock enough for a handful of mesas in 600 m. */
+const MESA_SEEDS = ['EMBERFALL', 'MOSSGATE', 'DUSKWARD'];
+
+/**
+ * Mesas (#75): a top walled all round, and one way up it — the stones.
+ *
+ * Over the cell field of a stretch of redrock, three floods under the
+ * budget's moves: a step up of at most a double jump, a drop of at most a
+ * survivable fall, and a jump over one lower cell onto ground within a slope
+ * of the take-off, the way src/gen/reach.mjs floods a window. Seeded from all
+ * the ground that is neither top nor stone. With the stones, every top is
+ * reached and left; with the stones taken away, none is.
+ */
+export function mesaSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const rows = [], built = [];
+  for (const seed of MESA_SEEDS) {
+    const G = makeGen(seed, null), R = 300, N = 2 * R;
+    const S = new Float32Array(N * N), kind = new Uint8Array(N * N), dry = new Uint8Array(N * N);
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const c = G.cell(i - R, j - R), k = i * N + j;
+      S[k] = c.water ? c.wl : c.H; kind[k] = c.mesa || 0;
+      dry[k] = c.magma || (c.water && c.wl - c.H > 1.5) ? 0 : 1;
+    }
+    /* Tops, one component each. */
+    const comp = new Int32Array(N * N).fill(-1), tops = [];
+    for (let k = 0; k < N * N; k++) {
+      if (kind[k] !== 1 || comp[k] >= 0 || !dry[k]) continue;
+      const id = tops.length, q = [k]; comp[k] = id;
+      for (let h = 0; h < q.length; h++) {
+        const p = q[h], i = (p / N) | 0, j = p % N;
+        for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ii = i + a, jj = j + b; if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
+          const r = ii * N + jj; if (kind[r] === 1 && comp[r] < 0 && dry[r]) { comp[r] = id; q.push(r); }
+        }
+      }
+      const edge = q.some((p) => { const i = (p / N) | 0, j = p % N; return i === 0 || j === 0 || i === N - 1 || j === N - 1; });
+      let sx = 0, sz = 0; for (const p of q) { sx += (p / N) | 0; sz += p % N; }
+      tops.push({ cells: q, edge, cx: Math.round(sx / q.length) - R, cz: Math.round(sz / q.length) - R });
+      if (!edge && built.length < 8 && Math.abs(tops.at(-1).cx) < R - 32 && Math.abs(tops.at(-1).cz) < R - 32) built.push([seed, G, tops.at(-1)]);
+    }
+    /* Walls: a top cell against ground that is neither top nor stone. */
+    let walls = 0, low = 0;
+    for (let k = 0; k < N * N; k++) {
+      if (kind[k] !== 1) continue;
+      const i = (k / N) | 0, j = k % N;
+      for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const ii = i + a, jj = j + b; if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
+        const r = ii * N + jj; if (kind[r] === 1 || kind[r] === 2 || !dry[r]) continue;
+        walls++; if (S[k] - S[r] <= MOVE.climb2) low++;
+      }
+    }
+    const flood = (back, stones) => {
+      const ok = (k) => dry[k] && (stones || kind[k] !== 2);
+      const seen = new Uint8Array(N * N), q = [];
+      for (let k = 0; k < N * N; k++) if (ok(k) && kind[k] !== 1 && kind[k] !== 2) { seen[k] = 1; q.push(k); }
+      for (let h = 0; h < q.length; h++) {
+        const k = q[h], i = (k / N) | 0, j = k % N;
+        for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ii = i + a, jj = j + b; if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
+          const p = ii * N + jj;
+          if (!seen[p] && ok(p)) {
+            const dh = back ? S[k] - S[p] : S[p] - S[k];
+            if (dh <= MOVE.climb2 && dh >= -MOVE.fall) { seen[p] = 1; q.push(p); }
+          }
+          /* over one lower cell, onto ground within a slope of the take-off */
+          const i2 = i + 2 * a, j2 = j + 2 * b; if (i2 < 0 || j2 < 0 || i2 >= N || j2 >= N) continue;
+          const p2 = i2 * N + j2; if (seen[p2] || !ok(p2)) continue;
+          if (S[p] <= S[k] - 1 && Math.abs(S[p2] - S[k]) <= MOVE.slope) { seen[p2] = 1; q.push(p2); }
+        }
+      }
+      return seen;
+    };
+    const up = flood(false, true), down = flood(true, true), bare = flood(false, false);
+    let whole = 0, reached = 0, left = 0, cheat = 0;
+    for (const t of tops) {
+      if (t.edge) continue; whole++;
+      if (t.cells.some((k) => up[k])) reached++;
+      if (t.cells.some((k) => down[k])) left++;
+      if (t.cells.some((k) => bare[k])) cheat++;
+    }
+    rows.push({ seed, whole, reached, left, cheat, walls, low });
+  }
+  const all = (f) => rows.every(f), tell = (f) => rows.map((r) => `${r.seed} ${f(r)}`).join('; ');
+  say('mesas stand in the redrock', all((r) => r.whole >= 4), tell((r) => `${r.whole} whole mesas`));
+  say('walled all round: no top is within a double jump of the ground at its foot',
+      all((r) => r.low === 0), tell((r) => `${r.low} of ${r.walls} wall edges within ${MOVE.climb2} m`));
+  say('and climbed by its stones: every top is reached, and left, from the ground',
+      all((r) => r.reached === r.whole && r.left === r.whole), tell((r) => `${r.reached}/${r.whole} reached, ${r.left}/${r.whole} left`));
+  say('and by nothing else: take the stones away and no top is reached',
+      all((r) => r.cheat === 0), tell((r) => `${r.cheat} reached without them`));
+
+  /* The same, on built windows rather than the cell field: erosion, the
+     routes and their grading, the reach repair and every prop have all run.
+     The height is the collider's own — a canopy or a ruin is ground here —
+     sampled a voxel at a time, and flooded from the window's edge by a step
+     up of at most a double jump, with the stones taken away. Nothing may
+     reach a top. */
+  let cheats = [];
+  for (const [seed, G, t] of built) {
+    const w = buildWorld({ seed, size: 64, ox: t.cx, oz: t.cz }), col = colliderForWorld(w), M = 64 / V;
+    const h = new Float32Array(M * M), k2 = new Uint8Array(M * M);
+    for (let i = 0; i < M; i++) for (let j = 0; j < M; j++) {
+      const x = -32 + (i + 0.5) * V, z = -32 + (j + 0.5) * V;
+      h[i * M + j] = col.supportUnder(x, z, 0.01, CEIL * 2);
+      k2[i * M + j] = G.cell(Math.round(x) + t.cx, Math.round(z) + t.cz).mesa || 0;
+    }
+    const seen = new Uint8Array(M * M), q = [];
+    for (let k = 0; k < M * M; k++) {
+      const i = (k / M) | 0, j = k % M;
+      if ((i === 0 || j === 0 || i === M - 1 || j === M - 1) && !k2[k]) { seen[k] = 1; q.push(k); }
+    }
+    for (let n = 0; n < q.length; n++) {
+      const k = q[n], i = (k / M) | 0, j = k % M;
+      for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const ii = i + a, jj = j + b; if (ii < 0 || jj < 0 || ii >= M || jj >= M) continue;
+        const p = ii * M + jj; if (seen[p] || k2[p] === 2) continue;
+        const dh = h[p] - h[k]; if (dh <= MOVE.climb2 && dh >= -MOVE.fall) { seen[p] = 1; q.push(p); }
+      }
+    }
+    let n = 0; for (let k = 0; k < M * M; k++) if (k2[k] === 1 && seen[k]) n++;
+    if (n) cheats.push(`${seed} ${t.cx},${t.cz}: ${n} voxels`);
+  }
+  say('and in a built world too: grading, repairs and props give no other way up',
+      built.length >= 6 && cheats.length === 0, cheats.length ? cheats.join('; ') : `${built.length} mesas built, none reached without the stones`);
+
+  /* And a body does it, on a built window rather than the cell field: the
+     surface pass must leave every stone a face with a lip to leave from. The
+     first built mesa with stones, walked from the ground beyond the last of
+     them towards the top: a jump at each face and at each lip, and never a
+     second one in the air. */
+  const pick = built.map(([seed, G, t]) => [seed, G.mesaOver(t.cx, t.cz)]).find(([, m]) => m && m.st.length >= 2);
+  let climbed = 'no built mesa with two stones or more';
+  if (pick) {
+    const [seed, m] = pick, r = m.dx ? m.rx : m.rz, far = m.st[m.st.length - 1] + 4;
+    const cw = buildWorld({ seed, size: 64, ox: m.cx, oz: m.cz }), cc = colliderForWorld(cw);
+    /* The stones are two wide, across offsets 0 and 1: walk the line between. */
+    const b = placeOnGround(cc, m.dx * far + (m.dx ? 0 : 0.5), m.dz * far + (m.dz ? 0 : 0.5));
+    const drops = () => cc.supportUnder(b.x - m.dx * RUN * TICK, b.z - m.dz * RUN * TICK, ACTOR.radius, b.y + EPS) < b.y - MOVE.step;
+    let jumps = 0;
+    for (let t = 0; t < 1200 && !b.dead && (b.x * m.dx + b.z * m.dz) > r - 2; t++) {
+      const j = b.grounded && (b.blocked || drops());
+      if (j) jumps++;
+      step(cc, b, { mx: -m.dx, mz: -m.dz, jump: j });
+    }
+    const on = cw.G.cell(Math.round(b.x) + m.cx, Math.round(b.z) + m.cz);
+    climbed = { ok: on.mesa === 1 && !b.dead && b.airJumped === 0 && jumps >= m.st.length,
+      detail: `${seed} ${m.cx},${m.cz}, ${m.st.length} stones: ended ${(b.y - (m.T - m.st.length)).toFixed(2)} m over the last stone on ${['open ground', 'the top', 'a stone', 'the apron'][on.mesa || 0]}, ${jumps} jumps, ${b.airJumped} in the air` };
+  }
+  say('a body climbs the stones onto the top, one jump each and none in the air',
+      climbed.ok === true, climbed.detail || climbed);
+  return out;
+}

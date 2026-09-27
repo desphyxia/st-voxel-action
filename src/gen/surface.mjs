@@ -80,7 +80,7 @@ export function sampleGrid(w) {
      (DECISIONS §3, "Faces and slopes"). */
   function slopeCorner(a,b,own){
     var c=cells[clamp(a,0,M-1)*M+clamp(b,0,M-1)];
-    if(c.water||c.magma) return own;
+    if(c.water||c.magma||c.mesa===1||c.mesa===2) return own;
     var h=cellH(a,b);
     return Math.abs(h-own)>MOVE.slope?own:h;
   }
@@ -124,6 +124,11 @@ export function sampleGrid(w) {
       var top;
       if(tr) top=Math.round(trailRamp(x,z)/V)*V;
       else if(c.water||c.magma) top=topsp[1];
+      /* A mesa's top and its stones are faces, not slopes (#75): the last
+         stone stands a metre over the ground and would ramp like any other
+         metre, and the lip every jump leaves from would go with it. A stone
+         is flat, too — a jump lands on it, not on a bump. */
+      else if(c.mesa===1||c.mesa===2){ top=topsp[1]; if(c.mesa===2) d=0; }
       else {
         var own=cellH(ci(x),ci(z)), rv=Math.round((slopeRamp(x,z,own)-own)/V)*V;
         top=topsp[1]+rv;
