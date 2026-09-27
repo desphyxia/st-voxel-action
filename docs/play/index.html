@@ -2888,7 +2888,13 @@ function sampleGrid(w) {
      once the banks held (#57). Beside water, the trail reads its own height. */
   function rampH(a,b,own){
     var c=cells[clamp(a,0,M-1)*M+clamp(b,0,M-1)];
-    return (c.water||c.magma)?own:cellH(a,b);
+    if(c.water||c.magma) return own;
+    /* Nor across a face (#73): blending towards a cell 3 m off smeared the
+       face into 0.75 m risers along the trail, which the old 1 m step walked
+       and the 0.5 m one does not. A route is graded to within a slope of
+       itself; what stands beyond that is beside it, not under it. */
+    var h=cellH(a,b);
+    return Math.abs(h-own)>MOVE.slope?own:h;
   }
   function trailRamp(px,pz){
     var fx=px+half, fz=pz+half;
