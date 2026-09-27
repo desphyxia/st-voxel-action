@@ -8636,10 +8636,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      put back to 'dev' so a stamped copy of a commit agrees with an unstamped
      one — which tools/which-build.mjs matches to a commit, and
      tools/lib/buildid.mjs computes the same way from the file. */
+  /* The 'dev' below is split in two on purpose: the publish stamp is a sed
+     of the declaration above, and it must not rewrite this line as well. */
   var QS_SRC=(function(){
     try{
       var b=document.getElementById('qsbundle'), me=document.currentScript;
-      var t=((b?b.textContent:'')+'\n'+(me?me.textContent:'')).replace(/var QS_BUILD='[^']*';/,"var QS_BUILD='dev';");
+      var t=((b?b.textContent:'')+'\n'+(me?me.textContent:'')).replace(/var QS_BUILD='[^']*';/,"var QS_BUILD='"+"dev';");
       var h=0x811c9dc5; for(var i=0;i<t.length;i++){ h^=t.charCodeAt(i); h=Math.imul(h,16777619); }
       return ('0000000'+(h>>>0).toString(16)).slice(-8).slice(0,7);
     }catch(e){ return '?'; }

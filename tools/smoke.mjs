@@ -356,6 +356,21 @@ if (NODE_HALF) {
           : `${seen.oneSided.length} fields read by one page and not the other, as recorded`);
 }
 
+/* ---------- STAMP: the publish recipe changes one line and no other ----------
+   CLAUDE.md stamps the play page with a sed of `var QS_BUILD='dev';`, which
+   rewrites every line carrying that text. The page's own source hash once
+   carried it too, as the string it restores before hashing — and the stamp
+   rewrote that as well, so every stamped build reported a hash no commit
+   has. Emulated here as sed does it: the first match on each line. */
+if (NODE_HALF) {
+  const page = readFileSync(PLAY_TARGET, 'utf8'), from = "var QS_BUILD='dev';", to = "var QS_BUILD='abc1234';";
+  const lines = page.split('\n'), hit = lines.filter((l) => l.includes(from)).length;
+  const stamped = lines.map((l) => l.replace(from, to)).join('\n');
+  check(hit === 1 && srcHash(stamped) === srcHash(page),
+        'STAMP: the publish stamp rewrites the declaration and nothing else, so a stamped build hashes as its commit',
+        `${hit} line(s) carry the stamp's text; stamped ${srcHash(stamped)}, file ${srcHash(page)}`);
+}
+
 /* ---------- CHUNK: a chunk alone is the ground its neighbour sees, issue #13 ---------- */
 if (NODE_HALF) for (const r of chunkSuite()) check(r.ok, `CHUNK: ${r.label}`, r.detail);
 
