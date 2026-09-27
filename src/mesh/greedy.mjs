@@ -237,6 +237,7 @@ export function surfaceAt(w, gi, gj, y) {
     /* ...and a shard field's plates and slots. */
     if (c.glass === 3) return { mat: MAT.GLASS, pal: PAL.SHARD.at };
     if (c.glass === 5) return { mat: MAT.GLASS, pal: PAL.GLASS_BED.at };
+    if (c.hedge === 1) return { mat: MAT.ROCK, pal: PAL.MEADOW_ROCK.at };
     var n0 = gi > 0 ? w.Hs[k - NZ] : hh - 2, n1 = gi < NX - 1 ? w.Hs[k + NZ] : hh - 2;
     var n2 = gj > 0 ? w.Hs[k - 1] : hh - 2, n3 = gj < NZ - 1 ? w.Hs[k + 1] : hh - 2;
     return (hh - Math.min(n0, n1, n2, n3)) > 0.9
@@ -248,6 +249,7 @@ export function surfaceAt(w, gi, gj, y) {
   if (c.spore >= 1 && c.spore <= 2 && y * V < hh - 1 - 0.001) return { mat: MAT.FUNGUS, pal: PAL.FUNGUS_STALK.at };
   if (c.spore >= 1 && c.spore <= 2 && y * V >= hh - 1 - 0.001) return { mat: MAT.FUNGUS, pal: PAL.FUNGUS_CAP.at };
   if (c.glass === 3) return { mat: MAT.GLASS, pal: PAL.SHARD.at };
+  if (c.hedge === 1) return { mat: MAT.ROCK, pal: PAL.MEADOW_ROCK.at };
   return (y * V < hh - 1.25)
     ? { mat: b.mat.rock, pal: b.rock.at } : { mat: b.mat.soil, pal: b.soil.at };
 }

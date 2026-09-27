@@ -29,5 +29,5 @@ export function groundCellAt(w, x, z) {
   var H = clamp(erodeAt(w.G, x, z, c), 0, CEIL);
   var g = regionAt(w.G, regionOf(x), regionOf(z)).grade.get(cellKey(x, z));
   if (g !== undefined) H = g;
-  return { H: H, water: c.water, magma: c.magma, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa, thorn: c.thorn, rime: c.rime, spore: c.spore, glass: c.glass };
+  return { H: H, water: c.water, magma: c.magma, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa, thorn: c.thorn, rime: c.rime, spore: c.spore, glass: c.glass, hedge: c.hedge };
 }

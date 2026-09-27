@@ -809,6 +809,86 @@ export function makeGen(seedStr,force){
       }
     return null;
   }
+  /* Enclosures (#76, Meadowlands): a field walled all round, each side runs
+     of dry-stone wall a metre high — a jump over — and hedge 3.5 m over the
+     highest ground round it, which nothing clears. Every side is drawn run
+     by run, and at least one run of the four sides is wall, so the inside is
+     always reached and only ever over a wall. The hedge is props (props.mjs),
+     wood under the leaves as a thicket is. Nothing grows inside or round it:
+     a tree beside a hedge is a way over it.
+
+     A jittered spot per 56 m square where the meadow is more than half the
+     climate, on ground within two metres of level, refused near a river, a
+     gorge or another feature. */
+  var MDW_GRID=56, MDW_APRON=3, MDW_REACH=20, MDW_SITES=new Map();
+  function meadowSite(gx,gz){
+    var k=gx*131071+gz, s=MDW_SITES.get(k);
+    if(s!==undefined) return s;
+    s=null;
+    if(prand(gx,gz,0xb710)<0.6) for(var t=0;t<4&&!s;t++) s=meadowTry(gx,gz,0xb711+t*16);
+    MDW_SITES.set(k,s);
+    return s;
+  }
+  function meadowTry(gx,gz,salt){
+    var cx=gx*MDW_GRID+14+Math.floor(prand(gx,gz,salt)*28),
+        cz=gz*MDW_GRID+14+Math.floor(prand(gx,gz,salt+1)*28);
+    if(climate(cx,cz)[BIO.MEADOW]<=0.5) return null;
+    var hx=7+Math.floor(prand(gx,gz,salt+2)*5), hz=7+Math.floor(prand(gx,gz,salt+3)*5);
+    var hi=-1e9, lo=1e9, dx, dz, x, z, h;
+    for(dx=-hx-MDW_APRON;dx<=hx+MDW_APRON;dx++) for(dz=-hz-MDW_APRON;dz<=hz+MDW_APRON;dz++){
+      x=cx+dx; z=cz+dz;
+      if(mesaWet(x,z)||mesaAt(x,z)||basaltAt(x,z)||cliffAt(x,z)||thornAt(x,z)||rimeAt(x,z)||sporeAt(x,z)||glassAt(x,z)) return null;
+      h=rawH(x,z); if(h>hi) hi=h; if(h<lo) lo=h;
+    }
+    if(hi-lo>2||Math.round(hi)+4>CEIL) return null;
+    /* The perimeter, walked round from the corner (-hx, -hz), cut into runs
+       of three to six metres, each wall or hedge. */
+    var per=[], i;
+    for(i=-hx;i<hx;i++) per.push([i,-hz]);
+    for(i=-hz;i<hz;i++) per.push([hx,i]);
+    for(i=hx;i>-hx;i--) per.push([i,hz]);
+    for(i=hz;i>-hz;i--) per.push([-hx,i]);
+    var kind=new Map(), m=0, run=0, walls=0;
+    while(m<per.length){
+      var len=3+Math.floor(prand(gx,gz,salt+20+run)*4), wall=prand(gx,gz,salt+60+run)<0.35;
+      for(i=0;i<len&&m<per.length;i++,m++) kind.set(per[m][0]*64+per[m][1],wall?1:2);
+      if(wall) walls++;
+      run++;
+    }
+    if(!walls) for(i=0;i<4;i++) kind.set(per[i+2][0]*64+per[i+2][1],1);
+    return {cx:cx,cz:cz,hx:hx,hz:hz,top:Math.round(hi)+3.5,kind:kind};
+  }
+  /* A wall (1), a hedge (2), the field inside (3), the ground round it (4). */
+  function meadowAt(x,z){
+    var apron=null;
+    for(var gx=Math.floor((x-MDW_REACH)/MDW_GRID);gx<=Math.floor((x+MDW_REACH)/MDW_GRID);gx++)
+      for(var gz=Math.floor((z-MDW_REACH)/MDW_GRID);gz<=Math.floor((z+MDW_REACH)/MDW_GRID);gz++){
+        var s=meadowSite(gx,gz); if(!s) continue;
+        var dx=x-s.cx, dz=z-s.cz;
+        if(Math.abs(dx)>s.hx+MDW_APRON||Math.abs(dz)>s.hz+MDW_APRON) continue;
+        var k=s.kind.get(dx*64+dz);
+        if(k!==undefined) return {kind:k,top:s.top};
+        if(Math.abs(dx)<s.hx&&Math.abs(dz)<s.hz) return {kind:3};
+        apron={kind:4};
+      }
+    return apron;
+  }
+  function meadowIn(x0,z0,x1,z1){
+    var n=0;
+    for(var gx=Math.floor(x0/MDW_GRID);gx<=Math.floor(x1/MDW_GRID);gx++)
+      for(var gz=Math.floor(z0/MDW_GRID);gz<=Math.floor(z1/MDW_GRID);gz++){
+        var c=meadowSite(gx,gz); if(c&&c.cx>=x0&&c.cx<x1&&c.cz>=z0&&c.cz<z1) n++;
+      }
+    return n;
+  }
+  function meadowOver(x,z){
+    for(var gx=Math.floor((x-MDW_REACH)/MDW_GRID);gx<=Math.floor((x+MDW_REACH)/MDW_GRID);gx++)
+      for(var gz=Math.floor((z-MDW_REACH)/MDW_GRID);gz<=Math.floor((z+MDW_REACH)/MDW_GRID);gz++){
+        var s=meadowSite(gx,gz); if(!s) continue;
+        if(Math.abs(x-s.cx)<=s.hx+MDW_APRON&&Math.abs(z-s.cz)<=s.hz+MDW_APRON) return s;
+      }
+    return null;
+  }
   /* one 1 m cell: everything sized in whole metres */
   function cell(x,z){
     var w=climate(x,z);
@@ -816,7 +896,8 @@ export function makeGen(seedStr,force){
     var cw=wsum(w,'canyon'), colw=wsum(w,'col');
     var lo=0, c=null, ms=mesaAt(x,z), bs=ms?null:basaltAt(x,z), cs=(ms||bs)?null:cliffAt(x,z), ts=(ms||bs||cs)?null:thornAt(x,z),
         rs=(ms||bs||cs||ts)?null:rimeAt(x,z), ps=(ms||bs||cs||ts||rs)?null:sporeAt(x,z),
-        gs=(ms||bs||cs||ts||rs||ps)?null:glassAt(x,z), ft=!!(ms||bs||cs||ts||rs||ps||gs);
+        gs=(ms||bs||cs||ts||rs||ps)?null:glassAt(x,z), ws=(ms||bs||cs||ts||rs||ps||gs)?null:meadowAt(x,z),
+        ft=!!(ms||bs||cs||ts||rs||ps||gs||ws);
     if(cw>0.28&&!ft){ c=canyonAt(x,z);
       c.body=c.d<c.w/2&&canyonBody(x,z);
       if(c.body){ var taper=clamp((cw-0.28)/0.25,0,1); H-=Math.round(c.dp*taper*(1-c.br)); }
@@ -826,6 +907,7 @@ export function makeGen(seedStr,force){
     else if(cs&&cs.h!==null) H=cs.kind===1?Math.max(H,cs.h):cs.h;
     else if(rs) H=rs.kind===5?Math.max(H,rs.h):rs.h;
     else if(gs&&gs.h!==undefined) H=gs.h;
+    else if(ws&&ws.kind===1) H=Math.round(rawH(x,z))+1;
     else if(ps&&ps.h!==null){ lo=Math.max(Math.round(rawH(x,z)),1); H=ps.h; }
     var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
     var rl=null;
@@ -834,7 +916,7 @@ export function makeGen(seedStr,force){
        the banks then pulled down and the bed was carved below the world to
        keep. Where the land is lower, the surface sits a quarter under it. */
     if(r.d<rw/2||riverCorner(x,z,rw)){ rl=Math.min(riverLevel(x,z,w),H-0.25); H=Math.min(H-1,Math.floor(rl-0.75+1e-9)); water=true; }
-    if(!water&&!(ms&&ms.h!==null)&&!bs&&!(cs&&cs.h!==null)&&!ts&&!rs&&!ps&&!gs&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
+    if(!water&&!(ms&&ms.h!==null)&&!bs&&!(cs&&cs.h!==null)&&!ts&&!rs&&!ps&&!gs&&!ws&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
@@ -853,14 +935,14 @@ export function makeGen(seedStr,force){
     H=clamp(H,0,CEIL);
     if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,rime:rs?rs.kind:0,spore:ps?ps.kind:0,glass:gs?gs.kind:0,glassTop:gs&&gs.top?gs.top:0,
+    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,rime:rs?rs.kind:0,spore:ps?ps.kind:0,glass:gs?gs.kind:0,glassTop:gs&&gs.top?gs.top:0,hedge:ws?ws.kind:0,hedgeTop:ws&&ws.top?ws.top:0,
       /* a shelf high enough to walk under: the ground's height under it */
       sporeLo:ps&&ps.kind===2&&H-1>=lo+2?lo:0,
       /* block: a route may not cross it — the thicket and its log's lane */
-      block:!!(ts&&(ts.kind===2||ts.kind===3))||!!(gs&&gs.kind!==4),
+      block:!!(ts&&(ts.kind===2||ts.kind===3))||!!(gs&&gs.kind!==4)||!!(ws&&ws.kind<=2),
       /* hold: a face the later passes keep as it is; bare: nothing grows here */
-      hold:!!(ms&&ms.kind<=2)||!!(bs&&bs.kind===1)||!!(cs&&(cs.kind===2||cs.kind===3))||!!(rs&&rs.kind<=4)||!!(ps&&ps.kind<=2)||!!(gs&&(gs.kind===3||gs.kind===5)),
-      bare:!!(ms&&ms.kind>=2)||!!bs||!!(cs&&cs.kind>=2)||!!ts||!!rs||!!ps||!!gs};
+      hold:!!(ms&&ms.kind<=2)||!!(bs&&bs.kind===1)||!!(cs&&(cs.kind===2||cs.kind===3))||!!(rs&&rs.kind<=4)||!!(ps&&ps.kind<=2)||!!(gs&&(gs.kind===3||gs.kind===5))||!!(ws&&ws.kind===1),
+      bare:!!(ms&&ms.kind>=2)||!!bs||!!(cs&&cs.kind>=2)||!!ts||!!rs||!!ps||!!gs||!!ws};
   }
   function rawH(x,z){ return macro(x,z,climate(x,z)); }
   /* a column is a run of solid spans, not one height: this is what lets a
@@ -922,7 +1004,7 @@ export function makeGen(seedStr,force){
       if(CELLS.size>=CELL_CAP) CELLS.clear();
       c=cell(x,z); CELLS.set(k,c);
     }
-    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,rime:c.rime,spore:c.spore,sporeLo:c.sporeLo,glass:c.glass,glassTop:c.glassTop,block:c.block,hold:c.hold,bare:c.bare};
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,rime:c.rime,spore:c.spore,sporeLo:c.sporeLo,glass:c.glass,glassTop:c.glassTop,hedge:c.hedge,hedgeTop:c.hedgeTop,block:c.block,hold:c.hold,bare:c.bare};
   }
   /* A world keeps its generator (w.G) for as long as it lives, and a streamed
      field holds sixteen of them — so the cache is let go when generation ends,
@@ -949,7 +1031,7 @@ export function makeGen(seedStr,force){
       }
     return n;
   }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,thornOver:thornOver,thornIn:thornIn,rimeOver:rimeOver,rimeIn:rimeIn,sporeOver:sporeOver,sporeIn:sporeIn,glassOver:glassOver,glassIn:glassIn,rimeFrame:rimeFrame,cliffFrame:cliffFrame,
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,thornOver:thornOver,thornIn:thornIn,rimeOver:rimeOver,rimeIn:rimeIn,sporeOver:sporeOver,sporeIn:sporeIn,glassOver:glassOver,glassIn:glassIn,meadowOver:meadowOver,meadowIn:meadowIn,rimeFrame:rimeFrame,cliffFrame:cliffFrame,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 

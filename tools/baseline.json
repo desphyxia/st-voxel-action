@@ -4,14 +4,14 @@
   "trailProps": 0,
   "waterBodies": 1,
   "waterBodies8": 1,
-  "lamps": 8,
-  "lampsByTrail": 8,
-  "voxels": 125931,
-  "mats": 125931,
+  "lamps": 6,
+  "lampsByTrail": 6,
+  "voxels": 134436,
+  "mats": 134436,
   "matKinds": 8,
-  "grass": 340522,
+  "grass": 351728,
   "waterCells": 126,
-  "trailCells": 475,
+  "trailCells": 336,
   "wetTrail": 0,
   "bridges": 0,
   "landmark": true,
@@ -24,15 +24,16 @@
   "crevasses": 0,
   "towers": 0,
   "shards": 0,
-  "digest": "ece3c422",
+  "enclosures": 10,
+  "digest": "1b93b3df",
   "parts": {
-   "vox": "e200ff7b",
-   "magma": "a788a156",
-   "grass": "7e324248",
-   "water": "395ade65",
-   "maps": "79683853",
-   "sites": "627f4e1e",
-   "cells": "e909cd43"
+   "vox": "f3ee023d",
+   "magma": "5446c923",
+   "grass": "8ab3b436",
+   "water": "24c5623f",
+   "maps": "dc293407",
+   "sites": "ce63fda8",
+   "cells": "d9d78dbb"
   }
  },
  {
@@ -60,6 +61,7 @@
   "crevasses": 0,
   "towers": 0,
   "shards": 0,
+  "enclosures": 0,
   "digest": "a42cf953",
   "parts": {
    "vox": "9ac607e2",
@@ -96,6 +98,7 @@
   "crevasses": 0,
   "towers": 0,
   "shards": 0,
+  "enclosures": 0,
   "digest": "97814b9a",
   "parts": {
    "vox": "36a50a7c",
@@ -132,6 +135,7 @@
   "crevasses": 0,
   "towers": 0,
   "shards": 0,
+  "enclosures": 0,
   "digest": "c7c1b9dc",
   "parts": {
    "vox": "02352bb2",
@@ -168,6 +172,7 @@
   "crevasses": 0,
   "towers": 0,
   "shards": 0,
+  "enclosures": 0,
   "digest": "e3be9924",
   "parts": {
    "vox": "619d371f",
@@ -204,6 +209,7 @@
   "crevasses": 12,
   "towers": 0,
   "shards": 0,
+  "enclosures": 0,
   "digest": "8c33e78c",
   "parts": {
    "vox": "6a11e6e3",
@@ -240,6 +246,7 @@
   "crevasses": 0,
   "towers": 13,
   "shards": 0,
+  "enclosures": 0,
   "digest": "3630b404",
   "parts": {
    "vox": "4178ff8f",
@@ -276,6 +283,7 @@
   "crevasses": 0,
   "towers": 0,
   "shards": 5,
+  "enclosures": 0,
   "digest": "06b4ded6",
   "parts": {
    "vox": "8cb06303",
@@ -292,14 +300,14 @@
   "trailProps": 0,
   "waterBodies": 5,
   "waterBodies8": 5,
-  "lamps": 8,
-  "lampsByTrail": 8,
-  "voxels": 122335,
-  "mats": 122335,
+  "lamps": 7,
+  "lampsByTrail": 7,
+  "voxels": 122291,
+  "mats": 122291,
   "matKinds": 8,
-  "grass": 279689,
+  "grass": 282351,
   "waterCells": 85,
-  "trailCells": 449,
+  "trailCells": 414,
   "wetTrail": 3,
   "bridges": 1,
   "landmark": true,
@@ -312,15 +320,16 @@
   "crevasses": 0,
   "towers": 0,
   "shards": 0,
-  "digest": "71447536",
+  "enclosures": 3,
+  "digest": "908e2228",
   "parts": {
-   "vox": "20b90e07",
-   "magma": "7f2dcafe",
-   "grass": "584bfa44",
+   "vox": "31f23469",
+   "magma": "36921acd",
+   "grass": "e94d4362",
    "water": "a93795da",
-   "maps": "156b1891",
-   "sites": "b73800d9",
-   "cells": "84aea175"
+   "maps": "682f1af1",
+   "sites": "48b5461f",
+   "cells": "3863226e"
   }
  }
 ]
