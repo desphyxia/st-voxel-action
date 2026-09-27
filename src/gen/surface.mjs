@@ -185,6 +185,8 @@ export function buildVoxels(w) {
       /* Ice (#76): a crevasse field's sheet and bridges are bare ice, and so
          is every wall it is cut with — the floor keeps the snow. */
       else if(c.rime===1||c.rime===3){ topc=pickPal(PAL.RIME_ICE,R); topm=MAT.ICE; }
+      /* A fungal tower's cap and its shelves (#76). */
+      else if(c.spore===1||c.spore===2){ topc=pickPal(PAL.FUNGUS_CAP,R); topm=MAT.FUNGUS; }
       else if(slope>0.9){ topc=pickPal(b.rock,R); topm=b.mat.rock; }
       else { topc=pickPal(b.surf,R); topm=b.mat.surf; }
       var topk=0.9+R()*0.2;
@@ -202,11 +204,12 @@ export function buildVoxels(w) {
       var bottom=Math.max(BOT[k],mn);
       for(y=hh-1.5*V;y>bottom-0.001;y-=V){
         var deep=(y<hh-1.25);
-        var ice=c.rime>=1&&c.rime<=4;
-        var sc=ice?pickPal(PAL.RIME_ICE,R):deep?pickPal(b.rock,R):pickPal(b.soil,R);
+        var ice=c.rime>=1&&c.rime<=4, fun=c.spore===1||c.spore===2;
+        var sc=ice?pickPal(PAL.RIME_ICE,R):fun?pickPal(y>hh-1?PAL.FUNGUS_CAP:PAL.FUNGUS_STALK,R)
+              :deep?pickPal(b.rock,R):pickPal(b.soil,R);
         var band=Math.floor(y/0.75)%2;
         var sk=(band?0.94:1.06)*(0.88+R()*0.2);
-        emit(x,y,z,sc,sk,ice?MAT.ICE:deep?b.mat.rock:b.mat.soil);
+        emit(x,y,z,sc,sk,ice?MAT.ICE:fun?MAT.FUNGUS:deep?b.mat.rock:b.mat.soil);
       }
       /* the underside of an undercut rim, and the floor under it */
       if(BOT[k]>0.01){

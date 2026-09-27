@@ -29,7 +29,9 @@ export function cutSpans(w) {
     var cs=cells[i*M+j];
     /* A mesa and its stones are solid rock (#75): a cave in one is a room
        in the wall of a block that is meant to have one way up. */
-    cs.sp=(cs.water||cs.magma||cs.hold)?[[0,Math.max(cs.H,1)]]:G.spansFor(-half+i+OX,-half+j+OZ,cs.H);
+    /* A bracket shelf with room under it (#76) is the ground and a slab. */
+    cs.sp=cs.sporeLo?[[0,cs.sporeLo],[cs.H-1,cs.H]]
+         :(cs.water||cs.magma||cs.hold)?[[0,Math.max(cs.H,1)]]:G.spansFor(-half+i+OX,-half+j+OZ,cs.H);
   }
   for(i=0;i<M;i++)for(j=0;j<M;j++){
     var cl=cells[i*M+j], wx=-half+i+OX, wz=-half+j+OZ;
@@ -43,7 +45,7 @@ export function cutSpans(w) {
          its foot is a wider top, or a ledge where the gap was meant to be.
          Nor from a glacier's skirt or over a crevasse: a rim hung from the
          skirt is a shelf across the crevasse's end. */
-      if(ch.H-cl.H<2||ch.water||ch.hold||ch.rime||S()>0.17) continue;
+      if(ch.H-cl.H<2||ch.water||ch.hold||ch.rime||ch.spore||S()>0.17) continue;
       var out=1+((S()*2)|0), th=(S()<0.5?1:0.75), o;
       for(o=0;o<=out;o++){
         var ti=i-DIRS4[d0][0]*o, tj=j-DIRS4[d0][1]*o;
@@ -61,7 +63,7 @@ export function cutSpans(w) {
            and for magma that top is the liquid's level: rock hung over a seam
            or a basalt pool raised the magma to the rim, and a body standing
            on the rim beside it burned (#76). */
-        if(tc.H>=ch.H-1||tc.water||tc.magma||(TRAIL&&TRAIL[ti*M+tj])) break;
+        if(tc.H>=ch.H-1||tc.water||tc.magma||tc.spore||tc.rime||(TRAIL&&TRAIL[ti*M+tj])) break;
         tc.sp.push([ch.H-th,ch.H]);
       }
       if(!ovhPos) ovhPos=[-half+i,cl.H+1.3,-half+j];
