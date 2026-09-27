@@ -2664,17 +2664,33 @@ if (BROWSER_HALF) {
             gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px); return px; };
           const meshes = []; P.scene.traverse((o) => {
             if (o.isMesh || o.isInstancedMesh) meshes.push(o); });
-          const on = snap(), tOn = P.draws.triangles, cOn = P.draws.calls;
+          const count = (a, b) => { let n = 0;
+            for (let i = 0; i < a.length; i += 4) if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) n++;
+            return n; };
+          /* Settled first. Ambient life builds a few cells a frame (LIFE_NEW),
+             so right after a walk one frame can hold creatures the one before
+             did not — a difference that has nothing to do with culling, and
+             CI's slower walk ends with more of them pending. Drawn until two
+             frames agree, then compared. */
+          let on = snap(), settle = 0;
+          for (let again; settle < 40; settle++) { again = snap(); if (!count(on, again)) break; on = again; }
+          const tOn = P.draws.triangles, cOn = P.draws.calls;
           const was = meshes.map((o) => o.frustumCulled);
           for (const o of meshes) o.frustumCulled = false;
           const off = snap(), tOff = P.draws.triangles, cOff = P.draws.calls;
           meshes.forEach((o, i) => { o.frustumCulled = was[i]; });
-          let diff = 0;
-          for (let i = 0; i < on.length; i += 4) {
-            if (on[i] !== off[i] || on[i + 1] !== off[i + 1] || on[i + 2] !== off[i + 2]) diff++;
-          }
+          const diff = count(on, off);
+          /* When it fails, which: every mesh un-culled on its own, and what it
+             moves. A name is what a fix needs, and 127 pixels says nothing. */
+          const culprits = [];
+          if (diff) meshes.forEach((o, i) => {
+            if (!was[i]) return;
+            o.frustumCulled = false; const n = count(on, snap()); o.frustumCulled = true;
+            if (n) { const bs = o.geometry.boundingSphere, p = o.getWorldPosition(new window.THREE.Vector3());
+              culprits.push(`${o.userData.kind || o.name || o.type} ${n}px at ${p.x.toFixed(0)},${p.y.toFixed(0)},${p.z.toFixed(0)} sphere ${bs ? bs.center.toArray().map((v) => v.toFixed(1)) + ' r' + bs.radius.toFixed(1) : 'none'}`); }
+          });
           P.pause(false);
-          return { px: w * h, diff, tOn, tOff, cOn, cOff, meshes: meshes.length,
+          return { px: w * h, diff, tOn, tOff, cOn, cOff, meshes: meshes.length, culprits, settle,
                    pinned: was.filter((v) => !v).length };
         });
         check(scull.pinned === 0 && scull.tOff > scull.tOn * 2,
@@ -2684,8 +2700,8 @@ if (BROWSER_HALF) {
               + `— ${(100 * (scull.tOff - scull.tOn) / scull.tOff).toFixed(0)}% never submitted`);
         check(scull.diff === 0,
               'STREAM: and rejecting them changes not one pixel',
-              scull.diff === 0 ? `identical over ${scull.px.toLocaleString()} pixels`
-                               : `${scull.diff} pixels differ — the cull is dropping something visible`);
+              scull.diff === 0 ? `identical over ${scull.px.toLocaleString()} pixels, after ${scull.settle} frames to settle`
+                               : `${scull.diff} pixels differ — the cull is dropping something visible: ${scull.culprits.join("; ") || "no one mesh alone"}`);
 
         /* ---------- WORKER: generation off the main thread, issue #13 ----------
            The hitch #13 asks to be rid of is a 86-290 ms freeze every time a
