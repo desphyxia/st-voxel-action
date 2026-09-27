@@ -2659,6 +2659,13 @@ if (BROWSER_HALF) {
            saving is losing: at x0.6 the same frame submits 738k against 897k. */
         const scull = await sp.evaluate(() => {
           const P = window.QSPLAY;
+          /* The stream idle first. Where no worker answers, chunks are adopted
+             on this thread a frame at a time, and a slow runner reaches this
+             line with some still queued: every draw below would then add one,
+             and the two frames compared differ by a chunk arriving at the edge
+             of the view, whatever the cull does. That is what failed on CI. */
+          let pumped = 0;
+          for (; pumped < 900 && P.chunks.pending > 0; pumped++) P.frameOnce();
           P.pause(true);
           const c = document.querySelector('#cv');
           const gl = c.getContext('webgl') || c.getContext('webgl2');
@@ -2685,15 +2692,21 @@ if (BROWSER_HALF) {
           const diff = count(on, off);
           /* When it fails, which: every mesh un-culled on its own, and what it
              moves. A name is what a fix needs, and 127 pixels says nothing. */
+          /* By kind, not by mesh: a mesh at a time was six hundred software
+             frames, and ran CI's browser job past its limit. */
           const culprits = [];
-          if (diff) meshes.forEach((o, i) => {
-            if (!was[i]) return;
-            o.frustumCulled = false; const n = count(on, snap()); o.frustumCulled = true;
-            if (n) { const bs = o.geometry.boundingSphere, p = o.getWorldPosition(new window.THREE.Vector3());
-              culprits.push(`${o.userData.kind || o.name || o.type} ${n}px at ${p.x.toFixed(0)},${p.y.toFixed(0)},${p.z.toFixed(0)} sphere ${bs ? bs.center.toArray().map((v) => v.toFixed(1)) + ' r' + bs.radius.toFixed(1) : 'none'}`); }
-          });
+          if (diff) {
+            const kinds = new Map();
+            meshes.forEach((o, i) => { if (!was[i]) return; const k = o.userData.kind || o.type;
+              if (!kinds.has(k)) kinds.set(k, []); kinds.get(k).push(o); });
+            for (const [k, list] of kinds) {
+              list.forEach((o) => { o.frustumCulled = false; }); const n = count(on, snap());
+              list.forEach((o) => { o.frustumCulled = true; });
+              if (n) culprits.push(`${k} (${list.length}) ${n}px`);
+            }
+          }
           P.pause(false);
-          return { px: w * h, diff, tOn, tOff, cOn, cOff, meshes: meshes.length, culprits, settle,
+          return { px: w * h, diff, tOn, tOff, cOn, cOff, meshes: meshes.length, culprits, settle, pumped,
                    pinned: was.filter((v) => !v).length };
         });
         check(scull.pinned === 0 && scull.tOff > scull.tOn * 2,
@@ -2703,8 +2716,8 @@ if (BROWSER_HALF) {
               + `— ${(100 * (scull.tOff - scull.tOn) / scull.tOff).toFixed(0)}% never submitted`);
         check(scull.diff === 0,
               'STREAM: and rejecting them changes not one pixel',
-              scull.diff === 0 ? `identical over ${scull.px.toLocaleString()} pixels, after ${scull.settle} frames to settle`
-                               : `${scull.diff} pixels differ — the cull is dropping something visible: ${scull.culprits.join("; ") || "no one mesh alone"}`);
+              scull.diff === 0 ? `identical over ${scull.px.toLocaleString()} pixels, after ${scull.pumped} frames for the stream and ${scull.settle} to settle`
+                               : `${scull.diff} pixels differ — the cull is dropping something visible: ${scull.culprits.join("; ") || "no one kind alone"}; ${scull.settle} frames never settled`);
 
         /* ---------- WORKER: generation off the main thread, issue #13 ----------
            The hitch #13 asks to be rid of is a 86-290 ms freeze every time a
