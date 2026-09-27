@@ -80,7 +80,8 @@ const PORT_SALT = 0x5300;
     which is the whole reason a port can be chosen from either side. */
 function baseCell(G, x, z) {
   var c = G.cell(x, z);
-  return { H: clamp(erodeAt(G, x, z, c), 0, CEIL), water: c.water, magma: c.magma, hold: c.hold };
+  return { H: clamp(erodeAt(G, x, z, c), 0, CEIL), water: c.water, magma: c.magma, hold: c.hold,
+           feat: !!(c.mesa || c.basalt || c.cliff) };
 }
 
 /** The port on one edge, as world [x, z], or null when the edge has nowhere a
@@ -95,7 +96,9 @@ function portOf(G, ex, ez, axis) {
     var ok = true, prev = null;
     for (s = -1; s <= 1 && ok; s++) {
       var c = axis ? baseCell(G, t, line + s) : baseCell(G, line + s, t);
-      if (c.water || c.magma || c.hold || (prev && Math.abs(c.H - prev.H) > MOVE.slope)) ok = false;
+      /* Not on a traversal feature at all (#76): a port on a cliff band's
+         back slope had the face between it and the trail on one side. */
+      if (c.water || c.magma || c.feat || (prev && Math.abs(c.H - prev.H) > MOVE.slope)) ok = false;
       prev = c;
     }
     if (ok) cands.push(t);
@@ -144,7 +147,9 @@ function makeGrid(G, rx, rz) {
    what the cost *means* once spans move ahead of routing. */
 
 function passCost(a, b) {
-  if (b.magma) return -1;
+  /* A route never crosses a feature's face (#76): a trail along a ledge line
+     is graded level and the ledges go with it. */
+  if (b.magma || b.hold) return -1;
   var dh = b.H - a.H;
   if (dh > MOVE.climb2) return -1;
   var c = 1 + (dh > 0 ? dh * 3.2 : (-dh) * 1.1);
@@ -255,9 +260,11 @@ function buildRegion(G, rx, rz) {
       var ci = i + a, cj = j + b;
       if (ci < 0 || cj < 0 || ci >= N || cj >= N) return false;
       var cq = at(ci, cj);
-      /* Not on a mesa (#75): a route from a site up there walks off the wall,
-         and grading it cuts the top down to the trail. */
-      if (!cq || cq.water || cq.magma || cq.hold || Math.abs(cq.H - cp.H) > 1) return false;
+      /* Not on a traversal feature or its apron (#75, #76). A route from a
+         site on a mesa walked off the wall, and grading it cut the top down
+         to the trail. A landmark on a cliff band's back slope hung a
+         twelve-metre tree over its ledge line. */
+      if (!cq || cq.water || cq.magma || cq.mesa || cq.basalt || cq.cliff || Math.abs(cq.H - cp.H) > 1) return false;
     }
     return true;
   }
