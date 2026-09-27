@@ -366,7 +366,7 @@ export function placeClutter(w, kit) {
       if(c0.H-c1.H<2) continue;
       /* Nor into a crevasse or at a fungal tower (#76): a pile at a crevasse's
          end wall is a way over it, and one at a stalk a way up it. */
-      if(c0.hold||c0.mesa||c0.rime||c1.rime||c0.spore||c1.spore) break;
+      if(c0.hold||c0.mesa||c0.rime||c1.rime||c0.spore||c1.spore||c0.glass||c1.glass) break;
       if(RS()<0.32) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((RS()*4)|0),RS);
       break;
     }
@@ -545,6 +545,48 @@ export function placeThickets(w, kit) {
         var top = y >= yTop - 2 * V;
         addVox(px, y + V / 2, pz, top || R() < 0.5 ? pickPal(PAL.BUSH_THORN, R) : PAL.FALLEN_BARK.at,
                0.7 + R() * 0.4, MAT.WOOD);
+      }
+    }
+  }
+}
+
+/**
+ * Shard fields (#76, Glasslands), stamped over the cells the field marked:
+ * glass grown together, every metre of it a cluster of four spikes each
+ * drawn its own height, from the site's top to three quarters of a metre
+ * over it. The lowest is still four metres over the highest ground round the
+ * field, and at least 3.5 m over the ground under it. Its edges, and the
+ * walls of the lane, are glass all the way down; inside, only the top is
+ * drawn, since nothing reaches it. The plates and slots of the lane are
+ * ground (field.mjs); only the walls either side of it are here, and each
+ * leaves out its innermost column the way a thicket's does.
+ */
+export var SHARD_H = 3.5;
+export function placeShards(w, kit) {
+  var M = w.M, cells = w.cells, half = w.half, G = w.G, OX = w.OX, OZ = w.OZ,
+      addVox = kit.addVox, surfAt = kit.surfAt, i, j;
+  function glassAt(a, b) {
+    if (a >= 0 && b >= 0 && a < M && b < M) return cells[a * M + b].glass;
+    return groundCellAt(w, -half + a + OX, -half + b + OZ).glass;
+  }
+  function lane(k) { return k === 3 || k === 5; }
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    var c = cells[i * M + j];
+    if (c.glass !== 2) continue;
+    var R = G.pstream(PASS.SHARD, -half + i + OX, -half + j + OZ);
+    var edge = false;
+    for (var d = 0; d < 4 && !edge; d++) if (glassAt(i + DIRS4[d][0], j + DIRS4[d][1]) !== 2) edge = true;
+    var lx0 = lane(glassAt(i - 1, j)), lx1 = lane(glassAt(i + 1, j)),
+        lz0 = lane(glassAt(i, j - 1)), lz1 = lane(glassAt(i, j + 1));
+    /* Four spikes a metre, each half a metre square and its own height. */
+    var tall = [R(), R(), R(), R()];
+    for (var ax = -0.5 + V / 2; ax < 0.5; ax += V) for (var az = -0.5 + V / 2; az < 0.5; az += V) {
+      if ((lx0 && ax < -0.25) || (lx1 && ax > 0.25) || (lz0 && az < -0.25) || (lz1 && az > 0.25)) continue;
+      var px = -half + i + ax, pz = -half + j + az, s = surfAt(px, pz), y;
+      var q = (ax > 0 ? 1 : 0) + (az > 0 ? 2 : 0);
+      var yTop = Math.max(c.glassTop, s.y + SHARD_H) + Math.floor(tall[q] * 4) * V;
+      for (y = edge ? s.y : yTop - 2 * V; y < yTop; y += V) {
+        addVox(px, y + V / 2, pz, PAL.SHARD.at + ((R() * PAL.SHARD.n) | 0), 0.8 + R() * 0.35, MAT.GLASS);
       }
     }
   }

@@ -4151,3 +4151,91 @@ export function sporeSuite() {
   say('and round the golden spore window too', gn >= 2, `${gn} towers within 128 m of ${gs.seed}'s window`);
   return out;
 }
+
+/* Seeds with glass enough for shard fields in 600 m. */
+const GLASS_SEEDS = ['MOSSGATE', 'ALDER-RUN', 'GLASSMERE'];
+
+/**
+ * Shard fields (#76, Glasslands): glass nobody gets into or onto, and a lane
+ * of vitrified plates through it that is the way across.
+ *
+ * On built windows round the first few fields of each seed — props and all,
+ * as with the thickets — double jumps from twelve points round each field,
+ * and off every plate at the walls either side of it: none ends up in the
+ * glass or on it. Then a body crosses the lane plate to plate, from open
+ * ground to open ground, hopping each slot.
+ */
+export function glassSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const sites = [];
+  for (const seed of GLASS_SEEDS) {
+    const G = makeGen(seed, null), seen = new Set();
+    for (let x = -300; x <= 300 && sites.filter((q) => q[0] === seed).length < 3; x += 4) for (let z = -300; z <= 300; z += 4) {
+      const s = G.glassOver(x, z); if (!s || seen.has(s)) continue;
+      seen.add(s); sites.push([seed, s]); if (sites.filter((q) => q[0] === seed).length >= 3) break;
+    }
+  }
+  const tries = (w, col, x, z, dx, dz, inside, top) => {
+    const g = w.cells[Math.round(x + 32) * w.M + Math.round(z + 32)].H;
+    const b = placeOnGround(col, x, z, g + 1.5);
+    for (let t = 0; t < 150 && !b.dead; t++) {
+      const j = (b.grounded && t > 2) || (!b.grounded && b.airJumps > 0 && b.vy <= 0);
+      step(col, b, { mx: dx, mz: dz, jump: j });
+    }
+    if (!inside(b.x, b.z)) return null;
+    const over = col.supportUnder(b.x, b.z, 0.01, CEIL * 2);
+    return over > b.y + 1.5 || b.y > top - 1 ? b : null;
+  };
+  const got = [], crossed = [];
+  let attempts = 0, H = 0;
+  for (const [seed, s] of sites) {
+    const w = buildWorld({ seed, size: 64, ox: s.cx, oz: s.cz }), col = colliderForWorld(w);
+    const r = s.ax ? s.rx : s.rz;
+    /* Over the glass, a quarter-metre in from its edge and off the lane. */
+    const inside = (x, z) => {
+      const ex = x / (s.rx - 0.25), ez = z / (s.rz - 0.25), u = s.ax ? z : x;
+      return ex * ex + ez * ez <= 1 && (u < -0.25 || u > 1.75);
+    };
+    for (let a = 0; a < 12; a++) {
+      const u = cos(a * Math.PI / 6), v = sin(a * Math.PI / 6);
+      const x = u * (s.rx + 1.5), z = v * (s.rz + 1.5), lu = s.ax ? z : x;
+      if (lu > -1.5 && lu < 2.5) continue;
+      attempts++;
+      const b = tries(w, col, x, z, -u, -v, inside, s.top);
+      if (b) got.push(`${seed} ${s.cx},${s.cz} from ${x.toFixed(0)},${z.toFixed(0)} to ${b.x.toFixed(1)},${b.y.toFixed(1)},${b.z.toFixed(1)}`);
+    }
+    /* Off every plate, at the walls either side. */
+    for (let t = -r - 1; t <= r + 1; t++) {
+      if ((((t + r + 1) % 3) + 3) % 3 === 2) continue;
+      for (const side of [-1, 1]) {
+        const u0 = side < 0 ? 0.3 : 0.7;
+        const x = s.ax ? t : u0, z = s.ax ? u0 : t, dx = s.ax ? 0 : side, dz = s.ax ? side : 0;
+        attempts++;
+        const b = tries(w, col, x, z, dx, dz, inside, s.top);
+        if (b) got.push(`${seed} ${s.cx},${s.cz} off the plate at ${t} to ${b.x.toFixed(1)},${b.y.toFixed(1)},${b.z.toFixed(1)}`);
+      }
+    }
+    /* Along the lane, plate to plate: a jump wherever the ground just ahead
+       falls away. */
+    const at = (t) => (s.ax ? [t, 0.5] : [0.5, t]), dir = s.ax ? [1, 0] : [0, 1];
+    const p0 = at(-r - 3), body = placeOnGround(col, p0[0], p0[1]);
+    for (let t = 0; t < 900 && !body.dead && (s.ax ? body.x : body.z) < r + 3; t++) {
+      const ahead = col.supportUnder(body.x + dir[0] * 0.7, body.z + dir[1] * 0.7, 0.01, body.y + 0.5);
+      const j = body.grounded && (body.blocked || ahead < body.y - 0.5);
+      step(col, body, { mx: dir[0], mz: dir[1], jump: j });
+    }
+    const end = s.ax ? body.x : body.z;
+    if (body.dead || end < r + 3) crossed.push(`${seed} ${s.cx},${s.cz} stopped at ${end.toFixed(1)} of ${r + 3}, y ${body.y.toFixed(2)}`);
+    else H++;
+  }
+  say('shard fields stand in the glass, and no double jump gets into one or onto it', sites.length >= 6 && got.length === 0,
+      got.length ? got.slice(0, 6).join('; ') : `${sites.length} fields built, ${attempts} double jumps at them from outside and off their plates, none got in`);
+  say('and a body crosses on the plates, hopping each slot', crossed.length === 0,
+      crossed.length ? crossed.join('; ') : `${H}/${sites.length} crossed plate to plate`);
+  const gg0 = GOLDEN_SEEDS.find((g) => g.nm === 'glass'), gg = makeGen(gg0.seed, gg0.force);
+  const gn = gg.glassIn(gg0.ox - 128, gg0.oz - 128, gg0.ox + 128, gg0.oz + 128);
+  say('and round the golden glass window too', gn >= 2, `${gn} fields within 128 m of ${gg0.seed}'s window`);
+  return out;
+}
+

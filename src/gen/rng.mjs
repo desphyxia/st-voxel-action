@@ -72,7 +72,7 @@ export function posStream(sw, x, z, salt) {
  */
 export const PASS = {
   SPAN: 1, VOX: 2, GRASS: 3, TREE: 4, CLUTTER: 5, SCREE: 6,
-  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12, THICKET: 13,
+  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12, THICKET: 13, SHARD: 14,
 };
 
 /** The seed word a pass draws under. */

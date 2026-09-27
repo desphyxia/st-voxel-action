@@ -23,6 +23,7 @@
   "thickets": 0,
   "crevasses": 0,
   "towers": 0,
+  "shards": 0,
   "digest": "ece3c422",
   "parts": {
    "vox": "e200ff7b",
@@ -58,6 +59,7 @@
   "thickets": 0,
   "crevasses": 0,
   "towers": 0,
+  "shards": 0,
   "digest": "a42cf953",
   "parts": {
    "vox": "9ac607e2",
@@ -93,6 +95,7 @@
   "thickets": 0,
   "crevasses": 0,
   "towers": 0,
+  "shards": 0,
   "digest": "97814b9a",
   "parts": {
    "vox": "36a50a7c",
@@ -128,6 +131,7 @@
   "thickets": 6,
   "crevasses": 0,
   "towers": 0,
+  "shards": 0,
   "digest": "c7c1b9dc",
   "parts": {
    "vox": "02352bb2",
@@ -163,6 +167,7 @@
   "thickets": 0,
   "crevasses": 0,
   "towers": 0,
+  "shards": 0,
   "digest": "e3be9924",
   "parts": {
    "vox": "619d371f",
@@ -198,6 +203,7 @@
   "thickets": 0,
   "crevasses": 12,
   "towers": 0,
+  "shards": 0,
   "digest": "8c33e78c",
   "parts": {
    "vox": "6a11e6e3",
@@ -233,6 +239,7 @@
   "thickets": 0,
   "crevasses": 0,
   "towers": 13,
+  "shards": 0,
   "digest": "3630b404",
   "parts": {
    "vox": "4178ff8f",
@@ -249,14 +256,14 @@
   "trailProps": 0,
   "waterBodies": 0,
   "waterBodies8": 0,
-  "lamps": 8,
-  "lampsByTrail": 8,
-  "voxels": 100502,
-  "mats": 100502,
+  "lamps": 9,
+  "lampsByTrail": 9,
+  "voxels": 120500,
+  "mats": 120500,
   "matKinds": 8,
-  "grass": 56060,
+  "grass": 55706,
   "waterCells": 0,
-  "trailCells": 375,
+  "trailCells": 354,
   "wetTrail": 0,
   "bridges": 0,
   "landmark": true,
@@ -268,15 +275,16 @@
   "thickets": 0,
   "crevasses": 0,
   "towers": 0,
-  "digest": "7aa6f09b",
+  "shards": 5,
+  "digest": "06b4ded6",
   "parts": {
-   "vox": "90b47d8b",
-   "magma": "ab3f147b",
-   "grass": "231eb85d",
+   "vox": "8cb06303",
+   "magma": "53b8ad62",
+   "grass": "bab3ec4d",
    "water": "ea6207e5",
-   "maps": "185b0df8",
-   "sites": "94c4e103",
-   "cells": "ced4fd48"
+   "maps": "6c155a8b",
+   "sites": "9b387ff4",
+   "cells": "6e676cf0"
   }
  },
  {
@@ -303,6 +311,7 @@
   "thickets": 0,
   "crevasses": 0,
   "towers": 0,
+  "shards": 0,
   "digest": "71447536",
   "parts": {
    "vox": "20b90e07",
