@@ -89,7 +89,7 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`61ae2a1`** (#69: ambient life) at **version 41**, stamped; concept from **`345adaf`** at **version 29**, which is still current — nothing
+Play is published from **`3b3a7b2`** (sun steps by the Shadows setting; Share place) at **version 42**, stamped; concept from **`345adaf`** at **version 29**, which is still current — nothing
 since has touched it. Neither needed force, both having been published earlier in the same
 session. Before that, `a608853` (play v36, concept v28) was forced on the
 user's word on 2026-09-26, after the live pages diffed identical to `fbdbd88` (play v35,
