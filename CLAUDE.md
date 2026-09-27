@@ -89,9 +89,10 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`4d5ec85`** (#76 Ashfall, PR #77) at **version 47**, stamped; concept
-from the same commit at **version 31**. Neither needed force, both published earlier in the same
-session. Before that, `5c8a086` (#73–#75) was play version 46 and concept version 30: play went
+Play is published from **`7d1561a`** (#76 Cloudpine, PR #78; the terrain-only cutaway, the
+phone-sized location bar and its time of day) at **version 48**, stamped; concept from the same
+commit at **version 32**. Neither needed force, both published earlier in the same session.
+Before that, `4d5ec85` (Ashfall, PR #77) was play version 47 and concept version 31. Before that, `5c8a086` (#73–#75) was play version 46 and concept version 30: play went
 straight through; concept was refused as the session's first, its live copy diffed identical to
 `345adaf` (version 29), and it was forced on the user's word on 2026-09-27. Before that, play
 was `369fbd5` at version 45. Before that, `a608853` (play v36, concept v28) was forced on the
