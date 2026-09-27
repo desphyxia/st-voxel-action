@@ -13519,6 +13519,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get sunTurn(){ return sunTurn(); },
     /* The cutaway (#72), for the gate to compare a frame with and without. */
     setCut:function(on){ cutOn=!!on; return cutOn; },
+    /* Silhouettes shown or not (#72), for the gate to diff a frame both ways. */
+    setSilhouettes:function(on){ if(built) built.scene.traverse(function(o){ if(o.userData.kind==='silhouette') o.visible=!!on; }); return !!on; },
     /* A wall of the world's own prop material stood between the camera and
        the player, for the gate to hide them behind; false takes it away. */
     testWall:function(on){
