@@ -72,6 +72,7 @@
          border:1px solid var(--line);padding:3px 9px;pointer-events:none;white-space:nowrap;
          font-variant-numeric:tabular-nums;z-index:2;display:none}
   .where b{color:var(--sand);font-weight:500}
+  .where .bld{color:var(--dim)}
   @media (max-width:560px){ .where{bottom:auto;top:60px;font-size:10px;max-width:calc(100% - 16px);overflow:hidden;text-overflow:ellipsis} }
   .fpsr b{color:var(--sand);font-weight:500}
   .hud b{color:var(--text);font-weight:500}
@@ -8629,9 +8630,27 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      on, before anything else can throw. The build is stamped into QS_BUILD
      when the page is published; 'dev' is a copy that was not. */
   var QS_BUILD='dev';
+  /* Which code this is, when QS_BUILD cannot say: GitHub Pages serves the
+     repo file as it is, unstamped, and it is where the game is tested. A
+     hash of the page's own code — the bundle and this script, with the stamp
+     put back to 'dev' so a stamped copy of a commit agrees with an unstamped
+     one — which tools/which-build.mjs matches to a commit, and
+     tools/lib/buildid.mjs computes the same way from the file. */
+  var QS_SRC=(function(){
+    try{
+      var b=document.getElementById('qsbundle'), me=document.currentScript;
+      var t=((b?b.textContent:'')+'\n'+(me?me.textContent:'')).replace(/var QS_BUILD='[^']*';/,"var QS_BUILD='dev';");
+      var h=0x811c9dc5; for(var i=0;i<t.length;i++){ h^=t.charCodeAt(i); h=Math.imul(h,16777619); }
+      return ('0000000'+(h>>>0).toString(16)).slice(-8).slice(0,7);
+    }catch(e){ return '?'; }
+  })();
+  /* What a screenshot shows: the commit where the page was stamped with one,
+     and otherwise the hash, marked with where the copy came from. */
+  var QS_LABEL=QS_BUILD!=='dev'?'build '+QS_BUILD
+    :(/github\.io$/.test(location.hostname)?'pages ':location.protocol==='file:'?'file ':'dev ')+QS_SRC;
   var REC_KEY='qs.flight', REC_PREV=null;
   try{ REC_PREV=JSON.parse(localStorage.getItem(REC_KEY)||'null'); }catch(e){}
-  var REC={v:1,build:QS_BUILD,started:new Date().toISOString(),clean:false,
+  var REC={v:1,build:QS_BUILD,src:QS_SRC,started:new Date().toISOString(),clean:false,
            ua:navigator.userAgent,dpr:window.devicePixelRatio||1,
            screen:[screen.width,screen.height],touch:GFX_COARSE,events:[],trail:[],snap:null,
            /* Where the page was served from: the artifact is stamped with its
@@ -11985,7 +12004,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Coordinates straight after the seed: on a narrow screen the line is
        cut at its end, and these are what a bug report needs most. */
     var t='<b>'+escHtml(String(built.cfg.seed))+'</b> · x '+wx.toFixed(1)+'  y '+a.y.toFixed(2)+'  z '+wz.toFixed(1)
-      +' · '+(streaming?'streamed':'window')+(ground?' · '+ground:'');
+      +' · '+(streaming?'streamed':'window')+(ground?' · '+ground:'')
+      /* Last, and in every screenshot of the view: which code drew it. */
+      +' · <span class="bld">'+escHtml(QS_LABEL)+'</span>';
     if(t!==whereText){ whereText=t; whereEl.innerHTML=t; }
     whereEl.style.display='block';
   }
@@ -13207,13 +13228,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   }
   setInterval(recTick,1000);
   function reportOf(r){
-    return {what:'Quarterstone report',build:r.build,started:r.started,made:new Date().toISOString(),
+    return {what:'Quarterstone report',build:r.build,src:r.src,started:r.started,made:new Date().toISOString(),
             endedCleanly:r.clean,from:r.from,peak:r.peak,ua:r.ua,dpr:r.dpr,screen:r.screen,touch:r.touch,
             now:r.snap,trail:r.trail,events:r.events,settings:r===REC?Object.assign({},GFX):undefined};
   }
   function reportText(r){
     var o=reportOf(r||REC);
-    return 'Quarterstone report · build '+o.build+' · '+o.made+'\n'+JSON.stringify(o,null,1);
+    return 'Quarterstone report · build '+o.build+(o.src?' · src '+o.src:'')+' · '+o.made+'\n'+JSON.stringify(o,null,1);
   }
   var crashEl=document.getElementById('crash'), crashTxt=document.getElementById('crashtxt'),
       crashMsg=document.getElementById('crashmsg'), crashHead=document.getElementById('crashh'),
@@ -13431,6 +13452,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get view(){ return cam.view; },
     /* Seconds between the sun's steps at the current Shadows setting. */
     get sunTurn(){ return sunTurn(); },
+    /* Which code this is: the stamp, the source hash, and what the view says. */
+    get build(){ return {stamp:QS_BUILD,src:QS_SRC,label:QS_LABEL}; },
     /* A place code for where the player stands, and going to one. */
     placeCode:placeCode, goPlace:goPlace, readPlace:readPlace,
     get seed(){ return built?built.cfg.seed:null; },

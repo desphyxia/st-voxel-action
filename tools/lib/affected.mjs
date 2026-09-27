@@ -38,6 +38,8 @@ const RULES = [
   [/^assets\//, ['build', 'look']],
   [/^tools\/author-hero\.mjs$/, ['build', 'look']],
   [/^tools\/(look\.mjs|look-baseline\.json|lib\/look\.mjs)$/, ['look']],
+  [/^tools\/which-build\.mjs$/, []],
+  [/^tools\/lib\/buildid\.mjs$/, ['build']],
   /* Read only by the node half. */
   [/^tools\/(baseline\.json|render-plate\.mjs|hooks\/|lib\/(playtest|consume|affected)\.mjs)/, []],
   [/^docs\/concept\//, ['boot', 'render']],

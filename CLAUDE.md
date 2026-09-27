@@ -111,6 +111,16 @@ commit stamped in, so a report pasted into the chat says exactly which code it c
 git show <sha>:docs/play/index.html | sed "s/var QS_BUILD='dev';/var QS_BUILD='<sha>';/" > play.html
 ```
 
+**Every view says which code drew it.** The location bar at the bottom of the play view ends
+with `build <sha>` on a stamped artifact and, on a copy that was not stamped, with a hash of the
+page's own code: `pages <hash>` on GitHub Pages — which serves the repo file unstamped and is
+where the game is mostly tested — `file <hash>` from disk, `dev <hash>` elsewhere. Crash reports
+carry the same as `src`. To turn a hash from a screenshot or a report into a commit:
+
+```
+node tools/which-build.mjs <hash>
+```
+
 Neither is published automatically, and a stale artifact is worse than no artifact: it is a
 live link, already in circulation, quietly serving a build that no longer exists.
 

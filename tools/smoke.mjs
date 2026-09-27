@@ -83,6 +83,7 @@
  * instead, and real performance is checked by hand on a GPU.
  */
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { srcHash } from './lib/buildid.mjs';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
@@ -2222,6 +2223,22 @@ if (BROWSER_HALF) {
         check(hudH.shown && hudG.shown && Math.abs(hudH.w - hudH.want) < 1 && Math.abs(hudG.w - hudG.want) < 1,
               'NET: each window shows its partner\'s health without opening anything',
               `host sees ${hudH.who} at ${hudH.w}% (${hudH.want.toFixed(0)}), guest sees ${hudG.who} at ${hudG.w}% (${hudG.want.toFixed(0)})`);
+
+        /* ---------- BUILD ID: which code a screenshot came from ----------
+           GitHub Pages serves this file unstamped and is where the game is
+           tested, so the view carries a hash of the page's own code, which
+           tools/which-build.mjs matches to a commit. The page's hash has to be
+           the one tools/lib/buildid.mjs computes from the file, or a hash read
+           off a screenshot would match nothing. */
+        {
+          const bid = await bp.evaluate(() => ({ b: window.QSPLAY.build, where: document.getElementById('where').textContent,
+                                                 report: window.QSPLAY.reportText().split('\n')[0] }));
+          const want = srcHash(readFileSync(PLAY_TARGET, 'utf8'));
+          check(bid.b.src === want && /^(file|dev|pages) [0-9a-f]{7}$/.test(bid.b.label) && bid.where.endsWith(bid.b.label)
+                && bid.report.includes('src ' + want),
+                'BUILD ID: the view and the report name the code that drew them, as the file hashes',
+                `"${bid.where.slice(-24)}"; page ${bid.b.src}, file ${want}; report "${bid.report.slice(0, 60)}"`);
+        }
 
         /* ---------- REPORT: the flight recorder and Copy report (#71) ----------
            A caught error opens the panel and is in the record; Copy report
