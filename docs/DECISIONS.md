@@ -47,10 +47,12 @@ same world — not credits.
 | Feel | Methodical, stamina-gated: deliberate spacing, committed swings, readable telegraphs |
 | Defence | Dodge is universal; blocking is frame-dependent (the bulwark's root wall is the extreme case) |
 | Targeting | Mouse free-aim; **twin-stick free aim** on gamepad |
-| Movement budget | Step up 1 m · vault 2 m · jump a 2.5 m gap · survive a 6 m drop · wade 0.75 m · swim deeper · magma lethal |
+| Movement budget | **Revised 2026-09-27.** Walk up 0.5 m · a vertical face of 1 m takes a jump, 2 m a double jump, 3 m and more is a wall · jump a 3 m gap, double-jump a 4.4 m one · survive a 6 m drop · wade 0.75 m · swim deeper · magma lethal. The vault is gone: a climb that anything 2 m tall allowed made every cliff a staircase. It may return as an unlocked verb. *Was: step up 1 m · vault 2 m · jump a 2.5 m gap* |
+| Double jump | One air jump per time off the ground, restored on landing, allowed after walking off a ledge; costs stamina, so height is a resource like a swing |
+| Faces and slopes | **What is a wall is decided, not incidental.** Ordinary ground climbs in 0.25 m steps and is walked; a 1 m face exists only where a feature puts one — a ledge, a stepping stone, a terrace edge — and every such face is a jump |
 | Swing shape | **Wind-up, active, recovery — committed throughout.** The active window pins you in place and cannot be cancelled by jump, vault or dodge; a dodge cancels the *recovery* and nothing else, which is the only escape hatch and costs stamina you wanted for the next swing |
 | What is drawn vs what is dangerous | **Different questions.** The hitbox is the active window; the arc on screen outlives it and fades. At 45° the active window is an eighth of a second and the character is forty pixels tall — a visual that lasted exactly as long as the hitbox would not be seen |
-| Character physics | **Solved from the budget, not tuned.** Run speed is the only free number; gravity, jump speed and airtime follow from it so that a jump clears exactly `MOVE.jump` and no more. A jump that quietly cleared 3.2 m would stop canyons being obstacles, and nobody would notice for months |
+| Character physics | **Solved from the budget, not tuned.** Run speed and the jump's height are the chosen numbers; gravity, jump speed and airtime follow from them so that a jump clears exactly `MOVE.jump` and no more. A jump that quietly cleared more would stop canyons being obstacles, and nobody would notice for months |
 
 ## 4. Gear and progression
 
@@ -122,6 +124,9 @@ underneath:
 | Voxel | 25 cm, for surface detail, palette dithering and silhouette |
 | Ceiling | 16 m applies to terrain; props (obelisks, hive trees, arcs) may exceed it |
 | Caves | Cliff-face decoration — mouths, alcoves, undercuts, no walkable interior |
+| Canyons | **Gorges, not trenches.** Vertical walls 5–8 m deep and 6–10 m wide — no jump climbs out and none crosses. In and out by breaches every 40–60 m and at the ends, across by bridge or arch where a trail meets one, or down where the drop is survivable. Floors are dry washes; a stream only where a river happens to cross |
+| Biome traversal features | **Each biome has one way the ground stands in your way.** Redrock Mesa: mesas, tables with sheer 4–6 m sides reached by stepping-stone routes of 1 m rises. Cloudpine: cliff bands climbed by ledge lines. Thornwood: thickets with fallen-log shortcuts. Ashfall: basalt column fields over magma. Rimewaste: ice and crevasses. Sporeverge: fungal towers of shelf steps. Glasslands: shard fields crossed on vitrified plates. Meadowlands: low walls and hedges. A feature counts as traversable only if the reach pass finds a route under the movement budget; the generator adds stones or breaches until it does |
+| Seeing into the ground | **A cutaway around each player, and silhouettes through the rest.** Terrain and props in front of a player and above their head are cut away inside a dithered oval, cut faces shown dark; players, machines and loot are drawn as silhouettes wherever they are hidden. Shadows are cast by the whole world. Deep ground is not playable without it |
 | Materials | Full material ids driving audio, carve hardness, flammability, conduction, friction, emission |
 | Weather | Full day/night and weather; rain wets materials, snow accumulates, fog for distance |
 | Terrain edits | Persist near settlements; wilderness heals over a few in-game days |
