@@ -2919,9 +2919,11 @@ if (BROWSER_HALF) {
            three r128 frees instanceMatrix only when the mesh itself is
            disposed. Over 480 m that grew GPU memory 17 MB per 100 m with the
            loaded chunk count flat — per chunk from 5 MB to 9 and rising — and
-           an iPhone ends that by killing the tab. Six 48 m jumps: GPU memory
-           per loaded chunk stays within a quarter of where it started, and
-           buffers are being freed at all. */
+           an iPhone ends that by killing the tab. Four 48 m jumps — a leak that
+           size shows as 30 MB over them, and each jump costs a whole ring of
+           chunks to load, so six made this the slowest check in the gate: GPU
+           memory per loaded chunk stays within a quarter of where it started,
+           and buffers are being freed at all. */
         const mem = await wp.evaluate(async () => {
           const P = window.QSPLAY, a = P.actor, per = Math.round(1 / window.QS.TICK), rows = [];
           const x0 = a.x, z0 = a.z;
@@ -2937,28 +2939,29 @@ if (BROWSER_HALF) {
               last = c.loaded;
             }
           };
-          for (let m = 1; m <= 6; m++) {
+          for (let m = 1; m <= 4; m++) {
             await settle(x0 + m * 48, z0);
             const mm = P.memory, n = P.chunks.nodes;
             rows.push({ at: m * 48, mb: mm.gpuMB, chunks: n, per: mm.gpuMB / n, buffers: mm.buffers });
           }
-          await settle(x0, z0);
           /* What the page holds in arrays per chunk, by its own count — the
              figure a Safari report carries — with grass drawn and with it off.
-             Turning it off and on again restreams, and grass comes back. */
+             Turning it off and on again restreams, and grass comes back. Read
+             where the walk ended: walking back would load a third ring. */
+          const xe = x0 + 4 * 48;
           const heldPer = () => { const s = P.snap(); return s.mem.heldMB / P.chunks.nodes; };
           const withGrass = heldPer();
-          P.setGfx('grass', 0); await settle(x0, z0); const noGrass = heldPer();
+          P.setGfx('grass', 0); await settle(xe, z0); const noGrass = heldPer();
           const tiles = () => { let n = 0; P.scene.traverse((o) => { if (o.userData.kind === 'grass') n++; }); return n; };
           const tilesOff = tiles();
-          P.setGfx('grass', 1); await settle(x0, z0); const tilesOn = tiles();
+          P.setGfx('grass', 1); await settle(xe, z0); const tilesOn = tiles();
           return { rows, dropped: P.field.dropped, back: P.chunks.nodes, withGrass, noGrass, tilesOff, tilesOn,
                    report: P.reportText().indexOf('"heldMB"') > 0 };
         });
         {
           const early = Math.max(mem.rows[0].per, mem.rows[1].per), last = mem.rows[mem.rows.length - 1];
           check(mem.dropped > 0 && mem.rows.every((r) => r.chunks >= 9) && last.per <= early * 1.25,
-                'MEMORY: 288 m of streaming costs no GPU memory beyond the chunks it holds (#71)',
+                'MEMORY: 192 m of streaming costs no GPU memory beyond the chunks it holds (#71)',
                 `${mem.dropped} chunks let go; ${mem.rows.map((r) => `${r.mb.toFixed(0)} MB/${r.chunks}`).join(', ')}; `
                 + `${last.per.toFixed(1)} MB a chunk at the end against ${early.toFixed(1)} early`);
           /* An iPhone ended a tab at 30 chunks holding ~25 MB of arrays each,

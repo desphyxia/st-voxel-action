@@ -46,7 +46,7 @@ const GEN_API = ['V', 'CEIL', 'CHUNK', 'MOVE', 'clamp', 'BIOMES', 'BIO', 'CLIMAT
 
 /** The greedy mesher, behind the build's renderer flag — issue #12. */
 const MESH_API = ['meshChunk', 'chunkOccupancy', 'innerChunk', 'openAir', 'surfaceAt', 'LEVELS',
-  'isCut', 'solidVox', 'carve', 'clearEdits', 'chunkGrid', 'BITE', 'BITE_R',
+  'isCut', 'solidVox', 'carve', 'editedChunks', 'clearEdits', 'chunkGrid', 'BITE', 'BITE_R',
   /* props without the faces nobody can see — issue #51 */
   'meshProps', 'solidKeys',
   /* authored models — issue #34 */

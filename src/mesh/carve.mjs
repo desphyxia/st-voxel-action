@@ -104,6 +104,22 @@ export function carve(w, x, y, z, opts) {
   return { cut: cut, held: held, chunks: chunks, removed: removed };
 }
 
+/**
+ * The chunks whose meshes read an edited voxel — what putting everything back
+ * has to remesh. Asked before `clearEdits`, because afterwards there is nothing
+ * left to ask. Remeshing every chunk instead cost the next frame ~5 s in
+ * software rendering, all of it re-uploading geometry that had not changed.
+ */
+export function editedChunks(w) {
+  var g = chunkGrid(w), ny = LEVELS, NZ = w.NZ, dirty = new Set(), chunks = [];
+  if (w.edits) w.edits.forEach(function (_m, k) {
+    var y = k % ny, cell = (k - y) / ny, gj = cell % NZ, gi = (cell - gj) / NZ;
+    chunksTouching(w, gi, gj, dirty);
+  });
+  dirty.forEach(function (k) { chunks.push([Math.floor(k / g), k % g]); });
+  return chunks;
+}
+
 /** Put everything back. The world is the generator's again. */
 export function clearEdits(w) {
   var n = w.edits ? w.edits.size : 0;

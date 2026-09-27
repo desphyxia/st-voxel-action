@@ -260,8 +260,10 @@ node tools/smoke.mjs --update   # re-record the golden baseline, deliberately
 node tools/hooks/install.mjs    # install the pre-push hook (once per clone)
 ```
 
-CI runs the two halves as two required jobs in parallel, so a regression in the half that
-matters comes back in well under a minute. The pre-push hook runs `--node` for the same reason.
+CI runs the two halves in parallel, so a regression in the half that matters comes back in well
+under a minute. The browser half is split further into three shards (`build`, `worker`, and the
+other five groups) with a cached Chromium, and a job named **Browser** passes only when all three
+do — that is the required check. The pre-push hook runs `--node` for the same reason.
 
 **Locally, do not run the whole browser half before every push.** It takes 25–30 minutes here in
 software rendering and ~17 on CI, and CI runs all of it on every push anyway. Run `--node`, then
