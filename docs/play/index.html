@@ -11056,6 +11056,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      no tiles, and its blades were let go, so the ground round the player is
      built again — the nine nearest here, as a new world settles, and the rest
      as the stream refills. */
+  /* Grass on to off, in a streamed world: the loaded chunks' tiles go now,
+     not when each chunk is next let go — a phone turns grass off to get its
+     memory back, and a tile drawing none of its blades still holds them. */
+  function dropGrassTiles(){
+    if(!streaming||!nodes) return;
+    var shared=sharedMats();
+    for(var k in nodes){ var g=nodes[k].g, gone=[];
+      g.children.forEach(function(o){ if(o.userData.kind==='grass') gone.push(o); });
+      gone.forEach(function(o){ g.remove(o); freeObject(o,shared); }); }
+    for(var k2 in premesh) if(premesh[k2]) premesh[k2].grass=[];
+  }
   function restreamForGrass(){
     grassEpoch++;
     if(!streaming||!field||!stream) return;
@@ -12638,7 +12649,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(all||k==='grass'){
       grassView=-1;
       var gOn=GFX.grass>0;
-      if(gOn!==grassOnLast){ grassOnLast=gOn; if(gOn&&built) restreamForGrass(); else grassEpoch++; }
+      if(gOn!==grassOnLast){ grassOnLast=gOn; if(gOn&&built) restreamForGrass(); else { grassEpoch++; dropGrassTiles(); } }
     }
     if((all||k==='grassMode')&&built){
       var gm=GFX.grassMode==='lean'?built.mats.grassLean:built.mats.grass;
