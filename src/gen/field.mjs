@@ -164,11 +164,30 @@ export function makeGen(seedStr,force){
     }
     return false;
   }
+  /* A gorge, not a trench (DECISIONS §5 "Canyons", #74): 6-10 m across, too
+     wide for a double jump, and 5-8 m deep with vertical walls, too tall for
+     one. `br` is how far a breach lifts the floor back towards the rim, 0 in
+     the gorge proper and 1 where it has come right up: a slow noise along the
+     canyon, so a breach is a long ramp every few tens of metres rather than a
+     step. `taper` brings the depth out where the canyon ground fades, so a
+     gorge ends in a slope rather than a wall. */
   function canyonAt(x,z){
     var v=N.c.fbm(x*0.0082+5,z*0.0082+5,3), d=Math.abs(v-0.5)*120;
-    var w=3+Math.floor(N.c.n2(x*0.02+31,z*0.02+7)*3); if(w>5)w=5;
-    var dp=3+Math.floor(N.c.n2(x*0.015+3,z*0.015+3)*2); if(dp>4)dp=4;
-    return {d:d,w:w,dp:dp};
+    var w=6+Math.floor(N.c.n2(x*0.02+31,z*0.02+7)*5); if(w>10)w=10;
+    var dp=5+Math.floor(N.c.n2(x*0.015+3,z*0.015+3)*4); if(dp>8)dp=8;
+    var b=N.c.n2(x*0.021+71,z*0.021+13), br=clamp((b-0.45)/0.5,0,1);
+    return {d:d,w:w,dp:dp,br:br};
+  }
+  /* Is this cell inside the body of a gorge, or on a sliver of it? Where the
+     canyon band pinches out it leaves strands a cell or two wide, and cut to
+     a gorge's depth those are pits you drop into and never leave. A cell of
+     the body has canyon around it three metres out in most directions; a
+     sliver does not, and stays at ground level. */
+  var CANYON_RING=[[3,0],[-3,0],[0,3],[0,-3],[2,2],[2,-2],[-2,2],[-2,-2]];
+  function canyonBody(x,z){
+    var n=0;
+    for(var q=0;q<8;q++){ var c=canyonAt(x+CANYON_RING[q][0],z+CANYON_RING[q][1]); if(c.d<c.w/2) n++; }
+    return n>=5;
   }
   function pillarAt(x,z,colw){
     if(colw<0.12) return 0;
@@ -188,8 +207,8 @@ export function makeGen(seedStr,force){
     var cw=wsum(w,'canyon'), colw=wsum(w,'col');
     var c=null;
     if(cw>0.28){ c=canyonAt(x,z);
-      if(c.d<c.w/2) H-=c.dp;
-      else if(c.d<c.w/2+2) H-=Math.round(c.dp*(1-(c.d-c.w/2)/2));
+      c.body=c.d<c.w/2&&canyonBody(x,z);
+      if(c.body){ var taper=clamp((cw-0.28)/0.25,0,1); H-=Math.round(c.dp*taper*(1-c.br)); }
     }
     H+=pillarAt(x,z,colw);
     var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;

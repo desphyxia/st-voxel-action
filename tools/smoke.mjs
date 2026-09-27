@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -298,6 +298,9 @@ if (NODE_HALF) for (const r of animSuite()) check(r.ok, `ANIM: ${r.label}`, r.de
 
 /* ---------- NAV: where a body of a given width can go, issues #15, #37, #6 ---------- */
 if (NODE_HALF) for (const r of navSuite()) check(r.ok, `NAV: ${r.label}`, r.detail);
+
+/* ---------- CANYON: gorges, deep and never a trap (#74) ---------- */
+if (NODE_HALF) for (const r of canyonSuite()) check(r.ok, `CANYON: ${r.label}`, r.detail);
 
 /* ---------- SKY: the hour and the weather are the seed's, issue #30 ---------- */
 if (NODE_HALF) for (const r of skySuite()) check(r.ok, `SKY: ${r.label}`, r.detail);

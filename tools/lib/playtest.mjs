@@ -3322,3 +3322,75 @@ export function navSuite() {
   }
   return out;
 }
+
+/* ---------------------------------------------------------------- canyons ---- */
+
+/**
+ * Gorges (#74, DECISIONS §5 "Canyons"), measured straight off the cell field
+ * over 600 m of two seeds whose ground is canyon country: deep enough that a
+ * double jump does not climb out, and never a trap — every stretch of floor
+ * can be reached and left by the budget's own rules, through a breach or an
+ * end.
+ */
+export function canyonSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const rows = [];
+  for (const seed of ['EMBERFALL', 'MOSSGATE']) {
+    const G = makeGen(seed, null), R = 300, N = 2 * R;
+    /* `dry` is ground a body can be on at all — not magma, and water only
+       where it can be waded or swum out of — and `S` the height it is on:
+       the surface, for water. */
+    const H = new Int16Array(N * N), S = new Float32Array(N * N), inC = new Uint8Array(N * N), dry = new Uint8Array(N * N);
+    let narrow = 0;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const c = G.cell(i - R, j - R), k = i * N + j;
+      H[k] = c.H; S[k] = c.water ? c.wl : c.H; dry[k] = c.magma || (c.water && c.wl - c.H > 1.5) ? 0 : 1;
+      inC[k] = c.canyon && c.cw > 0.28 && c.canyon.d < c.canyon.w / 2 && c.canyon.body ? 1 : 0;
+      if (inC[k] && c.canyon.w < 6) narrow++;
+    }
+    /* Walls: where a canyon cell meets ground outside it, rim over floor. */
+    let walls = 0, deep = 0, cells = 0;
+    for (let i = 1; i < N - 1; i++) for (let j = 1; j < N - 1; j++) {
+      const k = i * N + j; if (!inC[k]) continue; cells++;
+      for (const q of [k + 1, k - 1, k + N, k - N]) if (!inC[q]) { walls++; if (H[q] - H[k] > MOVE.climb2) deep++; }
+    }
+    /* Reached from outside, and left again: two floods over the budget's
+       moves — up no more than a double jump, down no more than a survivable
+       drop — one forward from all the ground outside, one backward. */
+    const flood = (back) => {
+      const seen = new Uint8Array(N * N), q = [];
+      /* Seeded from all the ground outside the canyon, and from the edge of
+         the sample: a gorge that runs out of it goes on somewhere, and a
+         breach there is a breach. */
+      for (let k = 0; k < N * N; k++) {
+        const i = (k / N) | 0, j = k % N, edge = i === 0 || j === 0 || i === N - 1 || j === N - 1;
+        if (dry[k] && (!inC[k] || edge)) { seen[k] = 1; q.push(k); }
+      }
+      for (let h = 0; h < q.length; h++) {
+        const k = q[h], i = (k / N) | 0, j = k % N;
+        for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ii = i + a, jj = j + b; if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
+          const p = ii * N + jj; if (seen[p] || !dry[p]) continue;
+          const dh = back ? S[k] - S[p] : S[p] - S[k];
+          if (dh > MOVE.climb2 || dh < -MOVE.fall) continue;
+          seen[p] = 1; q.push(p);
+        }
+      }
+      return seen;
+    };
+    const into = flood(false), outOf = flood(true);
+    let floor = 0, reached = 0, left = 0;
+    for (let k = 0; k < N * N; k++) if (inC[k] && dry[k]) { floor++; if (into[k]) reached++; if (outOf[k]) left++; }
+    rows.push({ seed, cells, walls, deep, floor, reached, left, narrow });
+  }
+  say('a gorge is deep: most of its walls are taller than a double jump climbs',
+      rows.every((r) => r.cells > 1000 && r.deep > r.walls * 0.5),
+      rows.map((r) => `${r.seed} ${r.cells} cells, ${(100 * r.deep / r.walls).toFixed(0)}% of ${r.walls} wall edges over ${MOVE.climb2} m`).join('; '));
+  say('and too wide to jump across: none is under 6 m',
+      rows.every((r) => r.narrow === 0), rows.map((r) => `${r.seed} ${r.narrow} narrower`).join('; '));
+  say('and never a trap: its floor can be reached and left, by a breach or an end',
+      rows.every((r) => r.reached >= r.floor * 0.99 && r.left >= r.floor * 0.99),
+      rows.map((r) => `${r.seed} ${r.floor} floor cells: ${(100 * r.reached / r.floor).toFixed(1)}% reached, ${(100 * r.left / r.floor).toFixed(1)}% left`).join('; '));
+  return out;
+}
