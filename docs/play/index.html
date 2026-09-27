@@ -12153,13 +12153,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /* ---------- a place to send a friend ----------
      A code names a world and a spot in it: the seed, whether the world
      streams — the same seed streamed is different ground, so it is part of
-     which world — and x and z to the decimetre. Height is not sent: the
-     ground under the spot decides it, which is also what makes a code
-     useless for putting someone inside a cliff. Base64url over a line of
-     text, so a seed of any characters survives, behind a version tag. */
+     which world — and x, y and z to the decimetre. The height is where to
+     look down from, not where to stand: the ground under it decides that,
+     so a spot at the foot of a cliff is the foot and not the top, and a
+     code cannot put anyone inside the rock. Base64url over a line of text,
+     so a seed of any characters survives, behind a version tag. */
   function placeCode(){
     var a=player(); if(!a||!built||!built.cfg) return '';
-    var t=(streaming?1:0)+'|'+(Math.round(a.x*10)/10)+'|'+(Math.round(a.z*10)/10)+'|'+built.cfg.seed;
+    var r=function(v){ return Math.round(v*10)/10; };
+    var t=(streaming?1:0)+'|'+r(a.x)+'|'+r(a.y)+'|'+r(a.z)+'|'+built.cfg.seed;
     return 'QS1-'+btoa(unescape(encodeURIComponent(t))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
   }
   function readPlace(code){
@@ -12167,10 +12169,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var t;
     try{ var b=m[1].replace(/-/g,'+').replace(/_/g,'/'); while(b.length%4) b+='=';
          t=decodeURIComponent(escape(atob(b))); }catch(e){ return null; }
-    var f=t.split('|'); if(f.length<4) return null;
-    var x=Number(f[1]), z=Number(f[2]), seed=f.slice(3).join('|');
-    if((f[0]!=='0'&&f[0]!=='1')||!isFinite(x)||!isFinite(z)||!seed) return null;
-    return {stream:f[0]==='1',x:x,z:z,seed:seed};
+    var f=t.split('|'); if(f.length<5) return null;
+    var x=Number(f[1]), y=Number(f[2]), z=Number(f[3]), seed=f.slice(4).join('|');
+    if((f[0]!=='0'&&f[0]!=='1')||!isFinite(x)||!isFinite(y)||!isFinite(z)||!seed) return null;
+    return {stream:f[0]==='1',x:x,y:y,z:z,seed:seed};
   }
   /* Ground under a spot a streamed world has not reached yet: the chunks
      around it are built here, the way a new world settles its first nine. */
@@ -12192,7 +12194,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     else if(!built||!built.cfg||built.cfg.seed!==p.seed) regen(p.seed);
     seedin.value=p.seed;
     settleAround(p.x,p.z);
-    var g=QS.placeOnGround(col,p.x,p.z), a=player();
+    /* Ground at or a little under the height that was shared; failing that,
+       whatever is under the spot at all — a carve since, or another build. */
+    var g=QS.placeOnGround(col,p.x,p.z,p.y+0.6), a=player();
+    if(!g.grounded) g=QS.placeOnGround(col,p.x,p.z);
     /* The same character, moved: what it carries comes with it. */
     a.x=g.x; a.z=g.z; a.vx=a.vy=a.vz=0; a.dead=null;
     if(g.grounded){ a.y=g.y; a.apex=g.y; a.grounded=true; }
