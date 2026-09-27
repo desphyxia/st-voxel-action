@@ -3310,8 +3310,16 @@ export function navSuite() {
            step of the terrain's own surface at its post (#3 found one 2.9 m
            up a tree, out of reach of anyone). */
         const e = EN.makeSentry(col, p[0], p[1], p[2] + 1e-6);
-        const k = Math.round((p[0] + w.half) / V) * w.NZ + Math.round((p[1] + w.half) / V);
-        if (Math.abs(e.y - w.Hs[k]) > MOVE.step) up.push(`${s.nm} post ${i} at ${e.y.toFixed(2)} over ground ${w.Hs[k]}`);
+        /* The ground under its whole footprint, not the one voxel under its
+           middle: on a hillside ramp (#73) the ground rises a quarter a voxel,
+           and a body stands on the highest of it. */
+        let g = -Infinity;
+        for (let dx = -EN.SENTRY.rad; dx <= EN.SENTRY.rad + 1e-9; dx += V) for (let dz = -EN.SENTRY.rad; dz <= EN.SENTRY.rad + 1e-9; dz += V) {
+          if (dx * dx + dz * dz > EN.SENTRY.rad * EN.SENTRY.rad) continue;
+          const k = Math.floor((p[0] + dx + w.half) / V) * w.NZ + Math.floor((p[1] + dz + w.half) / V);
+          if (w.Hs[k] > g) g = w.Hs[k];
+        }
+        if (Math.abs(e.y - g) > MOVE.step) up.push(`${s.nm} post ${i} at ${e.y.toFixed(2)} over ground ${g}`);
       });
     }
     say('and every machine stands on the ground at its post, not on what grows there',
@@ -3653,5 +3661,110 @@ export function basaltSuite() {
       detail: `${pickSeed} ${pick.cx},${pick.cz}, ${2 * pick.rx + 1} m across: ended at ${b.x.toFixed(1)}, ${b.dead || 'alive'}, ${jumps} jumps` };
   }
   say('a body crosses one from rim to rim, a jump at each lip', crossed.ok === true, crossed.detail || crossed);
+  return out;
+}
+
+/* Seeds with pine enough for several cliff bands in 600 m. */
+const CLIFF_SEEDS = ['EMBERFALL', 'QUARTERSTONE'];
+
+/**
+ * Cliff bands (#76, Cloudpine): a face you cannot jump, and a ledge line up it.
+ *
+ * Over the cell field, for every band wholly in the sample: its face stands
+ * more than a double jump over the ground in front of it, wherever there is
+ * no ledge. Then two floods confined to the front of the band — the apron,
+ * the ledges and the face row, never the slope behind — from the apron:
+ * with the ledges the face row is reached, and without them it is not. So
+ * the ledges are the way up the front, and the only one. On a built window a
+ * body climbs one: along the ledges, a jump at each, then onto the top.
+ */
+export function cliffSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const rows = [];
+  let pick = null, pickSeed = null;
+  for (const seed of CLIFF_SEEDS) {
+    const G = makeGen(seed, null), R = 300, N = 2 * R;
+    const S = new Float32Array(N * N), kind = new Uint8Array(N * N), dry = new Uint8Array(N * N), site = new Array(N * N);
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const c = G.cell(i - R, j - R), k = i * N + j;
+      S[k] = c.water ? c.wl : c.H; kind[k] = c.cliff || 0;
+      dry[k] = c.magma || (c.water && c.wl - c.H > 1.5) ? 0 : 1;
+      if (kind[k]) site[k] = G.cliffOver(i - R, j - R);
+    }
+    const bands = new Map();
+    const band = (s) => { if (!bands.has(s)) bands.set(s, { low: 0, faces: 0, up: false, cheat: false }); return bands.get(s); };
+    for (let k = 0; k < N * N; k++) {
+      if (kind[k] !== 2) continue;
+      const s = site[k]; if (!s || Math.abs(s.cx) > R - 40 || Math.abs(s.cz) > R - 40) continue;
+      const b = band(s), i = (k / N) | 0, j = k % N;
+      /* The cell in front: one step out of the band, across the face. */
+      const fi = s.ax ? i : i - s.sg, fj = s.ax ? j - s.sg : j, fk = fi * N + fj;
+      if (kind[fk] === 3 || !dry[fk]) continue;
+      b.faces++; if (S[k] - S[fk] <= MOVE.climb2) b.low++;
+    }
+    const flood = (ledges) => {
+      const ok = (k) => dry[k] && (kind[k] === 4 || kind[k] === 2 || (ledges && kind[k] === 3));
+      const seen = new Uint8Array(N * N), q = [];
+      for (let k = 0; k < N * N; k++) if (kind[k] === 4 && dry[k]) { seen[k] = 1; q.push(k); }
+      for (let h = 0; h < q.length; h++) {
+        const k = q[h], i = (k / N) | 0, j = k % N;
+        for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ii = i + a, jj = j + b; if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
+          const p = ii * N + jj; if (seen[p] || !ok(p)) continue;
+          const dh = S[p] - S[k]; if (dh <= MOVE.climb2 && dh >= -MOVE.fall) { seen[p] = 1; q.push(p); }
+        }
+      }
+      return seen;
+    };
+    const withL = flood(true), without = flood(false);
+    for (let k = 0; k < N * N; k++) {
+      if (kind[k] !== 2 || !bands.has(site[k])) continue;
+      const b = bands.get(site[k]);
+      if (withL[k]) b.up = true;
+      if (without[k]) b.cheat = true;
+    }
+    let whole = 0, low = 0, up = 0, cheat = 0;
+    for (const [s, b] of bands) {
+      whole++; low += b.low; if (b.up) up++; if (b.cheat) cheat++;
+      if (!pick && s.ln >= 3) { pick = s; pickSeed = seed; }
+    }
+    rows.push({ seed, whole, low, up, cheat });
+  }
+  const tell = (f) => rows.map((r) => `${r.seed} ${f(r)}`).join('; ');
+  say('cliff bands stand in the pines', rows.every((r) => r.whole >= 3), tell((r) => `${r.whole} whole bands`));
+  say('each face is more than a double jump wherever there is no ledge', rows.every((r) => r.low === 0),
+      tell((r) => `${r.low} low face cells`));
+  say('and its ledge line climbs it from the front', rows.every((r) => r.up === r.whole), tell((r) => `${r.up}/${r.whole}`));
+  say('and nothing else does: take the ledges away and the front is a wall', rows.every((r) => r.cheat === 0),
+      tell((r) => `${r.cheat} climbed without them`));
+  const gp = GOLDEN_SEEDS.find((g) => g.nm === 'pine'), gg = makeGen(gp.seed, gp.force);
+  const gn = gg.cliffIn(gp.ox - 128, gp.oz - 128, gp.ox + 128, gp.oz + 128);
+  say('and round the golden pine window too', gn >= 2, `${gn} bands within 128 m of ${gp.seed}'s window`);
+
+  /* A body climbs one: along the ledges, jumping at each, then into the band. */
+  let climbed = 'no band with three ledges';
+  if (pick) {
+    const cw = buildWorld({ seed: pickSeed, size: 64, ox: pick.cx, oz: pick.cz }), cc = colliderForWorld(cw);
+    /* The site's frame in the window's: along is x or z, across the other. */
+    const at = (al, ac) => (pick.ax ? [al, ac * pick.sg] : [ac * pick.sg, al]);
+    const alongV = pick.ax ? [1, 0] : [0, 1], intoV = pick.ax ? [0, pick.sg] : [pick.sg, 0];
+    const p0 = at(pick.l0 - 3, -1), b = placeOnGround(cc, p0[0], p0[1]);
+    const frame = () => cw.G.cliffFrame(pick, b.x + pick.cx, b.z + pick.cz);
+    let jumps = 0, t = 0;
+    const last = pick.l0 + 2 * pick.ln - 1;
+    for (; t < 1500 && !b.dead; t++) {
+      const [al, ac] = frame();
+      const dir = al < last ? alongV : intoV;
+      if (ac > 1.5) break;
+      const j = b.grounded && b.blocked;
+      if (j) jumps++;
+      step(cc, b, { mx: dir[0], mz: dir[1], jump: j });
+    }
+    const [al, ac] = frame();
+    climbed = { ok: !b.dead && ac > 0.5 && b.y >= pick.T - 1.5 && jumps >= pick.ln,
+      detail: `${pickSeed} ${pick.cx},${pick.cz}, ${pick.ln} ledges to a ${pick.T - pick.lg} m face: ended ${ac.toFixed(1)} m into the band at ${b.y.toFixed(2)} against a top of ${pick.T}, ${jumps} jumps` };
+  }
+  say('a body climbs a ledge line onto the band, a jump at each ledge', climbed.ok === true, climbed.detail || climbed);
   return out;
 }

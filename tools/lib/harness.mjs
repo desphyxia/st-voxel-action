@@ -293,6 +293,8 @@ export function measureWorld(d, name) {
     mesas: d.G && d.G.mesasIn ? d.G.mesasIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     /* Basalt column fields the same way (#76, Ashfall). */
     basalt: d.G && d.G.basaltIn ? d.G.basaltIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
+    /* Cliff bands the same way (#76, Cloudpine). */
+    cliffs: d.G && d.G.cliffIn ? d.G.cliffIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     digest: hex(h),
     parts,
   };

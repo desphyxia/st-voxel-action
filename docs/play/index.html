@@ -1420,18 +1420,101 @@ function makeGen(seedStr,force){
       }
     return null;
   }
+  /* Cliff bands (#76, Cloudpine): a long step in the ground, its front a
+     sheer face 4-6 m over everything within seven metres of it, its back
+     falling away a metre every three to meet the land behind. Round the
+     back it is a walk; up the front it is a ledge line — 2 m ledges a metre
+     deep, stuck to the face, each a metre over the last, from a jump off the
+     ground to a jump onto the top. The ends are faces too.
+
+     Placed like the others: a jittered spot per 56 m square where the pine
+     is more than half the climate, refused near a river, a gorge, a mesa or
+     a basalt field, drawn from the square's own coordinates. */
+  var CLF_GRID=56, CLF_APRON=7, CLF_REACH=40, CLF_SITES=new Map();
+  function cliffSite(gx,gz){
+    var k=gx*131071+gz, s=CLF_SITES.get(k);
+    if(s!==undefined) return s;
+    s=null;
+    if(prand(gx,gz,0x6c10)<0.8) for(var t=0;t<4&&!s;t++) s=cliffTry(gx,gz,0x6c11+t*16);
+    CLF_SITES.set(k,s);
+    return s;
+  }
+  /* A site's own frame: along the face, and across it — out of the band
+     negative, into it positive. */
+  function cliffFrame(s,x,z){ var dx=x-s.cx, dz=z-s.cz; return s.ax?[dx,dz*s.sg]:[dz,dx*s.sg]; }
+  function cliffWorld(s,al,ac){ return s.ax?[s.cx+al,s.cz+ac*s.sg]:[s.cx+ac*s.sg,s.cz+al]; }
+  function cliffTry(gx,gz,salt){
+    var cx=gx*CLF_GRID+14+Math.floor(prand(gx,gz,salt)*28),
+        cz=gz*CLF_GRID+14+Math.floor(prand(gx,gz,salt+1)*28);
+    if(climate(cx,cz)[BIO.PINE]<=0.5) return null;
+    var s={cx:cx,cz:cz,ax:prand(gx,gz,salt+2)<0.5,sg:prand(gx,gz,salt+3)<0.5?1:-1,
+           half:8+Math.floor(prand(gx,gz,salt+4)*7),D:12+Math.floor(prand(gx,gz,salt+5)*7)};
+    var hi=-1e9, al, ac, p;
+    for(al=-s.half-CLF_APRON;al<=s.half+CLF_APRON;al++) for(ac=-CLF_APRON;ac<=s.D+3;ac++){
+      p=cliffWorld(s,al,ac);
+      if(mesaWet(p[0],p[1])||mesaAt(p[0],p[1])||basaltAt(p[0],p[1])) return null;
+      if(ac<0&&Math.abs(al)<=s.half){ var h=rawH(p[0],p[1]); if(h>hi) hi=h; }
+    }
+    s.T=Math.round(hi)+4+Math.floor(prand(gx,gz,salt+6)*3);
+    if(s.T>CEIL-1) return null;
+    /* The ledges start two metres in from one end and climb along the face
+       from the ground under the first to a metre under the top. */
+    p=cliffWorld(s,-s.half+2,-1);
+    var g=Math.round(rawH(p[0],p[1])), n=s.T-g-1;
+    if(n<2||2*n>2*s.half-3) return null;
+    s.l0=-s.half+2; s.lg=g; s.ln=n;
+    return s;
+  }
+  /* The band's slope (1), its face row (2), a ledge (3), the apron (4). */
+  function cliffAt(x,z){
+    var apron=null;
+    for(var gx=Math.floor((x-CLF_REACH)/CLF_GRID);gx<=Math.floor((x+CLF_REACH)/CLF_GRID);gx++)
+      for(var gz=Math.floor((z-CLF_REACH)/CLF_GRID);gz<=Math.floor((z+CLF_REACH)/CLF_GRID);gz++){
+        var s=cliffSite(gx,gz); if(!s) continue;
+        var f=cliffFrame(s,x,z), al=f[0], ac=f[1];
+        if(Math.abs(al)>s.half+CLF_APRON||ac<-CLF_APRON||ac>s.D) continue;
+        if(Math.abs(al)<=s.half&&ac>=0){
+          if(ac===0) return {kind:2,h:s.T};
+          return {kind:1,h:s.T-Math.floor(ac/3)};
+        }
+        if(ac===-1&&al>=s.l0&&al<s.l0+2*s.ln){
+          var n=Math.floor((al-s.l0)/2);
+          return {kind:3,h:s.lg+1+n};
+        }
+        if(ac<0) apron={kind:4,h:null};
+      }
+    return apron;
+  }
+  function cliffIn(x0,z0,x1,z1){
+    var n=0;
+    for(var gx=Math.floor(x0/CLF_GRID);gx<=Math.floor(x1/CLF_GRID);gx++)
+      for(var gz=Math.floor(z0/CLF_GRID);gz<=Math.floor(z1/CLF_GRID);gz++){
+        var c=cliffSite(gx,gz); if(c&&c.cx>=x0&&c.cx<x1&&c.cz>=z0&&c.cz<z1) n++;
+      }
+    return n;
+  }
+  function cliffOver(x,z){
+    for(var gx=Math.floor((x-CLF_REACH)/CLF_GRID);gx<=Math.floor((x+CLF_REACH)/CLF_GRID);gx++)
+      for(var gz=Math.floor((z-CLF_REACH)/CLF_GRID);gz<=Math.floor((z+CLF_REACH)/CLF_GRID);gz++){
+        var s=cliffSite(gx,gz); if(!s) continue;
+        var f=cliffFrame(s,x,z);
+        if(Math.abs(f[0])<=s.half+CLF_APRON&&f[1]>=-CLF_APRON&&f[1]<=s.D) return s;
+      }
+    return null;
+  }
   /* one 1 m cell: everything sized in whole metres */
   function cell(x,z){
     var w=climate(x,z);
     var hm=macro(x,z,w), H=Math.round(hm);
     var cw=wsum(w,'canyon'), colw=wsum(w,'col');
-    var c=null, ms=mesaAt(x,z), bs=ms?null:basaltAt(x,z);
-    if(cw>0.28&&!ms&&!bs){ c=canyonAt(x,z);
+    var c=null, ms=mesaAt(x,z), bs=ms?null:basaltAt(x,z), cs=(ms||bs)?null:cliffAt(x,z);
+    if(cw>0.28&&!ms&&!bs&&!cs){ c=canyonAt(x,z);
       c.body=c.d<c.w/2&&canyonBody(x,z);
       if(c.body){ var taper=clamp((cw-0.28)/0.25,0,1); H-=Math.round(c.dp*taper*(1-c.br)); }
     }
-    if(!ms&&!bs) H+=pillarAt(x,z,colw);
+    if(!ms&&!bs&&!cs) H+=pillarAt(x,z,colw);
     else if(ms&&ms.h!==null) H=ms.h;
+    else if(cs&&cs.h!==null) H=cs.kind===1?Math.max(H,cs.h):cs.h;
     var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
     var rl=null;
     /* The smooth level, but never above the ground the river runs through: a
@@ -1439,7 +1522,7 @@ function makeGen(seedStr,force){
        the banks then pulled down and the bed was carved below the world to
        keep. Where the land is lower, the surface sits a quarter under it. */
     if(r.d<rw/2||riverCorner(x,z,rw)){ rl=Math.min(riverLevel(x,z,w),H-0.25); H=Math.min(H-1,Math.floor(rl-0.75+1e-9)); water=true; }
-    if(!water&&!(ms&&ms.h!==null)&&!bs&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
+    if(!water&&!(ms&&ms.h!==null)&&!bs&&!(cs&&cs.h!==null)&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
@@ -1458,9 +1541,10 @@ function makeGen(seedStr,force){
     H=clamp(H,0,CEIL);
     if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,
+    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,
       /* hold: a face the later passes keep as it is; bare: nothing grows here */
-      hold:!!(ms&&ms.kind<=2)||!!(bs&&bs.kind===1), bare:!!(ms&&ms.kind>=2)||!!bs};
+      hold:!!(ms&&ms.kind<=2)||!!(bs&&bs.kind===1)||!!(cs&&(cs.kind===2||cs.kind===3)),
+      bare:!!(ms&&ms.kind>=2)||!!bs||!!(cs&&cs.kind>=2)};
   }
   function rawH(x,z){ return macro(x,z,climate(x,z)); }
   /* a column is a run of solid spans, not one height: this is what lets a
@@ -1522,7 +1606,7 @@ function makeGen(seedStr,force){
       if(CELLS.size>=CELL_CAP) CELLS.clear();
       c=cell(x,z); CELLS.set(k,c);
     }
-    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,hold:c.hold,bare:c.bare};
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,hold:c.hold,bare:c.bare};
   }
   /* A world keeps its generator (w.G) for as long as it lives, and a streamed
      field holds sixteen of them — so the cache is let go when generation ends,
@@ -1549,7 +1633,7 @@ function makeGen(seedStr,force){
       }
     return n;
   }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,cliffFrame:cliffFrame,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 /* ---------- src/gen/erosion.mjs ---------- */
@@ -1684,7 +1768,8 @@ const PORT_SALT = 0x5300;
     which is the whole reason a port can be chosen from either side. */
 function baseCell(G, x, z) {
   var c = G.cell(x, z);
-  return { H: clamp(erodeAt(G, x, z, c), 0, CEIL), water: c.water, magma: c.magma, hold: c.hold };
+  return { H: clamp(erodeAt(G, x, z, c), 0, CEIL), water: c.water, magma: c.magma, hold: c.hold,
+           feat: !!(c.mesa || c.basalt || c.cliff) };
 }
 
 /** The port on one edge, as world [x, z], or null when the edge has nowhere a
@@ -1699,7 +1784,9 @@ function portOf(G, ex, ez, axis) {
     var ok = true, prev = null;
     for (s = -1; s <= 1 && ok; s++) {
       var c = axis ? baseCell(G, t, line + s) : baseCell(G, line + s, t);
-      if (c.water || c.magma || c.hold || (prev && Math.abs(c.H - prev.H) > MOVE.slope)) ok = false;
+      /* Not on a traversal feature at all (#76): a port on a cliff band's
+         back slope had the face between it and the trail on one side. */
+      if (c.water || c.magma || c.feat || (prev && Math.abs(c.H - prev.H) > MOVE.slope)) ok = false;
       prev = c;
     }
     if (ok) cands.push(t);
@@ -1748,7 +1835,9 @@ function makeGrid(G, rx, rz) {
    what the cost *means* once spans move ahead of routing. */
 
 function passCost(a, b) {
-  if (b.magma) return -1;
+  /* A route never crosses a feature's face (#76): a trail along a ledge line
+     is graded level and the ledges go with it. */
+  if (b.magma || b.hold) return -1;
   var dh = b.H - a.H;
   if (dh > MOVE.climb2) return -1;
   var c = 1 + (dh > 0 ? dh * 3.2 : (-dh) * 1.1);
@@ -1859,9 +1948,11 @@ function buildRegion(G, rx, rz) {
       var ci = i + a, cj = j + b;
       if (ci < 0 || cj < 0 || ci >= N || cj >= N) return false;
       var cq = at(ci, cj);
-      /* Not on a mesa (#75): a route from a site up there walks off the wall,
-         and grading it cuts the top down to the trail. */
-      if (!cq || cq.water || cq.magma || cq.hold || Math.abs(cq.H - cp.H) > 1) return false;
+      /* Not on a traversal feature or its apron (#75, #76). A route from a
+         site on a mesa walked off the wall, and grading it cut the top down
+         to the trail. A landmark on a cliff band's back slope hung a
+         twelve-metre tree over its ledge line. */
+      if (!cq || cq.water || cq.magma || cq.mesa || cq.basalt || cq.cliff || Math.abs(cq.H - cp.H) > 1) return false;
     }
     return true;
   }
