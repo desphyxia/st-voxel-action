@@ -2734,7 +2734,10 @@ if (BROWSER_HALF) {
             if (nd) {
               let n = 0; nd.g.traverse((o) => { if (o.userData.kind === 'grass') n += o.userData.full; });
               out.blades += n;
-              out.bladesHere += P.grassTiles(e.w.grass, QS.CHUNK / 2).reduce((s, t) => s + t.n, 0);
+              /* A streamed chunk lets its raw blades go once its tiles exist,
+                 so this thread grows them again to compare against. */
+              const again = QS.chunkWorld(f.seed, e.cx, e.cz, f.force, f.gdens).grass;
+              out.bladesHere += P.grassTiles(again, QS.CHUNK / 2).reduce((s, t) => s + t.n, 0);
             }
           }
           return out;
@@ -2798,7 +2801,17 @@ if (BROWSER_HALF) {
             rows.push({ at: m * 48, mb: mm.gpuMB, chunks: n, per: mm.gpuMB / n, buffers: mm.buffers });
           }
           await settle(x0, z0);
-          return { rows, dropped: P.field.dropped, back: P.chunks.nodes };
+          /* What the page holds in arrays per chunk, by its own count — the
+             figure a Safari report carries — with grass drawn and with it off.
+             Turning it off and on again restreams, and grass comes back. */
+          const heldPer = () => { const s = P.snap(); return s.mem.heldMB / P.chunks.nodes; };
+          const withGrass = heldPer();
+          P.setGfx('grass', 0); await settle(x0, z0); const noGrass = heldPer();
+          const tiles = () => { let n = 0; P.scene.traverse((o) => { if (o.userData.kind === 'grass') n++; }); return n; };
+          const tilesOff = tiles();
+          P.setGfx('grass', 1); await settle(x0, z0); const tilesOn = tiles();
+          return { rows, dropped: P.field.dropped, back: P.chunks.nodes, withGrass, noGrass, tilesOff, tilesOn,
+                   report: P.reportText().indexOf('"heldMB"') > 0 };
         });
         {
           const early = Math.max(mem.rows[0].per, mem.rows[1].per), last = mem.rows[mem.rows.length - 1];
@@ -2806,6 +2819,13 @@ if (BROWSER_HALF) {
                 'MEMORY: 288 m of streaming costs no GPU memory beyond the chunks it holds (#71)',
                 `${mem.dropped} chunks let go; ${mem.rows.map((r) => `${r.mb.toFixed(0)} MB/${r.chunks}`).join(', ')}; `
                 + `${last.per.toFixed(1)} MB a chunk at the end against ${early.toFixed(1)} early`);
+          /* An iPhone ended a tab at 30 chunks holding ~25 MB of arrays each,
+             most of it grass nobody read again and copies of buffers already
+             on the GPU. */
+          check(mem.withGrass < 14 && mem.noGrass < 5 && mem.tilesOff === 0 && mem.tilesOn > 0 && mem.report,
+                'MEMORY: and a streamed chunk holds a few MB of arrays, fewer with grass off, and the report says so',
+                `${mem.withGrass.toFixed(1)} MB a chunk with grass, ${mem.noGrass.toFixed(1)} without (was ~25); `
+                + `grass tiles ${mem.tilesOff} off, ${mem.tilesOn} back on; held memory ${mem.report ? 'in' : 'NOT in'} the report`);
         }
 
         /* ---------- STREAM: the zoom stops before the loaded ground does (#31) ----------

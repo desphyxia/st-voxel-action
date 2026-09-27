@@ -8633,7 +8633,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   try{ REC_PREV=JSON.parse(localStorage.getItem(REC_KEY)||'null'); }catch(e){}
   var REC={v:1,build:QS_BUILD,started:new Date().toISOString(),clean:false,
            ua:navigator.userAgent,dpr:window.devicePixelRatio||1,
-           screen:[screen.width,screen.height],touch:GFX_COARSE,events:[],trail:[],snap:null};
+           screen:[screen.width,screen.height],touch:GFX_COARSE,events:[],trail:[],snap:null,
+           /* Where the page was served from: the artifact is stamped with its
+              commit, a copy on GitHub Pages or opened from disk is not, and
+              "dev" alone does not say which of those a report came from. */
+           from:location.hostname||location.protocol.replace(':',''),peak:{chunks:0,heldMB:0}};
   function recEvent(kind,msg,where){
     msg=String(msg||'').slice(0,300);
     var last=REC.events[REC.events.length-1];
@@ -10115,7 +10119,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        makes a density worth looking at affordable at all. The cost is draw
        calls, one per visible tile, and that is the trade: a few tens of calls
        against a few hundred thousand triangles. */
-    var gts=pre&&pre.grass?pre.grass:grassTiles(data.grass,org?QS.CHUNK/2:null,GRASS_TILE);
+    /* With Grass off a streamed chunk composes none: a tile nobody draws
+       still holds every blade's matrix. Turning it back on restreams. */
+    var gts=pre&&pre.grass?pre.grass:(org&&(!GFX.grass||!data.grass))?[]:grassTiles(data.grass,org?QS.CHUNK/2:null,GRASS_TILE);
     for(i=0;i<gts.length;i++){
       var gt=gts[i], geo=bladeGeo.clone();
       var grass=new THREE.InstancedMesh(geo,GFX.grassMode==='lean'?mats.grassLean:mats.grass,gt.n);
@@ -10163,8 +10169,29 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        from the scene's fixed pool (#70), not from lights of their own. */
     g.userData.lamps=(data.lamps||[]).filter(function(l){ return keep(l[0],l[2]); })
       .map(function(l){ return [l[0],l[1]+0.1,l[2]]; });
+    /* A streamed chunk's ground, props and grass never change in place once
+       drawn — a carve builds a new geometry and drops the old — so once each
+       buffer is on the GPU the copy three keeps in memory is let go. Measured
+       on 30 chunks it was 300 MB of a 910 MB heap: on a phone, where GPU and
+       page share one budget, every buffer was being held twice. The window
+       world keeps its copies; the gate reads blades back out of them. */
+    if(org){ grassRaw(data); g.traverse(letGoOnUpload); }
     return {g:g,vox:vox,props:props,propMesh:propMesh,mesh:terrainMesh,data:data,org:org,boxes:boxes};
   }
+
+  var HELD_KINDS={terrain:1,props:1,grass:1};
+  function dropArray(){ this.array=null; }
+  function letGoOnUpload(o){
+    if(!(o.isMesh||o.isInstancedMesh)||!HELD_KINDS[o.userData.kind]) return;
+    var g=o.geometry;
+    for(var n in g.attributes) g.attributes[n].onUpload(dropArray);
+    if(g.index) g.index.onUpload(dropArray);
+    if(o.isInstancedMesh){ o.instanceMatrix.onUpload(dropArray); if(o.instanceColor) o.instanceColor.onUpload(dropArray); }
+  }
+  /* A streamed chunk's blades, as the generator made them, are only ever
+     read to compose its tiles; once those exist they are 350 MB over 30
+     chunks of numbers nothing reads again. */
+  function grassRaw(data){ if(data.grass) data.grass=null; }
 
   /** The grass and water materials, shared across every chunk of one world. */
   function worldMaterials(){
@@ -10951,7 +10978,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      point are different ground. See src/gen/chunk.mjs. */
   var field=null, stream=null, nodes=null;
   var streamMs=0, streamBuilt=0;
-  var STREAM_LOAD=2, STREAM_KEEP=3;
+  /* A phone keeps the ring it loads and no wider (#71's crash report): an
+     iPhone ended a tab holding 30 chunks, and the ring kept past the loaded
+     one could hold 49. Twenty-five at most, at the cost of a row built again
+     when a player turns back across a chunk edge. */
+  var STREAM_LOAD=2, STREAM_KEEP=GFX_COARSE?2:3;
 
   function nodeAt(cx,cz){ return nodes?nodes[cx+','+cz]:null; }
 
@@ -11015,7 +11046,25 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      them. Keyed by chunk and emptied by reconcileNodes; a chunk let go before
      its node is made drops its mesh with it. */
   var premesh={};
-  var POOL_N=2;
+  /* One worker on a phone: each carries its own copy of the generator and a
+     chunk in progress, out of the same memory the page is killed for. */
+  var POOL_N=GFX_COARSE?1:2;
+  /* Which Grass setting a worker's chunk was composed under: turning grass
+     back on restreams, and a reply built before that is asked for again. */
+  var grassEpoch=0, grassOnLast=GFX.grass>0;
+  /* Grass off to on, in a streamed world: every loaded chunk was built with
+     no tiles, and its blades were let go, so the ground round the player is
+     built again — the nine nearest here, as a new world settles, and the rest
+     as the stream refills. */
+  function restreamForGrass(){
+    grassEpoch++;
+    if(!streaming||!field||!stream) return;
+    for(var k in nodes) dropNode(k);
+    premesh={};
+    field.live().slice().forEach(function(e){ field.drop(e.cx,e.cz); });
+    var a=player(); settleAround(a?a.x:0,a?a.z:0);
+    worldChanged();
+  }
   /* How long boot waits, in ms, for a worker to answer before it settles on
      one window instead of streaming. Idle-thread milliseconds: see boot. */
   var BOOT_PATIENCE=1500, bootProbe=null;
@@ -11053,7 +11102,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
          plain data and clones in about 22 ms. The generator is not sent; the
          main thread makes its own from the same seed, which is what `makeGen`
          is for and costs nothing but closures. */
-      +'  var out={}; for(var k in w){ if(k!=="G") out[k]=w[k]; }\n'
+      +'  var out={}; for(var k in w){ if(k!=="G"&&k!=="grass") out[k]=w[k]; }\n'
       /* Moved, not copied (#64). A world is ~1.5 million numbers in plain
          arrays — voxel positions, palette and shade bytes, every blade's
          root and colour — and a plain array crosses postMessage by structured
@@ -11066,7 +11115,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       +'    if(Array.isArray(a)&&a.length>=64){ var ok=true;\n'
       +'      for(var q=0;q<a.length;q++) if(typeof a[q]!=="number"){ ok=false; break; }\n'
       +'      if(ok){ var f=new Float64Array(a); o[k]=f; tx.push(f.buffer); } } } }\n'
-      +'  typed(out); if(out.grass){ out.grass=Object.assign({},out.grass); typed(out.grass); }\n'
+      +'  typed(out);\n'
       +'  if(out.water){ out.water=Object.assign({},out.water); typed(out.water); }\n'
       /* And mesh it here. This is the reason the worker exists at all: the
          greedy pass is 209 ms of the ~220 ms the main thread used to spend
@@ -11093,10 +11142,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
          thread once the rest had moved (#64). */
       +'  var cp=QS.colliderForChunk(w,d.cx,d.cz).pack();\n'
       /* And grass: the tiles, shuffled and composed, as buffers (#64). */
-      +'  var grass=grassTiles(w.grass,QS.CHUNK/2,'+GRASS_TILE+'), gbuf=[];\n'
+      +'  var grass=d.gr?grassTiles(w.grass,QS.CHUNK/2,'+GRASS_TILE+'):[], gbuf=[];\n'
       +'  for(var gi=0;gi<grass.length;gi++){ var gt=grass[gi];\n'
       +'    gbuf.push(gt.mat.buffer,gt.ph.buffer,gt.ti.buffer,gt.cl.buffer,gt.dl.buffer); }\n'
-      +'  self.postMessage({cx:d.cx,cz:d.cz,w:out,mesh:mesh,props:props,grass:grass,col:cp,\n'
+      +'  self.postMessage({cx:d.cx,cz:d.cz,ep:d.ep,w:out,mesh:mesh,props:props,grass:grass,col:cp,\n'
       +'                    gen:_now()-t0,mesh_ms:_now()-t1},\n'
       +'    [mesh.pos.buffer,mesh.nor.buffer,mesh.col.buffer,mesh.grp.buffer,mesh.idx.buffer,\n'
       +'     props.pos.buffer,props.nor.buffer,props.col.buffer,props.idx.buffer,props.sway.buffer].concat(gbuf,tx,[cp.off.buffer,cp.sp.buffer,cp.liq.buffer,cp.lev.buffer]));\n'
@@ -11139,6 +11188,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         var rt=performance.now()-P.sentAt[k];
         P.gen=d.gen; P.deliver=Math.max(0,rt-d.gen); P.done++;
         P.busy[k]=null; P.waited=0;
+        /* Built before Grass was turned back on, so without it: asked again. */
+        if(d.ep!==grassEpoch){ if(streaming&&stream) stream.fail(d.cx,d.cz); return; }
         if(streaming&&stream){
           var t1=performance.now();
           /* Put a generator back on it: the mesher reads `w.G.pstream` to pick
@@ -11180,7 +11231,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       if(!j) break;
       pool.busy[k]=j;
       pool.sentAt[k]=performance.now(); pool.sent++;
-      pool.ws[k].postMessage({seed:field.seed,force:field.force,gd:field.gdens,cx:j.cx,cz:j.cz});
+      pool.ws[k].postMessage({seed:field.seed,force:field.force,gd:field.gdens,cx:j.cx,cz:j.cz,gr:GFX.grass>0,ep:grassEpoch});
       any=true;
     }
     return any;
@@ -12584,7 +12635,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var all=!k;
     if(all||k==='res'){ renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,GFX.res)); resize(); grassView=-1; }
     if(all||k==='shadows') gfxShadows();
-    if(all||k==='grass') grassView=-1;
+    if(all||k==='grass'){
+      grassView=-1;
+      var gOn=GFX.grass>0;
+      if(gOn!==grassOnLast){ grassOnLast=gOn; if(gOn&&built) restreamForGrass(); else grassEpoch++; }
+    }
     if((all||k==='grassMode')&&built){
       var gm=GFX.grassMode==='lean'?built.mats.grassLean:built.mats.grass;
       built.scene.traverse(function(o){ if(o.userData.kind==='grass') o.material=gm; });
@@ -13091,9 +13146,41 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      dialog. The simplest way out is the one taken: Copy report puts the text
      on the clipboard to paste into the chat or an issue, and where a framed
      page is refused the clipboard, the text is shown selected instead. */
+  /* What this page holds in arrays, counted by the page itself (#71): every
+     loaded window's generated data and every geometry copy three still keeps.
+     Safari gives no heap figure, and on the iPhone that killed a tab this was
+     most of the heap — the report's GPU line alone read as healthy. */
+  function heldBytes(){
+    var n=0, seen=new Set();
+    function arr(v){ if(!v) return;
+      if(ArrayBuffer.isView(v)){ if(!seen.has(v.buffer)){ seen.add(v.buffer); n+=v.buffer.byteLength; } }
+      else if(Array.isArray(v)&&typeof v[0]==='number') n+=v.length*8; }
+    function world(w){ if(!w) return;
+      for(var k in w){ if(k==='G') continue; var v=w[k];
+        if(v&&typeof v==='object'&&!ArrayBuffer.isView(v)&&!Array.isArray(v)&&!(v instanceof Map)){ for(var k2 in v) arr(v[k2]); }
+        else arr(v); } }
+    if(streaming&&field) field.live().forEach(function(e){ world(e.w); });
+    else if(built) world(built.data);
+    if(built&&built.scene) built.scene.traverse(function(o){ var g=o.geometry; if(!g||!g.attributes) return;
+      for(var k in g.attributes) arr(g.attributes[k].array); if(g.index) arr(g.index.array);
+      if(o.isInstancedMesh){ arr(o.instanceMatrix.array); if(o.instanceColor) arr(o.instanceColor.array); } });
+    return n;
+  }
+  var recLast=0, recChunks=-1;
+  /* Every five seconds, and every second while the ground is still arriving:
+     the ramp is where a phone runs out, and a report's last line was up to
+     five seconds older than the kill. */
+  function recTick(){
+    var now=performance.now(), ch=field&&streaming?field.loaded:-1,
+        loading=(streaming&&stream&&stream.pending>0)||ch!==recChunks;
+    if(loading||now-recLast>=5000) recSnap();
+  }
   function recSnap(){
     try{
-      var a=player(), m=memNow();
+      recLast=performance.now(); recChunks=field&&streaming?field.loaded:-1;
+      var a=player(), m=memNow(); m.heldMB=+(heldBytes()/1048576).toFixed(1);
+      if(m.heldMB>REC.peak.heldMB) REC.peak.heldMB=m.heldMB;
+      if(field&&streaming&&field.loaded>REC.peak.chunks) REC.peak.chunks=field.loaded;
       REC.snap={t:+((performance.now()/1000).toFixed(0)),
         seed:built&&built.cfg?built.cfg.seed:null,
         at:a?[+a.x.toFixed(1),+a.y.toFixed(2),+a.z.toFixed(1)]:null,
@@ -13102,15 +13189,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         chunks:field?field.loaded:null,mem:m,
         gfx:{preset:GFX.preset,grassMode:GFX.grassMode,res:GFX.res,shadows:GFX.shadows,grass:GFX.grass},
         sky:skyNow?skyNow.phase:null};
-      REC.trail.push({t:REC.snap.t,fps:REC.snap.fps,gpuMB:m.gpuMB,heapMB:m.heapMB,chunks:REC.snap.chunks});
-      if(REC.trail.length>24) REC.trail.shift();
+      REC.trail.push({t:REC.snap.t,fps:REC.snap.fps,gpuMB:m.gpuMB,heldMB:m.heldMB,heapMB:m.heapMB,chunks:REC.snap.chunks});
+      if(REC.trail.length>40) REC.trail.shift();
       recSave();
     }catch(e){}
   }
-  setInterval(recSnap,5000);
+  setInterval(recTick,1000);
   function reportOf(r){
     return {what:'Quarterstone report',build:r.build,started:r.started,made:new Date().toISOString(),
-            endedCleanly:r.clean,ua:r.ua,dpr:r.dpr,screen:r.screen,touch:r.touch,
+            endedCleanly:r.clean,from:r.from,peak:r.peak,ua:r.ua,dpr:r.dpr,screen:r.screen,touch:r.touch,
             now:r.snap,trail:r.trail,events:r.events,settings:r===REC?Object.assign({},GFX):undefined};
   }
   function reportText(r){
