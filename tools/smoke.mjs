@@ -2239,6 +2239,38 @@ if (BROWSER_HALF) {
               'NET: each window shows its partner\'s health without opening anything',
               `host sees ${hudH.who} at ${hudH.w}% (${hudH.want.toFixed(0)}), guest sees ${hudG.who} at ${hudG.w}% (${hudG.want.toFixed(0)})`);
 
+        /* ---------- VISIBILITY: a player behind the world is still seen (#72) ----------
+           A wall of the world's own prop material stood between the camera
+           and the player. With the cutaway the region round the player reads
+           as it does with no wall at all; without it, a silhouette in the
+           player's colour shows through. Sampled over the canvas round the
+           player's feet, read in the task that drew the frame. */
+        const vis = await bp.evaluate(() => {
+          const P = window.QSPLAY, cv = document.querySelector('#cv'), gl = cv.getContext('webgl2') || cv.getContext('webgl');
+          const sample = (wall, cut) => {
+            P.testWall(wall); P.setCut(cut); P.frameOnce(); P.frameOnce(); P.draw();
+            const s = P.screen(), k = cv.width / cv.clientWidth;
+            const w = Math.round(60 * k), h = Math.round(80 * k);
+            const x0 = Math.max(0, Math.round((s.x - 30) * k)), y0 = Math.max(0, Math.round(cv.height - (s.y + 10) * k));
+            const px = new Uint8Array(w * h * 4); gl.readPixels(x0, y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+            let n = 0, teal = 0; const m = [0, 0, 0];
+            for (let i = 0; i < px.length; i += 4) { n++; m[0] += px[i]; m[1] += px[i + 1]; m[2] += px[i + 2];
+              if (px[i + 1] > px[i] + 40 && px[i + 2] > px[i] + 40 && px[i + 1] > 90) teal++; }
+            return { teal: teal / n, mean: m.map((v) => v / n) };
+          };
+          const open = sample(false, true), cut = sample(true, true), sil = sample(true, false);
+          P.testWall(false); P.setCut(true); P.frameOnce();
+          let sils = 0; P.scene.traverse((o) => { if (o.userData.kind === 'silhouette') sils++; });
+          return { open, cut, sil, sils };
+        });
+        {
+          const d = (u, v) => Math.max(...u.mean.map((x, i) => Math.abs(x - v.mean[i])));
+          check(d(vis.cut, vis.open) < 12 && vis.sil.teal > 0.03 && vis.cut.teal < vis.sil.teal / 3 && vis.sils >= 2,
+                'VISIBILITY: a wall in front of the player is cut away, and without the cut a silhouette shows through (#72)',
+                `cut region within ${d(vis.cut, vis.open).toFixed(1)} of no wall; silhouette covers ${(100 * vis.sil.teal).toFixed(1)}% `
+                + `against ${(100 * vis.cut.teal).toFixed(1)}% cut; ${vis.sils} silhouette meshes`);
+        }
+
         /* ---------- BUILD ID: which code a screenshot came from ----------
            GitHub Pages serves this file unstamped and is where the game is
            tested, so the view carries a hash of the page's own code, which

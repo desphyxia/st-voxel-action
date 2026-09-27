@@ -9001,8 +9001,25 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      what makes a cloud shadow read as a shadow and not as a hole. Wet ground
      darkens; snow settles on what faces up. */
   var GRASS_WIND={value:GFX.wind?1:0};
+  /* How far round a player's line of sight the ground is cut away (#72), in
+     metres from the ray through their chest: a little more than a body is
+     wide at the default zoom, so a wall in front shows the player and the
+     ground right round them, and nothing further. */
+  var CUT_R=2.8, cutOn=true, cutF=new THREE.Vector3(), testWallM=null;
+  /* Where each player stands, for the cutaway, and which way the camera
+     looks. Never in a plate: those are the world alone, for the look gate. */
+  function cutFrame(){
+    camera.getWorldDirection(cutF); SKY_U.uCutF.value.copy(cutF);
+    var a=player(), b=other(), on=cutOn&&!plateMode;
+    if(on&&a) SKY_U.uCutA.value.set(a.x,a.y,a.z,1); else SKY_U.uCutA.value.w=0;
+    if(on&&b&&session&&session.connected) SKY_U.uCutB.value.set(b.x,b.y,b.z,1); else SKY_U.uCutB.value.w=0;
+  }
   var SKY_U={uCloud:{value:0},uCloudOff:{value:new THREE.Vector2()},uWet:{value:0},uSnow:{value:0},
-             uCloudOn:{value:GFX.clouds?1:0},uDetail:{value:GFX.detail?1:0}};
+             uCloudOn:{value:GFX.clouds?1:0},uDetail:{value:GFX.detail?1:0},
+             /* The cutaway (#72): each player's feet (w 1 when there is one),
+                the direction the camera looks, and the radius cut out. */
+             uCutA:{value:new THREE.Vector4()},uCutB:{value:new THREE.Vector4()},
+             uCutF:{value:new THREE.Vector3(0,-1,0)},uCutR:{value:CUT_R}};
   var SKY_GLSL=['uniform float uCloud; uniform vec2 uCloudOff; uniform float uWet; uniform float uSnow;',
     /* The two graphics settings that live in every lit surface (#70). */
     'uniform float uCloudOn; uniform float uDetail;',
@@ -9384,6 +9401,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     return t;
   })();
 
+  /* The cutaway (#72, DECISIONS §5 "Seeing into the ground"). A surface is
+     cut where it stands between the camera and a player: in front of them
+     along the view, within CUT_R of the ray through their chest, and above
+     their knees — so the floor they stand on and the step at their feet
+     stay. The edge is an ordered dither rather than a fade, so nothing has
+     to be sorted, and it reads as a clean hole at any size. The shadow pass
+     draws with its own depth materials, so a cut wall still casts. */
+  var CUT_GLSL=['uniform vec4 uCutA; uniform vec4 uCutB; uniform vec3 uCutF; uniform float uCutR;',
+    'float qsB2(vec2 a){ a=floor(a); return fract(dot(a,vec2(0.5,a.y*0.75))); }',
+    'float qsBayer(vec2 a){ return qsB2(0.5*a)*0.25+qsB2(a); }',
+    'float qsCutAt(vec4 c,vec3 w){',
+    '  if(c.w<0.5||w.y<c.y+1.2) return -1.0;',
+    '  vec3 d=w-(c.xyz+vec3(0.0,1.0,0.0)); float al=dot(d,uCutF);',
+    '  if(al>-0.6) return -1.0;',
+    '  float pr=length(d-al*uCutF);',
+    '  return 1.0-smoothstep(uCutR-1.0,uCutR,pr); }'].join('\n');
   function skyHook(sh){
     for(var k in SKY_U) sh.uniforms[k]=SKY_U[k];
     sh.vertexShader='varying vec3 vSkyW; varying vec3 vSkyN;\n'+sh.vertexShader.replace(
@@ -9391,7 +9424,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       '#include <begin_vertex>\n  vec4 skyWP=vec4(transformed,1.0);\n'
       +'  #ifdef USE_INSTANCING\n  skyWP=instanceMatrix*skyWP;\n  #endif\n'
       +'  vSkyW=(modelMatrix*skyWP).xyz; vSkyN=normalize(mat3(modelMatrix)*objectNormal);');
-    sh.fragmentShader='varying vec3 vSkyW; varying vec3 vSkyN;\n'+SKY_GLSL+'\n'+sh.fragmentShader
+    sh.fragmentShader='varying vec3 vSkyW; varying vec3 vSkyN;\n'+SKY_GLSL+'\n'+CUT_GLSL+'\n'+sh.fragmentShader
+      .replace('#include <clipping_planes_fragment>',
+        '  if(qsCutAt(uCutA,vSkyW)>qsBayer(gl_FragCoord.xy)||qsCutAt(uCutB,vSkyW)>qsBayer(gl_FragCoord.xy)) discard;\n'
+        +'#include <clipping_planes_fragment>')
       .replace('#include <emissivemap_fragment>',
         '#include <emissivemap_fragment>\n'
         +'  float skyUp=clamp(normalize(vSkyN).y,0.0,1.0);\n'
@@ -10157,7 +10193,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
          follow would cull a tile while part of it was still on screen — which
          is a hole in the ground, not a saving. */
       grass.userData.gb=gt.gb;
-      grass.userData.kind='grass'; grass.frustumCulled=true; grass.userData.full=gt.n;
+      grass.userData.kind='grass'; grass.frustumCulled=true; grass.userData.full=gt.n; grass.renderOrder=3;
       grass.count=grassCount(gt.n,cam.view);
       fitGrass(grass); g.add(grass);
     }
@@ -10408,6 +10444,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     geo.boundingSphere.radius+=def===QS.HERO_RIG?1.6:1.0;
     mesh.frustumCulled=true; mesh.castShadow=false;
     mesh.userData.keep=true; mesh.userData.kind='actor';
+    /* Its silhouette (#72): the same skin and bones, one flat colour, drawn
+       only where the world is in front of it. It goes before the body, so the
+       body's own far side never tints its near side, and grass goes after
+       both, so blades at a player's shins do not speckle them. */
+    mesh.renderOrder=2;
+    var sil=new THREE.SkinnedMesh(geo,new THREE.MeshBasicMaterial({color:def===QS.HERO_RIG?0x4fc3cd:0xe0604a,
+      skinning:true,depthFunc:THREE.GreaterDepth,depthWrite:false,fog:false}));
+    sil.bind(mesh.skeleton,mesh.bindMatrix);
+    sil.frustumCulled=true; sil.castShadow=false; sil.renderOrder=1;
+    sil.userData.keep=true; sil.userData.kind='silhouette';
+    mesh.add(sil);
     return {mesh:mesh,bones:byName,def:def,ranges:ranges,tint:{},shown:null,at:-1,
             authored:models?def.parts.filter(function(pt){ return !!models[pt.name]; }).length:0};
   }
@@ -10529,7 +10576,19 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     bs.center.set((x0+x1)/2,(y0+y1)/2,(z0+z1)/2);
     bs.radius=Math.sqrt((x1-x0)*(x1-x0)+(y1-y0)*(y1-y0)+(z1-z0)*(z1-z0))/2+pad;
   }
-  function eachLoot(fn){ if(loot) ['cube','ring','plinth','halo'].forEach(function(k){ fn(loot[k]); }); }
+  function eachLoot(fn){ if(loot) ['cube','ring','plinth','halo','sil'].forEach(function(k){ if(loot[k]) fn(loot[k]); }); }
+  /* What is lying on the ground, seen through what hides it (#72): the cubes'
+     own geometry and instance matrices, one colour, drawn only behind the
+     world, as many as the cubes are showing. */
+  function lootSil(cube){
+    var m=new THREE.InstancedMesh(cube.geometry,new THREE.MeshBasicMaterial({color:0xd9a25e,
+      depthFunc:THREE.GreaterDepth,depthWrite:false,fog:false}),cube.instanceMatrix.count);
+    m.instanceMatrix=cube.instanceMatrix; m.count=0; m.frustumCulled=true; m.castShadow=false;
+    m.renderOrder=1; cube.renderOrder=2;
+    m.userData.keep=true; m.userData.kind='silhouette';
+    m.onBeforeRender=function(){ m.count=cube.count; };
+    return m;
+  }
   /** One post, lit or not: a colour and a squash, rewritten only when it changes. */
   function setPost(q,lit){
     if(!postMesh||postLit[q]===lit) return;
@@ -10963,7 +11022,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     foeMeshes=encounter.enemies.map(function(){ var f=makeFoe(); built.scene.add(f.g); return f; });
     eachLoot(function(m){ if(m.parent) m.parent.remove(m); freeObject(m); });
     var nc=encounter.loot.caches.length;
-    loot=makeLoot(nc+encounter.loot.spoils.length,nc);
+    loot=makeLoot(nc+encounter.loot.spoils.length,nc); loot.sil=lootSil(loot.cube);
     eachLoot(function(m){ built.scene.add(m); });
     drawLattice();
     return {col:col,spawn:data.spawn,targets:targets,encounter:encounter};
@@ -12423,6 +12482,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     placeLamps();
     if(!built.warm) warmPrograms();
     shadowDue();
+    cutFrame();
     var sk=worldRev+'|'+plateMode+'|'+(built.sun?built.sun.position.x+','+built.sun.position.z:'');
     if(sk!==shadowKey){
       var why=sk.split('|')[0]!==shadowKey.split('|')[0]?(shadowByChunk?'chunk':'world'):'sun';
@@ -13372,7 +13432,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        machines, posts, loot and what they carry (#62). Counted as three would
        issue them — visible all the way up, one per mesh, instanced or not. */
     get actorDraws(){
-      var WORLD=['terrain','props','boxes','emissive','magma','water','grass','life'], n=0, list=[];
+      var WORLD=['terrain','props','boxes','emissive','magma','water','grass','life','silhouette'], n=0, list=[];
       if(built) built.scene.traverse(function(o){
         if(!(o.isMesh||o.isInstancedMesh)||WORLD.indexOf(o.userData.kind)>=0) return;
         for(var p=o;p;p=p.parent) if(!p.visible) return;
@@ -13457,6 +13517,20 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get view(){ return cam.view; },
     /* Seconds between the sun's steps at the current Shadows setting. */
     get sunTurn(){ return sunTurn(); },
+    /* The cutaway (#72), for the gate to compare a frame with and without. */
+    setCut:function(on){ cutOn=!!on; return cutOn; },
+    /* A wall of the world's own prop material stood between the camera and
+       the player, for the gate to hide them behind; false takes it away. */
+    testWall:function(on){
+      if(testWallM){ built.scene.remove(testWallM); testWallM.geometry.dispose(); testWallM=null; worldChanged(); }
+      if(!on||!built) return null;
+      var a=player(); camera.getWorldDirection(cutF);
+      testWallM=new THREE.Mesh(new THREE.BoxGeometry(4,5,4),built.mats.prop);
+      testWallM.position.set(a.x-cutF.x*4.5,a.y+1-cutF.y*4.5,a.z-cutF.z*4.5);
+      testWallM.userData.kind='terrain'; testWallM.castShadow=true; testWallM.receiveShadow=true;
+      built.scene.add(testWallM); worldChanged();
+      return testWallM.position.toArray();
+    },
     /* Which code this is: the stamp, the source hash, and what the view says. */
     get build(){ return {stamp:QS_BUILD,src:QS_SRC,label:QS_LABEL}; },
     /* A place code for where the player stands, and going to one. */
