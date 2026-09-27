@@ -21,6 +21,7 @@
   "basalt": 0,
   "cliffs": 0,
   "thickets": 0,
+  "crevasses": 0,
   "digest": "ece3c422",
   "parts": {
    "vox": "e200ff7b",
@@ -54,6 +55,7 @@
   "basalt": 0,
   "cliffs": 0,
   "thickets": 0,
+  "crevasses": 0,
   "digest": "a42cf953",
   "parts": {
    "vox": "9ac607e2",
@@ -87,6 +89,7 @@
   "basalt": 0,
   "cliffs": 12,
   "thickets": 0,
+  "crevasses": 0,
   "digest": "97814b9a",
   "parts": {
    "vox": "36a50a7c",
@@ -120,6 +123,7 @@
   "basalt": 0,
   "cliffs": 0,
   "thickets": 6,
+  "crevasses": 0,
   "digest": "c7c1b9dc",
   "parts": {
    "vox": "02352bb2",
@@ -153,6 +157,7 @@
   "basalt": 9,
   "cliffs": 0,
   "thickets": 0,
+  "crevasses": 0,
   "digest": "e3be9924",
   "parts": {
    "vox": "619d371f",
@@ -169,15 +174,15 @@
   "trailProps": 0,
   "waterBodies": 2,
   "waterBodies8": 2,
-  "lamps": 8,
-  "lampsByTrail": 8,
-  "voxels": 156877,
-  "mats": 156877,
+  "lamps": 7,
+  "lampsByTrail": 7,
+  "voxels": 151703,
+  "mats": 151703,
   "matKinds": 10,
-  "grass": 205862,
+  "grass": 182945,
   "waterCells": 38,
-  "trailCells": 470,
-  "wetTrail": 1,
+  "trailCells": 409,
+  "wetTrail": 2,
   "bridges": 1,
   "landmark": true,
   "overhang": true,
@@ -186,15 +191,16 @@
   "basalt": 0,
   "cliffs": 0,
   "thickets": 0,
-  "digest": "48b26054",
+  "crevasses": 12,
+  "digest": "8c33e78c",
   "parts": {
-   "vox": "ccdd4274",
-   "magma": "2aecd9d0",
-   "grass": "4d4ba7f9",
-   "water": "cda6f304",
-   "maps": "83685581",
-   "sites": "d2517bce",
-   "cells": "fbb35416"
+   "vox": "6a11e6e3",
+   "magma": "a1061f1c",
+   "grass": "6b204ef9",
+   "water": "3d1e6642",
+   "maps": "83b1eef8",
+   "sites": "30bc512d",
+   "cells": "c4df0025"
   }
  },
  {
@@ -219,6 +225,7 @@
   "basalt": 0,
   "cliffs": 0,
   "thickets": 0,
+  "crevasses": 0,
   "digest": "cc72ae63",
   "parts": {
    "vox": "13647a45",
@@ -252,6 +259,7 @@
   "basalt": 0,
   "cliffs": 0,
   "thickets": 0,
+  "crevasses": 0,
   "digest": "7aa6f09b",
   "parts": {
    "vox": "90b47d8b",
@@ -285,6 +293,7 @@
   "basalt": 0,
   "cliffs": 1,
   "thickets": 0,
+  "crevasses": 0,
   "digest": "71447536",
   "parts": {
    "vox": "20b90e07",

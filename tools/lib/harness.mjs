@@ -297,6 +297,8 @@ export function measureWorld(d, name) {
     cliffs: d.G && d.G.cliffIn ? d.G.cliffIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     /* Thickets the same way (#76, Thornwood). */
     thickets: d.G && d.G.thornIn ? d.G.thornIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
+    /* Crevasse fields the same way (#76, Rimewaste). */
+    crevasses: d.G && d.G.rimeIn ? d.G.rimeIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     digest: hex(h),
     parts,
   };

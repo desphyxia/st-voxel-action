@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -313,6 +313,9 @@ if (NODE_HALF) for (const r of cliffSuite()) check(r.ok, `CLIFF: ${r.label}`, r.
 
 /* ---------- THORN: thickets and the logs through them (#76) ---------- */
 if (NODE_HALF) for (const r of thornSuite()) check(r.ok, `THORN: ${r.label}`, r.detail);
+
+/* ---------- RIME: crevasse fields and their bridges (#76) ---------- */
+if (NODE_HALF) for (const r of rimeSuite()) check(r.ok, `RIME: ${r.label}`, r.detail);
 
 /* ---------- SKY: the hour and the weather are the seed's, issue #30 ---------- */
 if (NODE_HALF) for (const r of skySuite()) check(r.ok, `SKY: ${r.label}`, r.detail);
