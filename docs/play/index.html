@@ -10319,7 +10319,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   function cutFrame(){
     camera.getWorldDirection(cutF); SKY_U.uCutF.value.copy(cutF);
     var a=player(), b=other(), on=cutOn&&!plateMode, bOn=on&&b&&session&&session.connected;
-    var sA=cutEase(0,on&&a&&cutOcc(a)?1:0), sB=cutEase(1,bOn&&cutOcc(b)?1:0);
+    /* Forced, only the local player's: the gate isolates one cut. */
+    var sA=cutEase(0,on&&a&&cutOcc(a)?1:0), sB=cutEase(1,bOn&&!cutForce&&cutOcc(b)?1:0);
     cutSnap=false;
     if(a&&sA>0) SKY_U.uCutA.value.set(a.x,a.y,a.z,sA); else SKY_U.uCutA.value.w=0;
     if(bOn&&sB>0) SKY_U.uCutB.value.set(b.x,b.y,b.z,sB); else SKY_U.uCutB.value.w=0;
