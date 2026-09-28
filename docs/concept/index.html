@@ -794,7 +794,7 @@ function posStream(sw, x, z, salt) {
  */
 const PASS = {
   SPAN: 1, VOX: 2, GRASS: 3, TREE: 4, CLUTTER: 5, SCREE: 6,
-  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12, THICKET: 13, SHARD: 14, HEDGE: 15,
+  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12, THICKET: 13, SHARD: 14, HEDGE: 15, NUB: 16,
 };
 
 /** The seed word a pass draws under. */
@@ -1160,21 +1160,53 @@ function makeGen(seedStr,force){
       st.push(a0);
       if(top-g<=1) break;
     }
-    /* The shortcut (#75): on a route of four stones or more, one more 2 x 2
-       stone against the side of the line, two metres under the third from
-       the bottom and within a double jump of the ground under it. Two
-       double jumps — onto it, and from it onto that stone — take the place
-       of the climb over the stones below. It is a way up the
-       stones, never past them: it stands beside the line, and the nearest
-       stone to the wall is two metres out from it. */
-    var sc=null;
-    if(st.length>=4){
-      var m=st.length-3, sa=st[m], sh=T-m-3, sg=-1e9;
-      for(q=0;q<2;q++) for(p=2;p<=3;p++){
-        var gh2=Math.round(rawH(cx+dir[0]*(sa+q)+(dir[0]?0:p), cz+dir[1]*(sa+q)+(dir[1]?0:p)));
-        if(gh2>sg) sg=gh2;
+    /* The shortcut (#75): footholds up the wall itself, on the side square
+       to the stones. Single voxels of rock stuck to the face, each a metre
+       and a half over the last — past a single jump's 1.4 m, well inside a
+       double jump's 2.4 — and each set along the face from the one below by
+       an irregular half a metre to a metre, so they read as the rock's own
+       knobs rather than a ladder. The first stands a
+       metre and a half over the ground at the foot of the wall and the last
+       is within a double jump of the top, so it is a way up only for
+       someone who can double jump. Two metres apart left a quarter of a
+       metre over each at the top of the arc: too little to drift across
+       onto one without a shoulder in it. */
+    var sg0=prand(gx,gz,salt+6)<0.5?1:-1, pa=dir[0]?[0,sg0]:[sg0,0], rp=pa[0]?rx:rz,
+        fg=-1e9, nubs=[];
+    for(q=1;q<=2;q++) for(p=-2;p<=2;p++){
+      var ox=pa[0]?cx+pa[0]*(rp+q):cx+p, oz=pa[1]?cz+pa[1]*(rp+q):cz+p;
+      var hq=Math.round(rawH(ox,oz)); if(hq>fg) fg=hq;
+    }
+    /* One flat stretch of wall to one side of the axis: the last row out on
+       the axis is a single cell standing proud of its neighbours, and a
+       foothold either side of its corner put the body's shoulder into it.
+       The rows from one cell off the axis outward, as far as they share an
+       edge, are the stretch. The footholds climb it diagonally, away from
+       the axis, each half a metre to a metre along from the last: one
+       doubled back over the path between the two below it, and a body
+       jumping between those met it with its head. */
+    var rl=pa[0]?rz:rx, sl=prand(gx,gz,salt+8)<0.5?1:-1, edOf=function(lc){
+      var el=lc/rl, ed=rp; el*=el; el*=el;
+      while(ed>0&&(ed/rp)*(ed/rp)*(ed/rp)*(ed/rp)+el>1) ed--;
+      return ed;
+    };
+    var ed0=edOf(1), run=1;
+    while(run<rl-1&&edOf(run+1)===ed0) run++;
+    if(T-fg>=3){
+      var u=1+Math.round(prand(gx,gz,salt+7)*0.5/V)*V, uhi=run+0.25, lat=pa[0]?cz:cx;
+      var a=(pa[0]?cx:cz)+sg0*(ed0+0.5);
+      for(var k=1;fg+1.5*k<=T-1;k++){
+        if(k>1) u+=Math.round((0.5+prand(gx,gz,salt+7+k)*0.5)/V)*V;
+        /* Off the end of the stretch: no shortcut on this wall. */
+        if(u>uhi){ nubs=[]; break; }
+        /* A foothold is two voxels deep from the face outward, the last two
+           entries saying which way out is. Props sit half a voxel off the
+           terrain's grid, so one voxel on the face stood out 12.5 cm and was
+           lost against the wall on one side, and floated 12.5 cm off it on
+           the other; two from the face stand clear on both. */
+        var y=fg+1.5*k;
+        nubs.push(pa[0]?[a,y,lat+sl*u,sg0,0]:[lat+sl*u,y,a,0,sg0]);
       }
-      if(sh-sg>=1&&sh-sg<=2) sc={a:sa,h:sh,m:m};
     }
     /* A river through the rock would cut the top in two, and the half without
        the stones would be out of reach for good; a gorge through the apron
@@ -1185,7 +1217,7 @@ function makeGen(seedStr,force){
     for(n=r+1;n<=r+MESA_APRON+3*st.length;n++) for(p=-MESA_APRON;p<=MESA_APRON+1;p++){
       if(mesaWet(cx+dir[0]*n+(dir[0]?0:p), cz+dir[1]*n+(dir[1]?0:p))) return null;
     }
-    return {cx:cx,cz:cz,rx:rx,rz:rz,T:T,dx:dir[0],dz:dir[1],st:st,sc:sc};
+    return {cx:cx,cz:cz,rx:rx,rz:rz,T:T,dx:dir[0],dz:dir[1],st:st,nubs:nubs};
   }
   function mesaWet(x,z){
     if(riverAt(x,z).d<6) return true;
@@ -1208,7 +1240,6 @@ function makeGen(seedStr,force){
       if(ac>=0&&ac<=1&&al>0){
         for(var n=0;n<s.st.length;n++) if(al>=s.st[n]&&al<=s.st[n]+1) return {h:s.T-n-1,kind:2};
       }
-      if(s.sc&&ac>=2&&ac<=3&&al>=s.sc.a&&al<=s.sc.a+1) return {h:s.sc.h,kind:2};
       var lim=(s.dx?s.rx:s.rz)+MESA_APRON+3*s.st.length;
       if(Math.abs(dx)<=s.rx+MESA_APRON&&Math.abs(dz)<=s.rz+MESA_APRON) apron=true;
       else if(al>0&&al<=lim&&ac>=-MESA_APRON&&ac<=MESA_APRON+1) apron=true;
@@ -1948,6 +1979,15 @@ function makeGen(seedStr,force){
       }
     return null;
   }
+  /* Every mesa whose footholds could stand in a box, for the props pass. */
+  function mesasNear(x0,z0,x1,z1){
+    var out=[];
+    for(var gx=Math.floor((x0-MESA_REACH)/MESA_GRID);gx<=Math.floor((x1+MESA_REACH)/MESA_GRID);gx++)
+      for(var gz=Math.floor((z0-MESA_REACH)/MESA_GRID);gz<=Math.floor((z1+MESA_REACH)/MESA_GRID);gz++){
+        var m=mesaSite(gx,gz); if(m) out.push(m);
+      }
+    return out;
+  }
   /* How many mesas are centred in a box, straight from the site grid: what
      --diag counts, over more ground than one window holds (#75). */
   function mesasIn(x0,z0,x1,z1){
@@ -1958,7 +1998,7 @@ function makeGen(seedStr,force){
       }
     return n;
   }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,thornOver:thornOver,thornIn:thornIn,rimeOver:rimeOver,rimeIn:rimeIn,sporeOver:sporeOver,sporeIn:sporeIn,glassOver:glassOver,glassIn:glassIn,meadowOver:meadowOver,meadowIn:meadowIn,rimeFrame:rimeFrame,cliffFrame:cliffFrame,
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,mesasNear:mesasNear,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,thornOver:thornOver,thornIn:thornIn,rimeOver:rimeOver,rimeIn:rimeIn,sporeOver:sporeOver,sporeIn:sporeIn,glassOver:glassOver,glassIn:glassIn,meadowOver:meadowOver,meadowIn:meadowIn,rimeFrame:rimeFrame,cliffFrame:cliffFrame,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 /* ---------- src/gen/erosion.mjs ---------- */
@@ -4434,6 +4474,32 @@ function placeHedges(w, kit) {
     }
   }
 }
+
+/**
+ * A mesa's footholds (#75), stamped wherever they fall in this window: two
+ * voxels of the redrock's own rock stacked against the face, their top the
+ * height the field gave. Drawn from the site, not the window, so a foothold
+ * on a seam is the same voxel from both sides.
+ */
+function placeMesaNubs(w, kit) {
+  var half = w.half, G = w.G, OX = w.OX, OZ = w.OZ, addVox = kit.addVox;
+  if (!G.mesasNear) return;
+  // Pale bedrock, not the wall's own banded rock: a quarter-metre nub in
+  // the wall's colour vanishes on a face that is in shadow half the day.
+  var rock = BIOMES[BIO.MESA].bed, mat = BIOMES[BIO.MESA].mat.rock;
+  var ms = G.mesasNear(OX - half, OZ - half, OX + half, OZ + half);
+  for (var q = 0; q < ms.length; q++) {
+    var nubs = ms[q].nubs || [];
+    for (var n = 0; n < nubs.length; n++) {
+      var x = nubs[n][0] - OX, y = nubs[n][1], z = nubs[n][2] - OZ;
+      if (x < -half || z < -half || x >= half || z >= half) continue;
+      var R = G.pstream(PASS.NUB, Math.round(nubs[n][0] / V), Math.round(nubs[n][2] / V));
+      var ox = nubs[n][3] * V, oz = nubs[n][4] * V;
+      addVox(x, y - V / 2, z, pickPal(rock, R), 0.95 + R() * 0.1, mat);
+      addVox(x + ox, y - V / 2, z + oz, pickPal(rock, R), 1.05 + R() * 0.1, mat);
+    }
+  }
+}
 /* ---------- src/gen/grass.mjs ---------- */
 /**
  * Grass. One blade cloud per world: position, phase, tint, scale, yaw and two
@@ -4711,6 +4777,7 @@ function buildWorld(cfg) {
   placeThickets(w, kit);        /* Thornwood's thickets and their logs, before anything grows */
   placeShards(w, kit);          /* Glasslands' shard fields, the same way */
   placeHedges(w, kit);          /* Meadowlands' hedges */
+  placeMesaNubs(w, kit);        /* a mesa's footholds up its wall */
   scatterProps(w, kit);        /* trees, boulders, canyon arcs */
   placeClutter(w, kit);        /* scree, clutter, the sites, lamps, bridges */
   placeLandmark(w, kit);       /* one landmark, visible three chunks away */

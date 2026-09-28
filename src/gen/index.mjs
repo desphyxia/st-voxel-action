@@ -24,7 +24,7 @@ import { layRoutes } from './routes.mjs';
 import { cutSpans } from './spans.mjs';
 import { drainPerched, containWater, fillWaterTable, flowField, buildWaterGeometry } from './water.mjs';
 import { sampleGrid, buildVoxels } from './surface.mjs';
-import { makeStamps, scatterProps, placeClutter, placeLandmark, placeThickets, placeShards, placeHedges } from './props.mjs';
+import { makeStamps, scatterProps, placeClutter, placeLandmark, placeThickets, placeShards, placeHedges, placeMesaNubs } from './props.mjs';
 import { buildGrass } from './grass.mjs';
 import { floodReach, chooseSpawn } from './reach.mjs';
 
@@ -89,6 +89,7 @@ export function buildWorld(cfg) {
   placeThickets(w, kit);        /* Thornwood's thickets and their logs, before anything grows */
   placeShards(w, kit);          /* Glasslands' shard fields, the same way */
   placeHedges(w, kit);          /* Meadowlands' hedges */
+  placeMesaNubs(w, kit);        /* a mesa's footholds up its wall */
   scatterProps(w, kit);        /* trees, boulders, canyon arcs */
   placeClutter(w, kit);        /* scree, clutter, the sites, lamps, bridges */
   placeLandmark(w, kit);       /* one landmark, visible three chunks away */
