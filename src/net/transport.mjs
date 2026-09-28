@@ -28,18 +28,23 @@ import { mulberry32, xmur3 } from '../gen/rng.mjs';
  *
  *   latency  extra ticks on top of the one tick nothing can travel faster than
  *   loss     0..1, applied per message per direction
+ *   jitter   up to this many more ticks, drawn per message — so messages
+ *            overtake each other, which is what a real network does (#95)
+ *   dup      0..1, the chance a message arrives twice
  *   seed     names the loss stream, so a failing case can be re-run
  */
 export function makeLoopback(opts) {
   const o = opts || {};
   const latency = o.latency || 0;
   const loss = o.loss || 0;
+  const jitter = o.jitter || 0;
+  const dup = o.dup || 0;
   const rnd = mulberry32(xmur3(String(o.seed === undefined ? 'loopback' : o.seed))());
 
   let clock = 0;
   const queues = { a: [], b: [] };     /* messages waiting to arrive at each side */
   const handlers = { a: [], b: [] };
-  const stat = { sent: 0, dropped: 0, delivered: 0, bytes: 0 };
+  const stat = { sent: 0, dropped: 0, delivered: 0, bytes: 0, duplicated: 0 };
 
   function endpoint(self, other) {
     let open = true;
@@ -53,7 +58,9 @@ export function makeLoopback(opts) {
         const wire = JSON.stringify(msg);
         stat.bytes += wire.length;
         if (loss > 0 && rnd() < loss) { stat.dropped++; return; }
-        queues[other].push({ due: clock + 1 + latency, wire });
+        const late = () => (jitter ? Math.floor(rnd() * (jitter + 1)) : 0);
+        queues[other].push({ due: clock + 1 + latency + late(), wire });
+        if (dup > 0 && rnd() < dup) { stat.duplicated++; queues[other].push({ due: clock + 1 + latency + late(), wire }); }
       },
       onMessage(fn) { handlers[self].push(fn); },
       close() { open = false; },

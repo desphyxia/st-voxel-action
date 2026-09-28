@@ -30,6 +30,8 @@ import * as LT from '../../src/sim/lattice.mjs';
 import * as LO from '../../src/sim/loot.mjs';
 import { makeLoopback } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
+import * as NS from '../../src/net/session.mjs';
+import * as RTC from '../../src/net/rtc.mjs';
 import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache, portsOf, regionOf, REGION, cellKey, keyX, keyZ } from '../../src/gen/region.mjs';
 import { erodeAt } from '../../src/gen/erosion.mjs';
@@ -497,7 +499,7 @@ function sides(seedName) {
   return WORLDS.get(seedName);
 }
 
-function twoPlayers(seedName, wire, withFoes) {
+function twoPlayers(seedName, wire, withFoes, guestWire, gid) {
   const w = sides(seedName || 'meadow');
   /* Fresh every time: the machines in it die, and a suite that shared them
      would be testing whatever the previous case left standing. */
@@ -505,10 +507,10 @@ function twoPlayers(seedName, wire, withFoes) {
   const host = makeHost({ col: w.hostCol, spawn: w.spawn, transport: wire.a, cfg: w.cfg,
                           targets: encounter ? encounter.targets : w.hostTargets, encounter });
   const guest = makeGuest({
-    transport: wire.b,
+    transport: guestWire || wire.b, gid,
     build: () => ({ col: w.guestCol, spawn: w.spawn }),
   });
-  return { host, guest, wire, col: w.hostCol, encounter };
+  return { host, guest, wire, col: w.hostCol, encounter, w };
 }
 
 /**
@@ -735,6 +737,83 @@ export function netSuite() {
         `${p.guest.me.st.reach} m on the guest, ${p.host.peer.st.reach} m on the host`);
   }
 
+  /* 9. A real network (#95): messages overtake each other, some arrive twice
+        and some not at all. Snapshots older than the last are ignored, inputs
+        are queued in order once each, and every input rides the next few
+        messages too — so the ends still agree exactly. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 4, jitter: 8, dup: 0.15, loss: 0.15, seed: 'rough' }));
+    run(p, 500, scripted(0), scripted(2));
+    settle(p, 240);
+    const d = dist2(p.guest.me, p.host.peer), st = p.wire.stat;
+    say('a wire that reorders, duplicates and drops still ends in agreement, exactly', d === 0 && p.guest.me.y === p.host.peer.y,
+        `${d.toFixed(9)} m apart; ${st.dropped} dropped, ${st.duplicated} duplicated, up to 8 ticks of jitter`);
+  }
+
+  /* 9b. Two 60 Hz clocks are never the same 60 Hz. A guest running 2% fast
+         must not build the host a queue — which is a lag — without bound. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 3, jitter: 3, seed: 'drift' }));
+    const g = scripted(2), h = scripted(0);
+    let most = 0, gt = 0;
+    for (let t = 0; t < 1500; t++) {
+      p.wire.pump();
+      p.host.step(h(t));
+      p.guest.step(g(gt++));
+      if (t % 50 === 0) p.guest.step(g(gt++));
+      most = Math.max(most, p.host.stats.queued);
+    }
+    settle(p, 240);
+    const d = dist2(p.guest.me, p.host.peer);
+    say('a guest whose clock runs fast is caught up, not queued', most <= NS.CATCHUP + 3 && p.host.stats.caught > 0 && d === 0,
+        `queue at most ${most}, ${p.host.stats.caught} caught up, ${d.toFixed(9)} m apart after`);
+  }
+
+  /* 9c. A partner who goes silent — a closed lid, a dropped connection — is
+         lost after two seconds and stood still, not driven on by the last
+         input the host happened to have. And comes back when they speak. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 2 }));
+    run(p, 200, scripted(0), (t) => ({ mx: 1, mz: 0 }));
+    /* Silent means nothing at all leaves the guest — not even its answer to
+       the host's hello, which a live page gives without stepping. */
+    const send = p.wire.b.send;
+    p.wire.b.send = () => {};
+    for (let t = 0; t < NS.STALE + 60; t++) { p.wire.pump(); p.host.step({}); }
+    const lost = p.host.lost, x0 = p.host.peer.x;
+    for (let t = 0; t < 30; t++) { p.wire.pump(); p.host.step({}); }
+    const drift = Math.abs(p.host.peer.x - x0);
+    p.wire.b.send = send;
+    run(p, 20, () => ({}), () => ({}));
+    say('a partner gone quiet is lost, stood still, and found again', lost && drift < 1e-9 && !p.host.lost,
+        `${lost ? 'lost' : 'NOT lost'} after ${NS.STALE + 60} silent ticks, moved ${drift.toFixed(3)} m while lost, `
+        + `${p.host.lost ? 'still lost' : 'back'} once heard`);
+  }
+
+  /* 9d. A guest that reloads is a new guest: its count starts at one again.
+         The host hears a new id, forgets the old queue, announces itself once
+         the old guest has gone quiet, and the new one grows the world and
+         ends in agreement like the first. */
+  {
+    const wire = makeLoopback({ latency: 3 });
+    let cur = null;
+    wire.b.onMessage((m) => { if (cur) cur(m); });
+    const sw = { send: (m) => wire.b.send(m), onMessage: (fn) => { cur = fn; }, close() {} };
+    const p = twoPlayers('meadow', wire, false, sw, 1);
+    run(p, 300, scripted(0), scripted(2));
+    const fresh = makeGuest({ transport: sw, gid: 2, build: () => ({ col: p.w.guestCol, spawn: p.w.spawn }) });
+    p.guest = fresh;
+    let joinedAt = -1;
+    for (let t = 0; t < 600; t++) {
+      p.wire.pump(); p.host.step(scripted(0)(t)); p.guest.step(scripted(4)(t));
+      if (joinedAt < 0 && p.guest.ready) joinedAt = t;
+    }
+    settle(p, 200);
+    const d = dist2(p.guest.me, p.host.peer);
+    say('a reloaded guest rejoins and agrees', joinedAt >= 0 && d === 0,
+        `rejoined after ${joinedAt} ticks, ${d.toFixed(9)} m apart`);
+  }
+
   /* 8. The point of all of it: each of them can see the other move. */
   {
     const p = twoPlayers('meadow', makeLoopback({ latency: 4 }));
@@ -753,6 +832,77 @@ export function netSuite() {
         `guest saw ${sawHost.toFixed(1)} m, host saw ${sawGuest.toFixed(1)} m`);
   }
 
+  return out;
+}
+
+/* ------------------------------------------------------------------- rtc ---- */
+
+/* A description the shape a browser makes: a data channel, keys, candidates. */
+const SAMPLE_SDP = ['v=0', 'o=- 4611731400430051336 2 IN IP4 127.0.0.1', 's=-', 't=0 0',
+  'a=group:BUNDLE 0', 'a=msid-semantic: WMS', 'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
+  'c=IN IP4 0.0.0.0', 'a=candidate:1 1 udp 2113937151 192.168.1.20 54400 typ host generation 0',
+  'a=candidate:2 1 udp 1677729535 203.0.113.7 54400 typ srflx raddr 192.168.1.20 rport 54400 generation 0',
+  'a=ice-ufrag:Q3xw', 'a=ice-pwd:3cGd0xh2bXq2Qzj0yqS7mH1W',
+  'a=fingerprint:sha-256 7B:8B:F0:65:5F:78:E2:51:3B:AC:6F:F3:3F:46:1B:35:DC:B8:5F:64:1A:24:C2:43:F0:A1:58:D0:A1:2C:19:08',
+  'a=setup:actpass', 'a=mid:0', 'a=sctp-port:5000', 'a=max-message-size:262144', ''].join('\r\n');
+
+/** Two fake data channels wired to each other, delivering on a pump. */
+function channelPair() {
+  const q = [];
+  const mk = () => ({ readyState: 'open', bufferedAmount: 0, fns: [],
+    addEventListener(ev, fn) { this.fns.push(fn); }, close() { this.readyState = 'closed'; } });
+  const a = mk(), b = mk();
+  a.send = (d) => q.push([b, d]); b.send = (d) => q.push([a, d]);
+  return { a, b, pump() { while (q.length) { const [to, d] = q.shift(); for (const f of to.fns) f({ data: d }); } } };
+}
+
+/**
+ * The WebRTC half that runs without a browser (#95): codes that survive being
+ * pasted, refuse the wrong kind, and a transport over a channel. The browser
+ * half — two pages actually connecting — is in smoke.mjs.
+ */
+export async function rtcSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+
+  const inv = await RTC.packCode({ type: 'offer', sdp: SAMPLE_SDP });
+  const back = await RTC.unpackCode(inv, 'offer');
+  say('an invite code comes back as the description it was made from', back.sdp === SAMPLE_SDP && back.type === 'offer',
+      `${SAMPLE_SDP.length} characters of description, ${inv.length} of code`);
+
+  const mangled = '  ' + inv.slice(0, 40) + '\n' + inv.slice(40, 90) + ' \n ' + inv.slice(90) + '\n';
+  const linked = 'https://example.org/play/#join=' + inv;
+  const m1 = await RTC.unpackCode(mangled, 'offer'), m2 = await RTC.unpackCode(linked, 'offer');
+  say('and survives line breaks, spaces and being pasted as a link', m1.sdp === SAMPLE_SDP && m2.sdp === SAMPLE_SDP, 'all three read back');
+
+  const rep = await RTC.packCode({ type: 'answer', sdp: SAMPLE_SDP });
+  const why = [];
+  for (const [text, want] of [[rep, 'offer'], [inv, 'answer'], ['hello', 'offer'], [inv.slice(0, inv.length - 9), 'offer']]) {
+    try { await RTC.unpackCode(text, want); why.push('ACCEPTED'); } catch (e) { why.push(e.message); }
+  }
+  say('a reply where an invite goes, an invite where a reply goes, and a cut code are refused, saying which',
+      why.every((w) => w !== 'ACCEPTED'), why.join(' | '));
+
+  const kinds = RTC.candidateKinds(SAMPLE_SDP);
+  say('a description says which kinds of address it offers', kinds.host === 1 && kinds.srflx === 1, JSON.stringify(kinds));
+
+  /* A session over the channel transport, through JSON both ways. */
+  const ch = channelPair(), ta = RTC.channelTransport(ch.a), tb = RTC.channelTransport(ch.b);
+  const got = [];
+  tb.onMessage((m) => got.push(m));
+  ta.send({ t: 'x', n: 1.5, a: [1, 2] });
+  ch.a.bufferedAmount = RTC.MAX_BUFFER + 1; ta.send({ t: 'late' }); ch.a.bufferedAmount = 0;
+  ch.a.readyState = 'connecting'; ta.send({ t: 'early' }); ch.a.readyState = 'open';
+  ch.pump();
+  say('the channel transport sends JSON, and drops what a full or unopened channel would only delay',
+      got.length === 1 && got[0].n === 1.5 && ta.stat.skipped === 2, `${got.length} delivered, ${ta.stat.skipped} dropped`);
+
+  const wire = { a: RTC.channelTransport(ch.a), b: RTC.channelTransport(ch.b), pump: () => ch.pump(), stat: {} };
+  const p = twoPlayers('meadow', wire);
+  run(p, 300, scripted(0), scripted(2));
+  settle(p, 120);
+  const d = dist2(p.guest.me, p.host.peer);
+  say('a session over the channel transport ends in agreement', p.guest.ready && d === 0, `${d.toFixed(9)} m apart`);
   return out;
 }
 

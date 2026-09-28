@@ -30,7 +30,7 @@ const MODULES = {
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index', 'chunk'],
   'src/mesh': ['greedy', 'carve', 'propmesh', 'vox'],
   'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'loot', 'actor', 'nav', 'enemy', 'anim', 'sky', 'camera', 'input'],
-  'src/net': ['transport', 'session'],
+  'src/net': ['transport', 'session', 'rtc'],
 };
 
 /** The generator's public surface: what the concept plate draws with. */

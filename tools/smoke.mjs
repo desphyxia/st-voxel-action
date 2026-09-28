@@ -89,7 +89,7 @@ import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
-         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { chunkWorld } from '../src/gen/chunk.mjs';
@@ -428,6 +428,7 @@ if (NODE_HALF) for (const r of trailSuite()) check(r.ok, `WALK: ${r.label}`, r.d
    same inputs from the same state has to reproduce the host exactly, or a guest
    can only ever be approximately where it thinks it is. */
 if (NODE_HALF) for (const r of netSuite()) check(r.ok, `NET: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of await rtcSuite()) check(r.ok, `RTC: ${r.label}`, r.detail);
 
 /* ---------- VOX: the authored hero, issue #34 ----------
    The first hand-authored model. What has to hold for it to replace the
