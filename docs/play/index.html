@@ -90,7 +90,8 @@
   @media (max-width:900px),(pointer:coarse){ .fpsr{font-size:9px;letter-spacing:0;padding:2px 5px} }
   /* With the touch buttons up, the bottom-right corner is theirs out to Dodge
      (122 + 62 px from the edge). */
-  .stage.touch .where{left:196px;right:196px;max-width:calc(100% - 392px)}
+  .stage.touch .where{left:196px;right:196px;max-width:calc(100% - 392px);pointer-events:auto;
+                      -webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   /* Too narrow to fit between them at all: above them, clear of the toolbar. */
   @media (max-width:560px){ .where{bottom:auto;top:52px;left:8px;right:8px;max-width:calc(100% - 16px)} }
   .fpsr b{color:var(--sand);font-weight:500}
@@ -270,6 +271,17 @@
   .gfxrows .seg button{flex:1 1 auto}
   .gfxrows input[type=range]{width:100%;accent-color:var(--sand)}
   .gfxnote{margin:12px 0 0;color:var(--dim);font-size:10px;line-height:1.5}
+  /* The debug dialog (#92): a panel at the side, over a view that is still
+     played, so what a switch does can be watched as it happens. */
+  .gfx.dbg{background:none;place-items:start end;pointer-events:none}
+  .dbg .gfxp{pointer-events:auto;width:min(380px,100%)}
+  .dbghead{margin:12px 0 6px;color:var(--sand);letter-spacing:.12em;text-transform:uppercase;font-size:10px}
+  .dbg .gfxrows input[type=number]{width:64px;font:inherit;color:var(--text);background:rgba(10,13,17,.72);
+       border:1px solid var(--line2);border-radius:2px;padding:4px}
+  .dbg select{font:inherit;color:var(--text);background:rgba(10,13,17,.72);border:1px solid var(--line2);max-width:150px}
+  .dbg button:disabled,.dbg input:disabled,.dbg select:disabled{opacity:.4;cursor:not-allowed}
+  .dbgv{color:var(--sand);font-weight:500;align-self:center}
+  .dbgnums{margin:0 0 4px;white-space:pre-wrap;color:var(--muted);font:10.5px/1.5 var(--mono);font-variant-numeric:tabular-nums}
   /* The report panel (#71): above the dialog, since a crash can open it from there. */
   .crash{z-index:31}
   .crashmsg{margin:0 0 10px;color:var(--text);font-size:11px;line-height:1.5;font-family:var(--mono)}
@@ -342,6 +354,18 @@
             Remembered in this browser.</p>
         </div>
       </div>
+      <div class="gfx dbg" id="dbg" hidden>
+        <div class="gfxp" role="dialog" aria-modal="false" aria-labelledby="dbgh">
+          <div class="gfxtop"><h3 id="dbgh">Debug</h3><span class="gfxrate"></span>
+            <button type="button" id="dbgreset" title="Everything back off">Reset</button>
+            <button type="button" class="gfxdone" id="dbgdone">Done</button></div>
+          <pre class="dbgnums" id="dbgnums"></pre>
+          <div id="dbgbody"></div>
+          <p class="gfxnote">Nothing here changes the world. What it draws is this window&rsquo;s alone,
+            a plate ignores it, and a two-player game refuses what would change what happens.
+            Backtick, or a long press on the line under the view, opens and closes it.</p>
+        </div>
+      </div>
       <div class="fallback" id="fallback">This browser could not start WebGL, so there is nothing to play here.</div>
       <button class="exitfs" id="exitfs" type="button">Exit fullscreen · Esc</button>
       <div class="pad" id="pad">
@@ -394,11 +418,6 @@
         <label for="gdens">Grass density <b id="gdensv">60 / m&sup2;</b></label>
         <input type="range" id="gdens" min="2" max="160" step="2" value="60"
                title="How many blades the generator makes, averaged over the whole window. Regrows the world from the same seed, so the character goes back to the spawn.">
-      </span>
-      <span class="gctl">
-        <label for="glen">Grass length <b id="glenv">50 cm</b></label>
-        <input type="range" id="glen" min="5" max="120" step="1" value="50"
-               title="How tall a meadow blade is drawn. Every other biome is taller or shorter than this by its own row in the table. Live — nothing is regenerated.">
       </span>
     </div>
     <p class="netstat" id="netstat">Playing alone. <b>Host a game</b> opens a second window on
@@ -6945,7 +6964,8 @@ function heal(a, amount) {
 }
 
 function hurt(a, amount, cause) {
-  if (!a || a.dead || a.hp === undefined || invulnerable(a)) return false;
+  /* `invincible` is the debug dialog's (#92), for one player alone. */
+  if (!a || a.dead || a.hp === undefined || invulnerable(a) || a.invincible) return false;
   a.hp -= amount;
   a.hurtT = HURT_TIME;
   if (a.hp <= 0) { a.hp = 0; a.dead = cause || 'struck'; }
@@ -7871,7 +7891,7 @@ function step(col, a, input, targets, dt = TICK) {
   if (input.dodge) beginDodge(a, input.mx || 0, input.mz || 0);
 
   const liquid = col.liquidAt(a.x, a.z);
-  if (liquid.kind === LIQUID.MAGMA && a.y <= liquid.level + 0.35) { a.dead = 'magma'; return a; }
+  if (liquid.kind === LIQUID.MAGMA && a.y <= liquid.level + 0.35 && !a.invincible) { a.dead = 'magma'; return a; }
 
   const submerged = liquid.kind === LIQUID.WATER ? liquid.level - a.y : 0;
   a.inWater = submerged > EPS;
@@ -7974,7 +7994,10 @@ function step(col, a, input, targets, dt = TICK) {
     const g = col.supportUnder(a.x, a.z, r, a.y + EPS);
     if (ny <= g + EPS) {
       ny = g;
-      if (FALL_DAMAGE && !a.inWater && a.apex - g > MOVE.fall + EPS) a.dead = 'fall';
+      /* An actor may carry its own answer (the debug dialog, #92); the
+         world's is FALL_DAMAGE. */
+      const falls = a.fallDamage === undefined ? FALL_DAMAGE : a.fallDamage;
+      if (falls && !a.invincible && !a.inWater && a.apex - g > MOVE.fall + EPS) a.dead = 'fall';
       a.vy = 0; a.grounded = true; a.apex = g;
     } else if (wasGrounded && g !== -Infinity && a.y - g <= MOVE.step + EPS) {
       /* Walked down. A step down is as free as a step up — without this the
@@ -8616,6 +8639,15 @@ function makeEncounter(col, world, posts) {
 
   return {
     enemies, targets, postCount, loot,
+
+    /** One more machine, standing where it is put — the debug dialog's
+        (#92). It is a target like the rest; it drops no spoil, because the
+        loot field was sized for the machines the world placed. */
+    add(x, z, fromY) {
+      const e = makeSentry(col, x, z, fromY);
+      enemies.push(e); targets.push(e);
+      return e;
+    },
 
     /** One tick: the machines act, then whatever the players cut takes it. */
     step(players, dt = TICK) {
@@ -10312,6 +10344,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     return false;
   }
   function cutEase(q,want){
+    if(DBG.cutFreeze&&!cutSnap&&!plateMode) return cutS[q];
     cutS[q]=cutSnap?want:cutS[q]+(want-cutS[q])*0.2;
     if(Math.abs(cutS[q]-want)<0.02) cutS[q]=want;
     return cutS[q];
@@ -10850,6 +10883,27 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   var skyNow=QS.skyAt(0,0), sunDirV=new THREE.Vector3(-16,26,12).normalize();
   var SKY_FIXES=[null,0.27,0.5,0.73,0.02], SKY_NAMES=['auto','dawn','noon','dusk','night'];
   var SKY_CLEAR={cloud:0,rain:0,wetness:0};
+  /* The debug dialog's state (#92), here rather than with the dialog because
+     the sky, the cutaway and the loop all read it from the first world on. */
+  var DBG_DEF={wx:'',borders:false,skirt:false,cut:'auto',cutRing:false,cutFreeze:false,noOutline:false,
+               collide:false,reach:false,feat:false,wire:false,hide:{},time:null,grassLen:null,
+               fly:false,flySpeed:12,fall:false,inv:false,speed:1};
+  var DBG_KEEP=['wx','borders','skirt','cut','cutRing','cutFreeze','noOutline','collide','reach','feat','wire','hide','time','grassLen','flySpeed'];
+  var DBG=JSON.parse(JSON.stringify(DBG_DEF));
+  try{
+    var dbgSaved=JSON.parse(localStorage.getItem('qs.dbg')||'null');
+    if(dbgSaved) DBG_KEEP.forEach(function(k){ if(dbgSaved[k]!==undefined) DBG[k]=dbgSaved[k]; });
+  }catch(e){}
+  function dbgSave(){
+    try{ var o={}; DBG_KEEP.forEach(function(k){ o[k]=DBG[k]; }); localStorage.setItem('qs.dbg',JSON.stringify(o)); }catch(e){}
+  }
+  /* What the weather control puts in place of the seed's, from what the sky
+     already draws: rain is the seed's own rain at its heaviest, snow is that
+     rain with the Rimewaste's answer to it, fog is a low grey sky with the
+     distance pulled in. */
+  var DBG_WX={clear:{cloud:0,rain:0,wetness:0},rain:{cloud:0.9,rain:0.9,wetness:0.9},
+              snow:{cloud:0.9,rain:0.9,wetness:0.9},fog:{cloud:0.75,rain:0,wetness:0.3}};
+  function dbgWeather(){ return DBG.wx&&DBG_WX[DBG.wx]||null; }
   /* The background: a vertical gradient, one canvas shared by every scene and
      repainted on each sky step. */
   var skyCanvas=null, skyTex=null;
@@ -10945,7 +10999,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   }
   /** Which motes the air holds, from the biome under the view and the sky. */
   function partMode(s,dom){
-    var B=QS.BIO, cold=dom===B.RIME, green=dom===B.MEADOW||dom===B.PINE||dom===B.THORN;
+    var B=QS.BIO, cold=dom===B.RIME||DBG.wx==='snow', green=dom===B.MEADOW||dom===B.PINE||dom===B.THORN;
     if(s.rain>0.2) return cold?'snow':'rain';
     if(dom===B.ASH) return s.day<0.35?'embers':'ashfall';
     if(dom===B.SPORE) return 'spores';
@@ -10997,7 +11051,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(!force&&step===skyStepAt) return;
     skyStepAt=step;
     var seed=built.cfg?built.cfg.seed:'';
-    var s=skyNow=QS.skyAt(t,seed,plateMode||skyCalm?SKY_CLEAR:QS.weatherAt(seed,skySec));
+    var s=skyNow=QS.skyAt(t,seed,plateMode||skyCalm?SKY_CLEAR:(dbgWeather()||QS.weatherAt(seed,skySec)));
     if(force||dstep!==skyDirAt){
       skyDirAt=dstep;
       var sd=fixed?s:QS.skyAt(Math.floor(t/sunTurn())*sunTurn(),seed,SKY_CLEAR);
@@ -11040,6 +11094,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     SKY_U.uCloud.value=s.cloud; SKY_U.uWet.value=s.wetness;
     var dom=plateMode?0:domUnderView();
     var snowTo=dom===QS.BIO.RIME?Math.min(1,s.wetness*1.3):0;
+    if(!plateMode&&DBG.wx==='snow') snowTo=1;
     skySnow=force?snowTo:skySnow+(snowTo-skySnow)*0.25;
     SKY_U.uSnow.value=skySnow;
     var p=built.parts;
@@ -11081,7 +11136,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var D=camera.position.distanceTo(camT), v=cam.view;
     if(built.scene.fog){
       built.scene.fog.near=D+0.15*v;
-      built.scene.fog.far=D+v*(3.6-1.6*Math.max(skyNow.rain,skyNow.cloud*0.6))*(1-hazeFar);
+      built.scene.fog.far=D+v*(3.6-1.6*Math.max(skyNow.rain,skyNow.cloud*0.6))*(1-hazeFar)
+        *(!plateMode&&DBG.wx==='fog'?0.3:1);
     }
     var p=built.parts;
     if(p&&p.visible){
@@ -13343,6 +13399,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   var arming=null;
   stage.addEventListener('keydown',function(e){
     if(arming){ arming(e.code); e.preventDefault(); return; }
+    if(e.code==='Backquote'){ dbgOpen(!dbgOpen.on); e.preventDefault(); return; }
     /* Native fullscreen releases itself on Escape; the fallback has to be told. */
     if(e.code==='Escape'&&maxed()){ goMaxed(false); e.preventDefault(); return; }
     input.press(e.code);
@@ -13821,7 +13878,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
              attack:input.took('attack'),dodge:input.took('dodge'),
              aimX:h?h.x:0,aimZ:h?h.z:0};
     if(session){ session.step(inp); }
-    else { QS.step(col,a,inp,targets); if(encounter) encounter.step([a]); }
+    else { if(!dbgTick(a,inp)) QS.step(col,a,inp,targets); if(encounter) encounter.step([a]); }
 
     /* Hits are a bitmask cleared every tick, and the loop runs several ticks a
        frame — so they have to be read here, not in draw. */
@@ -13904,6 +13961,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(!built.warm) warmPrograms();
     shadowDue();
     cutFrame();
+    dbgFrame();
     var sk=worldRev+'|'+plateMode+'|'+(built.sun?built.sun.position.x+','+built.sun.position.z:'');
     if(sk!==shadowKey){
       var why=sk.split('|')[0]!==shadowKey.split('|')[0]?(shadowByChunk?'chunk':'world'):'sun';
@@ -13911,6 +13969,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       shadowKey=sk; renderer.shadowMap.needsUpdate=true;
     }
     renderer.render(built.scene,camera);
+    dbgAfter();
   }
 
   var acc=0, last=0, frames=0, fpsAt=0, wasConnected=false, paused=false;
@@ -13974,7 +14033,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        an arc 29 times its size over a third of the screen (found while
        building #33; the loop has done it since frameOnce existed). */
     var dt=Math.max(0,Math.min((now-last)/1000,0.25)); last=Math.max(last,now);
-    tm+=dt; acc+=dt;
+    tm+=dt; acc+=dt*(session?1:DBG.speed);
     pollPad();
     /* Fixed step, so the trajectory does not depend on the frame rate — the
        same reason the smoke test can assert it, and the same reason a guest's
@@ -14129,7 +14188,6 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     {k:'shadows',label:'Shadows',opts:[['off','Off'],['low','Low'],['high','High']]},
     {k:'grass',label:'Grass',opts:[[0,'Off'],[0.35,'Sparse'],[0.7,'Normal'],[1,'Full']]},
     {k:'grassMode',label:'Grass style',sub:'lean: cheaper blades, fewer and wider when small',opts:[['classic','Classic'],['lean','Lean']]},
-    {k:'grassLen',label:'Grass length',range:[5,120]},
     {k:'wind',label:'Grass wind',opts:[[false,'Still'],[true,'Gusts']]},
     {k:'clouds',label:'Cloud shadows',opts:[[false,'Off'],[true,'On']]},
     {k:'parts',label:'Particles',sub:'rain, snow, pollen, embers',opts:[[0,'Off'],[0.4,'Some'],[1,'All']]},
@@ -14200,7 +14258,6 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     return 'custom';
   }
   function gfxSet(k,v){
-    if(k==='grassLen'){ setGrassLength(v/100); gfxSync(); return; }
     GFX[k]=v; GFX.preset=gfxMatch(); gfxSave(); gfxApply(k); gfxSync();
   }
   function gfxPreset(p){
@@ -14227,12 +14284,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       if(row.k==='aa'&&GFX.aa!==GFX_AA) sub='reload the page to apply';
       if(sub){ var sm=document.createElement('small'); sm.textContent=sub; lab.appendChild(sm); }
       var seg=document.createElement('div'); seg.className='seg'; seg.dataset.k=row.k;
-      if(row.range){
-        var r=document.createElement('input'); r.type='range'; r.min=row.range[0]; r.max=row.range[1]; r.step=1;
-        r.value=Math.round(grassLen*100); r.setAttribute('aria-label',row.label);
-        r.addEventListener('input',function(){ setGrassLength(+r.value/100); });
-        seg.appendChild(r);
-      } else row.opts.forEach(function(o){
+      row.opts.forEach(function(o){
         seg.appendChild(gfxButton(o[1],GFX[row.k]===o[0],function(){ gfxSet(row.k,o[0]); }));
       });
       gfxRows.appendChild(lab); gfxRows.appendChild(seg);
@@ -14262,6 +14314,493 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(e.key==='Escape'){ e.preventDefault(); gfxOpen(false); }
   });
   gfxEl.addEventListener('keyup',function(e){ e.stopPropagation(); });
+
+  /* ---------- the debug dialog (#92) ----------
+     For looking at the world and poking it while playing alone. Backtick
+     opens it, or a long press on the location bar where there is no keyboard.
+     It never changes the world: what it draws is its own, what it overrides
+     (the hour, the weather, which layers show) is this window's picture only,
+     and plate mode ignores all of it, so no baseline can move. What it does
+     to the simulation — flying, pausing, spawning, no damage — is refused in a
+     two-player game, where the host decides what happened (#93).
+
+     Everything is off until asked for. The picture settings are remembered in
+     this browser; the simulation ones are not, so a reload is always a fair
+     game. */
+  var DBG_LAYERS=[['terrain',['terrain','boxes','magma']],['props',['props','emissive']],['grass',['grass']],
+                  ['water',['water']],['life',['life']]];
+  var DBG_SIM=['fly','flySpeed','tele','fall','inv','respawn','pause','step','speed','spawn','give'];
+
+  var dbgEl=document.getElementById('dbg'), dbgBody=document.getElementById('dbgbody'),
+      dbgNums=document.getElementById('dbgnums'), dbgTimer=null;
+
+  function dbgSet(k,v){
+    DBG[k]=v;
+    if(k==='wx') applySky(true);
+    if(k==='cut'){ cutOn=v!=='off'; cutForce=v==='force'; cutSnap=true; }
+    if(k==='fly'&&!v){ var a=player(); if(a&&!session){ a.apex=a.y; } }
+    if(k==='wire') dbgWire();
+    dbgSave(); dbgSync();
+  }
+  /* The hour: a slider over the day, in minutes, which holds the sun where it
+     is put; the clock button lets it run again. */
+  function dbgTime(min){
+    if(min===null){ skyFix=null; DBG.time=null; }
+    else { skyFix=(((min/1440)%1)+1)%1; DBG.time=min; }
+    applySky(true); dbgSave();
+    var b=document.getElementById('skybtn'); if(b) b.textContent='Sky: '+(skyFix===null?'auto':dayClock());
+  }
+  function dbgSpot(){
+    var a=player(), g=dbgCursor();
+    if(g) return g;
+    return a?{x:a.x+a.faceX*4,y:a.y,z:a.z+a.faceZ*4}:null;
+  }
+  /** Where the mouse meets the ground: the plane at the player's height,
+      then at the ground found there, a few times over. */
+  function dbgCursor(){
+    var c=input.cursor, a=player(); if(!c.active||!a||!built) return null;
+    var y=a.y, p=null;
+    for(var q=0;q<4;q++){
+      p=QS.groundAt(cam,c.x,c.y,vp,y);
+      var t=terrainTop(p.x,p.z); if(t===null) break; y=t;
+    }
+    return {x:p.x,y:y,z:p.z};
+  }
+  function dbgTeleport(x,z){
+    var a=player(); if(!a||session||!isFinite(x)||!isFinite(z)) return false;
+    settleAround(x,z);
+    var g=QS.placeOnGround(col,x,z);
+    a.x=g.x; a.z=g.z; a.vx=a.vy=a.vz=0; a.dead=null;
+    if(g.grounded){ a.y=g.y; a.apex=g.y; a.grounded=true; } else { a.y=Math.max(a.y,30); a.apex=a.y; a.grounded=false; }
+    QS.warpTo(cam,a.x,a.y,a.z); deadEl.style.display='none';
+    return true;
+  }
+  function dbgSpawnFoe(){
+    var p=dbgSpot(); if(!p||session||!encounter) return null;
+    var e=encounter.add(p.x,p.z,p.y+3);
+    var f=makeFoe(); built.scene.add(f.g); foeMeshes.push(f);
+    return e;
+  }
+  /* A spoil lying on the ground: the loot field has sixteen bits for them,
+     and its meshes were sized for the ones the world placed, so they are made
+     again one larger. */
+  function dbgSpawnLoot(mod){
+    var p=dbgSpot(), L=encounter&&encounter.loot; if(!p||session||!L||L.spoils.length>=16) return false;
+    var g=QS.placeOnGround(col,p.x,p.z,p.y+3);
+    L.spoils.push({x:g.x,y:g.y,z:g.z,mod:mod===undefined?(L.spoils.length*5)%QS.MODULES.length:mod,down:1,site:-1});
+    eachLoot(function(m){ if(m.parent) m.parent.remove(m); freeObject(m); });
+    var nc=L.caches.length;
+    loot=makeLoot(nc+L.spoils.length,nc); loot.sil=lootSil(loot.cube);
+    eachLoot(function(m){ built.scene.add(m); });
+    return true;
+  }
+  function dbgGive(mod){ var g=gear(); if(!g||session) return false; var ok=QS.takeModule(g,mod); drawLattice(); return ok; }
+
+  /* ---------- drawn by the dialog ----------
+     One group of its own, never cast into the shadow map and never read by
+     anything that simulates. It is rebuilt from what is loaded; a new world
+     frees it with everything else, and it is made again. */
+  var dbgG=null, dbgCache={}, dbgBorderAt=-1, dbgWireSet=[], dbgHidden=[];
+  function dbgGroup(){
+    if(dbgG&&dbgG.parent===built.scene) return dbgG;
+    dbgG=new THREE.Group(); dbgG.userData.kind='debug'; dbgCache={}; dbgBorderAt=-1;
+    built.scene.add(dbgG); return dbgG;
+  }
+  function dbgDrop(k){
+    var o=dbgCache[k]; if(!o) return;
+    if(o.parent) o.parent.remove(o); freeObject(o); delete dbgCache[k];
+  }
+  function dbgLineMat(color,over){
+    return new THREE.LineBasicMaterial({color:color,transparent:true,opacity:0.95,depthTest:!over,depthWrite:false,fog:false});
+  }
+  /** Chunk borders on the ground, by state: green loaded and wanted, orange
+      loaded but outside the load ring (the next to go), blue being built,
+      grey wanted and not started. The skirt is the chunk you stand in, grown
+      by the 4 m each chunk is generated past its edge. */
+  function dbgBorders(){
+    dbgDrop('borders');
+    if(!DBG.borders) return;
+    var pos=[], colr=[], a=player(), C=QS.CHUNK, h=C/2;
+    function y(x,z){ var t=terrainTop(x,z); return (t===null?(a?a.y:0):t)+0.12; }
+    function edge(x0,z0,x1,z1,c){
+      var n=Math.max(1,Math.round(Math.max(Math.abs(x1-x0),Math.abs(z1-z0))/0.5));
+      for(var q=0;q<n;q++){
+        var ax=x0+(x1-x0)*q/n, az=z0+(z1-z0)*q/n, bx=x0+(x1-x0)*(q+1)/n, bz=z0+(z1-z0)*(q+1)/n;
+        pos.push(ax,y(ax,az),az,bx,y(bx,bz),bz); colr.push(c[0],c[1],c[2],c[0],c[1],c[2]);
+      }
+    }
+    function square(x,z,r,c){ edge(x-r,z-r,x+r,z-r,c); edge(x+r,z-r,x+r,z+r,c); edge(x+r,z+r,x-r,z+r,c); edge(x-r,z+r,x-r,z-r,c); }
+    var GREEN=[0.35,0.95,0.4], ORANGE=[1,0.6,0.2], BLUE=[0.3,0.7,1], GREY=[0.6,0.6,0.6], YELLOW=[1,0.9,0.3];
+    if(streaming&&nodes){
+      var ps=[player(),other()].filter(Boolean).map(function(p){ return QS.chunkAt(p.x,p.z); });
+      var ring=function(cx,cz){ var r=1e9; ps.forEach(function(c){ r=Math.min(r,Math.max(Math.abs(cx-c.cx),Math.abs(cz-c.cz))); }); return r; };
+      var seen={}, busy={};
+      if(pool&&pool.busy) pool.busy.forEach(function(j){ if(j) busy[j.cx+','+j.cz]=1; });
+      for(var k in nodes){ var nd=nodes[k]; seen[k]=1;
+        square(nd.cx*C,nd.cz*C,h-0.05,ring(nd.cx,nd.cz)>STREAM_LOAD?ORANGE:GREEN); }
+      ps.forEach(function(c){
+        for(var dx=-STREAM_LOAD;dx<=STREAM_LOAD;dx++) for(var dz=-STREAM_LOAD;dz<=STREAM_LOAD;dz++){
+          var cx=c.cx+dx, cz=c.cz+dz, kk=cx+','+cz; if(seen[kk]) continue; seen[kk]=1;
+          square(cx*C,cz*C,h-0.3,busy[kk]?BLUE:GREY);
+        }
+      });
+      if(DBG.skirt&&a){ var me=QS.chunkAt(a.x,a.z); square(me.cx*C,me.cz*C,h+QS.SKIRT,YELLOW); }
+    } else if(built.data){
+      square(0,0,built.data.half-0.05,GREEN);
+    }
+    var g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+    g.setAttribute('color',new THREE.Float32BufferAttribute(colr,3));
+    var m=new THREE.LineBasicMaterial({vertexColors:true,depthWrite:false,fog:false});
+    var ls=new THREE.LineSegments(g,m); ls.frustumCulled=false; ls.renderOrder=5;
+    dbgGroup().add(ls); dbgCache.borders=ls;
+  }
+  /* The generator's markers, a colour per metre: what the feature map shows. */
+  function dbgFeatCol(c,trail){
+    if(c.magma) return [1,0.35,0.1];
+    if(c.water||c.pond) return [0.2,0.5,1];
+    if(trail) return [0.95,0.8,0.45];
+    if(c.mesa) return [0.75,0.4,0.2];
+    if(c.basalt) return [0.35,0.35,0.4];
+    if(c.cliff) return [0.7,0.7,0.7];
+    if(c.canyon) return [0.6,0.15,0.15];
+    if(c.thorn) return [0.15,0.45,0.15];
+    if(c.rime) return [0.7,0.95,1];
+    if(c.spore) return [0.7,0.3,0.9];
+    if(c.glass) return [0.9,1,1];
+    if(c.hedge) return [0.35,0.8,0.25];
+    return null;
+  }
+  /** Flat quads over one world's ground: its unreachable columns, or its
+      marked metres. `lim` keeps a streamed chunk to its own square. */
+  function dbgMap(d,kind,lim){
+    var V=QS.V, pos=[], colr=[], idx=[], NZ=d.NZ, half=d.half;
+    function quad(x,z,s,y,c){
+      var n=pos.length/3;
+      pos.push(x,y,z, x+s,y,z, x+s,y,z+s, x,y,z+s);
+      for(var q=0;q<4;q++) colr.push(c[0],c[1],c[2]);
+      idx.push(n,n+2,n+1, n,n+3,n+2);
+    }
+    if(kind==='reach'){
+      var u=d.unreach; if(!u) return null;
+      for(var i=0;i<d.NX;i++) for(var j=0;j<NZ;j++){
+        if(!u[i*NZ+j]) continue;
+        var x=-half+i*V, z=-half+j*V;
+        if(x<-lim||x>=lim||z<-lim||z>=lim) continue;
+        quad(x,z,V,d.Hs[i*NZ+j]+0.05,[0.95,0.15,0.15]);
+      }
+    } else {
+      var M=d.M, per=Math.round(1/V);
+      if(!d.cells) return null;
+      for(var a2=0;a2<M;a2++) for(var b2=0;b2<M;b2++){
+        var x2=-half+a2, z2=-half+b2; if(x2<-lim||x2>=lim||z2<-lim||z2>=lim) continue;
+        var gi=a2*per+(per>>1), gj=b2*per+(per>>1), k2=gi*NZ+gj;
+        var cc=dbgFeatCol(d.cells[a2*M+b2],d.FLG&&(d.FLG[k2]&4));
+        if(cc) quad(x2,z2,1,d.Hs[k2]+0.06,cc);
+      }
+      (d.sites||[]).forEach(function(s){
+        var x3=-half+s[0]-1, z3=-half+s[1]-1; if(x3<-lim-1||x3>=lim||z3<-lim-1||z3>=lim) return;
+        var gi3=Math.min(d.NX-1,Math.max(0,Math.round((s[0]+0.5)/V))), gj3=Math.min(NZ-1,Math.max(0,Math.round((s[1]+0.5)/V)));
+        quad(x3,z3,3,d.Hs[gi3*NZ+gj3]+0.4,[1,0.95,0.2]);
+      });
+    }
+    if(!pos.length) return null;
+    var g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+    g.setAttribute('color',new THREE.Float32BufferAttribute(colr,3));
+    g.setIndex(idx);
+    var m=new THREE.MeshBasicMaterial({vertexColors:true,transparent:true,opacity:0.5,depthWrite:false,
+      side:THREE.DoubleSide,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2,fog:false});
+    var me=new THREE.Mesh(g,m); me.renderOrder=4; me.frustumCulled=false;
+    return me;
+  }
+  /** Keep one map mesh per loaded chunk (or the one window), made when the
+      chunk arrives and let go with it. */
+  function dbgMaps(kind){
+    var want={}, on=DBG[kind==='reach'?'reach':'feat'];
+    if(on){
+      if(streaming&&nodes){ for(var k in nodes) want[kind+':'+k]={d:nodes[k].data,x:nodes[k].cx*QS.CHUNK,z:nodes[k].cz*QS.CHUNK,lim:QS.CHUNK/2}; }
+      else if(built.data) want[kind+':win']={d:built.data,x:0,z:0,lim:built.data.half};
+    }
+    for(var c in dbgCache) if(c.indexOf(kind+':')===0&&(!want[c]||dbgCache[c].userData.d!==want[c].d)) dbgDrop(c);
+    for(var w in want){
+      if(dbgCache[w]) continue;
+      var e=want[w], me=dbgMap(e.d,kind,e.lim);
+      if(!me){ me=new THREE.Group(); }
+      me.position.set(e.x,0,e.z); me.userData.d=e.d;
+      dbgGroup().add(me); dbgCache[w]=me;
+    }
+  }
+  /* The player's box, the sword's reach and arc, each machine's box, and the
+     cutaway's radius: redrawn every frame, because all of them move. */
+  var dbgBox=null, dbgArc=null, dbgRing=null, dbgFoeBoxes=[];
+  function dbgBoxMesh(color){
+    var g=new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1)); g.translate(0,0.5,0);
+    var m=new THREE.LineSegments(g,dbgLineMat(color,true)); m.renderOrder=6; m.frustumCulled=false;
+    return m;
+  }
+  function dbgShapes(){
+    var a=player(), grp=dbgGroup(), on=DBG.collide&&!!a;
+    if(on&&(!dbgBox||dbgBox.parent!==grp)){
+      dbgBox=dbgBoxMesh(0x40e0ff); grp.add(dbgBox);
+      var ag=new THREE.BufferGeometry(); ag.setAttribute('position',new THREE.Float32BufferAttribute(new Float32Array(26*3),3));
+      dbgArc=new THREE.LineLoop(ag,dbgLineMat(0xffe040,true)); dbgArc.renderOrder=6; dbgArc.frustumCulled=false; grp.add(dbgArc);
+      dbgFoeBoxes=[];
+    }
+    if(dbgBox){ dbgBox.visible=on; dbgArc.visible=on; }
+    if(on){
+      var R=QS.ACTOR.radius, H=QS.ACTOR.height;
+      dbgBox.scale.set(2*R,H,2*R); dbgBox.position.set(a.x,a.y,a.z);
+      var reach=a.st?a.st.reach:QS.REACH, arc=QS.ARC, hd=Math.atan2(a.faceX,a.faceZ), p=dbgArc.geometry.attributes.position;
+      p.setXYZ(0,a.x,a.y+0.9,a.z);
+      for(var q=0;q<25;q++){ var t=hd-arc/2+arc*q/24;
+        p.setXYZ(q+1,a.x+Math.sin(t)*reach,a.y+0.9,a.z+Math.cos(t)*reach); }
+      p.needsUpdate=true;
+    }
+    var foes=encounter&&!session?encounter.enemies:[];
+    for(var f=0;f<Math.max(foes.length,dbgFoeBoxes.length);f++){
+      var e=foes[f];
+      if(e&&on&&!dbgFoeBoxes[f]){ dbgFoeBoxes[f]=dbgBoxMesh(0xff5050); grp.add(dbgFoeBoxes[f]); }
+      var fb=dbgFoeBoxes[f]; if(!fb) continue;
+      fb.visible=!!(on&&e&&!e.dead);
+      if(fb.visible){ fb.scale.set(2*QS.SENTRY.rad,1.8,2*QS.SENTRY.rad); fb.position.set(e.x,e.y,e.z); }
+    }
+    if(DBG.cutRing&&a&&(!dbgRing||dbgRing.parent!==grp)){
+      var rg=new THREE.BufferGeometry(), rp=[];
+      for(var r=0;r<48;r++){ var u=r/48*Math.PI*2; rp.push(Math.cos(u)*CUT_R,Math.sin(u)*CUT_R,0); }
+      rg.setAttribute('position',new THREE.Float32BufferAttribute(rp,3));
+      dbgRing=new THREE.LineLoop(rg,dbgLineMat(0xff60ff,true)); dbgRing.renderOrder=6; dbgRing.frustumCulled=false; grp.add(dbgRing);
+    }
+    if(dbgRing){
+      dbgRing.visible=!!(DBG.cutRing&&a);
+      if(dbgRing.visible){ dbgRing.position.set(a.x,a.y+1,a.z); dbgRing.lookAt(a.x-cutF.x,a.y+1-cutF.y,a.z-cutF.z); }
+    }
+  }
+  function dbgWire(){
+    dbgWireSet.forEach(function(m){ m.wireframe=false; }); dbgWireSet=[];
+    if(!DBG.wire||!built||plateMode) return;
+    built.scene.traverse(function(o){
+      var k=o.userData.kind; if(k!=='terrain'&&k!=='props'&&k!=='boxes') return;
+      (Array.isArray(o.material)?o.material:[o.material]).forEach(function(m){
+        if(m&&!m.wireframe){ m.wireframe=true; dbgWireSet.push(m); } });
+    });
+  }
+  /** From draw(), just before the render: the dialog's picture, over the
+      world's. In a plate there is none of it. */
+  var dbgRev=-1, dbgBuilt=null;
+  function dbgFrame(){
+    if(plateMode){ if(dbgG) dbgG.visible=false; return; }
+    if(dbgBuilt!==built){ dbgBuilt=built; dbgG=null; dbgCache={}; dbgBox=dbgArc=dbgRing=null; dbgFoeBoxes=[]; dbgWireSet=[]; }
+    var any=DBG.borders||DBG.reach||DBG.feat||DBG.collide||DBG.cutRing;
+    if(!any&&!dbgG) { dbgLayers(); return; }
+    var grp=dbgGroup(); grp.visible=true;
+    if(DBG.borders&&(tm-dbgBorderAt>0.5||dbgBorderAt<0)){ dbgBorderAt=tm; dbgBorders(); }
+    else if(!DBG.borders&&dbgCache.borders) dbgDrop('borders');
+    if(worldRev!==dbgRev||DBG.reach!==!!dbgFrame.reach||DBG.feat!==!!dbgFrame.feat){
+      dbgRev=worldRev; dbgFrame.reach=DBG.reach; dbgFrame.feat=DBG.feat;
+      dbgMaps('reach'); dbgMaps('feat');
+      if(DBG.wire) dbgWire();
+    }
+    dbgShapes();
+    dbgLayers();
+  }
+  dbgFrame.reach=false; dbgFrame.feat=false;
+  /* Layers hidden by kind, over whatever the frame decided: marked, so that
+     showing them again gives back only what this hid. */
+  function dbgLayers(){
+    for(var q=0;q<dbgHidden.length;q++) dbgHidden[q].visible=true;
+    dbgHidden=[];
+    var kinds={}, n=0;
+    DBG_LAYERS.forEach(function(L){ if(DBG.hide[L[0]]) L[1].forEach(function(k){ kinds[k]=1; n++; }); });
+    if(DBG.noOutline){ kinds.silhouette=1; n++; }
+    if(!n||!built) return;
+    built.scene.traverse(function(o){ if(kinds[o.userData.kind]&&o.visible){ o.visible=false; dbgHidden.push(o); } });
+  }
+  /* The hidden objects are shown again straight after the render, so nothing
+     else in the page ever reads them as hidden. */
+  function dbgAfter(){ for(var q=0;q<dbgHidden.length;q++) dbgHidden[q].visible=true; dbgHidden=[]; }
+
+  /** One tick of the dialog's simulation, for the player alone. Returns true
+      if it moved the player itself, and the step is not to. */
+  function dbgTick(a,inp){
+    if(session||!a) return false;
+    a.fallDamage=DBG.fall?true:undefined;
+    a.invincible=DBG.inv||undefined;
+    if(!DBG.fly) return false;
+    var sp=DBG.flySpeed*TICK;
+    a.x+=inp.mx*sp; a.z+=inp.mz*sp;
+    if(input.down('jump')) a.y+=sp;
+    if(input.down('dodge')) a.y-=sp;
+    a.y=Math.max(-4,Math.min(QS.CEIL+30,a.y));
+    if(inp.mx||inp.mz){ var l=Math.sqrt(inp.mx*inp.mx+inp.mz*inp.mz); a.faceX=inp.mx/l; a.faceZ=inp.mz/l; }
+    a.vx=a.vy=a.vz=0; a.apex=a.y; a.grounded=false; a.dead=null;
+    return true;
+  }
+
+  /* ---------- the dialog's rows ---------- */
+  function dbgRow(parent,label,sub,k){
+    var lab=document.createElement('div'); lab.className='lab'; lab.textContent=label;
+    if(sub){ var sm=document.createElement('small'); sm.textContent=sub; lab.appendChild(sm); }
+    var seg=document.createElement('div'); seg.className='seg'; if(k) seg.dataset.k=k;
+    parent.appendChild(lab); parent.appendChild(seg);
+    return seg;
+  }
+  function dbgHead(text){
+    var h=document.createElement('div'); h.className='dbghead'; h.textContent=text; dbgBody.appendChild(h);
+    var rows=document.createElement('div'); rows.className='gfxrows'; dbgBody.appendChild(rows);
+    return rows;
+  }
+  function dbgToggle(rows,label,k,sub,sim){
+    var seg=dbgRow(rows,label,sub,k);
+    [[false,'Off'],[true,'On']].forEach(function(o){
+      var b=gfxButton(o[1],!!DBG[k]===o[0],function(){ dbgSet(k,o[0]); });
+      if(sim&&session) b.disabled=true;
+      seg.appendChild(b);
+    });
+    return seg;
+  }
+  function dbgRange(seg,min,max,step,val,fn,label){
+    var r=document.createElement('input'); r.type='range'; r.min=min; r.max=max; r.step=step; r.value=val;
+    r.setAttribute('aria-label',label); r.addEventListener('input',function(){ fn(+r.value); });
+    seg.appendChild(r); return r;
+  }
+  function dbgSync(){
+    var focus=document.activeElement&&dbgEl.contains(document.activeElement)?document.activeElement.textContent:null;
+    dbgBody.textContent='';
+    var s=!!session, seg, rows;
+
+    rows=dbgHead('World');
+    seg=dbgRow(rows,'Time of day',skyFix===null?'the clock runs':'held at '+dayClock(),'time');
+    dbgRange(seg,0,1439,5,Math.round((((skyNow.phase%1)+1)%1)*1440),function(v){ dbgTime(v); seg.previousSibling.querySelector('small').textContent='held at '+dayClock(); },'Time of day');
+    seg.appendChild(gfxButton('Clock',skyFix===null,function(){ dbgTime(skyFix===null?Math.round((((skyNow.phase%1)+1)%1)*1440):null); dbgSync(); }));
+    seg=dbgRow(rows,'Weather','only this window’s sky','wx');
+    [['','Seed'],['clear','Clear'],['rain','Rain'],['snow','Snow'],['fog','Fog']].forEach(function(o){
+      seg.appendChild(gfxButton(o[1],DBG.wx===o[0],function(){ dbgSet('wx',o[0]); })); });
+    seg=dbgRow(rows,'Grass height',null,'grassLen');
+    var gl=dbgRange(seg,5,120,1,Math.round(grassLen*100),function(v){ setGrassLength(v/100); DBG.grassLen=v/100; dbgSave(); },'Grass height');
+    gl.id='glen';
+    var gv=document.createElement('b'); gv.id='glenv'; gv.className='dbgv'; gv.textContent=Math.round(grassLen*100)+' cm'; seg.appendChild(gv);
+
+    rows=dbgHead('Chunks');
+    dbgToggle(rows,'Borders','borders','green loaded, orange next to go, blue building, grey waiting');
+    dbgToggle(rows,'Skirt','skirt','the 4 m each chunk is grown past its edge');
+
+    rows=dbgHead('Seeing');
+    seg=dbgRow(rows,'Cutaway',null,'cut');
+    [['auto','Auto'],['off','Off'],['force','Forced']].forEach(function(o){
+      seg.appendChild(gfxButton(o[1],DBG.cut===o[0],function(){ dbgSet('cut',o[0]); })); });
+    dbgToggle(rows,'Cut radius','cutRing');
+    dbgToggle(rows,'Freeze fade','cutFreeze');
+    dbgToggle(rows,'Hide outline','noOutline','the see-through silhouettes');
+    dbgToggle(rows,'Collision','collide','your box, the sword’s arc, the machines');
+    dbgToggle(rows,'Reach map','reach','ground the movement rules cannot reach');
+    dbgToggle(rows,'Feature map','feat','water, trails, each biome’s feature, sites');
+    dbgToggle(rows,'Wireframe','wire','terrain and props');
+    seg=dbgRow(rows,'Hide layers',null,'hide');
+    DBG_LAYERS.forEach(function(L){
+      seg.appendChild(gfxButton(L[0],!!DBG.hide[L[0]],function(){
+        var h=Object.assign({},DBG.hide); if(h[L[0]]) delete h[L[0]]; else h[L[0]]=true; dbgSet('hide',h); }));
+    });
+
+    rows=dbgHead('Moving');
+    dbgToggle(rows,'Fly','fly','through anything · jump up, dodge down',true);
+    seg=dbgRow(rows,'Fly speed',DBG.flySpeed+' m/s','flySpeed');
+    var fr=dbgRange(seg,2,40,1,DBG.flySpeed,function(v){ DBG.flySpeed=v; dbgSave(); seg.previousSibling.querySelector('small').textContent=v+' m/s'; },'Fly speed');
+    if(s) fr.disabled=true;
+    seg=dbgRow(rows,'Teleport','x, z in this world’s metres','tele');
+    var a=player(), tx=document.createElement('input'), tz=document.createElement('input');
+    [tx,tz].forEach(function(t,q){ t.type='number'; t.step='any'; t.className='dbgnum';
+      t.value=a?(q?a.z:a.x).toFixed(1):'0'; t.setAttribute('aria-label',q?'z':'x'); t.disabled=s; seg.appendChild(t); });
+    var go=gfxButton('Go',false,function(){ dbgTeleport(+tx.value,+tz.value); }); go.disabled=s; seg.appendChild(go);
+    dbgToggle(rows,'Fall damage','fall','a drop of more than '+QS.MOVE.fall+' m kills',true);
+    dbgToggle(rows,'Invincible','inv','no hurt, no magma, no fall',true);
+    seg=dbgRow(rows,'Respawn',null,'respawn');
+    var rb=gfxButton('Respawn',false,function(){ spawn(); }); rb.disabled=s; seg.appendChild(rb);
+
+    rows=dbgHead('Simulation');
+    seg=dbgRow(rows,'Time',null,'pause');
+    var pb=gfxButton(paused?'Paused':'Running',paused,function(){ paused=!paused; dbgSync(); });
+    var sb=gfxButton('Step',false,function(){ if(built) tick(); });
+    pb.disabled=s; sb.disabled=s||!paused; seg.appendChild(pb); seg.appendChild(sb);
+    seg=dbgRow(rows,'Speed',null,'speed');
+    [[0.1,'0.1×'],[0.25,'¼×'],[0.5,'½×'],[1,'1×']].forEach(function(o){
+      var b=gfxButton(o[1],DBG.speed===o[0],function(){ dbgSet('speed',o[0]); }); b.disabled=s; seg.appendChild(b); });
+    seg=dbgRow(rows,'Spawn','at the cursor, or ahead of you','spawn');
+    var mb=gfxButton('Machine',false,function(){ dbgSpawnFoe(); }), lb=gfxButton('Loot',false,function(){ dbgSpawnLoot(); });
+    mb.disabled=s; lb.disabled=s||!!(encounter&&encounter.loot.spoils.length>=16); seg.appendChild(mb); seg.appendChild(lb);
+    seg=dbgRow(rows,'Give module',null,'give');
+    var sel=document.createElement('select'); sel.className='dbgsel'; sel.setAttribute('aria-label','Module');
+    QS.MODULES.forEach(function(m,q){ var o=document.createElement('option'); o.value=q; o.textContent=m.name||m.nm||('module '+q); sel.appendChild(o); });
+    var gb=gfxButton('Give',false,function(){ dbgGive(+sel.value); }); sel.disabled=s; gb.disabled=s;
+    seg.appendChild(sel); seg.appendChild(gb);
+
+    if(s){ var note=document.createElement('p'); note.className='gfxnote';
+      note.textContent='In a two-player game the host decides what happens, so flying, pausing, spawning and the rest are off here. What only changes this window’s picture still works (#93).';
+      dbgBody.appendChild(note); }
+    if(focus){ var again=[].slice.call(dbgBody.querySelectorAll('button')).filter(function(b){ return b.textContent===focus; })[0]; if(again) again.focus(); }
+  }
+  function dbgNumbers(){
+    var a=player(), ri=renderer.info.render, mem=memNow(), lines=[];
+    lines.push(Math.round(fps)+' fps · '+costMs.toFixed(1)+' ms this thread');
+    lines.push(ri.calls+' draws · '+(ri.triangles/1000).toFixed(0)+'k triangles');
+    if(streaming&&nodes){
+      var nl=Object.keys(nodes).length, fl=pool&&pool.busy?pool.busy.filter(Boolean).length:0;
+      lines.push(nl+' chunks loaded · '+(stream?stream.pending:0)+' waiting · '+fl+' building'+(pool?' on '+pool.ws.length+' workers':' here'));
+    } else lines.push('one 64 m window');
+    lines.push('GPU '+mem.gpuMB+' MB in '+mem.buffers+' buffers, '+mem.textures+' textures'+(mem.heapMB!==null?' · heap '+mem.heapMB+' MB':''));
+    lines.push(QS_LABEL+' · seed '+(built&&built.cfg?built.cfg.seed:'?'));
+    if(a&&built){
+      var ch=QS.chunkAt(a.x,a.z), bio='';
+      try{ var g=built.data&&built.data.G, ox=streaming?0:(built.data.OX||0), oz=streaming?0:(built.data.OZ||0);
+        if(g) bio=QS.BIOMES[g.cell(Math.round(a.x+ox),Math.round(a.z+oz)).dom].nm; }catch(e){}
+      lines.push('chunk '+ch.cx+', '+ch.cz+(bio?' · '+bio:''));
+      var p=dbgCursor()||{x:a.x,y:a.y,z:a.z}, cur=!!dbgCursor(), top=terrainTop(p.x,p.z);
+      var mat=top===null?null:matUnder(p.x,top,p.z), mn=mat===null?'':((QS.MATERIALS[mat]&&(QS.MATERIALS[mat].name||QS.MATERIALS[mat].nm))||('material '+mat));
+      lines.push((cur?'cursor ':'under you ')+p.x.toFixed(1)+', '+p.z.toFixed(1)+' · ground '+(top===null?'none':top.toFixed(2)+' m')+(mn?' · '+mn:''));
+    }
+    dbgNums.textContent=lines.join('\n');
+  }
+  function dbgOpen(on){
+    if(on===dbgOpen.on) return;
+    dbgOpen.on=on; dbgEl.hidden=!on;
+    if(on){ input.releaseAll(); dbgSync(); dbgNumbers(); dbgTimer=setInterval(dbgNumbers,500);
+      var first=dbgBody.querySelector('button'); if(first) first.focus(); }
+    else { clearInterval(dbgTimer); dbgTimer=null; stage.focus(); }
+  }
+  dbgOpen.on=false;
+  document.getElementById('dbgdone').addEventListener('click',function(e){ e.stopPropagation(); dbgOpen(false); });
+  document.getElementById('dbgreset').addEventListener('click',function(e){
+    e.stopPropagation();
+    DBG=JSON.parse(JSON.stringify(DBG_DEF)); dbgSave();
+    cutOn=true; cutForce=false; cutSnap=true; paused=false;
+    dbgTime(null); applySky(true); dbgWire(); setGrassLength(GRASS_LEN_REF); dbgSync();
+  });
+  /* The panel keeps its own pointer and keys; the view around it is still
+     played, so a toggle can be watched as it happens. */
+  var dbgPanel=dbgEl.querySelector('.gfxp');
+  ['pointerdown','pointerup','pointermove','touchstart','contextmenu','wheel','click'].forEach(function(ev){
+    dbgPanel.addEventListener(ev,function(e){ e.stopPropagation(); },{passive:ev!=='contextmenu'});
+  });
+  dbgPanel.addEventListener('keydown',function(e){
+    e.stopPropagation();
+    if(e.key==='Escape'||e.code==='Backquote'){ e.preventDefault(); dbgOpen(false); }
+  });
+  dbgPanel.addEventListener('keyup',function(e){ e.stopPropagation(); });
+  /* A long press on the location bar, for a phone. */
+  (function(){
+    var t=null;
+    function cancel(){ if(t){ clearTimeout(t); t=null; } }
+    whereEl.addEventListener('pointerdown',function(e){ e.stopPropagation(); cancel(); t=setTimeout(function(){ t=null; dbgOpen(!dbgOpen.on); },600); });
+    ['pointerup','pointerleave','pointercancel'].forEach(function(ev){ whereEl.addEventListener(ev,cancel); });
+    whereEl.addEventListener('contextmenu',function(e){ e.preventDefault(); });
+  })();
+  /* What was remembered, put back. */
+  if(DBG.cut!=='auto'){ cutOn=DBG.cut!=='off'; cutForce=DBG.cut==='force'; }
+  if(DBG.time!==null&&DBG.time!==undefined) dbgTime(DBG.time);
+  if(DBG.grassLen) setGrassLength(DBG.grassLen,true);
+  /* Built once now, so the grass height's slider is there before the dialog
+     is first opened: a console, or the gate, may move it first. */
+  dbgSync();
 
   /* ---------- ambient life (#69) ----------
      Birds, fish, insects, frogs and lizards: drawn, never fought, and never

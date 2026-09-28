@@ -362,6 +362,15 @@ export function makeEncounter(col, world, posts) {
   return {
     enemies, targets, postCount, loot,
 
+    /** One more machine, standing where it is put — the debug dialog's
+        (#92). It is a target like the rest; it drops no spoil, because the
+        loot field was sized for the machines the world placed. */
+    add(x, z, fromY) {
+      const e = makeSentry(col, x, z, fromY);
+      enemies.push(e); targets.push(e);
+      return e;
+    },
+
     /** One tick: the machines act, then whatever the players cut takes it. */
     step(players, dt = TICK) {
       const budget = { left: 1 };

@@ -2588,7 +2588,7 @@ if (BROWSER_HALF) {
           P.setGfx('grassMode', 'classic'); const back = frame();
           return { was, open, rows, stepped, low, closed, saved, high, classic, lean, leanMode, back };
         });
-        check(gfx.open && gfx.rows === 15 && !gfx.stepped && gfx.closed,
+        check(gfx.open && gfx.rows === 14 && !gfx.stepped && gfx.closed,
               'SETTINGS: the gear opens every graphics setting over the view, keeps its keys, and Escape closes it',
               `${gfx.open ? 'open' : 'NOT open'}, ${gfx.rows} settings, a key inside it ${gfx.stepped ? 'MOVED the player' : 'moved nothing'}, `
               + `${gfx.closed ? 'closed' : 'still open'} on Escape`);
@@ -2605,6 +2605,44 @@ if (BROWSER_HALF) {
                 `${gfx.lean.grass.toLocaleString()} against ${gfx.classic.grass.toLocaleString()} grass triangles; `
                 + `mean colour within ${d.toFixed(2)} of 255`);
         }
+
+        /* ---------- DEBUG: the debug dialog (#92) ----------
+           Backtick opens it; every switch in it starts off; in a two-player
+           game — which this window is hosting — what would change what
+           happens is refused and what only draws still works; Escape closes
+           it. Fall damage, the switch in it that the movement budget cares
+           about, is asserted in the node half. */
+        const dbg = await bp.evaluate(() => {
+          const P = window.QSPLAY, dlg = document.getElementById('dbg');
+          document.querySelector('#cv').focus();
+          document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code: 'Backquote', key: '`', bubbles: true }));
+          const open = !dlg.hidden;
+          const seg = (k) => dlg.querySelector(`.seg[data-k="${k}"]`);
+          const pressed = (k) => [...seg(k).querySelectorAll('button[aria-pressed="true"]')].map((b) => b.textContent);
+          const toggles = [...dlg.querySelectorAll('.seg')].filter((g) => [...g.querySelectorAll('button')].some((b) => b.textContent === 'On'));
+          const onAtStart = toggles.filter((g) => pressed(g.dataset.k).includes('On')).map((g) => g.dataset.k);
+          const defaults = { wx: pressed('wx'), cut: pressed('cut'), hide: pressed('hide'), speed: pressed('speed') };
+          const sim = ['fly', 'fall', 'inv', 'respawn', 'pause', 'speed', 'spawn', 'give', 'tele'];
+          const live = sim.filter((k) => [...seg(k).querySelectorAll('button')].some((b) => !b.disabled));
+          [...seg('borders').querySelectorAll('button')].find((b) => b.textContent === 'On').click();
+          P.frameOnce();
+          let lines = 0;
+          P.scene.traverse((o) => { if (o.isLineSegments && o.parent && o.parent.userData.kind === 'debug') lines += o.geometry.attributes.position.count / 2; });
+          [...seg('borders').querySelectorAll('button')].find((b) => b.textContent === 'Off').click();
+          const nums = document.getElementById('dbgnums').textContent;
+          dlg.querySelector('.gfxp').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          return { open, toggles: toggles.length, onAtStart, defaults, live, lines, nums, closed: dlg.hidden };
+        });
+        check(dbg.open && dbg.closed && dbg.toggles >= 12 && dbg.onAtStart.length === 0
+              && dbg.defaults.wx[0] === 'Seed' && dbg.defaults.cut[0] === 'Auto' && dbg.defaults.hide.length === 0
+              && dbg.defaults.speed[0] === '1\u00d7',
+              'DEBUG: backtick opens the debug dialog with every switch off, and Escape closes it',
+              `${dbg.open ? 'open' : 'NOT open'}, ${dbg.toggles} switches, on at start: ${dbg.onAtStart.join(', ') || 'none'}, `
+              + `weather ${dbg.defaults.wx}, cutaway ${dbg.defaults.cut}, ${dbg.closed ? 'closed' : 'still open'} on Escape`);
+        check(dbg.live.length === 0 && dbg.lines > 20 && /fps/.test(dbg.nums),
+              'DEBUG: hosting, what would change the game is refused and what only draws still works',
+              `${dbg.live.length ? 'live: ' + dbg.live.join(', ') : 'every simulation control refused'}, `
+              + `${dbg.lines} chunk-border segments drawn, numbers ${/fps/.test(dbg.nums) ? 'shown' : 'MISSING'}`);
 
         await bp.screenshot({ path: join(OUT, 'play.png') });
         await peerPage.screenshot({ path: join(OUT, 'play-guest.png') });

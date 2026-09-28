@@ -217,7 +217,8 @@ export function heal(a, amount) {
 }
 
 export function hurt(a, amount, cause) {
-  if (!a || a.dead || a.hp === undefined || invulnerable(a)) return false;
+  /* `invincible` is the debug dialog's (#92), for one player alone. */
+  if (!a || a.dead || a.hp === undefined || invulnerable(a) || a.invincible) return false;
   a.hp -= amount;
   a.hurtT = HURT_TIME;
   if (a.hp <= 0) { a.hp = 0; a.dead = cause || 'struck'; }

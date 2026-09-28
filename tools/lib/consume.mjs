@@ -134,9 +134,9 @@ export const ONE_SIDED = [
   'bridges->play',    /* a deck is wood underfoot: the sound gate finds one (#36) */
   'lmPos->plate',
   'ovhPos->plate',
+  'sites->play',      /* where a trail was routed to: the debug dialog's feature map (#92) */
   'propStart->play',  /* where terrain ends and props begin — the mesher's split (#12) */
   'topi->plate',      /* the reach overlay recolours by top-voxel index */
   'trail->plate',
-  'unreach->plate',
   'WL->play',         /* the water's level there: a fish's surface, a frog's plop (#69) */
 ];
