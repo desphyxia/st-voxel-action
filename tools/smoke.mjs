@@ -2371,13 +2371,16 @@ if (BROWSER_HALF) {
           let sils = 0; P.scene.traverse((o) => { if (o.userData.kind === 'silhouette') sils++; });
           /* A wall uncut, for scale: terrain with the cut off and no silhouette. */
           const whole = sample(true, false, false);
-          /* A wall behind the player, with the cut forced open: nothing of it goes. */
+          /* A wall behind the player, with the cut forced open: nothing of it
+             goes. From the spawn, where the checks before have not walked the
+             player up against ground the forced cut would rightly open. */
+          P.respawn(); const backOpen = sample(false, false, false);
           const backCut = sample('behind', 'force', false), backWhole = sample('behind', false, false);
           P.testWall(false); P.setCut(true);
           return { open: { mean: open.mean }, cut: { mean: cut.mean }, prop: changed(prop, open), whole: changed(whole, open),
                    propVsWhole: changed(prop, whole), silShown: changed(sil, none),
                    cutShown: changed(cut, sample(true, true, false)), sils, openCut, wallCut,
-                   behind: changed(backCut, backWhole, open), behindWall: changed(backWhole, open) };
+                   behind: changed(backCut, backWhole, backOpen), behindWall: changed(backWhole, backOpen) };
         });
         {
           const d = (u, v) => Math.max(...u.mean.map((x, i) => Math.abs(x - v.mean[i])));
