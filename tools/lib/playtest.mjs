@@ -4371,3 +4371,70 @@ export function meadowSuite() {
   say('and round the golden meadow window too', gn >= 2, `${gn} enclosures within 128 m of ${gm.seed}'s window`);
   return out;
 }
+
+/**
+ * Nothing stands against a feature (#84): a ruin's pillars stand three
+ * metres from its site and its walls and fences run further, a landmark's
+ * standing stones four, and a tree or a boulder rooted just past an apron
+ * leans back over it — each of them a step onto a mesa, a hedge or a
+ * thicket.
+ *
+ * Every golden seed, its biome forced, searched region by region out from
+ * its window for sites within nine metres of a feature's face. Each is
+ * built, and no solid prop voxel that is not the feature's own stands more
+ * than a metre over the ground within two metres of the feature's face.
+ */
+const faceOf = (c) => (c.mesa === 1 || c.mesa === 2) || c.basalt === 1 || c.cliff === 2 || c.cliff === 3
+  || c.thorn === 2 || c.thorn === 3 || (c.rime >= 1 && c.rime <= 4) || c.spore === 1 || c.spore === 2
+  || c.glass === 2 || c.glass === 3 || c.glass === 5 || c.hedge === 1 || c.hedge === 2;
+export function stampSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const near = [], bad = [];
+  let looked = 0, voxels = 0;
+  for (const g of GOLDEN_SEEDS) {
+    if (g.force === null) continue;
+    const G = makeGen(g.seed, g.force), rx0 = regionOf(g.ox), rz0 = regionOf(g.oz);
+    let found = 0;
+    for (let d = 0; d <= 2 && found < 2; d++) for (let a = -d; a <= d && found < 2; a++) for (let b = -d; b <= d && found < 2; b++) {
+      if (Math.max(Math.abs(a), Math.abs(b)) !== d) continue;
+      for (const [sx, sz] of regionAt(G, rx0 + a, rz0 + b).sites) {
+        looked++;
+        let close = false;
+        for (let i = -9; i <= 9 && !close; i++) for (let j = -9; j <= 9 && !close; j++) if (faceOf(G.cell(sx + i, sz + j))) close = true;
+        if (!close) continue;
+        near.push(`${g.nm} ${sx},${sz}`); found++;
+        const w = buildWorld({ seed: g.seed, force: g.force, size: 64, ox: sx, oz: sz });
+        const cellAt = (x, z) => w.cells[Math.round(x + 32) * w.M + Math.round(z + 32)];
+        const face = (x, z) => { const i = Math.round(x + 32), j = Math.round(z + 32);
+          return i >= 0 && j >= 0 && i < w.M && j < w.M && faceOf(w.cells[i * w.M + j]); };
+        /* Any feature ground, apron included: a stamp near one keeps off all of
+           it, and what stands there is the feature's own. */
+        const feat = (x, z) => { const c = cellAt(x, z);
+          return !!(c.mesa || c.basalt || c.cliff || c.thorn || c.rime || c.spore || c.glass || c.hedge); };
+        const ps = w.propStart === undefined ? w.pos.length / 3 : w.propStart;
+        let hits = 0;
+        for (let q = ps; q < w.pos.length / 3; q++) {
+          const m = w.mat[q];
+          if (m === MAT.LEAF || m === MAT.SNOW) continue;
+          const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+          /* A prop voxel snaps a quarter-metre toward +x and +z on a tie, so the
+             feature's own can sit just over its cell's edge. */
+          if (Math.abs(x) > 30 || Math.abs(z) > 30 || feat(x, z) || feat(x - 0.26, z) || feat(x, z - 0.26)) continue;
+          /* Over the surface under it, a voxel column at a time, not the cell's
+             whole-metre height: a pebble on a ramp is not a step. */
+          const gi = Math.floor((x + 32) / V), gj = Math.floor((z + 32) / V);
+          const sy = gi >= 0 && gj >= 0 && gi < w.NX && gj < w.NZ ? w.Hs[gi * w.NZ + gj] : cellAt(x, z).H;
+          if (y < sy + 1) continue;
+          let by = false;
+          for (let i = -2; i <= 2 && !by; i++) for (let j = -2; j <= 2 && !by; j++) if (face(x + i, z + j)) by = true;
+          if (by) { hits++; voxels++; }
+        }
+        if (hits) bad.push(`${g.nm} site ${sx},${sz}: ${hits} voxels`);
+      }
+    }
+  }
+  say('nothing built or grown stands against a feature: no solid prop over a metre within two of a face', near.length >= 4 && bad.length === 0,
+      bad.length ? bad.slice(0, 6).join('; ') : `${near.length} sites near a feature of ${looked} looked at, none with a foothold`);
+  return out;
+}
