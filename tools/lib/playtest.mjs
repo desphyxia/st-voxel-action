@@ -98,6 +98,18 @@ function drop(d) {
   return march(c.finish(), placeOnGround(c, -3, 0), 900);
 }
 
+/* A bank beside deep water, `h` over its surface, and a swimmer pressing
+   into it: jump against the face, and again at the top if `twice`. */
+function bank(h, twice) {
+  const c = makeCollider(20, V), L = MOVE.wade + 0.75;
+  slab(c, -RIM, 0.3, 0); slab(c, 0.3, RIM, L + h);
+  c.setLiquid(-RIM, 0.3, -3, 3, LIQUID.WATER, L);
+  const a = march(c.finish(), placeOnGround(c, -3, 0), 900,
+                  (col, b) => (b.swimming && b.blocked) || (twice && !b.grounded && !b.swimming && b.airJumps > 0 && b.vy <= 0));
+  a.stood -= L;
+  return a;
+}
+
 function pool(kind, level) {
   const c = makeCollider(20, V);
   slab(c, -RIM, RIM, 0);
@@ -160,6 +172,17 @@ export function budgetSuite() {
 
   const w2 = pool(LIQUID.WATER, MOVE.wade + 0.25);
   say(`swims deeper`, w2.swimming, w2.swimming ? '' : 'still walking');
+
+  /* Out of deep water a jump is a jump from the surface, air jump and all:
+     a river between straight banks was a pit with no way out. */
+  const b1 = bank(MOVE.climb);
+  say(`climbs out of deep water onto a bank ${MOVE.climb} m over it`, b1.stood >= MOVE.climb - 0.01 && !b1.inWater,
+      `stood ${b1.stood.toFixed(2)} over the water, ${b1.inWater ? 'still in it' : 'out'}`);
+  const b2 = bank(MOVE.climb2, true);
+  say(`and onto ${MOVE.climb2} m with a double jump`, b2.stood >= MOVE.climb2 - 0.01 && b2.airJumped >= 1,
+      `stood ${b2.stood.toFixed(2)} over the water, ${b2.airJumped} in the air`);
+  const b3 = bank(MOVE.climb2 + 0.5, true);
+  say(`but not onto ${MOVE.climb2 + 0.5} m`, b3.stood < MOVE.climb2 + 0.49, `stood ${b3.stood.toFixed(2)} over the water`);
 
   const m1 = pool(LIQUID.MAGMA, 0);
   say('magma is lethal', m1.dead === 'magma', m1.dead || 'survived it');
@@ -4491,5 +4514,47 @@ export function stampSuite() {
   }
   say('nothing built or grown stands against a feature: no solid prop over a metre within two of a face', near.length >= 4 && bad.length === 0,
       bad.length ? bad.slice(0, 6).join('; ') : `${near.length} sites near a feature of ${looked} looked at, none with a foothold`);
+
+  /* Nothing of stone floats. A ruin's pillar, a hut's wall, a landmark's
+     standing stone or a boulder was stood on the ground at its centre, and at
+     a canyon's lip or a terrace's edge the rest of it hung over the drop — a
+     ring of stones six metres over a canyon floor at QUARTERSTONE -342,-441.
+     A stone voxel with nothing under it — no stone in the nine places below,
+     no ground within a voxel of its underside across the columns it spans,
+     no wall beside it at its height, as a foothold has — is floating. Over
+     the golden seeds, a window at the place that was reported, and the
+     self-test: a stone lifted two metres off a boulder is found. */
+  const floating = (w) => {
+    const n = w.pos.length / 3, ps = w.propStart === undefined ? n : w.propStart, found = [], solid = new Set();
+    const key = (x, y, z) => Math.round(x / V) + ',' + Math.round(y / V) + ',' + Math.round(z / V);
+    for (let q = 0; q < n; q++) solid.add(key(w.pos[q * 3], w.pos[q * 3 + 1], w.pos[q * 3 + 2]));
+    const top = (x, z) => { const i = Math.floor((x + w.half) / V), j = Math.floor((z + w.half) / V);
+      return i < 0 || j < 0 || i >= w.NX || j >= w.NZ ? NaN : w.Hs[i * w.NZ + j]; };
+    for (let q = ps; q < n; q++) {
+      const m = w.mat[q]; if (m !== MAT.ROCK && m !== MAT.BASALT) continue;
+      const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+      let held = false;
+      for (let a = -1; a <= 1 && !held; a++) for (let b = -1; b <= 1 && !held; b++) if (solid.has(key(x + a * V, y - V, z + b * V))) held = true;
+      if (held) continue;
+      let g = -Infinity, wall = false, off = false;
+      for (const dx of [-0.1, 0.1]) for (const dz of [-0.1, 0.1]) { const t = top(x + dx, z + dz); if (t !== t) off = true; else g = Math.max(g, t); }
+      for (const [dx, dz] of [[-0.3, 0], [0.3, 0], [0, -0.3], [0, 0.3]]) if (top(x + dx, z + dz) >= y) wall = true;
+      if (off || wall || y - V / 2 <= g + V + 0.01) continue;
+      found.push(`${(x + w.OX).toFixed(2)},${(y - V / 2 - g).toFixed(2)},${(z + w.OZ).toFixed(2)}`);
+    }
+    return found;
+  };
+  const fl = [];
+  const flw = GOLDEN_SEEDS.map((g) => [g.nm, buildWorld({ seed: g.seed, force: g.force, size: 64, ox: g.ox, oz: g.oz })]);
+  flw.push(['QUARTERSTONE -342,-441', buildWorld({ seed: 'QUARTERSTONE', size: 64, ox: -340, oz: -440 })]);
+  for (const [nm, w] of flw) { const f = floating(w); if (f.length) fl.push(`${nm}: ${f.length} (${f.slice(0, 2).join(' ')})`); }
+  const [, w0] = flw.find(([, w]) => { const ps = w.propStart === undefined ? w.pos.length / 3 : w.propStart;
+    for (let q = ps; q < w.pos.length / 3; q++) if (w.mat[q] === MAT.ROCK) return true; return false; });
+  const lift = { ...w0, pos: w0.pos.slice(), mat: w0.mat.slice() };
+  { const ps = lift.propStart === undefined ? lift.pos.length / 3 : lift.propStart;
+    for (let q = ps; q < lift.pos.length / 3; q++) if (lift.mat[q] === MAT.ROCK) { lift.pos[q * 3 + 1] += 8; break; } }
+  say('nothing of stone floats: every pillar, wall, standing stone and boulder stands on the ground under it',
+      fl.length === 0 && floating(lift).length === 1,
+      fl.length ? fl.join('; ') : `none over ${flw.length} windows; a stone lifted eight metres is found`);
   return out;
 }

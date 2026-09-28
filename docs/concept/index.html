@@ -3965,8 +3965,11 @@ function makeStamps(w) {
       }
     }
   }
+  /* A boulder settles to the lowest ground under it, buried on the high
+     side rather than hanging over the low one — by up to its own radius, to
+     a metre; past that it is on a lip, and is left out. */
   function boulder(px,pz,r,b,R){
-    var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
+    var y0=footing(px,pz,Math.ceil(r/V)*V,true,clamp(r,MOVE.step,1)); if(y0!==y0) return;
     for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
       if(nearTrail(px+ax,pz+az)) continue;
@@ -3977,6 +3980,7 @@ function makeStamps(w) {
     for(var q=0;q<n;q++){
       var sx=px+(R()-0.5)*2.4, sz=pz+(R()-0.5)*2.4, s=surfAt(sx,sz); if(s.f) continue;
       var n2=(R()<0.3)?2:1;
+      var y0=footing(sx,sz,n2*V,true); if(y0!==y0) continue; s={y:y0};
       for(var a=0;a<n2;a++)for(var b=0;b<n2;b++)for(var c2=0;c2<n2;c2++){
         if(nearTrail(sx+a*V,sz+b*V)) continue;
         addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickPal(BIOMES[dom].rock,R),0.8+R()*0.3,BIOMES[dom].mat.rock);
@@ -4032,40 +4036,57 @@ function makeStamps(w) {
     var dx=cos(ang),dz=sin(ang);
     for(var t2=0;t2<=len;t2+=V){
       if(R()<0.05){ t2+=0.75; continue; }
-      var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f||nearFeature(xx,zz)) continue;
+      var xx=px+dx*t2, zz=pz+dz*t2; if(nearFeature(xx,zz)) continue;
+      var y0=footing(xx,zz,0.25); if(y0!==y0) continue;
       var hh2=h*(0.55+0.45*Math.abs(sin(t2*0.7)));
-      for(var y2=0;y2<hh2;y2+=V)for(var b=-0.25;b<=0.25;b+=V){
+      for(var b=-0.25;b<=0.25;b+=V){
         if(onTrail(xx-dz*b,zz+dx*b)) continue;
-        addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickPal(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
+        for(var y2=surfAt(xx-dz*b,zz+dx*b).y-y0;y2<hh2;y2+=V)
+          addVox(xx-dz*b,y0+y2+V/2,zz+dx*b,pickPal(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
       }
     }
   }
+  /* The highest ground under a footprint, or NaN where it spans more than a
+     step or touches a flagged column. A piece was stood on the ground at its
+     centre, and at a canyon's lip or a terrace's edge the rest of it hung in
+     the air over the drop — six metres of ruin pillar over a canyon floor.
+     Where the ground under it varies by a step or less, each column is
+     founded on its own ground and rises to this. */
+  function footing(px,pz,r,low,tol){
+    var lo=Infinity, hi=-Infinity;
+    for(var a=-r;a<=r+1e-6;a+=V)for(var b=-r;b<=r+1e-6;b+=V){
+      var s=surfAt(px+a,pz+b); if(s.f&3) return NaN;
+      if(s.y<lo) lo=s.y; if(s.y>hi) hi=s.y;
+    }
+    return hi-lo>(tol||MOVE.step)+1e-6 ? NaN : (low ? lo : hi);
+  }
   function pillarRuin(px,pz,h,dom,R){
-    var s=surfAt(px,pz); if(s.f||nearFeature(px,pz)) return;
+    if(nearFeature(px,pz)) return;
+    var y0=footing(px,pz,0.5); if(y0!==y0) return;
     for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V){
       if(onTrail(px+b1,pz+b2)) continue;
-      addVox(px+b1,s.y+V/2,pz+b2,pickPal(BIOMES[dom].rock,R),0.95,BIOMES[dom].mat.rock);
+      var k=pickPal(BIOMES[dom].rock,R);
+      for(var yf=surfAt(px+b1,pz+b2).y;yf<=y0;yf+=V) addVox(px+b1,yf+V/2,pz+b2,k,0.95,BIOMES[dom].mat.rock);
     }
     for(var y2=V;y2<h;y2+=V){
       var rr2=(y2>h-0.6&&R()<0.5)?0.25:0.375;
       for(var a1=-rr2;a1<=rr2;a1+=V)for(var a2=-rr2;a2<=rr2;a2+=V){
         if(onTrail(px+a1,pz+a2)) continue;
-        addVox(px+a1,s.y+y2+V/2,pz+a2,pickPal(BIOMES[dom].rock,R),0.88+R()*0.22,BIOMES[dom].mat.rock);
+        addVox(px+a1,y0+y2+V/2,pz+a2,pickPal(BIOMES[dom].rock,R),0.88+R()*0.22,BIOMES[dom].mat.rock);
       }
     }
   }
   function hut(px,pz,dom,R){
-    var s=surfAt(px,pz); if(s.f) return;
-    var w=3.0,h=2.25;
+    var w=3.0,h=2.25, y0=footing(px,pz,w/2); if(y0!==y0) return;
     for(var a=-w/2;a<=w/2;a+=V)for(var b=-w/2;b<=w/2;b+=V){
       if(Math.abs(a)<w/2-V&&Math.abs(b)<w/2-V) continue;
       if(a>-0.6&&a<0.6&&b>w/2-V) continue;
       var hh2=h*(R()<0.22?0.45+R()*0.4:1);
       if(onTrail(px+a,pz+b)) continue;
-      for(var y2=0;y2<hh2;y2+=V) addVox(px+a,s.y+y2+V/2,pz+b,pickPal(BIOMES[dom].rock,R),0.88+R()*0.2,BIOMES[dom].mat.rock);
+      for(var y2=surfAt(px+a,pz+b).y-y0;y2<hh2;y2+=V) addVox(px+a,y0+y2+V/2,pz+b,pickPal(BIOMES[dom].rock,R),0.88+R()*0.2,BIOMES[dom].mat.rock);
     }
     for(var a2=-w/2;a2<=w/2;a2+=V)for(var b2=-w/2;b2<=w/2;b2+=V)
-      if(R()<0.3) addVox(px+a2,s.y+h+V/2,pz+b2,PAL.HUT_ROOF.at,0.9,MAT.WOOD);
+      if(R()<0.3) addVox(px+a2,y0+h+V/2,pz+b2,PAL.HUT_ROOF.at,0.9,MAT.WOOD);
   }
   function deckBridge(px,pz,di,dj,len,y,R){
     for(var t2=-len/2;t2<=len/2;t2+=V)for(var b=-0.75;b<=0.75;b+=V)
@@ -4079,7 +4100,7 @@ function makeStamps(w) {
       addVox(rx2,y+0.5,rz2,PAL.DECK_RAIL.at,0.95,MAT.WOOD);
     }
   }
-  return { addVox: addVox, addEm: addEm, surfAt: surfAt, onTrail: onTrail, nearFeature: nearFeature, tree: tree, boulder: boulder, scree: scree,
+  return { addVox: addVox, addEm: addEm, surfAt: surfAt, footing: footing, onTrail: onTrail, nearFeature: nearFeature, tree: tree, boulder: boulder, scree: scree,
            bush: bush, stump: stump, fallenTrunk: fallenTrunk, fence: fence, lamp: lamp,
            wallRun: wallRun, pillarRuin: pillarRuin, hut: hut, deckBridge: deckBridge };
 }
@@ -4238,13 +4259,16 @@ function placeClutter(w, kit) {
 function placeLandmark(w, kit) {
   var half = w.half, G = w.G,
       OX = w.OX, OZ = w.OZ,
-      addVox = kit.addVox, addEm = kit.addEm, onTrail = kit.onTrail, nearFeature = kit.nearFeature;
+      addVox = kit.addVox, addEm = kit.addEm, onTrail = kit.onTrail, nearFeature = kit.nearFeature,
+      surfAt = kit.surfAt, footing = kit.footing;
   var lmPos=null;
   function landmarkStamp(px,pz,kind,dom,base,R){
     var a,b,y2,r2;
     if(kind===0){                                   /* obelisk */
+      /* Its plinth is founded on the ground under each of its columns. */
       for(a=-1;a<=1;a+=V)for(b=-1;b<=1;b+=V){ if(onTrail(px+a,pz+b)) continue;
-        addVox(px+a,base+V/2,pz+b,pickPal(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock); }
+        var kp=pickPal(BIOMES[dom].rock,R), sp=0.9+R()*0.2;
+        for(y2=Math.min(surfAt(px+a,pz+b).y,base);y2<=base;y2+=V) addVox(px+a,y2+V/2,pz+b,kp,sp,BIOMES[dom].mat.rock); }
       for(y2=V;y2<11;y2+=V){
         r2=0.5*(1-y2/16);
         for(a=-r2;a<=r2;a+=V)for(b=-r2;b<=r2;b+=V){ if(onTrail(px+a,pz+b)) continue;
@@ -4278,9 +4302,13 @@ function placeLandmark(w, kit) {
         /* A stone stands four metres out, past what the landmark's ground was
            checked for: not beside a feature, where it is a step (#84). */
         if(nearFeature(sx,sz2)) continue;
+        /* And on its own ground, not the landmark's: stood at the landmark's
+           height, a stone past a canyon's lip hung six metres over its floor. */
+        var g0=footing(sx,sz2,0.375); if(g0!==g0) continue;
         for(y2=0;y2<sh;y2+=V)for(a=-0.375;a<=0.375;a+=V)for(b=-0.25;b<=0.25;b+=V){
           if(onTrail(sx+a,sz2+b)) continue;
-          addVox(sx+a,base+y2+V/2,sz2+b,pickPal(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock); }
+          var yb=y2===0?surfAt(sx+a,sz2+b).y-g0:y2;
+          for(var yy=yb;yy<=y2;yy+=V) addVox(sx+a,g0+yy+V/2,sz2+b,pickPal(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock); }
       }
     }
   }

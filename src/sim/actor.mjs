@@ -102,6 +102,8 @@ export function makeActor(x, y, z, rad) {
     /** Counted for anything tallying verbs: jumps from the ground, and in the air. */
     jumps: 0, airJumped: 0,
     inWater: false, swimming: false,
+    /** Rising out of deep water from a jump: buoyancy lets go until it falls. */
+    kick: false,
     /** Where it is looking. Aim drives this when there is aim; otherwise the
         direction of travel does. Phase 0 uses it for nothing but the model's
         heading — issue #1 decides what aim means once there is an ability. */
@@ -161,7 +163,7 @@ export function snapshot(a) {
     x: a.x, y: a.y, z: a.z, vx: a.vx, vy: a.vy, vz: a.vz,
     grounded: a.grounded, apex: a.apex,
     airJumps: a.airJumps, jumps: a.jumps, airJumped: a.airJumped,
-    inWater: a.inWater, swimming: a.swimming,
+    inWater: a.inWater, swimming: a.swimming, kick: a.kick,
     faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
     hp: a.hp, maxHp: a.maxHp, hurtT: a.hurtT,
     stamina: a.stamina, staminaHold: a.staminaHold,
@@ -182,7 +184,7 @@ export function restore(a, s) {
   a.grounded = s.grounded; a.apex = s.apex;
   a.airJumps = s.airJumps === undefined ? 1 : s.airJumps;
   a.jumps = s.jumps || 0; a.airJumped = s.airJumped || 0;
-  a.inWater = s.inWater; a.swimming = s.swimming;
+  a.inWater = s.inWater; a.swimming = s.swimming; a.kick = !!s.kick;
   a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
   if (s.gear) { applyGearWire(a.gear, s.gear); a.st = a.gear.st; }
   a.hp = s.hp; a.maxHp = s.maxHp === undefined ? a.st.maxHp : s.maxHp;
@@ -291,7 +293,10 @@ export function step(col, a, input, targets, dt = TICK) {
 
   const submerged = liquid.kind === LIQUID.WATER ? liquid.level - a.y : 0;
   a.inWater = submerged > EPS;
-  a.swimming = submerged > MOVE.wade;
+  /* A jump out of deep water rises under gravity like any other, and the
+     water takes the body back only once it starts to fall. */
+  if (a.kick && (a.vy <= 0 || a.grounded)) a.kick = false;
+  a.swimming = submerged > MOVE.wade && !a.kick;
 
   /* ---- intent ---- */
   if (a.dodge) {
@@ -318,7 +323,13 @@ export function step(col, a, input, targets, dt = TICK) {
   if (input.jump && !a.swing && !a.dodge && a.canJump !== false) {
     if (a.grounded || a.swimming) {
       const jv = a.rad === ACTOR.radius ? JUMP_V : jumpVFor(a.rad);
-      a.vy = a.swimming ? jv * 0.35 : jv;
+      /* From deep water the jump is a jump from the surface: a kick that
+         reaches as high over the water as a jump from the ground reaches
+         over the ground, with the air jump still in hand. It was a third of
+         a jump, which buoyancy undid on the next tick, so a river between
+         straight banks was a pit with no way out. */
+      a.vy = a.swimming ? Math.sqrt(jv * jv + 2 * GRAVITY * Math.max(0, liquid.level - a.y)) : jv;
+      if (a.swimming) { a.kick = true; a.swimming = false; }
       a.grounded = false;
       a.apex = a.y;
       a.jumps++;
