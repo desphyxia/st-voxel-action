@@ -1314,6 +1314,22 @@ function makeGen(seedStr,force){
       st.push(a0);
       if(top-g<=1) break;
     }
+    /* The shortcut (#75): on a route of four stones or more, one more 2 x 2
+       stone against the side of the line, two metres under the third from
+       the bottom and within a double jump of the ground under it. Two
+       double jumps — onto it, and from it onto that stone — take the place
+       of the climb over the stones below. It is a way up the
+       stones, never past them: it stands beside the line, and the nearest
+       stone to the wall is two metres out from it. */
+    var sc=null;
+    if(st.length>=4){
+      var m=st.length-3, sa=st[m], sh=T-m-3, sg=-1e9;
+      for(q=0;q<2;q++) for(p=2;p<=3;p++){
+        var gh2=Math.round(rawH(cx+dir[0]*(sa+q)+(dir[0]?0:p), cz+dir[1]*(sa+q)+(dir[1]?0:p)));
+        if(gh2>sg) sg=gh2;
+      }
+      if(sh-sg>=1&&sh-sg<=2) sc={a:sa,h:sh,m:m};
+    }
     /* A river through the rock would cut the top in two, and the half without
        the stones would be out of reach for good; a gorge through the apron
        would stop against it in a wall, a pocket with no way out, and one
@@ -1323,7 +1339,7 @@ function makeGen(seedStr,force){
     for(n=r+1;n<=r+MESA_APRON+3*st.length;n++) for(p=-MESA_APRON;p<=MESA_APRON+1;p++){
       if(mesaWet(cx+dir[0]*n+(dir[0]?0:p), cz+dir[1]*n+(dir[1]?0:p))) return null;
     }
-    return {cx:cx,cz:cz,rx:rx,rz:rz,T:T,dx:dir[0],dz:dir[1],st:st};
+    return {cx:cx,cz:cz,rx:rx,rz:rz,T:T,dx:dir[0],dz:dir[1],st:st,sc:sc};
   }
   function mesaWet(x,z){
     if(riverAt(x,z).d<6) return true;
@@ -1346,6 +1362,7 @@ function makeGen(seedStr,force){
       if(ac>=0&&ac<=1&&al>0){
         for(var n=0;n<s.st.length;n++) if(al>=s.st[n]&&al<=s.st[n]+1) return {h:s.T-n-1,kind:2};
       }
+      if(s.sc&&ac>=2&&ac<=3&&al>=s.sc.a&&al<=s.sc.a+1) return {h:s.sc.h,kind:2};
       var lim=(s.dx?s.rx:s.rz)+MESA_APRON+3*s.st.length;
       if(Math.abs(dx)<=s.rx+MESA_APRON&&Math.abs(dz)<=s.rz+MESA_APRON) apron=true;
       else if(al>0&&al<=lim&&ac>=-MESA_APRON&&ac<=MESA_APRON+1) apron=true;

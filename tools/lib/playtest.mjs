@@ -3456,8 +3456,11 @@ export function mesaSuite() {
         walls++; if (S[k] - S[r] <= MOVE.climb2) low++;
       }
     }
+    /* `stones`: all of them, none, or a test of which stone cells stand. */
     const flood = (back, stones) => {
-      const ok = (k) => dry[k] && (stones || kind[k] !== 2);
+      const ok = typeof stones === 'function'
+        ? (k) => dry[k] && (kind[k] !== 2 || stones(k))
+        : (k) => dry[k] && (stones || kind[k] !== 2);
       const seen = new Uint8Array(N * N), q = [];
       for (let k = 0; k < N * N; k++) if (ok(k) && kind[k] !== 1 && kind[k] !== 2) { seen[k] = 1; q.push(k); }
       for (let h = 0; h < q.length; h++) {
@@ -3485,7 +3488,26 @@ export function mesaSuite() {
       if (t.cells.some((k) => down[k])) left++;
       if (t.cells.some((k) => bare[k])) cheat++;
     }
-    rows.push({ seed, whole, reached, left, cheat, walls, low });
+    /* The shortcuts (#75): take away every stone under the one a shortcut
+       climbs to, keep the shortcut, and its top is still reached. */
+    let short = 0, shortOk = 0;
+    for (const t of tops) {
+      if (t.edge) continue;
+      const k0 = t.cells[0], s = G.mesaOver(((k0 / N) | 0) - R, (k0 % N) - R);
+      if (!s || !s.sc) continue;
+      short++;
+      const keep = (k) => {
+        const dx = ((k / N) | 0) - R - s.cx, dz = (k % N) - R - s.cz;
+        const al = dx * s.dx + dz * s.dz, ac = s.dx ? dz : dx;
+        if (al < s.st[0] || al > s.st[s.st.length - 1] + 1 || ac < 0 || ac > 4) return true;
+        if (ac >= 2) return al >= s.sc.a && al <= s.sc.a + 1;
+        for (let n = 0; n < s.st.length; n++) if (al >= s.st[n] && al <= s.st[n] + 1) return n <= s.sc.m;
+        return true;
+      };
+      const via = flood(false, keep);
+      if (t.cells.some((k) => via[k])) shortOk++;
+    }
+    rows.push({ seed, whole, reached, left, cheat, walls, low, short, shortOk });
   }
   const all = (f) => rows.every(f), tell = (f) => rows.map((r) => `${r.seed} ${f(r)}`).join('; ');
   say('mesas stand in the redrock', all((r) => r.whole >= 4), tell((r) => `${r.whole} whole mesas`));
@@ -3497,6 +3519,9 @@ export function mesaSuite() {
       all((r) => r.low === 0), tell((r) => `${r.low} of ${r.walls} wall edges within ${MOVE.climb2} m`));
   say('and climbed by its stones: every top is reached, and left, from the ground',
       all((r) => r.reached === r.whole && r.left === r.whole), tell((r) => `${r.reached}/${r.whole} reached, ${r.left}/${r.whole} left`));
+  say('and a long route has a shortcut: two double jumps in place of its lowest stones',
+      rows.reduce((a, r) => a + r.short, 0) >= 3 && all((r) => r.shortOk === r.short),
+      tell((r) => `${r.shortOk}/${r.short} tops reached by their shortcut`));
   say('and by nothing else: take the stones away and no top is reached',
       all((r) => r.cheat === 0), tell((r) => `${r.cheat} reached without them`));
 
