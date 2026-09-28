@@ -692,3 +692,26 @@ export function placeHedges(w, kit) {
     }
   }
 }
+
+/**
+ * A mesa's footholds (#75), stamped wherever they fall in this window: two
+ * voxels of the redrock's own rock stacked against the face, their top the
+ * height the field gave. Drawn from the site, not the window, so a foothold
+ * on a seam is the same voxel from both sides.
+ */
+export function placeMesaNubs(w, kit) {
+  var half = w.half, G = w.G, OX = w.OX, OZ = w.OZ, addVox = kit.addVox;
+  if (!G.mesasNear) return;
+  var rock = BIOMES[BIO.MESA].rock, mat = BIOMES[BIO.MESA].mat.rock;
+  var ms = G.mesasNear(OX - half, OZ - half, OX + half, OZ + half);
+  for (var q = 0; q < ms.length; q++) {
+    var nubs = ms[q].nubs || [];
+    for (var n = 0; n < nubs.length; n++) {
+      var x = nubs[n][0] - OX, y = nubs[n][1], z = nubs[n][2] - OZ;
+      if (x < -half || z < -half || x >= half || z >= half) continue;
+      var R = G.pstream(PASS.NUB, Math.round(nubs[n][0] / V), Math.round(nubs[n][2] / V));
+      addVox(x, y - V / 2, z, pickPal(rock, R), 0.9 + R() * 0.2, mat);
+      addVox(x, y - 1.5 * V, z, pickPal(rock, R), 0.8 + R() * 0.2, mat);
+    }
+  }
+}

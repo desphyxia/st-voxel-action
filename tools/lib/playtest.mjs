@@ -3488,26 +3488,7 @@ export function mesaSuite() {
       if (t.cells.some((k) => down[k])) left++;
       if (t.cells.some((k) => bare[k])) cheat++;
     }
-    /* The shortcuts (#75): take away every stone under the one a shortcut
-       climbs to, keep the shortcut, and its top is still reached. */
-    let short = 0, shortOk = 0;
-    for (const t of tops) {
-      if (t.edge) continue;
-      const k0 = t.cells[0], s = G.mesaOver(((k0 / N) | 0) - R, (k0 % N) - R);
-      if (!s || !s.sc) continue;
-      short++;
-      const keep = (k) => {
-        const dx = ((k / N) | 0) - R - s.cx, dz = (k % N) - R - s.cz;
-        const al = dx * s.dx + dz * s.dz, ac = s.dx ? dz : dx;
-        if (al < s.st[0] || al > s.st[s.st.length - 1] + 1 || ac < 0 || ac > 4) return true;
-        if (ac >= 2) return al >= s.sc.a && al <= s.sc.a + 1;
-        for (let n = 0; n < s.st.length; n++) if (al >= s.st[n] && al <= s.st[n] + 1) return n <= s.sc.m;
-        return true;
-      };
-      const via = flood(false, keep);
-      if (t.cells.some((k) => via[k])) shortOk++;
-    }
-    rows.push({ seed, whole, reached, left, cheat, walls, low, short, shortOk });
+    rows.push({ seed, whole, reached, left, cheat, walls, low });
   }
   const all = (f) => rows.every(f), tell = (f) => rows.map((r) => `${r.seed} ${f(r)}`).join('; ');
   say('mesas stand in the redrock', all((r) => r.whole >= 4), tell((r) => `${r.whole} whole mesas`));
@@ -3519,9 +3500,6 @@ export function mesaSuite() {
       all((r) => r.low === 0), tell((r) => `${r.low} of ${r.walls} wall edges within ${MOVE.climb2} m`));
   say('and climbed by its stones: every top is reached, and left, from the ground',
       all((r) => r.reached === r.whole && r.left === r.whole), tell((r) => `${r.reached}/${r.whole} reached, ${r.left}/${r.whole} left`));
-  say('and a long route has a shortcut: two double jumps in place of its lowest stones',
-      rows.reduce((a, r) => a + r.short, 0) >= 3 && all((r) => r.shortOk === r.short),
-      tell((r) => `${r.shortOk}/${r.short} tops reached by their shortcut`));
   say('and by nothing else: take the stones away and no top is reached',
       all((r) => r.cheat === 0), tell((r) => `${r.cheat} reached without them`));
 
@@ -3539,6 +3517,12 @@ export function mesaSuite() {
       const x = -32 + (i + 0.5) * V, z = -32 + (j + 0.5) * V;
       h[i * M + j] = col.supportUnder(x, z, 0.01, CEIL * 2);
       k2[i * M + j] = G.cell(Math.round(x) + t.cx, Math.round(z) + t.cz).mesa || 0;
+    }
+    /* The footholds up a wall (#75) are a way up by design, like the stones:
+       they are taken away with them here, and climbed below. */
+    for (const m of G.mesasNear(t.cx - 32, t.cz - 32, t.cx + 32, t.cz + 32)) for (const [x, , z] of m.nubs) {
+      const i = Math.round((x - t.cx + 32) / V), j = Math.round((z - t.cz + 32) / V);
+      if (i >= 0 && j >= 0 && i < M && j < M) k2[i * M + j] = 2;
     }
     const seen = new Uint8Array(M * M), q = [];
     for (let k = 0; k < M * M; k++) {
@@ -3558,6 +3542,52 @@ export function mesaSuite() {
   }
   say('and in a built world too: grading, repairs and props give no other way up',
       built.length >= 6 && cheats.length === 0, cheats.length ? cheats.join('; ') : `${built.length} mesas built, none reached without the stones`);
+
+  /* The shortcut (#75): a body at the foot of a wall, under its first
+     foothold, double jumps onto each in turn and from the last onto the top,
+     never touching a stone. */
+  const shorts = [], stuck = [];
+  for (const [seed, G, t] of built) {
+    const s = G.mesaOver(t.cx, t.cz);
+    if (!s || !s.nubs.length || shorts.length >= 4) continue;
+    shorts.push(s);
+    const w = buildWorld({ seed, size: 64, ox: s.cx, oz: s.cz }), col = colliderForWorld(w);
+    /* Which way is out of the wall, and where each foothold's top is. */
+    const n0 = s.nubs[0], alongX = s.dx !== 0;
+    const out = alongX ? Math.sign(n0[2] - s.cz) : Math.sign(n0[0] - s.cx);
+    const outV = alongX ? [0, out] : [out, 0];
+    /* Where a body stands on each: over the foothold's column, pressed to
+       the wall — the actor does not slide, so steering into the face stops
+       it dead. */
+    const holds = s.nubs.map(([x, y, z]) => [x - s.cx + V / 2 + outV[0] * 0.3, y, z - s.cz + V / 2 + outV[1] * 0.3]);
+    const st = [holds[0][0] + outV[0] * 1.2, holds[0][2] + outV[1] * 1.2];
+    const g0 = w.cells[Math.round(st[0] + 32) * w.M + Math.round(st[1] + 32)].H;
+    const b = placeOnGround(col, st[0], st[1], g0 + 1.5);
+    let reached = 0;
+    for (const hold of [...holds, null]) {
+      const [hx, hy, hz] = hold || [null, null, null];
+      /* Aim at the foothold, or for the top a metre in past the wall. */
+      const tx = hx === null ? b.x - outV[0] * 1.5 : hx, tz = hx === null ? b.z - outV[1] * 1.5 : hz;
+      const ty = hx === null ? s.T : hy;
+      let ok = false;
+      for (let tries = 0; tries < 3 && !ok && !b.dead; tries++) {
+        for (let tk = 0; tk < 150 && !b.dead; tk++) {
+          const dx = tx - b.x, dz = tz - b.z, d = hyp(dx, dz);
+          if (b.grounded && b.y >= ty - 0.3 && d < 0.8) { ok = true; break; }
+          const j = (b.grounded && tk > 1) || (!b.grounded && b.airJumps > 0 && b.vy <= 0);
+          /* Up first, then over: drifting across under the next foothold
+             puts a shoulder into it. */
+          const sp = d > 0.05 && (b.y > ty - 0.1 || d > 1.3) ? Math.min(1, d / 0.4) : 0;
+          step(col, b, { mx: sp * dx / (d || 1), mz: sp * dz / (d || 1), jump: j });
+        }
+      }
+      if (!ok) break;
+      reached++;
+    }
+    if (reached < s.nubs.length + 1) stuck.push(`${seed} ${s.cx},${s.cz}: ${reached} of ${s.nubs.length} footholds and the top, ended ${b.x.toFixed(1)},${b.y.toFixed(2)},${b.z.toFixed(1)}`);
+  }
+  say('and a double-jump shortcut up a wall: a body climbs its footholds onto the top', shorts.length >= 3 && stuck.length === 0,
+      stuck.length ? stuck.join('; ') : `${shorts.length} walls climbed by ${shorts.map((s) => s.nubs.length).join('/')} footholds`);
 
   /* And a body does it, on a built window rather than the cell field: the
      surface pass must leave every stone a face with a lip to leave from. The
