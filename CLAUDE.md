@@ -89,9 +89,11 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`88f9714`** (thicket looks #80/PR #86, nothing against a feature
-#84/PR #87, mesa shortcuts #75/PR #88) at **version 51**, stamped; concept from the same commit
-at **version 35**. Neither needed force, both published earlier in the same session. Before that,
+Play is published from **`566e695`** (mesa footholds instead of a shortcut block, #75/PR #89)
+at **version 52**, stamped; concept from the same commit at **version 36**. Both were refused as
+the session's first after a context reset, diffed identical to `88f9714`, and were forced on the
+user's word on 2026-09-28. Before that, `88f9714` (thicket looks #80/PR #86, nothing against a
+feature #84/PR #87, mesa shortcuts #75/PR #88) was play version 51 and concept version 35. Before that,
 `208d534` (#76 complete: Rimewaste #81, Sporeverge #82, Glasslands #83, Meadowlands #85) was play
 version 50 and concept version 34, forced on the user's word on 2026-09-28 after both live
 copies diffed identical to `e923cdd`. Before that, `e923cdd` (#76 Thornwood, PR
