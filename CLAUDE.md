@@ -89,10 +89,12 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`208d534`** (#76 complete: Rimewaste #81, Sporeverge #82, Glasslands
-#83, Meadowlands #85) at **version 50**, stamped; concept from the same commit at **version 34**.
-Both were refused as the session's first, both live copies diffed identical to `e923cdd`, and
-both were forced on the user's word on 2026-09-28. Before that, `e923cdd` (#76 Thornwood, PR
+Play is published from **`88f9714`** (thicket looks #80/PR #86, nothing against a feature
+#84/PR #87, mesa shortcuts #75/PR #88) at **version 51**, stamped; concept from the same commit
+at **version 35**. Neither needed force, both published earlier in the same session. Before that,
+`208d534` (#76 complete: Rimewaste #81, Sporeverge #82, Glasslands #83, Meadowlands #85) was play
+version 50 and concept version 34, forced on the user's word on 2026-09-28 after both live
+copies diffed identical to `e923cdd`. Before that, `e923cdd` (#76 Thornwood, PR
 #79) was play version 49 and concept version 33. Before that, `7d1561a` (Cloudpine, PR #78; the terrain-only cutaway, the
 phone-sized location bar and its time of day) was play version 48 and concept version 32.
 Before that, `4d5ec85` (Ashfall, PR #77) was play version 47 and concept version 31. Before that, `5c8a086` (#73–#75) was play version 46 and concept version 30: play went
