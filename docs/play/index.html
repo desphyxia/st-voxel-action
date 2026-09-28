@@ -10276,7 +10276,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /* Where each player stands, for the cutaway, and which way the camera
      looks. Never in a plate: those are the world alone, for the look gate. */
   /* How far each player's cut is open, 0 to 1. It opens only while the
-     ground actually stands between the camera and their chest or head, and
+     ground actually stands between the camera and the top of their head, and
      eases open and shut over a few frames rather than blinking: a rim that
      hid only their legs cut a hole anyway, and the silhouette already shows
      legs. `cutSnap` jumps straight to the answer, for the gate. */
@@ -10289,14 +10289,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   }
   function cutOcc(a){
     if(testWallM&&testWallM.userData.kind==='terrain') return true;
-    var V=QS.V;
-    for(var h=0;h<2;h++){
-      var py=a.y+(h?1.6:1.0);
-      for(var t=0.5;t<30;t+=V){
-        var y=py-cutF.y*t; if(y>QS.CEIL) break;
-        var top=terrainTop(a.x-cutF.x*t,a.z-cutF.z*t); if(top===null) break;
-        if(y<top-0.05) return true;
-      }
+    /* The top of the head, and only that: while any of the head shows, the
+       player can be followed, and a hole cut round them was uglier than what
+       it revealed. A body hidden below the head has its silhouette. The
+       ground has to stand a quarter-metre into the line of sight, so a lip
+       the line only grazes does not open it. */
+    var V=QS.V, py=a.y+1.7;
+    for(var t=0.5;t<30;t+=V){
+      var y=py-cutF.y*t; if(y>QS.CEIL) break;
+      var top=terrainTop(a.x-cutF.x*t,a.z-cutF.z*t); if(top===null) break;
+      if(y<top-0.25) return true;
     }
     return false;
   }
@@ -14920,19 +14922,19 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get cut(){ var a=player(); return {a:cutS[0],b:cutS[1],hidden:!!a&&cutOcc(a)}; },
     /* The cut's dark faces shown or not, for the gate to diff a frame both ways. */
     setCaps:function(on){ capOff=!on; return !!on; },
-    /* Stand the player at the foot of a bank two and a half metres or more on
-       the camera's side of them, somewhere loaded near where they are: a
-       place the cut has to open on rock. Null if there is none in reach. */
+    /* Stand the player on flat ground where the ground on the camera's side
+       hides even the top of their head, somewhere loaded near where they
+       are: a place the cut has to open on rock. Null if there is none. */
     cutSpot:function(){
       var a=player(); if(!a) return null; camera.getWorldDirection(cutF);
-      var hx=-cutF.x, hz=-cutF.z, hl=Math.sqrt(hx*hx+hz*hz)||1; hx/=hl; hz/=hl;
       for(var r=0;r<=40;r+=1)for(var i=-r;i<=r;i++)for(var j=-r;j<=r;j++){
         if(Math.max(Math.abs(i),Math.abs(j))!==r) continue;
         var x=Math.round(a.x)+i+0.5, z=Math.round(a.z)+j+0.5, y=terrainTop(x,z), ok=y!==null;
         for(var u=-0.5;ok&&u<=0.5;u+=0.25)for(var v=-0.5;ok&&v<=0.5;v+=0.25){ var t=terrainTop(x+u,z+v); if(t===null||Math.abs(t-y)>0.01) ok=false; }
-        for(var d=1.25;ok&&d<=3;d+=0.25){ var b=terrainTop(x+hx*d,z+hz*d); if(b===null||b<y+2.5) ok=false; }
         if(!ok) continue;
-        a.x=x; a.z=z; a.y=y; a.vx=a.vy=a.vz=0; a.grounded=true; cutSnap=true;
+        var was=[a.x,a.y,a.z]; a.x=x; a.z=z; a.y=y;
+        if(!cutOcc(a)){ a.x=was[0]; a.y=was[1]; a.z=was[2]; continue; }
+        a.vx=a.vy=a.vz=0; a.grounded=true; cutSnap=true;
         return [x,y,z];
       }
       return null;
