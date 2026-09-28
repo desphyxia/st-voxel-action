@@ -77,7 +77,8 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'colliderF
                  'project', 'groundAt', 'heading', 'aimFromPointer', 'aimFromStick',
                  'setView', 'VIEW', 'QUARTER', 'START_YAW',
                  'ACTIONS', 'DEFAULT_BINDINGS', 'defaultBindings', 'makeInput', 'stickFromDrag',
-                 'snapshot', 'restore', 'makeLoopback', 'makeHost', 'makeGuest', 'spawnNear', 'ACT'];
+                 'snapshot', 'restore', 'makeLoopback', 'makeHost', 'makeGuest', 'spawnNear', 'ACT',
+                 'ICE_SERVERS', 'CHANNEL', 'channelTransport', 'packCode', 'unpackCode', 'gathered', 'candidateKinds'];
 
 /**
  * The two pages that carry a bundle. The plate is a design document and gets
