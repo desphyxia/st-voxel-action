@@ -2377,19 +2377,22 @@ if (BROWSER_HALF) {
           P.respawn(); const backOpen = sample(false, false, false);
           const backCut = sample('behind', 'force', false), backWhole = sample('behind', false, false),
                 backAgain = sample('behind', false, false);
-          /* Over the wall's own pixels, and only the steady ones: grass sways,
-             motes drift and the partner's window draws between samples, which
-             speckled a tenth of the region with changes no cut made. */
+          /* Over the wall's own pixels: the test wall draws flat black, and
+             nothing else round the spawn does. Counted by what changed there,
+             not by what differs from a frame without it — at this zoom the
+             region is mostly grass and trees in the wind, and frames a moment
+             apart speckled a tenth of it with changes no cut made. */
+          const lum = (f, i) => (f.px[i] + f.px[i + 1] + f.px[i + 2]) / 3;
           let wallN = 0, wallTaken = 0;
           for (let i = 0; i < backWhole.px.length; i += 4) {
-            if (!differs(backWhole, backOpen, i) || differs(backWhole, backAgain, i)) continue;
+            if (lum(backWhole, i) > 12 || lum(backAgain, i) > 12 || lum(backOpen, i) < 30) continue;
             wallN++; if (differs(backCut, backWhole, i)) wallTaken++;
           }
           P.testWall(false); P.setCut(true);
           return { open: { mean: open.mean }, cut: { mean: cut.mean }, prop: changed(prop, open), whole: changed(whole, open),
                    propVsWhole: changed(prop, whole), silShown: changed(sil, none),
                    cutShown: changed(cut, sample(true, true, false)), sils, openCut, wallCut,
-                   behind: wallN ? wallTaken / wallN : 0, behindWall: changed(backWhole, backOpen) };
+                   behind: wallN ? wallTaken / wallN : 1, behindWall: wallN / (backWhole.px.length / 4) };
         });
         {
           const d = (u, v) => Math.max(...u.mean.map((x, i) => Math.abs(x - v.mean[i])));
