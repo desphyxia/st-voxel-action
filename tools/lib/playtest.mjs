@@ -92,10 +92,13 @@ function gap(g, twice) {
                (col, a) => atTheLip(col, a, 1, 0) || (twice && !a.grounded && a.airJumps > 0 && a.vy <= 0));
 }
 
-function drop(d) {
+function drop(d, falls) {
   const c = makeCollider(20, V);
   slab(c, -RIM, 0, d); slab(c, 0.3, RIM, 0);
-  return march(c.finish(), placeOnGround(c, -3, 0), 900);
+  const col = c.finish(), a = placeOnGround(col, -3, 0);
+  /* The debug dialog's switch (#92): one actor's own answer over the world's. */
+  if (falls !== undefined) a.fallDamage = falls;
+  return march(col, a, 900);
 }
 
 /* A bank beside deep water, `h` over its surface, and a swimmer pressing
@@ -166,6 +169,10 @@ export function budgetSuite() {
   const d2 = drop(MOVE.fall + 0.5);
   /* Fall damage is off until decided otherwise: a longer drop is survived too. */
   say(`and survives ${MOVE.fall + 0.5} m too: fall damage is off`, d2.dead === null, d2.dead || 'alive');
+
+  const d3 = drop(MOVE.fall + 0.5, true), d4 = drop(MOVE.fall, true);
+  say(`with the debug dialog's fall damage on, ${MOVE.fall + 0.5} m kills and ${MOVE.fall} m does not`,
+      d3.dead === 'fall' && d4.dead === null, `${d3.dead || 'alive'}, ${d4.dead || 'alive'}`);
 
   const w1 = pool(LIQUID.WATER, MOVE.wade);
   say(`wades ${MOVE.wade} m`, w1.inWater && !w1.swimming && w1.x > 5,

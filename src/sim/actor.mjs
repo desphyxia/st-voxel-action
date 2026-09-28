@@ -295,7 +295,7 @@ export function step(col, a, input, targets, dt = TICK) {
   if (input.dodge) beginDodge(a, input.mx || 0, input.mz || 0);
 
   const liquid = col.liquidAt(a.x, a.z);
-  if (liquid.kind === LIQUID.MAGMA && a.y <= liquid.level + 0.35) { a.dead = 'magma'; return a; }
+  if (liquid.kind === LIQUID.MAGMA && a.y <= liquid.level + 0.35 && !a.invincible) { a.dead = 'magma'; return a; }
 
   const submerged = liquid.kind === LIQUID.WATER ? liquid.level - a.y : 0;
   a.inWater = submerged > EPS;
@@ -398,7 +398,10 @@ export function step(col, a, input, targets, dt = TICK) {
     const g = col.supportUnder(a.x, a.z, r, a.y + EPS);
     if (ny <= g + EPS) {
       ny = g;
-      if (FALL_DAMAGE && !a.inWater && a.apex - g > MOVE.fall + EPS) a.dead = 'fall';
+      /* An actor may carry its own answer (the debug dialog, #92); the
+         world's is FALL_DAMAGE. */
+      const falls = a.fallDamage === undefined ? FALL_DAMAGE : a.fallDamage;
+      if (falls && !a.invincible && !a.inWater && a.apex - g > MOVE.fall + EPS) a.dead = 'fall';
       a.vy = 0; a.grounded = true; a.apex = g;
     } else if (wasGrounded && g !== -Infinity && a.y - g <= MOVE.step + EPS) {
       /* Walked down. A step down is as free as a step up — without this the
