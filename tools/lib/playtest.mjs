@@ -4239,3 +4239,135 @@ export function glassSuite() {
   return out;
 }
 
+/* Seeds with meadow enough for enclosures in 600 m. */
+const MEADOW_SEEDS = ['QUARTERSTONE', 'MOSSGATE', 'ALDER-RUN'];
+
+/**
+ * Enclosures (#76, Meadowlands): hedges nobody clears, and walls that are
+ * the way in.
+ *
+ * Over the cell field round each enclosure, the floods of the mesa suite
+ * from the ground outside it, never through a hedge: with the walls the
+ * field inside is reached; with the walls made hedge too, it is not. On
+ * built windows and against the collider: a body walks in over a wall, a
+ * jump at it; double jumps at the hedges from both sides, and along the
+ * perimeter off the top of every wall beside one, land nobody on a hedge or
+ * over it.
+ */
+export function meadowSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const sites = [];
+  for (const seed of MEADOW_SEEDS) {
+    const G = makeGen(seed, null), seen = new Set();
+    for (let x = -300; x <= 300 && sites.filter((q) => q[0] === seed).length < 3; x += 4) for (let z = -300; z <= 300; z += 4) {
+      const s = G.meadowOver(x, z); if (!s || seen.has(s)) continue;
+      seen.add(s); sites.push([seed, s, G]); if (sites.filter((q) => q[0] === seed).length >= 3) break;
+    }
+  }
+  const closed = [], open = [];
+  for (const [seed, s, G] of sites) {
+    const EX = s.hx + 6, EZ = s.hz + 6, NX = 2 * EX + 1, NZ = 2 * EZ + 1, N = NX * NZ;
+    const Hc = new Float32Array(N), kind = new Uint8Array(N), dry = new Uint8Array(N);
+    for (let i = 0; i < NX; i++) for (let j = 0; j < NZ; j++) {
+      const c = G.cell(s.cx + i - EX, s.cz + j - EZ), k = i * NZ + j;
+      Hc[k] = c.water ? c.wl : c.H; kind[k] = c.hedge;
+      dry[k] = c.magma || (c.water && c.wl - c.H > 1.5) ? 0 : 1;
+    }
+    const flood = (walls) => {
+      const ok = (k) => dry[k] && kind[k] !== 2 && (walls || kind[k] !== 1);
+      const seen = new Uint8Array(N), q = [];
+      for (let k = 0; k < N; k++) if (ok(k) && kind[k] !== 3 && kind[k] !== 1) { seen[k] = 1; q.push(k); }
+      for (let h = 0; h < q.length; h++) {
+        const k = q[h], i = (k / NZ) | 0, j = k % NZ;
+        for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ii = i + a, jj = j + b; if (ii < 0 || jj < 0 || ii >= NX || jj >= NZ) continue;
+          const p = ii * NZ + jj;
+          if (!seen[p] && ok(p)) {
+            const dh = Hc[p] - Hc[k];
+            if (dh <= MOVE.climb2 && dh >= -MOVE.fall) { seen[p] = 1; q.push(p); }
+          }
+        }
+      }
+      return seen;
+    };
+    const inside = [...Array(N).keys()].filter((k) => kind[k] === 3);
+    if (!inside.some((k) => flood(true)[k])) closed.push(`${seed} ${s.cx},${s.cz}`);
+    if (inside.some((k) => flood(false)[k])) open.push(`${seed} ${s.cx},${s.cz}`);
+  }
+  say('enclosures stand in the meadow', sites.length >= 6, `${sites.length} enclosures over ${MEADOW_SEEDS.length} seeds`);
+  say('and over their walls every field inside is reached', closed.length === 0, closed.length ? closed.join('; ') : `${sites.length} fields reached`);
+  say('and with the walls made hedge none is', open.length === 0, open.length ? open.join('; ') : `${sites.length} fields shut`);
+
+  const got = [], stuck = [];
+  let attempts = 0, walked = 0;
+  for (const [seed, s] of sites.slice(0, 6)) {
+    const w = buildWorld({ seed, size: 64, ox: s.cx, oz: s.cz }), col = colliderForWorld(w);
+    const kindAt = (x, z) => s.kind.get(Math.round(x) * 64 + Math.round(z));
+    /* On a hedge, or across one: over a hedge cell and near its top, or
+       ended on the far side of the hedge it was run at. */
+    const bad = (b, side0) => {
+      const k = kindAt(b.x, b.z);
+      if (k === 2 && b.y > s.top - 1) return true;
+      return side0 !== null && side0(b);
+    };
+    const jumpAt = (x, z, dx, dz, across) => {
+      const g = w.cells[Math.round(x + 32) * w.M + Math.round(z + 32)].H;
+      const b = placeOnGround(col, x, z, g + 1.5);
+      for (let t = 0; t < 150 && !b.dead; t++) {
+        const j = (b.grounded && t > 2) || (!b.grounded && b.airJumps > 0 && b.vy <= 0);
+        step(col, b, { mx: dx, mz: dz, jump: j });
+      }
+      /* Judged where it lands, not in the air. */
+      for (let t = 0; t < 120 && !b.dead && !b.grounded; t++) step(col, b, { mx: 0, mz: 0, jump: false });
+      attempts++;
+      return bad(b, across) ? b : null;
+    };
+    /* Every hedge cell on the four sides, run at from a metre and a half out
+       and a metre and a half in. */
+    for (const [key, k] of s.kind) {
+      if (k !== 2) continue;
+      const hx = Math.floor((key + 32 * 64 + 32) / 64) - 32, hz = key - hx * 64;
+      const nx = Math.abs(hx) === s.hx ? Math.sign(hx) : 0, nz = nx ? 0 : Math.sign(hz);
+      if ((hx + hz) % 2) continue;
+      for (const sd of [1, -1]) {
+        const x = hx + nx * 1.5 * sd, z = hz + nz * 1.5 * sd;
+        const across = (b) => ((b.x - hx) * nx + (b.z - hz) * nz) * sd < -0.6 && kindAt(b.x - nx * sd, b.z - nz * sd) === 2;
+        const b = jumpAt(x, z, -nx * sd, -nz * sd, across);
+        if (b) got.push(`${seed} ${s.cx},${s.cz} at ${hx},${hz} from ${sd > 0 ? 'outside' : 'inside'}: ${b.x.toFixed(1)},${b.y.toFixed(1)},${b.z.toFixed(1)}`);
+      }
+    }
+    /* Off every wall beside a hedge, along the side onto it. */
+    for (const [key, k] of s.kind) {
+      if (k !== 1) continue;
+      const wx = Math.floor((key + 32 * 64 + 32) / 64) - 32, wz = key - wx * 64;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (s.kind.get((wx + dx) * 64 + wz + dz) !== 2) continue;
+        const b = jumpAt(wx, wz, dx, dz, null);
+        if (b) got.push(`${seed} ${s.cx},${s.cz} off the wall at ${wx},${wz}: ${b.x.toFixed(1)},${b.y.toFixed(1)},${b.z.toFixed(1)}`);
+      }
+    }
+    /* In over the first wall, from three metres out. */
+    let wk = null;
+    for (const [key, k] of s.kind) {
+      const x = Math.floor((key + 32 * 64 + 32) / 64) - 32, z = key - x * 64;
+      if (k === 1 && (Math.abs(x) !== s.hx || Math.abs(z) !== s.hz)) { wk = key; break; }
+    }
+    const wx = Math.floor((wk + 32 * 64 + 32) / 64) - 32, wz = wk - wx * 64;
+    const nx = Math.abs(wx) === s.hx ? Math.sign(wx) : 0, nz = nx ? 0 : Math.sign(wz);
+    const b = placeOnGround(col, wx + nx * 3, wz + nz * 3);
+    for (let t = 0; t < 400 && !b.dead; t++) {
+      if (b.grounded && Math.abs(b.x) < s.hx - 0.8 && Math.abs(b.z) < s.hz - 0.8) break;
+      step(col, b, { mx: -nx, mz: -nz, jump: b.grounded && b.blocked });
+    }
+    if (Math.abs(b.x) < s.hx - 0.8 && Math.abs(b.z) < s.hz - 0.8) walked++;
+    else stuck.push(`${seed} ${s.cx},${s.cz} over the wall at ${wx},${wz}: ended ${b.x.toFixed(1)},${b.y.toFixed(1)},${b.z.toFixed(1)}`);
+  }
+  say('a body hops a wall into the field', stuck.length === 0, stuck.length ? stuck.join('; ') : `${walked} walked in over a wall`);
+  say('and no double jump lands on a hedge or over one', got.length === 0,
+      got.length ? got.slice(0, 6).join('; ') : `${attempts} double jumps at the hedges, from both sides and off the walls beside them`);
+  const gm = GOLDEN_SEEDS.find((g) => g.nm === 'meadow'), gg = makeGen(gm.seed, gm.force);
+  const gn = gg.meadowIn(gm.ox - 128, gm.oz - 128, gm.ox + 128, gm.oz + 128);
+  say('and round the golden meadow window too', gn >= 2, `${gn} enclosures within 128 m of ${gm.seed}'s window`);
+  return out;
+}

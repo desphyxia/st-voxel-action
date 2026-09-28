@@ -366,7 +366,7 @@ export function placeClutter(w, kit) {
       if(c0.H-c1.H<2) continue;
       /* Nor into a crevasse or at a fungal tower (#76): a pile at a crevasse's
          end wall is a way over it, and one at a stalk a way up it. */
-      if(c0.hold||c0.mesa||c0.rime||c1.rime||c0.spore||c1.spore||c0.glass||c1.glass) break;
+      if(c0.hold||c0.mesa||c0.rime||c1.rime||c0.spore||c1.spore||c0.glass||c1.glass||c0.hedge||c1.hedge) break;
       if(RS()<0.32) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((RS()*4)|0),RS);
       break;
     }
@@ -587,6 +587,44 @@ export function placeShards(w, kit) {
       var yTop = Math.max(c.glassTop, s.y + SHARD_H) + Math.floor(tall[q] * 4) * V;
       for (y = edge ? s.y : yTop - 2 * V; y < yTop; y += V) {
         addVox(px, y + V / 2, pz, PAL.SHARD.at + ((R() * PAL.SHARD.n) | 0), 0.8 + R() * 0.35, MAT.GLASS);
+      }
+    }
+  }
+}
+
+/**
+ * Hedges (#76, Meadowlands), stamped over the cells the field marked: a
+ * metre of leaf over wood, from the ground to a flat top 3.5 m over the
+ * highest ground round the enclosure and at least 3.25 m over the ground
+ * under it — over a double jump from the ground, and from the top of a wall
+ * beside it. The walls are ground (field.mjs).
+ */
+export var HEDGE_H = 3.25;
+export function placeHedges(w, kit) {
+  var M = w.M, cells = w.cells, half = w.half, G = w.G, OX = w.OX, OZ = w.OZ,
+      addVox = kit.addVox, surfAt = kit.surfAt, i, j;
+  function hedgeAt(a, b) {
+    if (a >= 0 && b >= 0 && a < M && b < M) return cells[a * M + b].hedge === 2;
+    return groundCellAt(w, -half + a + OX, -half + b + OZ).hedge === 2;
+  }
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    var c = cells[i * M + j];
+    if (c.hedge !== 2) continue;
+    var R = G.pstream(PASS.HEDGE, -half + i + OX, -half + j + OZ);
+    /* A prop voxel snaps to the nearest terrain column, and on a tie that is
+       the one a quarter-metre on toward +x and +z: a hedge drawn to its cell
+       stood that far into the cell past its +x and +z faces, in the way of
+       anyone hopping a wall at its end or walking in along its inside. So
+       on those faces, wherever the next cell is not hedge, the outermost
+       column is left out. */
+    var lx1 = !hedgeAt(i + 1, j), lz1 = !hedgeAt(i, j + 1);
+    for (var ax = -0.5 + V / 2; ax < 0.5; ax += V) for (var az = -0.5 + V / 2; az < 0.5; az += V) {
+      if ((lx1 && ax > 0.25) || (lz1 && az > 0.25)) continue;
+      var px = -half + i + ax, pz = -half + j + az, s = surfAt(px, pz), y;
+      var yTop = Math.max(c.hedgeTop, s.y + HEDGE_H);
+      for (y = s.y; y < yTop; y += V) {
+        var outer = Math.abs(ax) > 0.3 || Math.abs(az) > 0.3 || y > yTop - 2 * V;
+        addVox(px, y + V / 2, pz, outer ? pickPal(PAL.BUSH_GREEN, R) : PAL.BROAD_TRUNK.at, 0.75 + R() * 0.35, MAT.WOOD);
       }
     }
   }

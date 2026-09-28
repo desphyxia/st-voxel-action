@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -322,6 +322,9 @@ if (NODE_HALF) for (const r of sporeSuite()) check(r.ok, `SPORE: ${r.label}`, r.
 
 /* ---------- GLASS: shard fields and their plates (#76) ---------- */
 if (NODE_HALF) for (const r of glassSuite()) check(r.ok, `GLASS: ${r.label}`, r.detail);
+
+/* ---------- MEADOW: enclosures, their walls and hedges (#76) ---------- */
+if (NODE_HALF) for (const r of meadowSuite()) check(r.ok, `MEADOW: ${r.label}`, r.detail);
 
 /* ---------- SKY: the hour and the weather are the seed's, issue #30 ---------- */
 if (NODE_HALF) for (const r of skySuite()) check(r.ok, `SKY: ${r.label}`, r.detail);
@@ -2616,7 +2619,12 @@ if (BROWSER_HALF) {
           P.input.press(held);
           let last = { x: P.actor.x, z: P.actor.z };
           for (let i = 0; i < 4800; i++) {
+            /* And hops what stops it, the way anyone would: a metre of wall
+               round a field (#76) turned it back twenty-six times. */
+            const jump = P.actor.grounded && P.actor.blocked;
+            if (jump) P.input.press('Space');
             P.run(1);
+            if (jump) P.input.release('Space');
             const a = P.actor, c = QS.chunkAt(a.x, a.z);
             seen.add(c.cx + ',' + c.cz);
             if (a.y < lowest) lowest = a.y;
