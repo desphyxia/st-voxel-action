@@ -10392,12 +10392,21 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' float n=skyN(p)*0.65+skyN(p*2.3+vec2(7.0,3.0))*0.35;',
     ' float cov=smoothstep(1.3-uCloud*0.9,1.5-uCloud*0.9,n+0.25);',
     ' return 1.0-0.62*cov; }'].join('\n');
+  var CUT_GLSL=['uniform vec4 uCutA; uniform vec4 uCutB; uniform vec3 uCutF; uniform float uCutR;',
+    'float qsB2(vec2 a){ a=floor(a); return fract(dot(a,vec2(0.5,a.y*0.75))); }',
+    'float qsBayer(vec2 a){ return qsB2(0.5*a)*0.25+qsB2(a); }',
+    'float qsCutAt(vec4 c,vec3 w){',
+    '  if(c.w<0.001||w.y<c.y+1.2) return -1.0;',
+    '  vec3 d=w-(c.xyz+vec3(0.0,1.0,0.0)); float al=dot(d,uCutF);',
+    '  if(al>-0.6) return -1.0;',
+    '  float pr=length(d-al*uCutF);',
+    '  return (1.0-smoothstep(uCutR-1.0,uCutR,pr))*c.w; }'].join('\n');
   var GRASS_VS=[
     'attribute float aPhase; attribute float aTint; attribute vec3 aCol; attribute vec3 aDry;',
     'uniform float uTime; uniform float uW; uniform float uHeight; uniform vec2 uWind; uniform float uWindAmt;',
     'uniform vec3 uPush['+GRASS_PUSH+'];',
     'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD; varying vec3 vN;',
-    'varying vec2 vGW; varying float vGust;',
+    'varying vec2 vGW; varying float vGust; varying float vGY;',
     '#include <fog_pars_vertex>',
     'float h11(vec2 q){ return fract(sin(dot(q,vec2(127.1,311.7)))*43758.545); }',
     'vec3 bez(vec3 a,vec3 b,vec3 c,vec3 d,float t){ float u=1.0-t;',
@@ -10417,7 +10426,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* the wind: the blade's own shiver over a gust that crosses the field */
     ' float gust=sin(dot(base.xz,uWind)*0.09-uTime*0.85)*uWindAmt;',
     ' float w=(sin(uTime*1.5+dot(base.xz,uWind)*0.5+aPhase)*0.45)*uWindAmt+gust*0.40;',
-    ' vGW=base.xz; vGust=gust;',
+    ' vGW=base.xz; vGY=base.y; vGust=gust;',
     ' float tilt=clamp(0.24+w*0.18,0.0,0.72);',
     ' vec3 up=vec3(0.0,1.0,0.0);',
     ' vec3 lean=normalize(dir*0.55+vec3(uWind.x,0.0,uWind.y)*0.45+vec3(1e-5));',
@@ -10469,10 +10478,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      nothing said so (issue #39, and the gate hole is #40). */
   var GRASS_FS=['uniform vec3 uSun; uniform float uSunI; uniform vec3 uAmb;',
     'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD; varying vec3 vN;',
-    'varying vec2 vGW; varying float vGust;',
+    'varying vec2 vGW; varying float vGust; varying float vGY;',
     '#include <fog_pars_fragment>',
     SKY_GLSL,
-    'void main(){ vec3 c=mix(vC*0.42,vC,vH*0.80+0.20); c=mix(c,vD,vT*0.7);',
+    /* The cutaway takes the grass with the ground it grows on, by where the
+       blade is rooted: blades left standing on cut rock floated in the hole. */
+    CUT_GLSL,
+    'void main(){',
+    ' vec3 gw=vec3(vGW.x,vGY,vGW.y);',
+    ' if(qsCutAt(uCutA,gw)>qsBayer(gl_FragCoord.xy)||qsCutAt(uCutB,gw)>qsBayer(gl_FragCoord.xy)) discard;',
+    ' vec3 c=mix(vC*0.42,vC,vH*0.80+0.20); c=mix(c,vD,vT*0.7);',
     ' c*=1.0-0.2*uWet;',
     ' vec3 n=normalize(vN);',
     /* abs(), not max(): a blade is a surface with no inside, and the back of
@@ -10770,15 +10785,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      stay. The edge is an ordered dither rather than a fade, so nothing has
      to be sorted, and it reads as a clean hole at any size. The shadow pass
      draws with its own depth materials, so a cut wall still casts. */
-  var CUT_GLSL=['uniform vec4 uCutA; uniform vec4 uCutB; uniform vec3 uCutF; uniform float uCutR;',
-    'float qsB2(vec2 a){ a=floor(a); return fract(dot(a,vec2(0.5,a.y*0.75))); }',
-    'float qsBayer(vec2 a){ return qsB2(0.5*a)*0.25+qsB2(a); }',
-    'float qsCutAt(vec4 c,vec3 w){',
-    '  if(c.w<0.001||w.y<c.y+1.2) return -1.0;',
-    '  vec3 d=w-(c.xyz+vec3(0.0,1.0,0.0)); float al=dot(d,uCutF);',
-    '  if(al>-0.6) return -1.0;',
-    '  float pr=length(d-al*uCutF);',
-    '  return (1.0-smoothstep(uCutR-1.0,uCutR,pr))*c.w; }'].join('\n');
+
   /* `cut`: the cutaway (#72) is for terrain only. What stands on it — trees,
      rocks, ruins, the loot, the machines — is drawn whole: cutting a hole in
      a tree beside the player showed the ground through the trunk. */
@@ -11640,6 +11647,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
                   uSunI:{value:1},uAmb:{value:new THREE.Color(0.60,0.60,0.60)},
                   uCloud:SKY_U.uCloud,uCloudOff:SKY_U.uCloudOff,uWet:SKY_U.uWet,uSnow:SKY_U.uSnow,
                   uCloudOn:SKY_U.uCloudOn,uDetail:SKY_U.uDetail,uWindAmt:GRASS_WIND,
+                  uCutA:SKY_U.uCutA,uCutB:SKY_U.uCutB,uCutF:SKY_U.uCutF,uCutR:SKY_U.uCutR,
                   fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0},
                   uHeight:{value:grassLen/GRASS_LEN_REF},
                   uWind:{value:new THREE.Vector2(0.72,0.69)},
