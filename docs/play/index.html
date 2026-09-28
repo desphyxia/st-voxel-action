@@ -14587,7 +14587,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       world's. In a plate there is none of it. */
   var dbgRev=-1, dbgBuilt=null;
   function dbgFrame(){
-    if(plateMode){ if(dbgG) dbgG.visible=false; return; }
+    if(plateMode){
+      if(dbgG) dbgG.visible=false;
+      /* A plate draws solid faces whatever was left switched on here. */
+      if(dbgWireSet.length){ dbgWireSet.forEach(function(m){ m.wireframe=false; }); dbgWireSet=[]; dbgRev=-1; }
+      return;
+    }
     if(dbgBuilt!==built){ dbgBuilt=built; dbgG=null; dbgCache={}; dbgBox=dbgArc=dbgRing=null; dbgFoeBoxes=[]; dbgWireSet=[]; }
     var any=DBG.borders||DBG.reach||DBG.feat||DBG.collide||DBG.cutRing;
     if(!any&&!dbgG) { dbgLayers(); return; }
