@@ -2367,9 +2367,13 @@ if (BROWSER_HALF) {
           let sils = 0; P.scene.traverse((o) => { if (o.userData.kind === 'silhouette') sils++; });
           /* A wall uncut, for scale: terrain with the cut off and no silhouette. */
           const whole = sample(true, false, false);
+          /* A wall behind the player, with the cut forced open: nothing of it goes. */
+          const backCut = sample('behind', 'force', false), backWhole = sample('behind', false, false);
+          P.testWall(false); P.setCut(true);
           return { open: { mean: open.mean }, cut: { mean: cut.mean }, prop: changed(prop, open), whole: changed(whole, open),
                    propVsWhole: changed(prop, whole), silShown: changed(sil, none),
-                   cutShown: changed(cut, sample(true, true, false)), sils, openCut, wallCut };
+                   cutShown: changed(cut, sample(true, true, false)), sils, openCut, wallCut,
+                   behind: changed(backCut, backWhole), behindWall: changed(backWhole, open) };
         });
         {
           const d = (u, v) => Math.max(...u.mean.map((x, i) => Math.abs(x - v.mean[i])));
@@ -2387,6 +2391,9 @@ if (BROWSER_HALF) {
           check(vis.whole > 0.2 && vis.prop > vis.whole * 0.8,
                 'VISIBILITY: and only terrain is cut: the same wall as a prop stays whole',
                 `a prop wall changes ${(100 * vis.prop).toFixed(0)}% of the region, as an uncut terrain wall changes ${(100 * vis.whole).toFixed(0)}%`);
+          check(vis.behindWall > 0.05 && vis.behind < 0.01,
+                'VISIBILITY: and nothing behind the player is ever cut, even with the cut forced open',
+                `a wall behind them fills ${(100 * vis.behindWall).toFixed(0)}% of the region; forcing the cut changes ${(100 * vis.behind).toFixed(2)}% of it`);
           check(vis.openCut === 0 && vis.wallCut === 1,
                 'VISIBILITY: the cut opens only when the ground hides the player',
                 `open ground: cut ${vis.openCut}; behind a wall: cut ${vis.wallCut}`);

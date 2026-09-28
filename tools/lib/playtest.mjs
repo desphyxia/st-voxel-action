@@ -164,7 +164,8 @@ export function budgetSuite() {
   say(`survives a ${MOVE.fall} m drop`, d1.dead === null, d1.dead || 'alive');
 
   const d2 = drop(MOVE.fall + 0.5);
-  say(`dies on ${MOVE.fall + 0.5} m`, d2.dead === 'fall', d2.dead || 'walked away');
+  /* Fall damage is off until decided otherwise: a longer drop is survived too. */
+  say(`and survives ${MOVE.fall + 0.5} m too: fall damage is off`, d2.dead === null, d2.dead || 'alive');
 
   const w1 = pool(LIQUID.WATER, MOVE.wade);
   say(`wades ${MOVE.wade} m`, w1.inWater && !w1.swimming && w1.x > 5,

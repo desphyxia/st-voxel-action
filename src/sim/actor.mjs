@@ -75,6 +75,12 @@ export const AIR_JUMP_V = Math.sqrt(2 * GRAVITY * (MOVE.climb2 - MOVE.climb));
 /** What a double jump costs: height is a resource, like a swing. */
 export const AIR_JUMP_COST = 15;
 
+/**
+ * Whether a long drop kills. Off until decided otherwise (2026-09-28): the
+ * budget still says what a drop is — MOVE.fall — and the generator and the
+ * route checks still hold to it; only the death is withheld.
+ */
+export const FALL_DAMAGE = false;
 export const WADE_SPEED = RUN * 0.55;
 export const SWIM_SPEED = RUN * 0.45;
 /** How much of the wanted velocity an airborne actor can claw back per tick. */
@@ -392,7 +398,7 @@ export function step(col, a, input, targets, dt = TICK) {
     const g = col.supportUnder(a.x, a.z, r, a.y + EPS);
     if (ny <= g + EPS) {
       ny = g;
-      if (!a.inWater && a.apex - g > MOVE.fall + EPS) a.dead = 'fall';
+      if (FALL_DAMAGE && !a.inWater && a.apex - g > MOVE.fall + EPS) a.dead = 'fall';
       a.vy = 0; a.grounded = true; a.apex = g;
     } else if (wasGrounded && g !== -Infinity && a.y - g <= MOVE.step + EPS) {
       /* Walked down. A step down is as free as a step up — without this the
