@@ -2358,8 +2358,12 @@ if (BROWSER_HALF) {
             return { px, mean: m.map((v) => v / n) };
           };
           /* The fraction of pixels a change turns over by more than a shade. */
-          const changed = (u, v) => { let c = 0, n = 0; for (let i = 0; i < u.px.length; i += 4) { n++;
-            if (Math.abs(u.px[i] - v.px[i]) + Math.abs(u.px[i + 1] - v.px[i + 1]) + Math.abs(u.px[i + 2] - v.px[i + 2]) > 30) c++; } return c / n; };
+          /* With `only`, counted over the pixels where `v` differs from it — the
+             pixels a wall covers, against the frame without it — so ground the
+             cut rightly opens beside the player does not count against it. */
+          const differs = (u, v, i) => Math.abs(u.px[i] - v.px[i]) + Math.abs(u.px[i + 1] - v.px[i + 1]) + Math.abs(u.px[i + 2] - v.px[i + 2]) > 30;
+          const changed = (u, v, only) => { let c = 0, n = 0; for (let i = 0; i < u.px.length; i += 4) {
+            if (only && !differs(v, only, i)) continue; n++; if (differs(u, v, i)) c++; } return n ? c / n : 0; };
           const open = sample(false, true, true), openCut = P.cut.a, cut = sample(true, true, true), wallCut = P.cut.a,
                 prop = sample('prop', true, true);
           const sil = sample(true, false, true), none = sample(true, false, false);
@@ -2373,7 +2377,7 @@ if (BROWSER_HALF) {
           return { open: { mean: open.mean }, cut: { mean: cut.mean }, prop: changed(prop, open), whole: changed(whole, open),
                    propVsWhole: changed(prop, whole), silShown: changed(sil, none),
                    cutShown: changed(cut, sample(true, true, false)), sils, openCut, wallCut,
-                   behind: changed(backCut, backWhole), behindWall: changed(backWhole, open) };
+                   behind: changed(backCut, backWhole, open), behindWall: changed(backWhole, open) };
         });
         {
           const d = (u, v) => Math.max(...u.mean.map((x, i) => Math.abs(x - v.mean[i])));
@@ -2393,7 +2397,7 @@ if (BROWSER_HALF) {
                 `a prop wall changes ${(100 * vis.prop).toFixed(0)}% of the region, as an uncut terrain wall changes ${(100 * vis.whole).toFixed(0)}%`);
           check(vis.behindWall > 0.05 && vis.behind < 0.01,
                 'VISIBILITY: and nothing behind the player is ever cut, even with the cut forced open',
-                `a wall behind them fills ${(100 * vis.behindWall).toFixed(0)}% of the region; forcing the cut changes ${(100 * vis.behind).toFixed(2)}% of it`);
+                `a wall behind them covers ${(100 * vis.behindWall).toFixed(0)}% of the region; forcing the cut changes ${(100 * vis.behind).toFixed(2)}% of what it covers`);
           check(vis.openCut === 0 && vis.wallCut === 1,
                 'VISIBILITY: the cut opens only when the ground hides the player',
                 `open ground: cut ${vis.openCut}; behind a wall: cut ${vis.wallCut}`);
