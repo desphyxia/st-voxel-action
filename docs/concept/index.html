@@ -677,6 +677,10 @@ const GROUPS = {
 
   /* ---- the rime's ice sheets and crevasse walls (#76), last for the same reason ---- */
   RIME_ICE:     [0x9cc3d6, 0xb3d3e2, 0x86b0c6, 0xc4dde8],
+
+  /* ---- a thicket's shade and its tips (#80), last for the same reason ---- */
+  THORN_DARK:   [0x2a321c, 0x32301e, 0x262c1a],
+  THORN_TIP:    [0x7d8c45, 0x93a150, 0x6f7e3c],
 };
 
 /** The flat table the renderer indexes. */
@@ -4241,7 +4245,13 @@ function placeThickets(w, kit) {
   }
   for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
     var c = cells[i * M + j], k = c.thorn;
-    if (k !== 2 && k !== 3) continue;
+    if (k !== 2 && k !== 3 && k !== 4) continue;
+    /* The apron only where it touches the thicket: that is the fringe. */
+    if (k === 4) {
+      var by = false;
+      for (var d4 = 0; d4 < 4 && !by; d4++) if (thornAt(i + DIRS4[d4][0], j + DIRS4[d4][1]) === 2) by = true;
+      if (!by) continue;
+    }
     var R = G.pstream(PASS.THICKET, -half + i + OX, -half + j + OZ);
     var edge = false;
     if (k === 2) for (var d = 0; d < 4 && !edge; d++) if (thornAt(i + DIRS4[d][0], j + DIRS4[d][1]) !== 2) edge = true;
@@ -4254,20 +4264,47 @@ function placeThickets(w, kit) {
     for (var ax = -0.5 + V / 2; ax < 0.5; ax += V) for (var az = -0.5 + V / 2; az < 0.5; az += V) {
       if ((lx0 && ax < -0.25) || (lx1 && ax > 0.25) || (lz0 && az < -0.25) || (lz1 && az > 0.25)) continue;
       var px = -half + i + ax, pz = -half + j + az, s = surfAt(px, pz), y;
+      if (k === 4) { fringe(px, pz, s.y, R); continue; }
       if (k === 3) {
         for (y = 0; y < 1; y += V) addVox(px, s.y + y + V / 2, pz,
           (y > 0.7 && R() < 0.25 ? PAL.FALLEN_MOSS.at : PAL.FALLEN_BARK.at), 0.8 + R() * 0.3, MAT.WOOD);
         continue;
       }
       /* Up to the site's flat top, from the ground at the edges and from two
-         voxels under it everywhere else. */
-      var yTop = Math.max(c.thornTop, s.y + THICKET_H);
+         voxels under it everywhere else. The wall is stems and shade: a
+         quarter of its columns are bark from the ground up, the rest thorn
+         that darkens toward the ground. */
+      var yTop = Math.max(c.thornTop, s.y + THICKET_H), stem = R() < 0.25;
       for (y = edge ? s.y : yTop - 2 * V; y < yTop; y += V) {
-        var top = y >= yTop - 2 * V;
-        addVox(px, y + V / 2, pz, top || R() < 0.5 ? pickPal(PAL.BUSH_THORN, R) : PAL.FALLEN_BARK.at,
+        var top = y >= yTop - 2 * V, low = (y - s.y) / (yTop - s.y);
+        addVox(px, y + V / 2, pz,
+               top ? pickPal(R() < 0.5 ? PAL.BUSH_THORN : PAL.THORN_LEAF, R)
+                   : stem ? PAL.FALLEN_BARK.at : pickPal(low < 0.45 ? PAL.THORN_DARK : PAL.BUSH_THORN, R),
                0.7 + R() * 0.4, MAT.WOOD);
       }
+      crown(px, pz, yTop, R);
     }
+  }
+  /* Over the solid top, a crown of spikes up to a metre high: leaf, which a
+     body passes through, so the top stays where the collider has it and
+     only the silhouette breaks. Light at the tips, now and then a berry. */
+  function crown(px, pz, y0, R) {
+    var n = Math.floor(R() * R() * 5);
+    for (var q = 0; q < n; q++)
+      addVox(px, y0 + q * V + V / 2, pz,
+             q === n - 1 ? (R() < 0.08 ? PAL.THORN_BERRY.at : pickPal(PAL.THORN_TIP, R)) : pickPal(PAL.THORN_LEAF, R),
+             0.8 + R() * 0.35, MAT.LEAF);
+  }
+  /* Round its foot, on the ground beside it, a ragged fringe of leaf up to a
+     metre and a half: soft, so it is no step, and it hides the metre grid's
+     staircase the wall would otherwise draw. */
+  function fringe(px, pz, y0, R) {
+    if (R() >= 0.4) return;
+    var n = 1 + Math.floor(R() * 6);
+    for (var q = 0; q < n; q++)
+      addVox(px, y0 + q * V + V / 2, pz,
+             q === n - 1 ? pickPal(PAL.THORN_TIP, R) : pickPal(R() < 0.5 ? PAL.BUSH_THORN : PAL.THORN_LEAF, R),
+             0.8 + R() * 0.3, MAT.LEAF);
   }
 }
 
