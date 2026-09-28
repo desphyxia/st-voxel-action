@@ -10294,7 +10294,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     return d.Hs[gi*d.NZ+gj];
   }
   function cutOcc(a){
-    if(cutForce) return true;
+    /* Forced for the local player only: a partner a few metres off has a
+       line of sight of their own, and what stands in it is theirs to cut. */
+    if(cutForce&&a===player()) return true;
     if(testWallM&&testWallM.userData.kind==='terrain'&&!testWallM.userData.behind) return true;
     /* The top of the head, and only that: while any of the head shows, the
        player can be followed, and a hole cut round them was uglier than what
