@@ -301,6 +301,8 @@ export function measureWorld(d, name) {
     crevasses: d.G && d.G.rimeIn ? d.G.rimeIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     /* Fungal towers the same way (#76, Sporeverge). */
     towers: d.G && d.G.sporeIn ? d.G.sporeIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
+    /* Shard fields the same way (#76, Glasslands). */
+    shards: d.G && d.G.glassIn ? d.G.glassIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     digest: hex(h),
     parts,
   };

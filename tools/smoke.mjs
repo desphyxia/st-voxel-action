@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -319,6 +319,9 @@ if (NODE_HALF) for (const r of rimeSuite()) check(r.ok, `RIME: ${r.label}`, r.de
 
 /* ---------- SPORE: fungal towers and their shelves (#76) ---------- */
 if (NODE_HALF) for (const r of sporeSuite()) check(r.ok, `SPORE: ${r.label}`, r.detail);
+
+/* ---------- GLASS: shard fields and their plates (#76) ---------- */
+if (NODE_HALF) for (const r of glassSuite()) check(r.ok, `GLASS: ${r.label}`, r.detail);
 
 /* ---------- SKY: the hour and the weather are the seed's, issue #30 ---------- */
 if (NODE_HALF) for (const r of skySuite()) check(r.ok, `SKY: ${r.label}`, r.detail);
