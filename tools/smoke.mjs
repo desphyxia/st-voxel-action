@@ -2375,12 +2375,21 @@ if (BROWSER_HALF) {
              goes. From the spawn, where the checks before have not walked the
              player up against ground the forced cut would rightly open. */
           P.respawn(); const backOpen = sample(false, false, false);
-          const backCut = sample('behind', 'force', false), backWhole = sample('behind', false, false);
+          const backCut = sample('behind', 'force', false), backWhole = sample('behind', false, false),
+                backAgain = sample('behind', false, false);
+          /* Over the wall's own pixels, and only the steady ones: grass sways,
+             motes drift and the partner's window draws between samples, which
+             speckled a tenth of the region with changes no cut made. */
+          let wallN = 0, wallTaken = 0;
+          for (let i = 0; i < backWhole.px.length; i += 4) {
+            if (!differs(backWhole, backOpen, i) || differs(backWhole, backAgain, i)) continue;
+            wallN++; if (differs(backCut, backWhole, i)) wallTaken++;
+          }
           P.testWall(false); P.setCut(true);
           return { open: { mean: open.mean }, cut: { mean: cut.mean }, prop: changed(prop, open), whole: changed(whole, open),
                    propVsWhole: changed(prop, whole), silShown: changed(sil, none),
                    cutShown: changed(cut, sample(true, true, false)), sils, openCut, wallCut,
-                   behind: changed(backCut, backWhole, backOpen), behindWall: changed(backWhole, backOpen) };
+                   behind: wallN ? wallTaken / wallN : 0, behindWall: changed(backWhole, backOpen) };
         });
         {
           const d = (u, v) => Math.max(...u.mean.map((x, i) => Math.abs(x - v.mean[i])));
