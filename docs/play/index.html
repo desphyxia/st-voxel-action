@@ -4123,6 +4123,7 @@ function makeStamps(w) {
      side rather than hanging over the low one — by up to its own radius, to
      a metre; past that it is on a lip, and is left out. */
   function boulder(px,pz,r,b,R){
+    if(surfAt(px,pz).f) return;
     var y0=footing(px,pz,Math.ceil(r/V)*V,true,clamp(r,MOVE.step,1)); if(y0!==y0) return;
     for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
@@ -4190,7 +4191,7 @@ function makeStamps(w) {
     var dx=cos(ang),dz=sin(ang);
     for(var t2=0;t2<=len;t2+=V){
       if(R()<0.05){ t2+=0.75; continue; }
-      var xx=px+dx*t2, zz=pz+dz*t2; if(nearFeature(xx,zz)) continue;
+      var xx=px+dx*t2, zz=pz+dz*t2; if(surfAt(xx,zz).f||nearFeature(xx,zz)) continue;
       var y0=footing(xx,zz,0.25); if(y0!==y0) continue;
       var hh2=h*(0.55+0.45*Math.abs(sin(t2*0.7)));
       for(var b=-0.25;b<=0.25;b+=V){
@@ -4215,7 +4216,7 @@ function makeStamps(w) {
     return hi-lo>(tol||MOVE.step)+1e-6 ? NaN : (low ? lo : hi);
   }
   function pillarRuin(px,pz,h,dom,R){
-    if(nearFeature(px,pz)) return;
+    if(surfAt(px,pz).f||nearFeature(px,pz)) return;
     var y0=footing(px,pz,0.5); if(y0!==y0) return;
     for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V){
       if(onTrail(px+b1,pz+b2)) continue;
@@ -4231,6 +4232,7 @@ function makeStamps(w) {
     }
   }
   function hut(px,pz,dom,R){
+    if(surfAt(px,pz).f) return;
     var w=3.0,h=2.25, y0=footing(px,pz,w/2); if(y0!==y0) return;
     for(var a=-w/2;a<=w/2;a+=V)for(var b=-w/2;b<=w/2;b+=V){
       if(Math.abs(a)<w/2-V&&Math.abs(b)<w/2-V) continue;
@@ -10346,7 +10348,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         fragmentShader:CAP_GLSL});
       var g=e?new THREE.PlaneGeometry(2*CUT_R+2,2*CUT_R+2):new THREE.PlaneGeometry(CAP_S-4,CAP_S-4);
       if(!e) g.rotateX(-Math.PI/2);
-      var me=new THREE.Mesh(g,m); me.frustumCulled=false; me.visible=false; me.userData.kind='cutcap';
+      var me=new THREE.Mesh(g,m); me.visible=false; me.userData.kind='cutcap';
       cap.meshes.push(me);
     }
     return cap;
@@ -12328,6 +12330,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   function spawn(){
     /* A guest does not get to decide where it is — the host does. */
     if(role==='guest') return;
+    /* Streamed, the spawn's ground may have been let go by now: dead a few
+       hundred metres off, a respawn stood the body on nothing and it fell
+       out of the world. Grown first, as a place code's is. */
+    if(streaming) settleAround(built.data.spawn[0],built.data.spawn[2]);
     var a=QS.placeOnGround(col,built.data.spawn[0],built.data.spawn[2]);
     if(session){ session.me.x=a.x; session.me.y=a.y; session.me.z=a.z;
                  session.me.vx=session.me.vy=session.me.vz=0;
@@ -14914,17 +14920,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get cut(){ var a=player(); return {a:cutS[0],b:cutS[1],hidden:!!a&&cutOcc(a)}; },
     /* The cut's dark faces shown or not, for the gate to diff a frame both ways. */
     setCaps:function(on){ capOff=!on; return !!on; },
-    /* Stand the player at the foot of a bank three metres high or more on
+    /* Stand the player at the foot of a bank two and a half metres or more on
        the camera's side of them, somewhere loaded near where they are: a
        place the cut has to open on rock. Null if there is none in reach. */
     cutSpot:function(){
       var a=player(); if(!a) return null; camera.getWorldDirection(cutF);
       var hx=-cutF.x, hz=-cutF.z, hl=Math.sqrt(hx*hx+hz*hz)||1; hx/=hl; hz/=hl;
-      for(var r=0;r<=24;r+=1)for(var i=-r;i<=r;i++)for(var j=-r;j<=r;j++){
+      for(var r=0;r<=40;r+=1)for(var i=-r;i<=r;i++)for(var j=-r;j<=r;j++){
         if(Math.max(Math.abs(i),Math.abs(j))!==r) continue;
         var x=Math.round(a.x)+i+0.5, z=Math.round(a.z)+j+0.5, y=terrainTop(x,z), ok=y!==null;
         for(var u=-0.5;ok&&u<=0.5;u+=0.25)for(var v=-0.5;ok&&v<=0.5;v+=0.25){ var t=terrainTop(x+u,z+v); if(t===null||Math.abs(t-y)>0.01) ok=false; }
-        for(var d=1.25;ok&&d<=3;d+=0.25){ var b=terrainTop(x+hx*d,z+hz*d); if(b===null||b<y+3) ok=false; }
+        for(var d=1.25;ok&&d<=3;d+=0.25){ var b=terrainTop(x+hx*d,z+hz*d); if(b===null||b<y+2.5) ok=false; }
         if(!ok) continue;
         a.x=x; a.z=z; a.y=y; a.vx=a.vy=a.vz=0; a.grounded=true; cutSnap=true;
         return [x,y,z];

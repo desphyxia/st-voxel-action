@@ -2394,7 +2394,7 @@ if (BROWSER_HALF) {
 
         /* The cut face. Terrain has no inside, so a cut through a bank showed
            the sky where the rock had been: a pale stain that read as low
-           ground. At the foot of a bank three metres high on the camera's
+           ground. At the foot of a bank two and a half metres high on the camera's
            side, the cut opens, and its dark faces cover what it opened: with
            them the hole is darker than without, and no brighter than the
            ground round the player. */
@@ -2420,7 +2420,7 @@ if (BROWSER_HALF) {
               'VISIBILITY: and where it cuts through rock, the cut face is drawn dark, not the sky',
               cap ? `at ${cap.at.map((v) => v.toFixed(1)).join(',')}: cut ${cap.cut.a}; the faces change ${(100 * cap.changed).toFixed(1)}% `
                 + `of the region, ${cap.off.l.toFixed(0)} → ${cap.on.l.toFixed(0)} bright, pale ${(100 * cap.off.pale).toFixed(1)}% → ${(100 * cap.on.pale).toFixed(1)}%`
-                : 'no bank three metres high in reach');
+                : 'no bank two and a half metres high in reach');
 
         /* ---------- BUILD ID: which code a screenshot came from ----------
            GitHub Pages serves this file unstamped and is where the game is

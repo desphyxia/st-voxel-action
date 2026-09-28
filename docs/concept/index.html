@@ -3969,6 +3969,7 @@ function makeStamps(w) {
      side rather than hanging over the low one — by up to its own radius, to
      a metre; past that it is on a lip, and is left out. */
   function boulder(px,pz,r,b,R){
+    if(surfAt(px,pz).f) return;
     var y0=footing(px,pz,Math.ceil(r/V)*V,true,clamp(r,MOVE.step,1)); if(y0!==y0) return;
     for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
@@ -4036,7 +4037,7 @@ function makeStamps(w) {
     var dx=cos(ang),dz=sin(ang);
     for(var t2=0;t2<=len;t2+=V){
       if(R()<0.05){ t2+=0.75; continue; }
-      var xx=px+dx*t2, zz=pz+dz*t2; if(nearFeature(xx,zz)) continue;
+      var xx=px+dx*t2, zz=pz+dz*t2; if(surfAt(xx,zz).f||nearFeature(xx,zz)) continue;
       var y0=footing(xx,zz,0.25); if(y0!==y0) continue;
       var hh2=h*(0.55+0.45*Math.abs(sin(t2*0.7)));
       for(var b=-0.25;b<=0.25;b+=V){
@@ -4061,7 +4062,7 @@ function makeStamps(w) {
     return hi-lo>(tol||MOVE.step)+1e-6 ? NaN : (low ? lo : hi);
   }
   function pillarRuin(px,pz,h,dom,R){
-    if(nearFeature(px,pz)) return;
+    if(surfAt(px,pz).f||nearFeature(px,pz)) return;
     var y0=footing(px,pz,0.5); if(y0!==y0) return;
     for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V){
       if(onTrail(px+b1,pz+b2)) continue;
@@ -4077,6 +4078,7 @@ function makeStamps(w) {
     }
   }
   function hut(px,pz,dom,R){
+    if(surfAt(px,pz).f) return;
     var w=3.0,h=2.25, y0=footing(px,pz,w/2); if(y0!==y0) return;
     for(var a=-w/2;a<=w/2;a+=V)for(var b=-w/2;b<=w/2;b+=V){
       if(Math.abs(a)<w/2-V&&Math.abs(b)<w/2-V) continue;
