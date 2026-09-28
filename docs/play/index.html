@@ -14101,12 +14101,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var guard=0;
     while(acc>=TICK&&guard++<90){ tick(); acc-=TICK; }
     if(acc>=TICK) acc=0;
-    metro.ticks=(metro.ticks||0)+guard;
+    metro.ticks=(metro.ticks||0)+guard; metro.secs=(metro.secs||0)+dt; metro.calls=(metro.calls||0)+1;
   }
   function metroSync(){
     var want=document.hidden&&!!session&&!plateMode;
     if(want&&!metro){
-      metroLast=performance.now();
+      /* From now, not from whatever the frame loop had fallen behind by: a
+         slow frame runs at most eight ticks and leaves the rest owed, and
+         paying that off in one burst as the tab is hidden is a jump. */
+      metroLast=performance.now(); acc=0;
       try{
         var url=URL.createObjectURL(new Blob(['setInterval(function(){postMessage(0);},16);'],{type:'text/javascript'}));
         var w=new Worker(url);
@@ -16197,7 +16200,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     netInvite:netInvite, netAccept:netAccept, netReply:netReply, metroSync:metroSync,
     netConfig:function(o){ if(o.ice) net.ice=o.ice; if(o.gather!==undefined) net.gather=o.gather; },
     get net(){ return {state:net.state,role:net.role,relay:!!net.relay,lost:!!(session&&session.lost),
-                       metro:metro?{kind:metro.kind,ticks:metro.ticks||0}:null}; },
+                       metro:metro?{kind:metro.kind,ticks:metro.ticks||0,secs:metro.secs||0,calls:metro.calls||0}:null}; },
     screen:function(){ var a=player(); return QS.project(cam,{x:a.x,y:a.y,z:a.z},vp); },
     respawn:spawn
   };
