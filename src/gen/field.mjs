@@ -284,15 +284,18 @@ export function makeGen(seedStr,force){
     while(run<rl-1&&edOf(run+1)===ed0) run++;
     if(T-fg>=3){
       var u=1+Math.round(prand(gx,gz,salt+7)*0.5/V)*V, uhi=run+0.25, lat=pa[0]?cz:cx;
-      var fc=(pa[0]?cx:cz)+sg0*(ed0+0.5), a=fc+(sg0>0?0:-V);
+      var a=(pa[0]?cx:cz)+sg0*(ed0+0.5);
       for(var k=1;fg+1.5*k<=T-1;k++){
         if(k>1) u+=Math.round((0.5+prand(gx,gz,salt+7+k)*0.5)/V)*V;
         /* Off the end of the stretch: no shortcut on this wall. */
         if(u>uhi){ nubs=[]; break; }
-        /* The voxel's column is the one just outside the face: a prop voxel
-           snaps a quarter-metre toward + on a tie. */
+        /* A foothold is two voxels deep from the face outward, the last two
+           entries saying which way out is. Props sit half a voxel off the
+           terrain's grid, so one voxel on the face stood out 12.5 cm and was
+           lost against the wall on one side, and floated 12.5 cm off it on
+           the other; two from the face stand clear on both. */
         var y=fg+1.5*k;
-        nubs.push(pa[0]?[a,y,lat+sl*u]:[lat+sl*u,y,a]);
+        nubs.push(pa[0]?[a,y,lat+sl*u,sg0,0]:[lat+sl*u,y,a,0,sg0]);
       }
     }
     /* A river through the rock would cut the top in two, and the half without

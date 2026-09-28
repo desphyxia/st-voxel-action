@@ -1348,15 +1348,18 @@ function makeGen(seedStr,force){
     while(run<rl-1&&edOf(run+1)===ed0) run++;
     if(T-fg>=3){
       var u=1+Math.round(prand(gx,gz,salt+7)*0.5/V)*V, uhi=run+0.25, lat=pa[0]?cz:cx;
-      var fc=(pa[0]?cx:cz)+sg0*(ed0+0.5), a=fc+(sg0>0?0:-V);
+      var a=(pa[0]?cx:cz)+sg0*(ed0+0.5);
       for(var k=1;fg+1.5*k<=T-1;k++){
         if(k>1) u+=Math.round((0.5+prand(gx,gz,salt+7+k)*0.5)/V)*V;
         /* Off the end of the stretch: no shortcut on this wall. */
         if(u>uhi){ nubs=[]; break; }
-        /* The voxel's column is the one just outside the face: a prop voxel
-           snaps a quarter-metre toward + on a tie. */
+        /* A foothold is two voxels deep from the face outward, the last two
+           entries saying which way out is. Props sit half a voxel off the
+           terrain's grid, so one voxel on the face stood out 12.5 cm and was
+           lost against the wall on one side, and floated 12.5 cm off it on
+           the other; two from the face stand clear on both. */
         var y=fg+1.5*k;
-        nubs.push(pa[0]?[a,y,lat+sl*u]:[lat+sl*u,y,a]);
+        nubs.push(pa[0]?[a,y,lat+sl*u,sg0,0]:[lat+sl*u,y,a,0,sg0]);
       }
     }
     /* A river through the rock would cut the top in two, and the half without
@@ -4635,7 +4638,9 @@ function placeHedges(w, kit) {
 function placeMesaNubs(w, kit) {
   var half = w.half, G = w.G, OX = w.OX, OZ = w.OZ, addVox = kit.addVox;
   if (!G.mesasNear) return;
-  var rock = BIOMES[BIO.MESA].rock, mat = BIOMES[BIO.MESA].mat.rock;
+  // Pale bedrock, not the wall's own banded rock: a quarter-metre nub in
+  // the wall's colour vanishes on a face that is in shadow half the day.
+  var rock = BIOMES[BIO.MESA].bed, mat = BIOMES[BIO.MESA].mat.rock;
   var ms = G.mesasNear(OX - half, OZ - half, OX + half, OZ + half);
   for (var q = 0; q < ms.length; q++) {
     var nubs = ms[q].nubs || [];
@@ -4643,8 +4648,9 @@ function placeMesaNubs(w, kit) {
       var x = nubs[n][0] - OX, y = nubs[n][1], z = nubs[n][2] - OZ;
       if (x < -half || z < -half || x >= half || z >= half) continue;
       var R = G.pstream(PASS.NUB, Math.round(nubs[n][0] / V), Math.round(nubs[n][2] / V));
-      addVox(x, y - V / 2, z, pickPal(rock, R), 0.9 + R() * 0.2, mat);
-      addVox(x, y - 1.5 * V, z, pickPal(rock, R), 0.8 + R() * 0.2, mat);
+      var ox = nubs[n][3] * V, oz = nubs[n][4] * V;
+      addVox(x, y - V / 2, z, pickPal(rock, R), 0.95 + R() * 0.1, mat);
+      addVox(x + ox, y - V / 2, z + oz, pickPal(rock, R), 1.05 + R() * 0.1, mat);
     }
   }
 }

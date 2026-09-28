@@ -3520,8 +3520,8 @@ export function mesaSuite() {
     }
     /* The footholds up a wall (#75) are a way up by design, like the stones:
        they are taken away with them here, and climbed below. */
-    for (const m of G.mesasNear(t.cx - 32, t.cz - 32, t.cx + 32, t.cz + 32)) for (const [x, , z] of m.nubs) {
-      const i = Math.round((x - t.cx + 32) / V), j = Math.round((z - t.cz + 32) / V);
+    for (const m of G.mesasNear(t.cx - 32, t.cz - 32, t.cx + 32, t.cz + 32)) for (const [x, , z, ox, oz] of m.nubs) for (let d = -1; d <= 2; d++) {
+      const i = Math.round((x + ox * d * V - t.cx + 32) / V), j = Math.round((z + oz * d * V - t.cz + 32) / V);
       if (i >= 0 && j >= 0 && i < M && j < M) k2[i * M + j] = 2;
     }
     const seen = new Uint8Array(M * M), q = [];

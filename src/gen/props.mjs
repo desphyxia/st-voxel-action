@@ -702,7 +702,9 @@ export function placeHedges(w, kit) {
 export function placeMesaNubs(w, kit) {
   var half = w.half, G = w.G, OX = w.OX, OZ = w.OZ, addVox = kit.addVox;
   if (!G.mesasNear) return;
-  var rock = BIOMES[BIO.MESA].rock, mat = BIOMES[BIO.MESA].mat.rock;
+  // Pale bedrock, not the wall's own banded rock: a quarter-metre nub in
+  // the wall's colour vanishes on a face that is in shadow half the day.
+  var rock = BIOMES[BIO.MESA].bed, mat = BIOMES[BIO.MESA].mat.rock;
   var ms = G.mesasNear(OX - half, OZ - half, OX + half, OZ + half);
   for (var q = 0; q < ms.length; q++) {
     var nubs = ms[q].nubs || [];
@@ -710,8 +712,9 @@ export function placeMesaNubs(w, kit) {
       var x = nubs[n][0] - OX, y = nubs[n][1], z = nubs[n][2] - OZ;
       if (x < -half || z < -half || x >= half || z >= half) continue;
       var R = G.pstream(PASS.NUB, Math.round(nubs[n][0] / V), Math.round(nubs[n][2] / V));
-      addVox(x, y - V / 2, z, pickPal(rock, R), 0.9 + R() * 0.2, mat);
-      addVox(x, y - 1.5 * V, z, pickPal(rock, R), 0.8 + R() * 0.2, mat);
+      var ox = nubs[n][3] * V, oz = nubs[n][4] * V;
+      addVox(x, y - V / 2, z, pickPal(rock, R), 0.95 + R() * 0.1, mat);
+      addVox(x + ox, y - V / 2, z + oz, pickPal(rock, R), 1.05 + R() * 0.1, mat);
     }
   }
 }
