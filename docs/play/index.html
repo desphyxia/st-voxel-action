@@ -13272,10 +13272,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     b.addEventListener('click',function(){ sndToggle(!SND.on); show(); });
     show();
   })();
-  /* Length on `input` — it is a uniform, so it can follow the drag. Density on
-     `change` — it regrows the world, so it waits for the slider to be let go. */
-  document.getElementById('glen').addEventListener('input',function(){
-    setGrassLength(Number(this.value)/100); });
+  /* Density on `change` — it regrows the world, so it waits for the slider to
+     be let go. Length is in the debug dialog now (#92), live on `input`. */
   document.getElementById('gdens').addEventListener('change',function(){
     setGrassDensity(Number(this.value)); });
   fullBtn.addEventListener('click',function(){ toggleFull(); });
