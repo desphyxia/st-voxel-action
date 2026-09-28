@@ -134,6 +134,10 @@ const GROUPS = {
 
   /* ---- the rime's ice sheets and crevasse walls (#76), last for the same reason ---- */
   RIME_ICE:     [0x9cc3d6, 0xb3d3e2, 0x86b0c6, 0xc4dde8],
+
+  /* ---- a thicket's shade and its tips (#80), last for the same reason ---- */
+  THORN_DARK:   [0x2a321c, 0x32301e, 0x262c1a],
+  THORN_TIP:    [0x7d8c45, 0x93a150, 0x6f7e3c],
 };
 
 /** The flat table the renderer indexes. */
