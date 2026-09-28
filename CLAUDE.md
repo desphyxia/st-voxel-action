@@ -89,10 +89,11 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`9ac5816`** (out of the water, stones on the ground, a cutaway that only
-cuts what hides you, no fall damage — PR #90) at **version 53**, stamped; concept from the same
-commit at **version 37**. Both went straight through as a later publish in the session that forced
-`566e695`. Before that, play was **`566e695`** (mesa footholds instead of a shortcut block, #75/PR #89)
+Play is published from **`381d382`** (the debug dialog, #92/PR #94) at **version 54**, stamped;
+concept did not move and stays at `9ac5816`, **version 37**. Before that, play was **`9ac5816`**
+(out of the water, stones on the ground, a cutaway that only cuts what hides you, no fall damage —
+PR #90) at **version 53**, stamped, with concept at version 37; both went straight through as a later
+publish in the session that forced `566e695`. Before that, play was **`566e695`** (mesa footholds instead of a shortcut block, #75/PR #89)
 at **version 52**, stamped; concept from the same commit at **version 36**. Both were refused as
 the session's first after a context reset, diffed identical to `88f9714`, and were forced on the
 user's word on 2026-09-28. Before that, `88f9714` (thicket looks #80/PR #86, nothing against a
