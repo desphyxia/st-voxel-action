@@ -4119,8 +4119,12 @@ function makeStamps(w) {
       }
     }
   }
+  /* A boulder settles to the lowest ground under it, buried on the high
+     side rather than hanging over the low one — by up to its own radius, to
+     a metre; past that it is on a lip, and is left out. */
   function boulder(px,pz,r,b,R){
-    var s=surfAt(px,pz); if(s.f) return; var y0=s.y;
+    if(surfAt(px,pz).f) return;
+    var y0=footing(px,pz,Math.ceil(r/V)*V,true,clamp(r,MOVE.step,1)); if(y0!==y0) return;
     for(var ax=-r;ax<=r;ax+=V)for(var ay=-r*0.6;ay<=r*0.8;ay+=V)for(var az=-r;az<=r;az+=V){
       if((ax*ax+az*az)/(r*r)+(ay*ay)/(r*r*0.8)>1-R()*0.18) continue;
       if(nearTrail(px+ax,pz+az)) continue;
@@ -4131,6 +4135,7 @@ function makeStamps(w) {
     for(var q=0;q<n;q++){
       var sx=px+(R()-0.5)*2.4, sz=pz+(R()-0.5)*2.4, s=surfAt(sx,sz); if(s.f) continue;
       var n2=(R()<0.3)?2:1;
+      var y0=footing(sx,sz,n2*V,true); if(y0!==y0) continue; s={y:y0};
       for(var a=0;a<n2;a++)for(var b=0;b<n2;b++)for(var c2=0;c2<n2;c2++){
         if(nearTrail(sx+a*V,sz+b*V)) continue;
         addVox(sx+a*V,s.y+c2*V+V/2,sz+b*V,pickPal(BIOMES[dom].rock,R),0.8+R()*0.3,BIOMES[dom].mat.rock);
@@ -4186,40 +4191,58 @@ function makeStamps(w) {
     var dx=cos(ang),dz=sin(ang);
     for(var t2=0;t2<=len;t2+=V){
       if(R()<0.05){ t2+=0.75; continue; }
-      var xx=px+dx*t2, zz=pz+dz*t2, s=surfAt(xx,zz); if(s.f||nearFeature(xx,zz)) continue;
+      var xx=px+dx*t2, zz=pz+dz*t2; if(surfAt(xx,zz).f||nearFeature(xx,zz)) continue;
+      var y0=footing(xx,zz,0.25); if(y0!==y0) continue;
       var hh2=h*(0.55+0.45*Math.abs(sin(t2*0.7)));
-      for(var y2=0;y2<hh2;y2+=V)for(var b=-0.25;b<=0.25;b+=V){
+      for(var b=-0.25;b<=0.25;b+=V){
         if(onTrail(xx-dz*b,zz+dx*b)) continue;
-        addVox(xx-dz*b,s.y+y2+V/2,zz+dx*b,pickPal(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
+        for(var y2=surfAt(xx-dz*b,zz+dx*b).y-y0;y2<hh2;y2+=V)
+          addVox(xx-dz*b,y0+y2+V/2,zz+dx*b,pickPal(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock);
       }
     }
   }
+  /* The highest ground under a footprint, or NaN where it spans more than a
+     step or touches a flagged column. A piece was stood on the ground at its
+     centre, and at a canyon's lip or a terrace's edge the rest of it hung in
+     the air over the drop — six metres of ruin pillar over a canyon floor.
+     Where the ground under it varies by a step or less, each column is
+     founded on its own ground and rises to this. */
+  function footing(px,pz,r,low,tol){
+    var lo=Infinity, hi=-Infinity;
+    for(var a=-r;a<=r+1e-6;a+=V)for(var b=-r;b<=r+1e-6;b+=V){
+      var s=surfAt(px+a,pz+b); if(s.f&3) return NaN;
+      if(s.y<lo) lo=s.y; if(s.y>hi) hi=s.y;
+    }
+    return hi-lo>(tol||MOVE.step)+1e-6 ? NaN : (low ? lo : hi);
+  }
   function pillarRuin(px,pz,h,dom,R){
-    var s=surfAt(px,pz); if(s.f||nearFeature(px,pz)) return;
+    if(surfAt(px,pz).f||nearFeature(px,pz)) return;
+    var y0=footing(px,pz,0.5); if(y0!==y0) return;
     for(var b1=-0.5;b1<=0.5;b1+=V)for(var b2=-0.5;b2<=0.5;b2+=V){
       if(onTrail(px+b1,pz+b2)) continue;
-      addVox(px+b1,s.y+V/2,pz+b2,pickPal(BIOMES[dom].rock,R),0.95,BIOMES[dom].mat.rock);
+      var k=pickPal(BIOMES[dom].rock,R);
+      for(var yf=surfAt(px+b1,pz+b2).y;yf<=y0;yf+=V) addVox(px+b1,yf+V/2,pz+b2,k,0.95,BIOMES[dom].mat.rock);
     }
     for(var y2=V;y2<h;y2+=V){
       var rr2=(y2>h-0.6&&R()<0.5)?0.25:0.375;
       for(var a1=-rr2;a1<=rr2;a1+=V)for(var a2=-rr2;a2<=rr2;a2+=V){
         if(onTrail(px+a1,pz+a2)) continue;
-        addVox(px+a1,s.y+y2+V/2,pz+a2,pickPal(BIOMES[dom].rock,R),0.88+R()*0.22,BIOMES[dom].mat.rock);
+        addVox(px+a1,y0+y2+V/2,pz+a2,pickPal(BIOMES[dom].rock,R),0.88+R()*0.22,BIOMES[dom].mat.rock);
       }
     }
   }
   function hut(px,pz,dom,R){
-    var s=surfAt(px,pz); if(s.f) return;
-    var w=3.0,h=2.25;
+    if(surfAt(px,pz).f) return;
+    var w=3.0,h=2.25, y0=footing(px,pz,w/2); if(y0!==y0) return;
     for(var a=-w/2;a<=w/2;a+=V)for(var b=-w/2;b<=w/2;b+=V){
       if(Math.abs(a)<w/2-V&&Math.abs(b)<w/2-V) continue;
       if(a>-0.6&&a<0.6&&b>w/2-V) continue;
       var hh2=h*(R()<0.22?0.45+R()*0.4:1);
       if(onTrail(px+a,pz+b)) continue;
-      for(var y2=0;y2<hh2;y2+=V) addVox(px+a,s.y+y2+V/2,pz+b,pickPal(BIOMES[dom].rock,R),0.88+R()*0.2,BIOMES[dom].mat.rock);
+      for(var y2=surfAt(px+a,pz+b).y-y0;y2<hh2;y2+=V) addVox(px+a,y0+y2+V/2,pz+b,pickPal(BIOMES[dom].rock,R),0.88+R()*0.2,BIOMES[dom].mat.rock);
     }
     for(var a2=-w/2;a2<=w/2;a2+=V)for(var b2=-w/2;b2<=w/2;b2+=V)
-      if(R()<0.3) addVox(px+a2,s.y+h+V/2,pz+b2,PAL.HUT_ROOF.at,0.9,MAT.WOOD);
+      if(R()<0.3) addVox(px+a2,y0+h+V/2,pz+b2,PAL.HUT_ROOF.at,0.9,MAT.WOOD);
   }
   function deckBridge(px,pz,di,dj,len,y,R){
     for(var t2=-len/2;t2<=len/2;t2+=V)for(var b=-0.75;b<=0.75;b+=V)
@@ -4233,7 +4256,7 @@ function makeStamps(w) {
       addVox(rx2,y+0.5,rz2,PAL.DECK_RAIL.at,0.95,MAT.WOOD);
     }
   }
-  return { addVox: addVox, addEm: addEm, surfAt: surfAt, onTrail: onTrail, nearFeature: nearFeature, tree: tree, boulder: boulder, scree: scree,
+  return { addVox: addVox, addEm: addEm, surfAt: surfAt, footing: footing, onTrail: onTrail, nearFeature: nearFeature, tree: tree, boulder: boulder, scree: scree,
            bush: bush, stump: stump, fallenTrunk: fallenTrunk, fence: fence, lamp: lamp,
            wallRun: wallRun, pillarRuin: pillarRuin, hut: hut, deckBridge: deckBridge };
 }
@@ -4392,13 +4415,16 @@ function placeClutter(w, kit) {
 function placeLandmark(w, kit) {
   var half = w.half, G = w.G,
       OX = w.OX, OZ = w.OZ,
-      addVox = kit.addVox, addEm = kit.addEm, onTrail = kit.onTrail, nearFeature = kit.nearFeature;
+      addVox = kit.addVox, addEm = kit.addEm, onTrail = kit.onTrail, nearFeature = kit.nearFeature,
+      surfAt = kit.surfAt, footing = kit.footing;
   var lmPos=null;
   function landmarkStamp(px,pz,kind,dom,base,R){
     var a,b,y2,r2;
     if(kind===0){                                   /* obelisk */
+      /* Its plinth is founded on the ground under each of its columns. */
       for(a=-1;a<=1;a+=V)for(b=-1;b<=1;b+=V){ if(onTrail(px+a,pz+b)) continue;
-        addVox(px+a,base+V/2,pz+b,pickPal(BIOMES[dom].rock,R),0.9+R()*0.2,BIOMES[dom].mat.rock); }
+        var kp=pickPal(BIOMES[dom].rock,R), sp=0.9+R()*0.2;
+        for(y2=Math.min(surfAt(px+a,pz+b).y,base);y2<=base;y2+=V) addVox(px+a,y2+V/2,pz+b,kp,sp,BIOMES[dom].mat.rock); }
       for(y2=V;y2<11;y2+=V){
         r2=0.5*(1-y2/16);
         for(a=-r2;a<=r2;a+=V)for(b=-r2;b<=r2;b+=V){ if(onTrail(px+a,pz+b)) continue;
@@ -4432,9 +4458,13 @@ function placeLandmark(w, kit) {
         /* A stone stands four metres out, past what the landmark's ground was
            checked for: not beside a feature, where it is a step (#84). */
         if(nearFeature(sx,sz2)) continue;
+        /* And on its own ground, not the landmark's: stood at the landmark's
+           height, a stone past a canyon's lip hung six metres over its floor. */
+        var g0=footing(sx,sz2,0.375); if(g0!==g0) continue;
         for(y2=0;y2<sh;y2+=V)for(a=-0.375;a<=0.375;a+=V)for(b=-0.25;b<=0.25;b+=V){
           if(onTrail(sx+a,sz2+b)) continue;
-          addVox(sx+a,base+y2+V/2,sz2+b,pickPal(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock); }
+          var yb=y2===0?surfAt(sx+a,sz2+b).y-g0:y2;
+          for(var yy=yb;yy<=y2;yy+=V) addVox(sx+a,g0+yy+V/2,sz2+b,pickPal(BIOMES[dom].rock,R),0.85+R()*0.25,BIOMES[dom].mat.rock); }
       }
     }
   }
@@ -7621,6 +7651,12 @@ const AIR_JUMP_V = Math.sqrt(2 * GRAVITY * (MOVE.climb2 - MOVE.climb));
 /** What a double jump costs: height is a resource, like a swing. */
 const AIR_JUMP_COST = 15;
 
+/**
+ * Whether a long drop kills. Off until decided otherwise (2026-09-28): the
+ * budget still says what a drop is — MOVE.fall — and the generator and the
+ * route checks still hold to it; only the death is withheld.
+ */
+const FALL_DAMAGE = false;
 const WADE_SPEED = RUN * 0.55;
 const SWIM_SPEED = RUN * 0.45;
 /** How much of the wanted velocity an airborne actor can claw back per tick. */
@@ -7648,6 +7684,8 @@ function makeActor(x, y, z, rad) {
     /** Counted for anything tallying verbs: jumps from the ground, and in the air. */
     jumps: 0, airJumped: 0,
     inWater: false, swimming: false,
+    /** Rising out of deep water from a jump: buoyancy lets go until it falls. */
+    kick: false,
     /** Where it is looking. Aim drives this when there is aim; otherwise the
         direction of travel does. Phase 0 uses it for nothing but the model's
         heading — issue #1 decides what aim means once there is an ability. */
@@ -7707,7 +7745,7 @@ function snapshot(a) {
     x: a.x, y: a.y, z: a.z, vx: a.vx, vy: a.vy, vz: a.vz,
     grounded: a.grounded, apex: a.apex,
     airJumps: a.airJumps, jumps: a.jumps, airJumped: a.airJumped,
-    inWater: a.inWater, swimming: a.swimming,
+    inWater: a.inWater, swimming: a.swimming, kick: a.kick,
     faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
     hp: a.hp, maxHp: a.maxHp, hurtT: a.hurtT,
     stamina: a.stamina, staminaHold: a.staminaHold,
@@ -7728,7 +7766,7 @@ function restore(a, s) {
   a.grounded = s.grounded; a.apex = s.apex;
   a.airJumps = s.airJumps === undefined ? 1 : s.airJumps;
   a.jumps = s.jumps || 0; a.airJumped = s.airJumped || 0;
-  a.inWater = s.inWater; a.swimming = s.swimming;
+  a.inWater = s.inWater; a.swimming = s.swimming; a.kick = !!s.kick;
   a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
   if (s.gear) { applyGearWire(a.gear, s.gear); a.st = a.gear.st; }
   a.hp = s.hp; a.maxHp = s.maxHp === undefined ? a.st.maxHp : s.maxHp;
@@ -7837,7 +7875,10 @@ function step(col, a, input, targets, dt = TICK) {
 
   const submerged = liquid.kind === LIQUID.WATER ? liquid.level - a.y : 0;
   a.inWater = submerged > EPS;
-  a.swimming = submerged > MOVE.wade;
+  /* A jump out of deep water rises under gravity like any other, and the
+     water takes the body back only once it starts to fall. */
+  if (a.kick && (a.vy <= 0 || a.grounded)) a.kick = false;
+  a.swimming = submerged > MOVE.wade && !a.kick;
 
   /* ---- intent ---- */
   if (a.dodge) {
@@ -7864,7 +7905,13 @@ function step(col, a, input, targets, dt = TICK) {
   if (input.jump && !a.swing && !a.dodge && a.canJump !== false) {
     if (a.grounded || a.swimming) {
       const jv = a.rad === ACTOR.radius ? JUMP_V : jumpVFor(a.rad);
-      a.vy = a.swimming ? jv * 0.35 : jv;
+      /* From deep water the jump is a jump from the surface: a kick that
+         reaches as high over the water as a jump from the ground reaches
+         over the ground, with the air jump still in hand. It was a third of
+         a jump, which buoyancy undid on the next tick, so a river between
+         straight banks was a pit with no way out. */
+      a.vy = a.swimming ? Math.sqrt(jv * jv + 2 * GRAVITY * Math.max(0, liquid.level - a.y)) : jv;
+      if (a.swimming) { a.kick = true; a.swimming = false; }
       a.grounded = false;
       a.apex = a.y;
       a.jumps++;
@@ -7927,7 +7974,7 @@ function step(col, a, input, targets, dt = TICK) {
     const g = col.supportUnder(a.x, a.z, r, a.y + EPS);
     if (ny <= g + EPS) {
       ny = g;
-      if (!a.inWater && a.apex - g > MOVE.fall + EPS) a.dead = 'fall';
+      if (FALL_DAMAGE && !a.inWater && a.apex - g > MOVE.fall + EPS) a.dead = 'fall';
       a.vy = 0; a.grounded = true; a.apex = g;
     } else if (wasGrounded && g !== -Infinity && a.y - g <= MOVE.step + EPS) {
       /* Walked down. A step down is as free as a step up — without this the
@@ -10234,12 +10281,122 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   var CUT_R=2.8, cutOn=true, cutF=new THREE.Vector3(), testWallM=null;
   /* Where each player stands, for the cutaway, and which way the camera
      looks. Never in a plate: those are the world alone, for the look gate. */
+  /* How far each player's cut is open, 0 to 1. It opens only while the
+     ground actually stands between the camera and the top of their head, and
+     eases open and shut over a few frames rather than blinking: a rim that
+     hid only their legs cut a hole anyway, and the silhouette already shows
+     legs. `cutSnap` jumps straight to the answer, for the gate. */
+  var cutS=[0,0], cutSnap=true, cutForce=false;
+  function terrainTop(x,z){
+    var at=worldAt(x,z); if(!at) return null;
+    var d=at.d, V=QS.V, gi=Math.floor((at.x+d.half)/V), gj=Math.floor((at.z+d.half)/V);
+    if(gi<0||gj<0||gi>=d.NX||gj>=d.NZ) return null;
+    return d.Hs[gi*d.NZ+gj];
+  }
+  function cutOcc(a){
+    /* Forced for the local player only: a partner a few metres off has a
+       line of sight of their own, and what stands in it is theirs to cut. */
+    if(cutForce&&a===player()) return true;
+    if(testWallM&&testWallM.userData.kind==='terrain'&&!testWallM.userData.behind) return true;
+    /* The top of the head, and only that: while any of the head shows, the
+       player can be followed, and a hole cut round them was uglier than what
+       it revealed. A body hidden below the head has its silhouette. The
+       ground has to stand a quarter-metre into the line of sight, so a lip
+       the line only grazes does not open it. */
+    var V=QS.V, py=a.y+1.7;
+    for(var t=0.5;t<30;t+=V){
+      var y=py-cutF.y*t; if(y>QS.CEIL) break;
+      var top=terrainTop(a.x-cutF.x*t,a.z-cutF.z*t); if(top===null) break;
+      if(y<top-0.25) return true;
+    }
+    return false;
+  }
+  function cutEase(q,want){
+    cutS[q]=cutSnap?want:cutS[q]+(want-cutS[q])*0.2;
+    if(Math.abs(cutS[q]-want)<0.02) cutS[q]=want;
+    return cutS[q];
+  }
   function cutFrame(){
     camera.getWorldDirection(cutF); SKY_U.uCutF.value.copy(cutF);
-    var a=player(), b=other(), on=cutOn&&!plateMode;
-    if(on&&a) SKY_U.uCutA.value.set(a.x,a.y,a.z,1); else SKY_U.uCutA.value.w=0;
-    if(on&&b&&session&&session.connected) SKY_U.uCutB.value.set(b.x,b.y,b.z,1); else SKY_U.uCutB.value.w=0;
+    var a=player(), b=other(), on=cutOn&&!plateMode, bOn=on&&b&&session&&session.connected;
+    /* Forced, only the local player's: the gate isolates one cut. */
+    var sA=cutEase(0,on&&a&&cutOcc(a)?1:0), sB=cutEase(1,bOn&&!cutForce&&cutOcc(b)?1:0);
+    cutSnap=false;
+    if(a&&sA>0) SKY_U.uCutA.value.set(a.x,a.y,a.z,sA); else SKY_U.uCutA.value.w=0;
+    if(bOn&&sB>0) SKY_U.uCutB.value.set(b.x,b.y,b.z,sB); else SKY_U.uCutB.value.w=0;
+    capFrame(0,a,sA); capFrame(1,b,sB);
   }
+  /* The cut face (DECISIONS §5: "cut faces shown dark"). Terrain is a
+     height field with no inside, so a ray through the hole ran on through
+     solid rock to nothing and the hole showed the sky: a white stain where a
+     five-metre bank had been cut away, reading as low ground. Three caps per
+     player close the cut where it passes through rock — its floor, level
+     with the knees; its end, the plane just in front of the chest; and its
+     back, the upright plane just on the camera's side of the player —
+     each drawn only where the ground under it stands higher, looked up in a
+     small height map of the terrain round the player. */
+  var CAP_M=96, CAP_S=CAP_M*0.25, CAP_GLSL=['uniform vec4 uCut; uniform vec3 uF; uniform float uR; uniform float uEnd;',
+    'uniform sampler2D uHM; uniform vec4 uHO; varying vec3 vW;',
+    'float qsB2(vec2 a){ a=floor(a); return fract(dot(a,vec2(0.5,a.y*0.75))); }',
+    'float qsBayer(vec2 a){ return qsB2(0.5*a)*0.25+qsB2(a); }',
+    'void main(){',
+    '  vec3 d=vW-(uCut.xyz+vec3(0.0,1.0,0.0)); float al=dot(d,uF);',
+    '  vec2 hz=normalize(-uF.xz+vec2(1e-5)); float sd=dot(d.xz,hz);',
+    '  if(uEnd<0.5){ if(al>-0.6||sd<0.4) discard; }',
+    '  else if(uEnd<1.5){ if(vW.y<uCut.y+1.2||sd<0.4) discard; }',
+    '  else if(vW.y<uCut.y+1.2||al>-0.6) discard;',
+    '  float pr=length(d-al*uF);',
+    '  if((1.0-smoothstep(uR-1.0,uR,pr))*uCut.w<=qsBayer(gl_FragCoord.xy)) discard;',
+    '  vec2 uv=(vW.xz-uHO.xy)/uHO.w;',
+    '  if(uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0) discard;',
+    '  if(vW.y>=uHO.z+texture2D(uHM,uv).r*255.0*0.25-0.001) discard;',
+    '  vec3 c=floor(vW*4.0); float g=fract(sin(dot(c,vec3(12.9898,78.233,37.719)))*43758.5453);',
+    '  gl_FragColor=vec4(vec3(0.19,0.14,0.10)*(0.8+0.3*g),1.0);',
+    '}'].join('\n');
+  function makeCap(){
+    var data=new Uint8Array(CAP_M*CAP_M*4), tex=new THREE.DataTexture(data,CAP_M,CAP_M,THREE.RGBAFormat);
+    tex.magFilter=THREE.NearestFilter; tex.minFilter=THREE.NearestFilter; tex.generateMipmaps=false;
+    var cap={data:data,tex:tex,at:null,age:0,uCut:{value:new THREE.Vector4()},uHO:{value:new THREE.Vector4()},meshes:[]};
+    for(var e=0;e<3;e++){
+      var m=new THREE.ShaderMaterial({side:THREE.DoubleSide,uniforms:{uCut:cap.uCut,uF:SKY_U.uCutF,uR:SKY_U.uCutR,
+        uEnd:{value:e},uHM:{value:tex},uHO:cap.uHO},
+        vertexShader:'varying vec3 vW; void main(){ vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; gl_Position=projectionMatrix*viewMatrix*w; }',
+        fragmentShader:CAP_GLSL});
+      var g=e===1?new THREE.PlaneGeometry(2*CUT_R+2,2*CUT_R+2):e===2?new THREE.PlaneGeometry(4*CUT_R+4,4*CUT_R+4):new THREE.PlaneGeometry(CAP_S-4,CAP_S-4);
+      if(!e) g.rotateX(-Math.PI/2);
+      var me=new THREE.Mesh(g,m); me.visible=false; me.userData.kind='cutcap';
+      cap.meshes.push(me);
+    }
+    return cap;
+  }
+  /* The height map is taken again when the player has walked two metres
+     from where it was, and every second anyway, for chunks that arrive. */
+  function capMap(cap,a){
+    var x0=Math.round(a.x)-CAP_S/2, z0=Math.round(a.z)-CAP_S/2, base=Math.floor(a.y)-16, V=QS.V;
+    for(var j=0;j<CAP_M;j++)for(var i=0;i<CAP_M;i++){
+      var t=terrainTop(x0+(i+0.5)*V,z0+(j+0.5)*V);
+      cap.data[(j*CAP_M+i)*4]=t===null?0:Math.max(0,Math.min(255,Math.round((t-base)/V)));
+    }
+    cap.tex.needsUpdate=true; cap.uHO.value.set(x0,z0,base,CAP_S);
+    cap.at={x:a.x,y:a.y,z:a.z}; cap.age=0;
+  }
+  function capFrame(q,a,s){
+    if(!built) return;
+    if(!built.caps){ built.caps=[makeCap(),makeCap()];
+      built.caps.forEach(function(c){ c.meshes.forEach(function(me){ built.scene.add(me); }); }); }
+    var cap=built.caps[q], show=!!a&&s>0&&!capOff;
+    cap.meshes.forEach(function(me){ me.visible=show; });
+    if(!show) return;
+    if(!cap.at||Math.abs(a.x-cap.at.x)>2||Math.abs(a.z-cap.at.z)>2||Math.abs(a.y-cap.at.y)>4||++cap.age>60) capMap(cap,a);
+    cap.uCut.value.set(a.x,a.y,a.z,s);
+    cap.meshes[0].position.set(a.x,a.y+1.2,a.z);
+    cap.meshes[1].position.set(a.x-cutF.x*0.6,a.y+1-cutF.y*0.6,a.z-cutF.z*0.6);
+    cap.meshes[1].quaternion.setFromUnitVectors(CAP_Z,CAP_N.copy(cutF).negate());
+    var hl=Math.sqrt(cutF.x*cutF.x+cutF.z*cutF.z)||1, hx=-cutF.x/hl, hz=-cutF.z/hl;
+    cap.meshes[2].position.set(a.x+hx*0.4,a.y+1.2+CUT_R,a.z+hz*0.4);
+    cap.meshes[2].quaternion.setFromUnitVectors(CAP_Z,CAP_N.set(hx,0,hz));
+  }
+  var CAP_Z=new THREE.Vector3(0,0,1), CAP_N=new THREE.Vector3(), capOff=false;
   var SKY_U={uCloud:{value:0},uCloudOff:{value:new THREE.Vector2()},uWet:{value:0},uSnow:{value:0},
              uCloudOn:{value:GFX.clouds?1:0},uDetail:{value:GFX.detail?1:0},
              /* The cutaway (#72): each player's feet (w 1 when there is one),
@@ -10256,12 +10413,26 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' float n=skyN(p)*0.65+skyN(p*2.3+vec2(7.0,3.0))*0.35;',
     ' float cov=smoothstep(1.3-uCloud*0.9,1.5-uCloud*0.9,n+0.25);',
     ' return 1.0-0.62*cov; }'].join('\n');
+  var CUT_GLSL=['uniform vec4 uCutA; uniform vec4 uCutB; uniform vec3 uCutF; uniform float uCutR;',
+    'float qsB2(vec2 a){ a=floor(a); return fract(dot(a,vec2(0.5,a.y*0.75))); }',
+    'float qsBayer(vec2 a){ return qsB2(0.5*a)*0.25+qsB2(a); }',
+    'float qsCutAt(vec4 c,vec3 w){',
+    '  if(c.w<0.001||w.y<c.y+1.2) return -1.0;',
+    '  vec3 d=w-(c.xyz+vec3(0.0,1.0,0.0)); float al=dot(d,uCutF);',
+    '  if(al>-0.6) return -1.0;',
+    /* Only what stands on the camera's side of the player, level: the
+       camera looks down, so a wall behind them and above their head lay
+       within the radius of the line of sight, and was cut though it can
+       never hide them. */
+    '  vec2 hz=normalize(-uCutF.xz+vec2(1e-5)); if(dot(d.xz,hz)<0.4) return -1.0;',
+    '  float pr=length(d-al*uCutF);',
+    '  return (1.0-smoothstep(uCutR-1.0,uCutR,pr))*c.w; }'].join('\n');
   var GRASS_VS=[
     'attribute float aPhase; attribute float aTint; attribute vec3 aCol; attribute vec3 aDry;',
     'uniform float uTime; uniform float uW; uniform float uHeight; uniform vec2 uWind; uniform float uWindAmt;',
     'uniform vec3 uPush['+GRASS_PUSH+'];',
     'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD; varying vec3 vN;',
-    'varying vec2 vGW; varying float vGust;',
+    'varying vec2 vGW; varying float vGust; varying float vGY;',
     '#include <fog_pars_vertex>',
     'float h11(vec2 q){ return fract(sin(dot(q,vec2(127.1,311.7)))*43758.545); }',
     'vec3 bez(vec3 a,vec3 b,vec3 c,vec3 d,float t){ float u=1.0-t;',
@@ -10281,7 +10452,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* the wind: the blade's own shiver over a gust that crosses the field */
     ' float gust=sin(dot(base.xz,uWind)*0.09-uTime*0.85)*uWindAmt;',
     ' float w=(sin(uTime*1.5+dot(base.xz,uWind)*0.5+aPhase)*0.45)*uWindAmt+gust*0.40;',
-    ' vGW=base.xz; vGust=gust;',
+    ' vGW=base.xz; vGY=base.y; vGust=gust;',
     ' float tilt=clamp(0.24+w*0.18,0.0,0.72);',
     ' vec3 up=vec3(0.0,1.0,0.0);',
     ' vec3 lean=normalize(dir*0.55+vec3(uWind.x,0.0,uWind.y)*0.45+vec3(1e-5));',
@@ -10333,10 +10504,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      nothing said so (issue #39, and the gate hole is #40). */
   var GRASS_FS=['uniform vec3 uSun; uniform float uSunI; uniform vec3 uAmb;',
     'varying float vH; varying float vT; varying vec3 vC; varying vec3 vD; varying vec3 vN;',
-    'varying vec2 vGW; varying float vGust;',
+    'varying vec2 vGW; varying float vGust; varying float vGY;',
     '#include <fog_pars_fragment>',
     SKY_GLSL,
-    'void main(){ vec3 c=mix(vC*0.42,vC,vH*0.80+0.20); c=mix(c,vD,vT*0.7);',
+    /* The cutaway takes the grass with the ground it grows on, by where the
+       blade is rooted: blades left standing on cut rock floated in the hole. */
+    CUT_GLSL,
+    'void main(){',
+    ' vec3 gw=vec3(vGW.x,vGY,vGW.y);',
+    ' if(qsCutAt(uCutA,gw)>qsBayer(gl_FragCoord.xy)||qsCutAt(uCutB,gw)>qsBayer(gl_FragCoord.xy)) discard;',
+    ' vec3 c=mix(vC*0.42,vC,vH*0.80+0.20); c=mix(c,vD,vT*0.7);',
     ' c*=1.0-0.2*uWet;',
     ' vec3 n=normalize(vN);',
     /* abs(), not max(): a blade is a surface with no inside, and the back of
@@ -10634,15 +10811,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      stay. The edge is an ordered dither rather than a fade, so nothing has
      to be sorted, and it reads as a clean hole at any size. The shadow pass
      draws with its own depth materials, so a cut wall still casts. */
-  var CUT_GLSL=['uniform vec4 uCutA; uniform vec4 uCutB; uniform vec3 uCutF; uniform float uCutR;',
-    'float qsB2(vec2 a){ a=floor(a); return fract(dot(a,vec2(0.5,a.y*0.75))); }',
-    'float qsBayer(vec2 a){ return qsB2(0.5*a)*0.25+qsB2(a); }',
-    'float qsCutAt(vec4 c,vec3 w){',
-    '  if(c.w<0.5||w.y<c.y+1.2) return -1.0;',
-    '  vec3 d=w-(c.xyz+vec3(0.0,1.0,0.0)); float al=dot(d,uCutF);',
-    '  if(al>-0.6) return -1.0;',
-    '  float pr=length(d-al*uCutF);',
-    '  return 1.0-smoothstep(uCutR-1.0,uCutR,pr); }'].join('\n');
+
   /* `cut`: the cutaway (#72) is for terrain only. What stands on it — trees,
      rocks, ruins, the loot, the machines — is drawn whole: cutting a hole in
      a tree beside the player showed the ground through the trunk. */
@@ -11504,6 +11673,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
                   uSunI:{value:1},uAmb:{value:new THREE.Color(0.60,0.60,0.60)},
                   uCloud:SKY_U.uCloud,uCloudOff:SKY_U.uCloudOff,uWet:SKY_U.uWet,uSnow:SKY_U.uSnow,
                   uCloudOn:SKY_U.uCloudOn,uDetail:SKY_U.uDetail,uWindAmt:GRASS_WIND,
+                  uCutA:SKY_U.uCutA,uCutB:SKY_U.uCutB,uCutF:SKY_U.uCutF,uCutR:SKY_U.uCutR,
                   fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0},
                   uHeight:{value:grassLen/GRASS_LEN_REF},
                   uWind:{value:new THREE.Vector2(0.72,0.69)},
@@ -12184,6 +12354,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   function spawn(){
     /* A guest does not get to decide where it is — the host does. */
     if(role==='guest') return;
+    /* Streamed, the spawn's ground may have been let go by now: dead a few
+       hundred metres off, a respawn stood the body on nothing and it fell
+       out of the world. Grown first, as a place code's is. */
+    if(streaming) settleAround(built.data.spawn[0],built.data.spawn[2]);
     var a=QS.placeOnGround(col,built.data.spawn[0],built.data.spawn[2]);
     if(session){ session.me.x=a.x; session.me.y=a.y; session.me.z=a.z;
                  session.me.vx=session.me.vy=session.me.vz=0;
@@ -12225,6 +12399,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var keep=sharedMats();
     built.scene.traverse(function(n){ if(!n.userData.keep) freeObject(n,keep); });
     keep.forEach(function(m){ m.dispose(); });
+    if(built.caps) built.caps.forEach(function(c){ c.tex.dispose(); });
     /* The sun's shadow map is a 2048 render target of its own: a new world
        brings a new sun, and the old one's map stayed on the GPU. */
     if(built.sun&&built.sun.shadow) built.sun.shadow.dispose();
@@ -14764,7 +14939,29 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Seconds between the sun's steps at the current Shadows setting. */
     get sunTurn(){ return sunTurn(); },
     /* The cutaway (#72), for the gate to compare a frame with and without. */
-    setCut:function(on){ cutOn=!!on; return cutOn; },
+    /* 'force' opens it whether or not the ground hides anyone, for the gate. */
+    setCut:function(on){ cutOn=!!on; cutForce=on==='force'; cutSnap=true; return cutOn; },
+    /* How far each player's cut is open, and whether the ground hides them. */
+    get cut(){ var a=player(); return {a:cutS[0],b:cutS[1],hidden:!!a&&cutOcc(a)}; },
+    /* The cut's dark faces shown or not, for the gate to diff a frame both ways. */
+    setCaps:function(on){ capOff=!on; return !!on; },
+    /* Stand the player on flat ground where the ground on the camera's side
+       hides even the top of their head, somewhere loaded near where they
+       are: a place the cut has to open on rock. Null if there is none. */
+    cutSpot:function(){
+      var a=player(); if(!a) return null; camera.getWorldDirection(cutF);
+      for(var r=0;r<=40;r+=1)for(var i=-r;i<=r;i++)for(var j=-r;j<=r;j++){
+        if(Math.max(Math.abs(i),Math.abs(j))!==r) continue;
+        var x=Math.round(a.x)+i+0.5, z=Math.round(a.z)+j+0.5, y=terrainTop(x,z), ok=y!==null;
+        for(var u=-0.5;ok&&u<=0.5;u+=0.25)for(var v=-0.5;ok&&v<=0.5;v+=0.25){ var t=terrainTop(x+u,z+v); if(t===null||Math.abs(t-y)>0.01) ok=false; }
+        if(!ok) continue;
+        var was=[a.x,a.y,a.z]; a.x=x; a.z=z; a.y=y;
+        if(!cutOcc(a)){ a.x=was[0]; a.y=was[1]; a.z=was[2]; continue; }
+        a.vx=a.vy=a.vz=0; a.grounded=true; cutSnap=true;
+        return [x,y,z];
+      }
+      return null;
+    },
     /* Silhouettes shown or not (#72), for the gate to diff a frame both ways. */
     setSilhouettes:function(on){ if(built) built.scene.traverse(function(o){ if(o.userData.kind==='silhouette') o.visible=!!on; }); return !!on; },
     /* A wall of the world's own prop material stood between the camera and
@@ -14775,12 +14972,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       if(testWallM){ built.scene.remove(testWallM); testWallM.geometry.dispose();
         if(testWallM.userData.own) testWallM.material.dispose(); testWallM=null; worldChanged(); }
       if(!on||!built) return null;
-      var a=player(), prop=on==='prop'; camera.getWorldDirection(cutF);
+      var a=player(), prop=on==='prop', behind=on==='behind'; camera.getWorldDirection(cutF);
       testWallM=new THREE.Mesh(new THREE.BoxGeometry(4,5,4),prop?built.mats.prop:skyLambert(true));
-      testWallM.position.set(a.x-cutF.x*4.5,a.y+1-cutF.y*4.5,a.z-cutF.z*4.5);
+      /* 'behind': the same wall on the far side of the player, level, which
+         can never hide them and must never be cut. */
+      if(behind){ var hl=Math.sqrt(cutF.x*cutF.x+cutF.z*cutF.z)||1;
+        testWallM.position.set(a.x+cutF.x/hl*2.5,a.y+2.5,a.z+cutF.z/hl*2.5); testWallM.userData.behind=true; }
+      else testWallM.position.set(a.x-cutF.x*4.5,a.y+1-cutF.y*4.5,a.z-cutF.z*4.5);
       testWallM.userData.kind=prop?'props':'terrain'; testWallM.userData.own=!prop;
       testWallM.castShadow=true; testWallM.receiveShadow=true;
-      built.scene.add(testWallM); worldChanged();
+      built.scene.add(testWallM); worldChanged(); cutSnap=true;
       return testWallM.position.toArray();
     },
     /* Which code this is: the stamp, the source hash, and what the view says. */

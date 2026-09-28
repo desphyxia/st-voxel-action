@@ -760,6 +760,63 @@ if (NODE_HALF) {
         perchedAt.length ? `${perchedAt.length} perched: ${perchedAt.slice(0, 3).join('; ')}`
           : `none over ${worlds.length} seeds and 9 streamed chunks; a cell lifted a metre is found`);
 
+  /* Every body of water has a way out. A swimmer's jump is a jump from the
+     surface, so a bank within a double jump of it is an exit; a river cut
+     between banks higher than that everywhere is a pit. Bodies that reach the
+     window's edge may leave by it and are not judged here. The self-test
+     raises every bank of one body three metres and requires it found. */
+  const pits = (w) => {
+    const { M, cells } = w, seen = new Uint8Array(M * M), found = [];
+    for (let i = 1; i < M - 1; i++) for (let j = 1; j < M - 1; j++) {
+      const k0 = i * M + j; if (!cells[k0].water || seen[k0]) continue;
+      const q = [k0]; seen[k0] = 1; let edge = false, exit = false, n = 0;
+      while (q.length) {
+        const a = q.pop(), ai = (a / M) | 0, aj = a % M, ca = cells[a]; n++;
+        for (let d = 0; d < 4; d++) {
+          const bi = ai + D4W[d][0], bj = aj + D4W[d][1];
+          if (bi < 1 || bj < 1 || bi >= M - 1 || bj >= M - 1) { edge = true; continue; }
+          const b = bi * M + bj, cb = cells[b];
+          if (cb.water) { if (!seen[b]) { seen[b] = 1; q.push(b); } continue; }
+          if (cb.H <= Math.max(ca.wl, ca.H) + MOVE.climb2 + 0.01) exit = true;
+        }
+      }
+      if (!edge && !exit) found.push(`${n} cells at ${i},${j}`);
+    }
+    return found;
+  };
+  const pitAt = [];
+  worlds.forEach((w, q) => pits(w).forEach((p) => pitAt.push(`${GOLDEN_SEEDS[q].nm} ${p}`)));
+  for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) {
+    pits(chunkWorld('QUARTERSTONE', cx, cz, null, 1)).forEach((p) => pitAt.push(`chunk ${cx},${cz} ${p}`));
+  }
+  /* The self-test walls in the first body that stays inside its window. */
+  let walled = 0, pp = null;
+  for (const w0 of worlds) {
+    const { M } = w0, cells = w0.cells.map((c) => ({ ...c })), seen = new Uint8Array(M * M);
+    for (let k0 = 0; k0 < M * M && !walled; k0++) {
+      if (!cells[k0].water || seen[k0]) continue;
+      const q = [k0], body = [k0]; seen[k0] = 1; let edge = false;
+      while (q.length) {
+        const a = q.pop(), ai = (a / M) | 0, aj = a % M;
+        for (const [di, dj] of D4W) {
+          const bi = ai + di, bj = aj + dj;
+          if (bi < 1 || bj < 1 || bi >= M - 1 || bj >= M - 1) { edge = true; continue; }
+          const b = bi * M + bj; if (cells[b].water && !seen[b]) { seen[b] = 1; q.push(b); body.push(b); }
+        }
+      }
+      if (edge) continue;
+      for (const a of body) for (const [di, dj] of D4W) {
+        const b = a + di * M + dj; if (!cells[b].water) cells[b].H = Math.max(cells[b].H, cells[a].wl + 3);
+      }
+      walled = body.length; pp = { ...w0, cells };
+    }
+    if (walled) break;
+  }
+  check(pitAt.length === 0 && walled > 0 && pits(pp).length === 1,
+        'WATER: every body of water has a bank a swimmer can jump onto',
+        pitAt.length ? `${pitAt.length} pits: ${pitAt.slice(0, 3).join('; ')}`
+          : `none over ${worlds.length} seeds and 9 streamed chunks; a pool walled three metres high is found`);
+
   /* No crown across a river. Settling held a narrow river down at both low
      banks and left its middle standing, up to a metre over the water either
      side of it — seen at SCORCH-3 (26.5, -13.5), falls down both flanks and a
@@ -2301,17 +2358,41 @@ if (BROWSER_HALF) {
             return { px, mean: m.map((v) => v / n) };
           };
           /* The fraction of pixels a change turns over by more than a shade. */
-          const changed = (u, v) => { let c = 0, n = 0; for (let i = 0; i < u.px.length; i += 4) { n++;
-            if (Math.abs(u.px[i] - v.px[i]) + Math.abs(u.px[i + 1] - v.px[i + 1]) + Math.abs(u.px[i + 2] - v.px[i + 2]) > 30) c++; } return c / n; };
-          const open = sample(false, true, true), cut = sample(true, true, true), prop = sample('prop', true, true);
+          /* With `only`, counted over the pixels where `v` differs from it — the
+             pixels a wall covers, against the frame without it — so ground the
+             cut rightly opens beside the player does not count against it. */
+          const differs = (u, v, i) => Math.abs(u.px[i] - v.px[i]) + Math.abs(u.px[i + 1] - v.px[i + 1]) + Math.abs(u.px[i + 2] - v.px[i + 2]) > 30;
+          const changed = (u, v, only) => { let c = 0, n = 0; for (let i = 0; i < u.px.length; i += 4) {
+            if (only && !differs(v, only, i)) continue; n++; if (differs(u, v, i)) c++; } return n ? c / n : 0; };
+          const open = sample(false, true, true), openCut = P.cut.a, cut = sample(true, true, true), wallCut = P.cut.a,
+                prop = sample('prop', true, true);
           const sil = sample(true, false, true), none = sample(true, false, false);
           P.testWall(false); P.setCut(true); P.setSilhouettes(true); P.frameOnce();
           let sils = 0; P.scene.traverse((o) => { if (o.userData.kind === 'silhouette') sils++; });
           /* A wall uncut, for scale: terrain with the cut off and no silhouette. */
           const whole = sample(true, false, false);
+          /* A wall behind the player, with the cut forced open: nothing of it
+             goes. From the spawn, where the checks before have not walked the
+             player up against ground the forced cut would rightly open. */
+          P.respawn(); const backOpen = sample(false, false, false);
+          const backCut = sample('behind', 'force', false), backWhole = sample('behind', false, false),
+                backAgain = sample('behind', false, false);
+          /* Over the wall's own pixels: the test wall draws flat black, and
+             nothing else round the spawn does. Counted by what changed there,
+             not by what differs from a frame without it — at this zoom the
+             region is mostly grass and trees in the wind, and frames a moment
+             apart speckled a tenth of it with changes no cut made. */
+          const lum = (f, i) => (f.px[i] + f.px[i + 1] + f.px[i + 2]) / 3;
+          let wallN = 0, wallTaken = 0;
+          for (let i = 0; i < backWhole.px.length; i += 4) {
+            if (lum(backWhole, i) > 12 || lum(backAgain, i) > 12 || lum(backOpen, i) < 30) continue;
+            wallN++; if (differs(backCut, backWhole, i)) wallTaken++;
+          }
+          P.testWall(false); P.setCut(true);
           return { open: { mean: open.mean }, cut: { mean: cut.mean }, prop: changed(prop, open), whole: changed(whole, open),
                    propVsWhole: changed(prop, whole), silShown: changed(sil, none),
-                   cutShown: changed(cut, sample(true, true, false)), sils };
+                   cutShown: changed(cut, sample(true, true, false)), sils, openCut, wallCut,
+                   behind: wallN ? wallTaken / wallN : 1, behindWall: wallN / (backWhole.px.length / 4) };
         });
         {
           const d = (u, v) => Math.max(...u.mean.map((x, i) => Math.abs(x - v.mean[i])));
@@ -2329,7 +2410,45 @@ if (BROWSER_HALF) {
           check(vis.whole > 0.2 && vis.prop > vis.whole * 0.8,
                 'VISIBILITY: and only terrain is cut: the same wall as a prop stays whole',
                 `a prop wall changes ${(100 * vis.prop).toFixed(0)}% of the region, as an uncut terrain wall changes ${(100 * vis.whole).toFixed(0)}%`);
+          /* Under five per cent: what remains is a bird or a mote crossing
+             the wall between samples, a speck; a cut takes a hole. */
+          check(vis.behindWall > 0.05 && vis.behind < 0.05,
+                'VISIBILITY: and nothing behind the player is ever cut, even with the cut forced open',
+                `a wall behind them covers ${(100 * vis.behindWall).toFixed(0)}% of the region; forcing the cut changes ${(100 * vis.behind).toFixed(2)}% of what it covers`);
+          check(vis.openCut === 0 && vis.wallCut === 1,
+                'VISIBILITY: the cut opens only when the ground hides the player',
+                `open ground: cut ${vis.openCut}; behind a wall: cut ${vis.wallCut}`);
         }
+
+        /* The cut face. Terrain has no inside, so a cut through a bank showed
+           the sky where the rock had been: a pale stain that read as low
+           ground. Where the ground on the camera's side hides even the top of
+           the head, the cut opens, and its dark faces cover what it opened: with
+           them the hole is darker than without, and no brighter than the
+           ground round the player. */
+        const cap = await bp.evaluate(() => {
+          const P = window.QSPLAY, cv = document.querySelector('#cv'), gl = cv.getContext('webgl2') || cv.getContext('webgl');
+          const at = P.cutSpot(); if (!at) return null;
+          const sample = (caps) => {
+            P.setCaps(caps); P.frameOnce(); P.frameOnce(); P.draw();
+            const s = P.screen(), k = cv.width / cv.clientWidth;
+            const w = Math.round(120 * k), h = Math.round(120 * k);
+            const x0 = Math.max(0, Math.round((s.x - 60) * k)), y0 = Math.max(0, Math.round(cv.height - (s.y + 40) * k));
+            const px = new Uint8Array(w * h * 4); gl.readPixels(x0, y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+            let n = 0, l = 0, pale = 0;
+            for (let i = 0; i < px.length; i += 4) { const v = (px[i] + px[i + 1] + px[i + 2]) / 3; n++; l += v; if (v > 200) pale++; }
+            return { px, l: l / n, pale: pale / n };
+          };
+          const on = sample(true), off = sample(false); P.setCaps(true);
+          let c = 0; for (let i = 0; i < on.px.length; i += 4)
+            if (Math.abs(on.px[i] - off.px[i]) + Math.abs(on.px[i + 1] - off.px[i + 1]) + Math.abs(on.px[i + 2] - off.px[i + 2]) > 30) c++;
+          return { at, cut: P.cut, on: { l: on.l, pale: on.pale }, off: { l: off.l, pale: off.pale }, changed: c / (on.px.length / 4) };
+        });
+        check(!!cap && cap.cut.a === 1 && cap.changed > 0.03 && cap.on.l < cap.off.l && cap.on.pale < 0.02,
+              'VISIBILITY: and where it cuts through rock, the cut face is drawn dark, not the sky',
+              cap ? `at ${cap.at.map((v) => v.toFixed(1)).join(',')}: cut ${cap.cut.a}; the faces change ${(100 * cap.changed).toFixed(1)}% `
+                + `of the region, ${cap.off.l.toFixed(0)} → ${cap.on.l.toFixed(0)} bright, pale ${(100 * cap.off.pale).toFixed(1)}% → ${(100 * cap.on.pale).toFixed(1)}%`
+                : 'nowhere in reach where the ground hides a head');
 
         /* ---------- BUILD ID: which code a screenshot came from ----------
            GitHub Pages serves this file unstamped and is where the game is
