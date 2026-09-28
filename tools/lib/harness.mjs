@@ -299,6 +299,8 @@ export function measureWorld(d, name) {
     thickets: d.G && d.G.thornIn ? d.G.thornIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     /* Crevasse fields the same way (#76, Rimewaste). */
     crevasses: d.G && d.G.rimeIn ? d.G.rimeIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
+    /* Fungal towers the same way (#76, Sporeverge). */
+    towers: d.G && d.G.sporeIn ? d.G.sporeIn(d.OX - 128, d.OZ - 128, d.OX + 128, d.OZ + 128) : -1,
     digest: hex(h),
     parts,
   };

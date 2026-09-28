@@ -4024,3 +4024,130 @@ export function rimeSuite() {
   say('and round the golden rime window too', gn >= 2, `${gn} fields within 128 m of ${gr.seed}'s window`);
   return out;
 }
+
+/* Seeds with spore enough for towers in 600 m. */
+const SPORE_SEEDS = ['MOSSGATE', 'DUSKWARD', 'COLDHARBOUR'];
+
+/**
+ * Fungal towers (#76, Sporeverge): a stalk nobody climbs, and a spiral of
+ * shelves round it that is the way up.
+ *
+ * Over the cell field round each tower, the floods of the mesa suite from
+ * all the ground that is neither stalk nor shelf: with the shelves the cap is
+ * reached, and left; with them taken away it is not. Then, on built windows
+ * and against the collider — where a high shelf is a slab with air under it —
+ * a body climbs the spiral shelf by shelf onto the cap, and double jumps at
+ * the stalk from all round it land nobody on top.
+ */
+export function sporeSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const sites = [];
+  for (const seed of SPORE_SEEDS) {
+    const G = makeGen(seed, null), seen = new Set();
+    for (let x = -300; x <= 300 && sites.filter((q) => q[0] === seed).length < 3; x += 4) for (let z = -300; z <= 300; z += 4) {
+      const s = G.sporeOver(x, z); if (!s || seen.has(s)) continue;
+      seen.add(s); sites.push([seed, s, G]); if (sites.filter((q) => q[0] === seed).length >= 3) break;
+    }
+  }
+  const unreached = [], stranded = [], cheats = [];
+  let floating = 0;
+  for (const [seed, s, G] of sites) {
+    const E = s.R + 9, N = 2 * E + 1;
+    const Hc = new Float32Array(N * N), bare = new Float32Array(N * N), kind = new Uint8Array(N * N), dry = new Uint8Array(N * N);
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const c = G.cell(s.cx + i - E, s.cz + j - E), k = i * N + j;
+      Hc[k] = c.water ? c.wl : c.H; kind[k] = c.spore;
+      dry[k] = c.magma || (c.water && c.wl - c.H > 1.5) ? 0 : 1;
+      if (c.sporeLo) floating++;
+      /* With the shelf taken away, the ground it stood over. */
+      bare[k] = c.spore === 2 ? (c.sporeLo || s.G) : Hc[k];
+    }
+    const flood = (H, back) => {
+      const seen = new Uint8Array(N * N), q = [];
+      for (let k = 0; k < N * N; k++) if (dry[k] && kind[k] !== 1 && kind[k] !== 2) { seen[k] = 1; q.push(k); }
+      for (let h = 0; h < q.length; h++) {
+        const k = q[h], i = (k / N) | 0, j = k % N;
+        for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const ii = i + a, jj = j + b; if (ii < 0 || jj < 0 || ii >= N || jj >= N) continue;
+          const p = ii * N + jj;
+          if (!seen[p] && dry[p]) {
+            const dh = back ? H[k] - H[p] : H[p] - H[k];
+            if (dh <= MOVE.climb2 && dh >= -MOVE.fall) { seen[p] = 1; q.push(p); }
+          }
+          const i2 = i + 2 * a, j2 = j + 2 * b; if (i2 < 0 || j2 < 0 || i2 >= N || j2 >= N) continue;
+          const p2 = i2 * N + j2; if (seen[p2] || !dry[p2]) continue;
+          if (H[p] <= H[k] - 1 && Math.abs(H[p2] - H[k]) <= MOVE.slope) { seen[p2] = 1; q.push(p2); }
+        }
+      }
+      return seen;
+    };
+    const cap = [...Array(N * N).keys()].filter((k) => kind[k] === 1);
+    const up = flood(Hc, false), down = flood(Hc, true), bareUp = flood(bare, false);
+    if (!cap.some((k) => up[k])) unreached.push(`${seed} ${s.cx},${s.cz}`);
+    if (!cap.some((k) => down[k])) stranded.push(`${seed} ${s.cx},${s.cz}`);
+    if (cap.some((k) => bareUp[k])) cheats.push(`${seed} ${s.cx},${s.cz}`);
+  }
+  say('fungal towers stand in the spore', sites.length >= 6, `${sites.length} towers over ${SPORE_SEEDS.length} seeds, ${floating} shelf cells with air under them`);
+  say('and up their shelves every cap is reached, and left, from the ground', unreached.length === 0 && stranded.length === 0,
+      unreached.length || stranded.length ? `not reached: ${unreached.join(', ') || 'none'}; not left: ${stranded.join(', ') || 'none'}` : `${sites.length} caps reached and left`);
+  say('and without the shelves no cap is reached', cheats.length === 0,
+      cheats.length ? cheats.join('; ') : `${sites.length} towers, none climbed without them`);
+
+  /* On built windows, against the collider. */
+  const climbed = [], got = [], props = [];
+  let tries = 0, done = 0;
+  for (const [seed, s] of sites.slice(0, 5)) {
+    const w = buildWorld({ seed, size: 64, ox: s.cx, oz: s.cz }), col = colliderForWorld(w);
+    /* No prop stands within the tower's reach: a canopy leaning over the
+       stalk is a way onto the cap, and one over the shelves a way past them. */
+    const ps = w.propStart === undefined ? w.pos.length / 3 : w.propStart, E = s.R + 3;
+    for (let q = ps; q < w.pos.length / 3; q++) {
+      const x = w.pos[q * 3], y = w.pos[q * 3 + 1], z = w.pos[q * 3 + 2];
+      if (Math.abs(x) <= E && Math.abs(z) <= E && y > s.G + 0.5) { props.push(`${seed} ${s.cx},${s.cz}: a prop at ${x},${y},${z}`); break; }
+    }
+    const onCap = (b) => Math.abs(b.x) <= s.R + 0.5 && Math.abs(b.z) <= s.R + 0.5 && b.y > s.T - 0.5;
+    /* Shelf by shelf, jumping at each, then onto the cap. */
+    const targets = s.shelves.map((run, i) => [run[0][0] + (run[1][0] - run[0][0]) / 2, run[0][1] + (run[1][1] - run[0][1]) / 2, s.G + 1 + i]);
+    targets.push([0, 0, s.T]);
+    const f = s.shelves[0][0], st = [f[0] * 1.8, f[1] * 1.8];
+    const g0 = w.cells[Math.round(st[0] + 32) * w.M + Math.round(st[1] + 32)].H;
+    const b = placeOnGround(col, st[0], st[1], g0 + 1.5);
+    let ti = 0;
+    for (let t = 0; t < 3000 && !b.dead && ti < targets.length; t++) {
+      const [tx, tz, th] = targets[ti], dx = tx - b.x, dz = tz - b.z, d = hyp(dx, dz);
+      if (b.grounded && d < 0.45 && b.y > th - 0.3) { ti++; continue; }
+      /* From the lip of one shelf, a metre short of the next one's middle
+         and a metre of air between; again at the top of the arc if the
+         next is still over head height. */
+      const near = d < 2.2 && th > b.y + 0.3;
+      const j = (b.grounded && (b.blocked || near)) || (!b.grounded && b.airJumps > 0 && b.vy <= 0 && th > b.y - 0.2);
+      const sp = d > 0.01 ? Math.min(1, d / 0.6) : 0;
+      step(col, b, { mx: sp * dx / (d || 1), mz: sp * dz / (d || 1), jump: j });
+    }
+    if (onCap(b) && !b.dead) done++;
+    else climbed.push(`${seed} ${s.cx},${s.cz}: shelf ${ti} of ${s.n}, at ${b.x.toFixed(1)},${b.y.toFixed(2)},${b.z.toFixed(1)}${b.dead ? ' dead' : ''}`);
+    /* Double jumps at the stalk from twelve points round it, run straight in. */
+    for (let a = 0; a < 12; a++) {
+      const u = cos(a * Math.PI / 6), v = sin(a * Math.PI / 6), x = u * (s.R + 3), z = v * (s.R + 3);
+      const g = w.cells[Math.round(x + 32) * w.M + Math.round(z + 32)].H;
+      const c = placeOnGround(col, x, z, g + 1.5);
+      tries++;
+      for (let t = 0; t < 150 && !c.dead; t++) {
+        const j = (c.grounded && t > 2) || (!c.grounded && c.airJumps > 0 && c.vy <= 0);
+        step(col, c, { mx: -u, mz: -v, jump: j });
+      }
+      if (onCap(c)) got.push(`${seed} ${s.cx},${s.cz} from ${x.toFixed(0)},${z.toFixed(0)} at y ${c.y.toFixed(2)}`);
+    }
+  }
+  say('nothing grows within three metres of a stalk on a built window', props.length === 0,
+      props.length ? props.join('; ') : `${Math.min(5, sites.length)} towers, no prop within reach`);
+  say('a body climbs the shelves onto the cap, a jump at each', climbed.length === 0,
+      climbed.length ? climbed.join('; ') : `${done} towers climbed`);
+  say('and no double jump from the ground lands on one', got.length === 0,
+      got.length ? got.slice(0, 6).join('; ') : `${tries} double jumps at the stalks, none on a cap`);
+  const gs = GOLDEN_SEEDS.find((g) => g.nm === 'spore'), gg = makeGen(gs.seed, gs.force);
+  const gn = gg.sporeIn(gs.ox - 128, gs.oz - 128, gs.ox + 128, gs.oz + 128);
+  say('and round the golden spore window too', gn >= 2, `${gn} towers within 128 m of ${gs.seed}'s window`);
+  return out;
+}

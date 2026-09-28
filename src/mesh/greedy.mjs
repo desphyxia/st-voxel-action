@@ -232,6 +232,8 @@ export function surfaceAt(w, gi, gj, y) {
     }
     /* As surface.mjs: a crevasse field's sheet and bridges are ice (#76). */
     if (c.rime === 1 || c.rime === 3) return { mat: MAT.ICE, pal: PAL.RIME_ICE.at };
+    /* ...and a fungal tower's cap and shelves. */
+    if (c.spore === 1 || c.spore === 2) return { mat: MAT.FUNGUS, pal: PAL.FUNGUS_CAP.at };
     var n0 = gi > 0 ? w.Hs[k - NZ] : hh - 2, n1 = gi < NX - 1 ? w.Hs[k + NZ] : hh - 2;
     var n2 = gj > 0 ? w.Hs[k - 1] : hh - 2, n3 = gj < NZ - 1 ? w.Hs[k + 1] : hh - 2;
     return (hh - Math.min(n0, n1, n2, n3)) > 0.9
@@ -239,6 +241,9 @@ export function surfaceAt(w, gi, gj, y) {
   }
   /* ...and every wall it is cut with. */
   if (c.rime >= 1 && c.rime <= 4) return { mat: MAT.ICE, pal: PAL.RIME_ICE.at };
+  /* The stalk, under a cap whose rim is its top metre. */
+  if (c.spore >= 1 && c.spore <= 2 && y * V < hh - 1 - 0.001) return { mat: MAT.FUNGUS, pal: PAL.FUNGUS_STALK.at };
+  if (c.spore >= 1 && c.spore <= 2 && y * V >= hh - 1 - 0.001) return { mat: MAT.FUNGUS, pal: PAL.FUNGUS_CAP.at };
   return (y * V < hh - 1.25)
     ? { mat: b.mat.rock, pal: b.rock.at } : { mat: b.mat.soil, pal: b.soil.at };
 }

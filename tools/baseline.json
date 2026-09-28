@@ -22,6 +22,7 @@
   "cliffs": 0,
   "thickets": 0,
   "crevasses": 0,
+  "towers": 0,
   "digest": "ece3c422",
   "parts": {
    "vox": "e200ff7b",
@@ -56,6 +57,7 @@
   "cliffs": 0,
   "thickets": 0,
   "crevasses": 0,
+  "towers": 0,
   "digest": "a42cf953",
   "parts": {
    "vox": "9ac607e2",
@@ -90,6 +92,7 @@
   "cliffs": 12,
   "thickets": 0,
   "crevasses": 0,
+  "towers": 0,
   "digest": "97814b9a",
   "parts": {
    "vox": "36a50a7c",
@@ -124,6 +127,7 @@
   "cliffs": 0,
   "thickets": 6,
   "crevasses": 0,
+  "towers": 0,
   "digest": "c7c1b9dc",
   "parts": {
    "vox": "02352bb2",
@@ -158,6 +162,7 @@
   "cliffs": 0,
   "thickets": 0,
   "crevasses": 0,
+  "towers": 0,
   "digest": "e3be9924",
   "parts": {
    "vox": "619d371f",
@@ -192,6 +197,7 @@
   "cliffs": 0,
   "thickets": 0,
   "crevasses": 12,
+  "towers": 0,
   "digest": "8c33e78c",
   "parts": {
    "vox": "6a11e6e3",
@@ -208,14 +214,14 @@
   "trailProps": 0,
   "waterBodies": 1,
   "waterBodies8": 1,
-  "lamps": 9,
-  "lampsByTrail": 9,
-  "voxels": 112377,
-  "mats": 112377,
+  "lamps": 6,
+  "lampsByTrail": 6,
+  "voxels": 114334,
+  "mats": 114334,
   "matKinds": 10,
-  "grass": 167146,
+  "grass": 166794,
   "waterCells": 855,
-  "trailCells": 353,
+  "trailCells": 297,
   "wetTrail": 4,
   "bridges": 1,
   "landmark": true,
@@ -226,15 +232,16 @@
   "cliffs": 0,
   "thickets": 0,
   "crevasses": 0,
-  "digest": "cc72ae63",
+  "towers": 13,
+  "digest": "3630b404",
   "parts": {
-   "vox": "13647a45",
-   "magma": "c5fa14ee",
-   "grass": "eea98f0a",
-   "water": "0285feab",
-   "maps": "5d516cdc",
-   "sites": "e9c738b1",
-   "cells": "beb2f094"
+   "vox": "4178ff8f",
+   "magma": "b73ab739",
+   "grass": "0878bde0",
+   "water": "eb4f034a",
+   "maps": "6da476ba",
+   "sites": "be36c57e",
+   "cells": "0f313ca4"
   }
  },
  {
@@ -260,6 +267,7 @@
   "cliffs": 0,
   "thickets": 0,
   "crevasses": 0,
+  "towers": 0,
   "digest": "7aa6f09b",
   "parts": {
    "vox": "90b47d8b",
@@ -294,6 +302,7 @@
   "cliffs": 1,
   "thickets": 0,
   "crevasses": 0,
+  "towers": 0,
   "digest": "71447536",
   "parts": {
    "vox": "20b90e07",

@@ -1542,13 +1542,105 @@ function makeGen(seedStr,force){
       }
     return null;
   }
+  /* Fungal towers (#76, Sporeverge): a square stalk six to eight metres tall
+     and seven across, its top a cap, and round it a spiral of bracket shelves —
+     2 m slabs a metre thick, stuck to the stalk, each a metre over the last
+     with a metre of air between — from a jump off the ground to a step onto
+     the cap. The stalk's sides are too tall to climb anywhere else.
+
+     A shelf high enough to walk under is a slab with air beneath it: the
+     column is two spans, the ground and the shelf, the way an overhang's
+     rim is (spans.mjs).
+
+     Placed like the others: a jittered spot per 48 m square where the spore
+     is more than half the climate, refused near a river, a gorge or another
+     feature. */
+  var SPR_GRID=48, SPR_APRON=6, SPR_REACH=14, SPR_SITES=new Map();
+  function sporeSite(gx,gz){
+    var k=gx*131071+gz, s=SPR_SITES.get(k);
+    if(s!==undefined) return s;
+    s=null;
+    if(prand(gx,gz,0x9f10)<0.75) for(var t=0;t<4&&!s;t++) s=sporeTry(gx,gz,0x9f11+t*16);
+    SPR_SITES.set(k,s);
+    return s;
+  }
+  function sporeTry(gx,gz,salt){
+    var cx=gx*SPR_GRID+10+Math.floor(prand(gx,gz,salt)*28),
+        cz=gz*SPR_GRID+10+Math.floor(prand(gx,gz,salt+1)*28);
+    if(climate(cx,cz)[BIO.SPORE]<=0.5) return null;
+    var R=3, E=R+1+SPR_APRON, hi=-1e9, dx, dz, h;
+    for(dx=-E;dx<=E;dx++) for(dz=-E;dz<=E;dz++){
+      var x=cx+dx, z=cz+dz;
+      if(mesaWet(x,z)||mesaAt(x,z)||basaltAt(x,z)||cliffAt(x,z)||thornAt(x,z)||rimeAt(x,z)) return null;
+      h=rawH(x,z); if(h>hi) hi=h;
+    }
+    var G=Math.max(Math.round(hi),1), T=G+6+Math.floor(prand(gx,gz,salt+2)*3);
+    if(T>CEIL-1) return null;
+    /* The ring the shelves stand on: the square of cells round the stalk,
+       walked in order from a drawn start and either way round, a shelf of
+       two and a gap of one. A gap never falls on a corner — the shelves
+       either side of it would not be in line, and the jump across it would
+       be a diagonal one — so a shelf that reaches a corner takes it too. */
+    var ring=[], q=R+1, i, j;
+    for(i=-q;i<q;i++) ring.push([q,i]);
+    for(i=q;i>-q;i--) ring.push([i,q]);
+    for(i=q;i>-q;i--) ring.push([-q,i]);
+    for(i=-q;i<q;i++) ring.push([i,-q]);
+    var L=ring.length, a0=Math.floor(prand(gx,gz,salt+3)*L), dir=prand(gx,gz,salt+4)<0.5?1:-1;
+    var cell=function(m){ return ring[((a0+dir*m)%L+L)%L]; };
+    var corner=function(c){ return Math.abs(c[0])===q&&Math.abs(c[1])===q; };
+    var n=T-G-1, sh=new Map(), shelves=[], m=0;
+    for(i=0;i<n;i++){
+      var run=[cell(m),cell(m+1)]; m+=2;
+      if(corner(cell(m))){ run.push(cell(m)); m++; }
+      m++;
+      if(m>L) return null;
+      for(j=0;j<run.length;j++) sh.set(run[j][0]*64+run[j][1],G+1+i);
+      shelves.push(run);
+    }
+    return {cx:cx,cz:cz,R:R,G:G,T:T,n:n,sh:sh,shelves:shelves};
+  }
+  function sporeStalk(dx,dz,R){ return Math.abs(dx)<=R&&Math.abs(dz)<=R; }
+  /* The stalk (1), a shelf (2), the six metres round it where nothing grows
+     (3): a canopy rooted nearer leans over the shelves or the cap. */
+  function sporeAt(x,z){
+    var apron=null;
+    for(var gx=Math.floor((x-SPR_REACH)/SPR_GRID);gx<=Math.floor((x+SPR_REACH)/SPR_GRID);gx++)
+      for(var gz=Math.floor((z-SPR_REACH)/SPR_GRID);gz<=Math.floor((z+SPR_REACH)/SPR_GRID);gz++){
+        var s=sporeSite(gx,gz); if(!s) continue;
+        var dx=x-s.cx, dz=z-s.cz, E=s.R+1+SPR_APRON;
+        if(Math.abs(dx)>E||Math.abs(dz)>E) continue;
+        if(sporeStalk(dx,dz,s.R)) return {kind:1,h:s.T};
+        var h=s.sh.get(dx*64+dz);
+        if(h!==undefined) return {kind:2,h:h};
+        apron={kind:3,h:null};
+      }
+    return apron;
+  }
+  function sporeIn(x0,z0,x1,z1){
+    var n=0;
+    for(var gx=Math.floor(x0/SPR_GRID);gx<=Math.floor(x1/SPR_GRID);gx++)
+      for(var gz=Math.floor(z0/SPR_GRID);gz<=Math.floor(z1/SPR_GRID);gz++){
+        var c=sporeSite(gx,gz); if(c&&c.cx>=x0&&c.cx<x1&&c.cz>=z0&&c.cz<z1) n++;
+      }
+    return n;
+  }
+  function sporeOver(x,z){
+    for(var gx=Math.floor((x-SPR_REACH)/SPR_GRID);gx<=Math.floor((x+SPR_REACH)/SPR_GRID);gx++)
+      for(var gz=Math.floor((z-SPR_REACH)/SPR_GRID);gz<=Math.floor((z+SPR_REACH)/SPR_GRID);gz++){
+        var s=sporeSite(gx,gz); if(!s) continue;
+        var E=s.R+1+SPR_APRON; if(Math.abs(x-s.cx)<=E&&Math.abs(z-s.cz)<=E) return s;
+      }
+    return null;
+  }
   /* one 1 m cell: everything sized in whole metres */
   function cell(x,z){
     var w=climate(x,z);
     var hm=macro(x,z,w), H=Math.round(hm);
     var cw=wsum(w,'canyon'), colw=wsum(w,'col');
-    var c=null, ms=mesaAt(x,z), bs=ms?null:basaltAt(x,z), cs=(ms||bs)?null:cliffAt(x,z), ts=(ms||bs||cs)?null:thornAt(x,z),
-        rs=(ms||bs||cs||ts)?null:rimeAt(x,z), ft=!!(ms||bs||cs||ts||rs);
+    var lo=0, c=null, ms=mesaAt(x,z), bs=ms?null:basaltAt(x,z), cs=(ms||bs)?null:cliffAt(x,z), ts=(ms||bs||cs)?null:thornAt(x,z),
+        rs=(ms||bs||cs||ts)?null:rimeAt(x,z), ps=(ms||bs||cs||ts||rs)?null:sporeAt(x,z),
+        ft=!!(ms||bs||cs||ts||rs||ps);
     if(cw>0.28&&!ft){ c=canyonAt(x,z);
       c.body=c.d<c.w/2&&canyonBody(x,z);
       if(c.body){ var taper=clamp((cw-0.28)/0.25,0,1); H-=Math.round(c.dp*taper*(1-c.br)); }
@@ -1557,6 +1649,7 @@ function makeGen(seedStr,force){
     else if(ms&&ms.h!==null) H=ms.h;
     else if(cs&&cs.h!==null) H=cs.kind===1?Math.max(H,cs.h):cs.h;
     else if(rs) H=rs.kind===5?Math.max(H,rs.h):rs.h;
+    else if(ps&&ps.h!==null){ lo=Math.max(Math.round(rawH(x,z)),1); H=ps.h; }
     var r=riverAt(x,z), rw=r.w+Math.round(w[BIO.SPORE]*3), water=false, pond=false, wl=0;
     var rl=null;
     /* The smooth level, but never above the ground the river runs through: a
@@ -1564,7 +1657,7 @@ function makeGen(seedStr,force){
        the banks then pulled down and the bed was carved below the world to
        keep. Where the land is lower, the surface sits a quarter under it. */
     if(r.d<rw/2||riverCorner(x,z,rw)){ rl=Math.min(riverLevel(x,z,w),H-0.25); H=Math.min(H-1,Math.floor(rl-0.75+1e-9)); water=true; }
-    if(!water&&!(ms&&ms.h!==null)&&!bs&&!(cs&&cs.h!==null)&&!ts&&!rs&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
+    if(!water&&!(ms&&ms.h!==null)&&!bs&&!(cs&&cs.h!==null)&&!ts&&!rs&&!ps&&N.s.fbm(x*0.018+21,z*0.018+21,2)>0.60){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
@@ -1583,12 +1676,14 @@ function makeGen(seedStr,force){
     H=clamp(H,0,CEIL);
     if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,rime:rs?rs.kind:0,
+    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,rime:rs?rs.kind:0,spore:ps?ps.kind:0,
+      /* a shelf high enough to walk under: the ground's height under it */
+      sporeLo:ps&&ps.kind===2&&H-1>=lo+2?lo:0,
       /* block: a route may not cross it — the thicket and its log's lane */
       block:!!(ts&&(ts.kind===2||ts.kind===3)),
       /* hold: a face the later passes keep as it is; bare: nothing grows here */
-      hold:!!(ms&&ms.kind<=2)||!!(bs&&bs.kind===1)||!!(cs&&(cs.kind===2||cs.kind===3))||!!(rs&&rs.kind<=4),
-      bare:!!(ms&&ms.kind>=2)||!!bs||!!(cs&&cs.kind>=2)||!!ts||!!rs};
+      hold:!!(ms&&ms.kind<=2)||!!(bs&&bs.kind===1)||!!(cs&&(cs.kind===2||cs.kind===3))||!!(rs&&rs.kind<=4)||!!(ps&&ps.kind<=2),
+      bare:!!(ms&&ms.kind>=2)||!!bs||!!(cs&&cs.kind>=2)||!!ts||!!rs||!!ps};
   }
   function rawH(x,z){ return macro(x,z,climate(x,z)); }
   /* a column is a run of solid spans, not one height: this is what lets a
@@ -1650,7 +1745,7 @@ function makeGen(seedStr,force){
       if(CELLS.size>=CELL_CAP) CELLS.clear();
       c=cell(x,z); CELLS.set(k,c);
     }
-    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,rime:c.rime,block:c.block,hold:c.hold,bare:c.bare};
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,rime:c.rime,spore:c.spore,sporeLo:c.sporeLo,block:c.block,hold:c.hold,bare:c.bare};
   }
   /* A world keeps its generator (w.G) for as long as it lives, and a streamed
      field holds sixteen of them — so the cache is let go when generation ends,
@@ -1677,7 +1772,7 @@ function makeGen(seedStr,force){
       }
     return n;
   }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,thornOver:thornOver,thornIn:thornIn,rimeOver:rimeOver,rimeIn:rimeIn,rimeFrame:rimeFrame,cliffFrame:cliffFrame,
+  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,thornOver:thornOver,thornIn:thornIn,rimeOver:rimeOver,rimeIn:rimeIn,sporeOver:sporeOver,sporeIn:sporeIn,rimeFrame:rimeFrame,cliffFrame:cliffFrame,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 /* ---------- src/gen/erosion.mjs ---------- */
@@ -1813,7 +1908,7 @@ const PORT_SALT = 0x5300;
 function baseCell(G, x, z) {
   var c = G.cell(x, z);
   return { H: clamp(erodeAt(G, x, z, c), 0, CEIL), water: c.water, magma: c.magma, hold: c.hold,
-           feat: !!(c.mesa || c.basalt || c.cliff || c.thorn || c.rime) };
+           feat: !!(c.mesa || c.basalt || c.cliff || c.thorn || c.rime || c.spore) };
 }
 
 /** The port on one edge, as world [x, z], or null when the edge has nowhere a
@@ -1883,7 +1978,7 @@ function passCost(a, b) {
      is graded level and the ledges go with it. Nor a thicket, nor the two
      metres round one: the thicket is props on a quarter-metre offset from
      the ground, and a trail at its foot had thorn standing in it. */
-  if (b.magma || b.hold || b.block || b.thorn || b.rime) return -1;
+  if (b.magma || b.hold || b.block || b.thorn || b.rime || b.spore) return -1;
   var dh = b.H - a.H;
   if (dh > MOVE.climb2) return -1;
   var c = 1 + (dh > 0 ? dh * 3.2 : (-dh) * 1.1);
@@ -1998,7 +2093,7 @@ function buildRegion(G, rx, rz) {
          site on a mesa walked off the wall, and grading it cut the top down
          to the trail. A landmark on a cliff band's back slope hung a
          twelve-metre tree over its ledge line. */
-      if (!cq || cq.water || cq.magma || cq.mesa || cq.basalt || cq.cliff || cq.thorn || cq.rime || Math.abs(cq.H - cp.H) > 1) return false;
+      if (!cq || cq.water || cq.magma || cq.mesa || cq.basalt || cq.cliff || cq.thorn || cq.rime || cq.spore || Math.abs(cq.H - cp.H) > 1) return false;
     }
     return true;
   }
@@ -2696,7 +2791,7 @@ function groundCellAt(w, x, z) {
   var H = clamp(erodeAt(w.G, x, z, c), 0, CEIL);
   var g = regionAt(w.G, regionOf(x), regionOf(z)).grade.get(cellKey(x, z));
   if (g !== undefined) H = g;
-  return { H: H, water: c.water, magma: c.magma, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa, thorn: c.thorn, rime: c.rime };
+  return { H: H, water: c.water, magma: c.magma, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa, thorn: c.thorn, rime: c.rime, spore: c.spore };
 }
 /* ---------- src/gen/routes.mjs ---------- */
 /**
@@ -2835,7 +2930,9 @@ function cutSpans(w) {
     var cs=cells[i*M+j];
     /* A mesa and its stones are solid rock (#75): a cave in one is a room
        in the wall of a block that is meant to have one way up. */
-    cs.sp=(cs.water||cs.magma||cs.hold)?[[0,Math.max(cs.H,1)]]:G.spansFor(-half+i+OX,-half+j+OZ,cs.H);
+    /* A bracket shelf with room under it (#76) is the ground and a slab. */
+    cs.sp=cs.sporeLo?[[0,cs.sporeLo],[cs.H-1,cs.H]]
+         :(cs.water||cs.magma||cs.hold)?[[0,Math.max(cs.H,1)]]:G.spansFor(-half+i+OX,-half+j+OZ,cs.H);
   }
   for(i=0;i<M;i++)for(j=0;j<M;j++){
     var cl=cells[i*M+j], wx=-half+i+OX, wz=-half+j+OZ;
@@ -2849,7 +2946,7 @@ function cutSpans(w) {
          its foot is a wider top, or a ledge where the gap was meant to be.
          Nor from a glacier's skirt or over a crevasse: a rim hung from the
          skirt is a shelf across the crevasse's end. */
-      if(ch.H-cl.H<2||ch.water||ch.hold||ch.rime||S()>0.17) continue;
+      if(ch.H-cl.H<2||ch.water||ch.hold||ch.rime||ch.spore||S()>0.17) continue;
       var out=1+((S()*2)|0), th=(S()<0.5?1:0.75), o;
       for(o=0;o<=out;o++){
         var ti=i-DIRS4[d0][0]*o, tj=j-DIRS4[d0][1]*o;
@@ -2867,7 +2964,7 @@ function cutSpans(w) {
            and for magma that top is the liquid's level: rock hung over a seam
            or a basalt pool raised the magma to the rim, and a body standing
            on the rim beside it burned (#76). */
-        if(tc.H>=ch.H-1||tc.water||tc.magma||(TRAIL&&TRAIL[ti*M+tj])) break;
+        if(tc.H>=ch.H-1||tc.water||tc.magma||tc.spore||tc.rime||(TRAIL&&TRAIL[ti*M+tj])) break;
         tc.sp.push([ch.H-th,ch.H]);
       }
       if(!ovhPos) ovhPos=[-half+i,cl.H+1.3,-half+j];
@@ -3408,6 +3505,8 @@ function buildVoxels(w) {
       /* Ice (#76): a crevasse field's sheet and bridges are bare ice, and so
          is every wall it is cut with — the floor keeps the snow. */
       else if(c.rime===1||c.rime===3){ topc=pickPal(PAL.RIME_ICE,R); topm=MAT.ICE; }
+      /* A fungal tower's cap and its shelves (#76). */
+      else if(c.spore===1||c.spore===2){ topc=pickPal(PAL.FUNGUS_CAP,R); topm=MAT.FUNGUS; }
       else if(slope>0.9){ topc=pickPal(b.rock,R); topm=b.mat.rock; }
       else { topc=pickPal(b.surf,R); topm=b.mat.surf; }
       var topk=0.9+R()*0.2;
@@ -3425,11 +3524,12 @@ function buildVoxels(w) {
       var bottom=Math.max(BOT[k],mn);
       for(y=hh-1.5*V;y>bottom-0.001;y-=V){
         var deep=(y<hh-1.25);
-        var ice=c.rime>=1&&c.rime<=4;
-        var sc=ice?pickPal(PAL.RIME_ICE,R):deep?pickPal(b.rock,R):pickPal(b.soil,R);
+        var ice=c.rime>=1&&c.rime<=4, fun=c.spore===1||c.spore===2;
+        var sc=ice?pickPal(PAL.RIME_ICE,R):fun?pickPal(y>hh-1?PAL.FUNGUS_CAP:PAL.FUNGUS_STALK,R)
+              :deep?pickPal(b.rock,R):pickPal(b.soil,R);
         var band=Math.floor(y/0.75)%2;
         var sk=(band?0.94:1.06)*(0.88+R()*0.2);
-        emit(x,y,z,sc,sk,ice?MAT.ICE:deep?b.mat.rock:b.mat.soil);
+        emit(x,y,z,sc,sk,ice?MAT.ICE:fun?MAT.FUNGUS:deep?b.mat.rock:b.mat.soil);
       }
       /* the underside of an undercut rim, and the floor under it */
       if(BOT[k]>0.01){
@@ -3816,8 +3916,9 @@ function placeClutter(w, kit) {
       var di=DIRS4[dd][0], dj=DIRS4[dd][1];
       var c1=groundCellAt(w,wx0+di,wz0+dj);
       if(c0.H-c1.H<2) continue;
-      /* Nor into a crevasse (#76): a pile at its end wall is a way over it. */
-      if(c0.hold||c0.mesa||c0.rime||c1.rime) break;
+      /* Nor into a crevasse or at a fungal tower (#76): a pile at a crevasse's
+         end wall is a way over it, and one at a stalk a way up it. */
+      if(c0.hold||c0.mesa||c0.rime||c1.rime||c0.spore||c1.spore) break;
       if(RS()<0.32) scree(px0+di*1.7,pz0+dj*1.7,c1.dom,2+((RS()*4)|0),RS);
       break;
     }
@@ -4062,8 +4163,8 @@ function buildGrass(w) {
     var n0b=i>0?Hs[k-NZ]:Hs[k], n1b=j>0?Hs[k-1]:Hs[k];
     if(Hs[k]-Math.min(n0b,n1b)>0.6) continue;
     var cq=cellAt(x,z), dsum=0,hbase=0,hvar=0,cr=0,cg=0,cb=0,dr=0,dg=0,db=0;
-    /* Nothing grows through ice (#76). */
-    if(cq.rime===1||cq.rime===3) continue;
+    /* Nothing grows through ice or on a fungal tower (#76). */
+    if(cq.rime===1||cq.rime===3||cq.spore===1||cq.spore===2) continue;
     for(var q2=0;q2<cq.w.length;q2++){var B2=BIOMES[q2],w2b=cq.w[q2];
       dsum+=w2b*B2.gr.d; hbase+=w2b*B2.gr.h[0]; hvar+=w2b*B2.gr.h[1];
       cr+=w2b*shadeR(B2.gr.c,1); cg+=w2b*shadeG(B2.gr.c,1); cb+=w2b*shadeB(B2.gr.c,1);
