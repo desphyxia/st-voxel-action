@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -325,6 +325,9 @@ if (NODE_HALF) for (const r of glassSuite()) check(r.ok, `GLASS: ${r.label}`, r.
 
 /* ---------- MEADOW: enclosures, their walls and hedges (#76) ---------- */
 if (NODE_HALF) for (const r of meadowSuite()) check(r.ok, `MEADOW: ${r.label}`, r.detail);
+
+/* ---------- STAMP: nothing built or grown against a feature (#84) ---------- */
+if (NODE_HALF) for (const r of stampSuite()) check(r.ok, `STAMP: ${r.label}`, r.detail);
 
 /* ---------- SKY: the hour and the weather are the seed's, issue #30 ---------- */
 if (NODE_HALF) for (const r of skySuite()) check(r.ok, `SKY: ${r.label}`, r.detail);
