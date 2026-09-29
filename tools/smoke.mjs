@@ -3574,10 +3574,13 @@ if (BROWSER_HALF) {
             'WEATHER: light runs along the shards\' edges',
             `${glass.wx.edgePaths.length} traced props in view (${[...new Set(glass.wx.edgePaths)].join(', ')}); `
             + `${glass.wx.edgesMade} runs, ${JSON.stringify(glass.wx.edgeKinds)}`);
+      const wispsBefore = await wxp.evaluate(() => window.QSPLAY.wx.wispsMade);
       const marsh = await wxIn(cfgOf('thorn'), 'night', 'Clear', 20);
-      check(marsh.wx.marshPts > 0 && marsh.wx.bubbles > 0 && marsh.wx.wisps > 0,
+      /* Wisps made, not wisps alive: each lives 8-16 s and the next comes at
+         about one in two seconds, so at any one instant there can be none. */
+      check(marsh.wx.marshPts > 0 && marsh.wx.bubbles > 0 && marsh.wx.wispsMade - wispsBefore > 0,
             'WEATHER: a marsh bubbles, and at night its wisps drift over it',
-            `${marsh.wx.marshPts} marsh points in view, ${marsh.wx.bubbles} bubbles, ${marsh.wx.wisps} wisps`);
+            `${marsh.wx.marshPts} marsh points in view, ${marsh.wx.bubbles} bubbles, ${marsh.wx.wispsMade - wispsBefore} wisps in 20 s (${marsh.wx.wisps} at the end)`);
       const bow = await wxIn(cfgOf('meadow'), 'noon', 'Rainbow', 10);
       check(bow.wx.rainbow > 0.5,
             'WEATHER: as rain clears under a sun, a rainbow',

@@ -12731,7 +12731,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     else if(built&&built.data) add(built.data,0,0);
     return out;
   }
-  var MARSH={bubNext:0,bubbles:0,wisps:[],at:null,atT:-1};
+  var MARSH={bubNext:0,bubbles:0,wisps:[],wispsMade:0,at:null,atT:-1};
   function wxMarsh(dt,s){
     if(plateMode){ MARSH.wisps.length=0; return; }
     /* The points in view, looked up twice a second rather than every frame. */
@@ -12747,6 +12747,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var want=GFX.glow&&s.day<0.3?Math.min(3,1+Math.floor(pts.length/40)):0;
     if(MARSH.wisps.length<want&&Math.random()<dt*0.5){
       var q=pts[Math.floor(Math.random()*pts.length)];
+      MARSH.wispsMade++;
       MARSH.wisps.push({x:q[0],y:q[1]+0.6,z:q[2],t:0,T:8+8*Math.random(),ph:Math.random()*6.28,vx:(Math.random()-0.5)*0.4,vz:(Math.random()-0.5)*0.4});
     }
     for(var i=MARSH.wisps.length-1;i>=0;i--){
@@ -17797,7 +17798,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
                       devils:WX.devils.length,devilsMade:WX.devilsMade,bursts:WX.bursts,
                       aurora:WX.aurora,rainbow:WX.rainbow,bits:BITS.n,fog:wxFogK(),rainOnWater:SKY_U.uRain.value,
                       edgeRuns:EDGE.runs.length,edgesMade:EDGE.made,edgeKinds:EDGE.byKind,
-                      marshPts:MARSH.at?MARSH.at.length:0,bubbles:MARSH.bubbles,wisps:MARSH.wisps.length,
+                      marshPts:MARSH.at?MARSH.at.length:0,bubbles:MARSH.bubbles,wisps:MARSH.wisps.length,wispsMade:MARSH.wispsMade,
                       edgePaths:edgesInView(skyNow).map(function(c){ return c.e.kind.k; })}; },
     /** Which motes a sky and a biome make, without a world to stand in. */
     partModeFor:function(s,domKey){ var B=QS.BIO; return partMode(s,B[domKey.toUpperCase()]); },
