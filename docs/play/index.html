@@ -17573,15 +17573,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* The cut's dark faces shown or not, for the gate to diff a frame both ways. */
     setCaps:function(on){ capOff=!on; return !!on; },
     /* Stand the player on flat ground where the ground on the camera's side
-       hides even the top of their head by a metre or more, somewhere loaded
-       near where they are: a place the cut has to open on rock. A bank that
+       hides even the top of their head by a metre or more, the nearest such
+       place to the world's spawn — wherever the checks before this one left
+       them — so the gate always measures the same bank: a place the cut has
+       to open on rock. A bank that
        only just hides the head leaves the faces a sliver to cover, and a
        check of them nothing to measure. Null if there is none. */
     cutSpot:function(){
-      var a=player(); if(!a) return null; camera.getWorldDirection(cutF);
+      var a=player(); if(!a||!built) return null; camera.getWorldDirection(cutF);
+      var sx=Math.round(built.data.spawn[0]), sz=Math.round(built.data.spawn[2]);
       for(var r=0;r<=40;r+=1)for(var i=-r;i<=r;i++)for(var j=-r;j<=r;j++){
         if(Math.max(Math.abs(i),Math.abs(j))!==r) continue;
-        var x=Math.round(a.x)+i+0.5, z=Math.round(a.z)+j+0.5, y=terrainTop(x,z), ok=y!==null;
+        var x=sx+i+0.5, z=sz+j+0.5, y=terrainTop(x,z), ok=y!==null;
         for(var u=-0.5;ok&&u<=0.5;u+=0.25)for(var v=-0.5;ok&&v<=0.5;v+=0.25){ var t=terrainTop(x+u,z+v); if(t===null||Math.abs(t-y)>0.01) ok=false; }
         if(!ok) continue;
         var was=[a.x,a.y,a.z]; a.x=x; a.z=z; a.y=y;
