@@ -5306,6 +5306,27 @@ function chunkOccupancy(w, cx, cz, pad, org) {
   return { occ: occ, nx: nx, nz: nz, ny: ny, i0: i0, j0: j0, pad: pad };
 }
 
+/**
+ * Where props stand, on the same grid as a chunk's occupancy (#99): a cell
+ * holding a prop voxel is 1. Only the occlusion reads it — a face is still a
+ * face whether a trunk stands beside it or not — so the ground darkens where
+ * a boulder, a wall or a trunk meets it, and nothing about the geometry moves.
+ * A prop voxel is centred on a multiple of V where terrain cells are offset by
+ * half of one, so each is counted in the column holding most of it.
+ */
+function propShade(w, g) {
+  if (!w.pos || w.propStart === undefined) return null;
+  var n = w.pos.length / 3; if (w.propStart >= n) return null;
+  var a = new Uint8Array(g.occ.length), half = w.half, ny = g.ny, nz = g.nz, q;
+  for (q = w.propStart; q < n; q++) {
+    var gi = Math.floor((w.pos[q * 3] + half) / V) - g.i0, gj = Math.floor((w.pos[q * 3 + 2] + half) / V) - g.j0;
+    var y = Math.floor(w.pos[q * 3 + 1] / V);
+    if (gi < 0 || gj < 0 || gi >= g.nx || gj >= nz || y < 0 || y >= ny) continue;
+    a[(gi * nz + gj) * ny + y] = 1;
+  }
+  return a;
+}
+
 /** One past the highest solid level anywhere in an occupancy grid; 0 if empty. */
 function topOf(g) {
   if (g.top !== undefined) return g.top;
@@ -5443,6 +5464,9 @@ function meshChunk(w, cx, cz, org) {
   var top = topOf(g);
   var STR = [nz * ny, 1, ny];                     /* strides, index order (a, y, b) */
   function occY(k, y) { return (y < 0 || y >= ny) ? 0 : occ[k]; }
+  /* What shades a corner: the ground and the props standing on it. */
+  var pro = propShade(w, g);
+  function aoY(k, y) { return (y < 0 || y >= ny) ? 0 : (occ[k] || (pro ? pro[k] : 0)); }
   for (var d = 0; d < DIRS.length; d++) {
     var axis = DIRS[d][0], sign = DIRS[d][1];
     /* u and v are the two axes of the slice; n is the one being swept. */
@@ -5478,10 +5502,10 @@ function meshChunk(w, cx, cz, org) {
               /* the four corners of the face, in the slice's own axes */
               var uMk = nk - su, uPk = nk + su, vMk = nk - sv, vPk = nk + sv;
               var uMy = nyy - yU, uPy = nyy + yU, vMy = nyy - yV, vPy = nyy + yV;
-              var c0 = cornerAO(occY(uMk, uMy), occY(vMk, vMy), occY(uMk - sv, uMy - yV));
-              var c1 = cornerAO(occY(uPk, uPy), occY(vMk, vMy), occY(uPk - sv, uPy - yV));
-              var c2 = cornerAO(occY(uPk, uPy), occY(vPk, vPy), occY(uPk + sv, uPy + yV));
-              var c3 = cornerAO(occY(uMk, uMy), occY(vPk, vPy), occY(uMk + sv, uMy + yV));
+              var c0 = cornerAO(aoY(uMk, uMy), aoY(vMk, vMy), aoY(uMk - sv, uMy - yV));
+              var c1 = cornerAO(aoY(uPk, uPy), aoY(vMk, vMy), aoY(uPk - sv, uPy - yV));
+              var c2 = cornerAO(aoY(uPk, uPy), aoY(vPk, vPy), aoY(uPk + sv, uPy + yV));
+              var c3 = cornerAO(aoY(uMk, uMy), aoY(vPk, vPy), aoY(uMk + sv, uMy + yV));
               packed = c0 | (c1 << 2) | (c2 << 4) | (c3 << 6);
               faces++;
             } else m = 0;
@@ -10416,9 +10440,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      Remembered per browser, and a browser that refuses storage just gets the
      defaults each time. */
   var GFX_PRESETS={
-    low:   {res:0.75,aa:false,shadows:'off', grass:0.35,wind:false,clouds:false,parts:0,  water:'simple',sway:false,magma:false,lamps:0,detail:false,life:false},
-    medium:{res:1,   aa:false,shadows:'low', grass:0.7, wind:true, clouds:false,parts:0.4,water:'full',  sway:true, magma:true, lamps:2,detail:true, life:true},
-    high:  {res:1.5, aa:true, shadows:'high',grass:1,   wind:true, clouds:true, parts:1,  water:'full',  sway:true, magma:true, lamps:4,detail:true, life:true}
+    low:   {res:0.75,aa:false,shadows:'off', grass:0.35,wind:false,clouds:false,parts:0,  water:'simple',sway:false,magma:false,lamps:0,detail:false,life:false,edges:true,glow:false,fx:false},
+    medium:{res:1,   aa:false,shadows:'low', grass:0.7, wind:true, clouds:false,parts:0.4,water:'full',  sway:true, magma:true, lamps:2,detail:true, life:true, edges:true,glow:false,fx:true},
+    high:  {res:1.5, aa:true, shadows:'high',grass:1,   wind:true, clouds:true, parts:1,  water:'full',  sway:true, magma:true, lamps:4,detail:true, life:true, edges:true,glow:true, fx:true}
   };
   var GFX_COARSE=!!(window.matchMedia&&window.matchMedia('(pointer: coarse)').matches);
   /* grassMode sits outside the presets: it is the comparison #70 asked for,
@@ -10942,7 +10966,19 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
              /* The cutaway (#72): each player's feet (w 1 when there is one),
                 the direction the camera looks, and the radius cut out. */
              uCutA:{value:new THREE.Vector4()},uCutB:{value:new THREE.Vector4()},
-             uCutF:{value:new THREE.Vector3(0,-1,0)},uCutR:{value:CUT_R}};
+             uCutF:{value:new THREE.Vector3(0,-1,0)},uCutR:{value:CUT_R},
+             /* The look batch (#99): voxel edges, a grade per biome, and mist
+                that gathers in ground below the player. */
+             uEdges:{value:GFX.edges?1:0},
+             uGradeLift:{value:new THREE.Vector3(0,0,0)},uGradeGain:{value:new THREE.Vector3(1,1,1)},uGradeSat:{value:1},
+             uMist:{value:0},uMistTop:{value:0},uMistCol:{value:new THREE.Color(0.8,0.85,0.9)},uMistOff:{value:new THREE.Vector2()},
+             /* The water's sky: what its surface reflects. */
+             uSkyCol:{value:new THREE.Color(0.7,0.8,0.9)}};
+  /** The post uniforms, for a material with uniforms of its own. */
+  function postUniforms(u){
+    ['uGradeLift','uGradeGain','uGradeSat','uMist','uMistTop','uMistCol','uMistOff'].forEach(function(k){ u[k]=SKY_U[k]; });
+    return u;
+  }
   var SKY_GLSL=['uniform float uCloud; uniform vec2 uCloudOff; uniform float uWet; uniform float uSnow;',
     /* The two graphics settings that live in every lit surface (#70). */
     'uniform float uCloudOn; uniform float uDetail;',
@@ -10953,6 +10989,21 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' float n=skyN(p)*0.65+skyN(p*2.3+vec2(7.0,3.0))*0.35;',
     ' float cov=smoothstep(1.3-uCloud*0.9,1.5-uCloud*0.9,n+0.25);',
     ' return 1.0-0.62*cov; }'].join('\n');
+  /* What every lit surface does last (#99), after its fog: mist in the ground
+     below where the player stands — thickest at dawn and in wet weather,
+     broken into banks that drift with the clouds — and then the biome's grade:
+     saturation, gain and lift, blended by the biomes under the view. */
+  var POST_GLSL=['uniform vec3 uGradeLift; uniform vec3 uGradeGain; uniform float uGradeSat;',
+    'uniform float uMist; uniform float uMistTop; uniform vec3 uMistCol; uniform vec2 uMistOff;',
+    'float qsPH(vec2 p){ vec3 q=fract(vec3(p.xyx)*0.1031); q+=dot(q,q.yzx+33.33); return fract((q.x+q.y)*q.z); }',
+    'float qsPN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);',
+    ' return mix(mix(qsPH(i),qsPH(i+vec2(1.0,0.0)),f.x),mix(qsPH(i+vec2(0.0,1.0)),qsPH(i+vec2(1.0,1.0)),f.x),f.y); }',
+    'vec3 qsPost(vec3 c, vec3 w){',
+    ' if(uMist>0.001){ float mk=uMist*smoothstep(uMistTop,uMistTop-3.5,w.y);',
+    '   mk*=0.45+0.55*qsPN(w.xz*0.07+uMistOff);',
+    '   c=mix(c,uMistCol,clamp(mk,0.0,0.8)); }',
+    ' float l=dot(c,vec3(0.299,0.587,0.114)); c=mix(vec3(l),c,uGradeSat);',
+    ' return c*uGradeGain+uGradeLift; }'].join('\n');
   var CUT_GLSL=['uniform vec4 uCutA; uniform vec4 uCutB; uniform vec3 uCutF; uniform float uCutR;',
     'float qsB2(vec2 a){ a=floor(a); return fract(dot(a,vec2(0.5,a.y*0.75))); }',
     'float qsBayer(vec2 a){ return qsB2(0.5*a)*0.25+qsB2(a); }',
@@ -11047,6 +11098,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     'varying vec2 vGW; varying float vGust; varying float vGY;',
     '#include <fog_pars_fragment>',
     SKY_GLSL,
+    POST_GLSL,
     /* The cutaway takes the grass with the ground it grows on, by where the
        blade is rooted: blades left standing on cut rock floated in the hole. */
     CUT_GLSL,
@@ -11068,6 +11120,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' gl_FragColor=vec4(lit,1.0);',
     ' #include <tonemapping_fragment>',
     ' #include <fog_fragment>',
+    ' gl_FragColor.rgb=qsPost(gl_FragColor.rgb,gw);',
     '}'].join('\n');
   var WATER_VS=['uniform float uTime;','attribute float aDepth; attribute float aFoam; attribute vec2 aFlow;',
     'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
@@ -11085,9 +11138,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' vP=p; vec4 mvPosition=viewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;',
     ' #include <fog_vertex>',
     '}'].join('\n');
-  var WATER_FS=['uniform float uTime; uniform vec2 uWind; uniform float uLight; uniform float uDetail;',
+  var WATER_FS=['uniform float uTime; uniform vec2 uWind; uniform float uLight; uniform float uDetail; uniform vec3 uSkyCol;',
     'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
     '#include <fog_pars_fragment>',
+    POST_GLSL,
     /* Value noise for the falls, sin-free like the terrain grain. */
     'float fallH(vec2 p){ vec3 q=fract(vec3(p.xyx)*0.1031); q+=dot(q,q.yzx+33.33); return fract((q.x+q.y)*q.z); }',
     'float fallN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);',
@@ -11111,6 +11165,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' if(uDetail>0.5){ rip=flowN(vP.xz*1.4,fl,uTime*0.45)*0.65+flowN(vP.xz*3.2+vec2(3.1,7.7),fl,uTime*0.6)*0.35;',
     '   g=smoothstep(0.80,0.97,fallN(vP.xz*3.8+vec2(uTime*0.3,-uTime*0.2))); }',
     ' c+=vec3(0.05,0.09,0.09)*rip;',
+    /* The sky in it (#99): a surface seen at 45 degrees reflects a good share
+       of the sky, more where a ripple tilts it toward the viewer. */
+    ' c=mix(c,uSkyCol,0.16+0.14*rip);',
+    /* And light playing on a shallow bed: two wandering wave fields whose
+       crossings pinch into thin bright lines, as sunlight through ripples does.
+       Only where the bed shows, and only with the full water setting. */
+    ' if(uDetail>0.5){ float sh=1.0-smoothstep(0.08,0.55,vD);',
+    '   if(sh>0.01){ vec2 cp=vP.xz*2.2+fl*uTime*0.25;',
+    '     float k1=sin(cp.x*2.1+uTime*1.3+sin(cp.y*1.7+uTime*0.9)*1.4);',
+    '     float k2=sin(cp.y*2.4-uTime*1.1+sin(cp.x*1.5-uTime*0.7)*1.4);',
+    '     float ca=pow(1.0-abs(k1*k2),8.0);',
+    '     c+=vec3(0.55,0.65,0.55)*ca*sh*0.30; } }',
     /* Opaque with depth: at a flat 0.86 the bed's voxel edges showed through
        every pool as thin contour lines. Clear in the shallows, where seeing the
        bottom is the point, and solid once there is depth to it. */
@@ -11150,6 +11216,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' gl_FragColor=vec4(c*uLight,a);',
     ' #include <tonemapping_fragment>',
     ' #include <fog_fragment>',
+    ' gl_FragColor.rgb=qsPost(gl_FragColor.rgb,vP);',
     '}'].join('\n');
 
   /* ---------- magma ----------
@@ -11355,14 +11422,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /* `cut`: the cutaway (#72) is for terrain only. What stands on it — trees,
      rocks, ruins, the loot, the machines — is drawn whole: cutting a hole in
      a tree beside the player showed the ground through the trunk. */
-  function skyHook(sh,cut){
+  function skyHook(sh,cut,ground){
     for(var k in SKY_U) sh.uniforms[k]=SKY_U[k];
     sh.vertexShader='varying vec3 vSkyW; varying vec3 vSkyN;\n'+sh.vertexShader.replace(
       '#include <begin_vertex>',
       '#include <begin_vertex>\n  vec4 skyWP=vec4(transformed,1.0);\n'
       +'  #ifdef USE_INSTANCING\n  skyWP=instanceMatrix*skyWP;\n  #endif\n'
       +'  vSkyW=(modelMatrix*skyWP).xyz; vSkyN=normalize(mat3(modelMatrix)*objectNormal);');
-    sh.fragmentShader='varying vec3 vSkyW; varying vec3 vSkyN;\n'+SKY_GLSL+'\n'+CUT_GLSL+'\n'+sh.fragmentShader
+    sh.fragmentShader='varying vec3 vSkyW; varying vec3 vSkyN;\nuniform float uEdges;\n'+SKY_GLSL+'\n'+POST_GLSL+'\n'+CUT_GLSL+'\n'+sh.fragmentShader
       .replace('#include <clipping_planes_fragment>',
         (cut?'  if(qsCutAt(uCutA,vSkyW)>qsBayer(gl_FragCoord.xy)||qsCutAt(uCutB,vSkyW)>qsBayer(gl_FragCoord.xy)) discard;\n':'')
         +'#include <clipping_planes_fragment>')
@@ -11378,9 +11445,23 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         +'    float skL=dot(diffuseColor.rgb,vec3(0.3,0.59,0.11));\n'
         +'    float moss=skNorth*step(0.45,skP)*(1.0-smoothstep(0.55,0.75,skL))*(1.0-uSnow)*uDetail;\n'
         +'    diffuseColor.rgb=mix(diffuseColor.rgb,diffuseColor.rgb*vec3(0.66,0.86,0.46),moss*0.55); }\n'
-        +'  diffuseColor.rgb=mix(diffuseColor.rgb,vec3(0.93,0.95,0.98),uSnow*smoothstep(0.55,0.92,skyUp));')
+        +'  diffuseColor.rgb=mix(diffuseColor.rgb,vec3(0.93,0.95,0.98),uSnow*smoothstep(0.55,0.92,skyUp));\n'
+        /* Voxel edges (#99): a faint light line where one 25 cm face meets the
+           next, a pixel or so wide whatever the zoom, and gone once a voxel is
+           too small on screen for a line to read as anything but texture. */
+        +'  if(uEdges>0.5){ vec3 vq=vSkyW/'+QS.V.toFixed(2)+'; vec3 an=abs(normalize(vSkyN));\n'
+        +'    vec2 uv=an.x>0.5?vq.yz:(an.y>0.5?vq.xz:vq.xy); vec2 fw=max(fwidth(uv),vec2(1e-4));\n'
+        +'    vec2 dd=(0.5-abs(fract(uv)-0.5))/fw; float edge=1.0-clamp(min(dd.x,dd.y)-0.35,0.0,1.0);\n'
+        +'    edge*=1.0-smoothstep(0.14,0.32,max(fw.x,fw.y));\n'
+        /* Flat ground is one greedy quad per stretch, and lines across it are
+           not edges of anything: a lawn became graph paper. So terrain keeps
+           them on its walls, where a step's lip shows from the side, and props
+           — built of separate blocks — keep them everywhere. */
+        +(ground?'    edge*=1.0-step(0.5,an.y);\n':'')
+        +'    diffuseColor.rgb*=1.0+0.16*edge; }')
       .replace('#include <aomap_fragment>',
-        '  reflectedLight.directDiffuse*=skyCloud(vSkyW.xz);\n#include <aomap_fragment>');
+        '  reflectedLight.directDiffuse*=skyCloud(vSkyW.xz);\n#include <aomap_fragment>')
+      .replace('#include <fog_fragment>','#include <fog_fragment>\n  gl_FragColor.rgb=qsPost(gl_FragColor.rgb,vSkyW);');
   }
   /* The hour. `skySec` is simulation seconds since the world was built,
      advanced by tick() and nothing else, so the sky is as paused as the game
@@ -11603,6 +11684,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(built.wmat) built.wmat.uniforms.uLight.value=(0.28+0.72*s.day)*(1-0.15*s.cloud);
     built.scene.traverse(function(o){ if(o.userData.lamp) o.intensity=o.userData.lamp*s.lamps; });
     SKY_U.uCloud.value=s.cloud; SKY_U.uWet.value=s.wetness;
+    gradeAndMist(s);
     var dom=plateMode?0:domUnderView();
     var snowTo=dom===QS.BIO.RIME?Math.min(1,s.wetness*1.3):0;
     if(!plateMode&&DBG.wx==='snow') snowTo=1;
@@ -11626,11 +11708,50 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       }
     }
   }
+  /* ---------- a grade per biome, and valley mist (#99) ----------
+     Each biome's mood as saturation, gain and lift, blended by the weights of
+     the biomes under the view — so walking from meadow into the mesa warms the
+     whole picture over a few metres rather than at a line. */
+  var GRADE={
+    meadow:{sat:1.06,gain:[1.02,1.02,0.97],lift:[0.000,0.004,0.000]},
+    mesa:  {sat:1.04,gain:[1.07,1.00,0.89],lift:[0.020,0.008,0.000]},
+    pine:  {sat:0.98,gain:[0.95,1.02,1.04],lift:[0.000,0.006,0.012]},
+    thorn: {sat:0.92,gain:[1.03,0.99,0.91],lift:[0.012,0.006,0.000]},
+    ash:   {sat:0.74,gain:[0.99,0.95,0.93],lift:[0.022,0.006,0.000]},
+    rime:  {sat:0.86,gain:[0.94,0.99,1.07],lift:[0.000,0.006,0.020]},
+    spore: {sat:1.10,gain:[1.02,0.95,1.05],lift:[0.010,0.000,0.012]},
+    glass: {sat:0.86,gain:[0.95,1.03,1.05],lift:[0.000,0.010,0.012]}
+  };
+  function gradeAndMist(s){
+    var w=null;
+    try{ var at=worldAt(Math.round(cam.tx),Math.round(cam.tz)), g=built&&built.data&&built.data.G;
+      if(g){ var ox=streaming?0:(built.data.OX||0), oz=streaming?0:(built.data.OZ||0);
+        w=g.cell(Math.round(cam.tx+ox),Math.round(cam.tz+oz)).w; } }catch(e){}
+    var sat=0, gn=[0,0,0], lf=[0,0,0], tot=0;
+    if(w) for(var i=0;i<w.length;i++){ var gr=GRADE[QS.BIOMES[i].k]; if(!gr||!w[i]) continue;
+      sat+=w[i]*gr.sat; tot+=w[i];
+      for(var c=0;c<3;c++){ gn[c]+=w[i]*gr.gain[c]; lf[c]+=w[i]*gr.lift[c]; } }
+    if(tot>0){ sat/=tot; for(var c2=0;c2<3;c2++){ gn[c2]/=tot; lf[c2]/=tot; } }
+    else { sat=1; gn=[1,1,1]; lf=[0,0,0]; }
+    SKY_U.uGradeSat.value=sat; SKY_U.uGradeGain.value.set(gn[0],gn[1],gn[2]); SKY_U.uGradeLift.value.set(lf[0],lf[1],lf[2]);
+    /* Mist: at its thickest in the hour after dawn, a little at dusk and in
+       the night, more in wet weather, and never in a plate. */
+    var ph=((s.phase%1)+1)%1, dawn=Math.max(0,1-Math.abs(ph-0.29)/0.08), dusk=Math.max(0,1-Math.abs(ph-0.76)/0.06);
+    var night=1-s.day;
+    SKY_U.uMist.value=plateMode?0:Math.min(0.85,dawn*0.75+dusk*0.3+night*0.2+s.wetness*0.35);
+    var fc=s.fogCol; SKY_U.uMistCol.value.setRGB(Math.min(1,fc[0]*0.9+0.12),Math.min(1,fc[1]*0.9+0.12),Math.min(1,fc[2]*0.9+0.14));
+    SKY_U.uSkyCol.value.setRGB(s.skyHorizon[0],s.skyHorizon[1],s.skyHorizon[2]);
+    /* The rim is the sky's colour, bright by day and dim at night. */
+    var rk=0.55+0.5*s.day;
+    RIM_MAT.color.setRGB(Math.min(1,s.skyHorizon[0]*rk+0.12),Math.min(1,s.skyHorizon[1]*rk+0.12),Math.min(1,s.skyHorizon[2]*rk+0.14));
+  }
   /** Per frame: fog that follows the zoom, drifting clouds, moving motes. */
   function skyFrame(dt){
     if(!built) return;
     if(plateMode) SKY_U.uCloudOff.value.set(0,0);
     else SKY_U.uCloudOff.value.addScaledVector(wind,-dt*0.09);
+    SKY_U.uMistOff.value.copy(SKY_U.uCloudOff.value).multiplyScalar(1.6);
+    var pa=player(); SKY_U.uMistTop.value=(pa?pa.y:cam.ty)-0.8;
     var p=built.parts;
     if(p&&p.visible){
       var u=p.material.uniforms, wv=p.userData.wind||0, md=PART_MODES[skyMode];
@@ -11866,7 +11987,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      gap a player would notice. */
   var SWAY_U={uSwayT:{value:0},uSwayW:{value:new THREE.Vector2(0.72,0.69)}};
   function swayLambert(){
-    var m=new THREE.MeshLambertMaterial({vertexColors:true});
+    var m=new THREE.MeshLambertMaterial({vertexColors:true}); m.extensions={derivatives:true};
     m.onBeforeCompile=function(sh){
       sh.uniforms.uSwayT=SWAY_U.uSwayT; sh.uniforms.uSwayW=SWAY_U.uSwayW;
       sh.vertexShader='attribute float aSway; uniform float uSwayT; uniform vec2 uSwayW;\n'+sh.vertexShader.replace(
@@ -11884,13 +12005,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /* Three caches a program by its onBeforeCompile's source, which is the same
      text either way here, so the key says which one this is. */
   function skyLambert(cut){
-    var m=new THREE.MeshLambertMaterial({vertexColors:true});
+    var m=new THREE.MeshLambertMaterial({vertexColors:true}); m.extensions={derivatives:true};
     m.onBeforeCompile=function(sh){ skyHook(sh,!!cut); };
     m.customProgramCacheKey=function(){ return cut?'sky-cut':'sky'; };
     return m;
   }
   function meshMaterial(){
-    var m=new THREE.MeshLambertMaterial({vertexColors:true});
+    var m=new THREE.MeshLambertMaterial({vertexColors:true}); m.extensions={derivatives:true};
     m.onBeforeCompile=function(sh){
       sh.uniforms.uPal={value:palTex};
       sh.uniforms.uPalN={value:QS.PALETTE.length};
@@ -11920,7 +12041,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
           +'  qsShade=mix(qsShade,0.86+0.18*fract(qsBand*0.618)+0.04*qsGrain(qsCell),qsRock);\n'
           +'  vec3 qsCol=texture2D(uPal,vec2((vGroup.x+qsPick+0.5)/uPalN,0.5)).rgb;\n'
           +'  diffuseColor.rgb*=qsCol*qsShade;');
-      skyHook(sh,true);
+      skyHook(sh,true,true);
     };
     m.customProgramCacheKey=function(){ return 'terrain-cut'; };
     return m;
@@ -12247,6 +12368,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
                   uCutA:SKY_U.uCutA,uCutB:SKY_U.uCutB,uCutF:SKY_U.uCutF,uCutR:SKY_U.uCutR,
                   fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0},
                   uHeight:{value:grassLen/GRASS_LEN_REF},
+                  uGradeLift:SKY_U.uGradeLift,uGradeGain:SKY_U.uGradeGain,uGradeSat:SKY_U.uGradeSat,
+                  uMist:SKY_U.uMist,uMistTop:SKY_U.uMistTop,uMistCol:SKY_U.uMistCol,uMistOff:SKY_U.uMistOff,
                   uWind:{value:new THREE.Vector2(0.72,0.69)},
                   uSun:{value:new THREE.Vector3(-16,26,12).normalize()},
                   uPush:{value:(function(){var a=[],q;
@@ -12269,8 +12392,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         vertexShader:MAGMA_VS,fragmentShader:MAGMA_FS}),
       water:new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,fog:true,
         polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-4,
-        uniforms:{uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)},uLight:{value:1},
-                  uDetail:{value:GFX.water==='full'?1:0},fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0}},
+        uniforms:postUniforms({uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)},uLight:{value:1},uSkyCol:SKY_U.uSkyCol,
+                  uDetail:{value:GFX.water==='full'?1:0},fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0}}),
         vertexShader:WATER_VS,fragmentShader:WATER_FS}),
     };
   }
@@ -12370,6 +12493,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(r.tint){ c.setHex(colours[r.tint]); c.multiplyScalar(r.k); }
     else c.setHex(QS.PALETTE[QS.PAL[r.pal].at]);
   }
+  var RIM_MAT=(function(){
+    var m=new THREE.MeshBasicMaterial({color:0xdce8f2,side:THREE.BackSide,skinning:true,fog:false});
+    m.onBeforeCompile=function(sh){
+      sh.uniforms.uRimW={value:0.028};
+      sh.vertexShader='attribute vec3 aOut; uniform float uRimW;\n'+sh.vertexShader.replace('#include <begin_vertex>',
+        '#include <begin_vertex>\n  transformed+=aOut*uRimW;');
+    };
+    m.customProgramCacheKey=function(){ return 'rim'; };
+    return m;
+  })();
   function buildRig(def,colours,models){
     var rest=QS.restPositions(def), idx={}, bones=[], byName={};
     def.bones.forEach(function(b,i){
@@ -12377,12 +12510,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       idx[b.name]=i; bones.push(bone); byName[b.name]=bone;
       if(b.parent) byName[b.parent].add(bone);
     });
-    var pos=[],nor=[],cols=[],si=[],sw=[],ind=[],ranges={},base=0,c=new THREE.Color();
+    var pos=[],nor=[],cols=[],si=[],sw=[],ind=[],out=[],ranges={},base=0,c=new THREE.Color();
+    var sgn=function(d){ return d>1e-6?1:(d<-1e-6?-1:0); };
     def.parts.forEach(function(pt){
       var r=rest[pt.bone], bi=idx[pt.bone], vm=models&&models[pt.name], v;
       if(vm){
-        var nv=vm.pos.length/3;
+        var nv=vm.pos.length/3, lo=[1e9,1e9,1e9], hi=[-1e9,-1e9,-1e9];
+        for(v=0;v<nv;v++) for(var ax=0;ax<3;ax++){ lo[ax]=Math.min(lo[ax],vm.pos[v*3+ax]); hi[ax]=Math.max(hi[ax],vm.pos[v*3+ax]); }
         for(v=0;v<nv;v++){
+          /* Which way this vertex lies from its part's middle, per axis: the
+             outline pushes every part out by the same amount on every side. */
+          out.push(sgn(vm.pos[v*3]-(lo[0]+hi[0])/2),sgn(vm.pos[v*3+1]-(lo[1]+hi[1])/2),sgn(vm.pos[v*3+2]-(lo[2]+hi[2])/2));
           pos.push(vm.pos[v*3]+r[0]+pt.at[0],vm.pos[v*3+1]+r[1]+pt.at[1],vm.pos[v*3+2]+r[2]+pt.at[2]);
           nor.push(vm.nor[v*3],vm.nor[v*3+1],vm.nor[v*3+2]);
           voxColour(vm.ci[v],colours,c); cols.push(c.r,c.g,c.b);
@@ -12396,6 +12534,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       c.setHex(typeof pt.color==='string'?colours[pt.color]:pt.color);
       var P=bx.attributes.position, N=bx.attributes.normal, n=P.count;
       for(v=0;v<n;v++){
+        out.push(sgn(P.getX(v)),sgn(P.getY(v)),sgn(P.getZ(v)));
         pos.push(P.getX(v)+r[0]+pt.at[0],P.getY(v)+r[1]+pt.at[1],P.getZ(v)+r[2]+pt.at[2]);
         nor.push(N.getX(v),N.getY(v),N.getZ(v)); cols.push(c.r,c.g,c.b);
         si.push(bi,0,0,0); sw.push(1,0,0,0);
@@ -12409,6 +12548,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     geo.setAttribute('color',new THREE.Float32BufferAttribute(cols,3));
     geo.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(si,4));
     geo.setAttribute('skinWeight',new THREE.Float32BufferAttribute(sw,4));
+    geo.setAttribute('aOut',new THREE.Float32BufferAttribute(out,3));
     geo.setIndex(ind);
     var mesh=new THREE.SkinnedMesh(geo,new THREE.MeshLambertMaterial({vertexColors:true,skinning:true}));
     mesh.add(bones[0]); mesh.updateMatrixWorld(true);
@@ -12431,6 +12571,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     sil.frustumCulled=true; sil.castShadow=false; sil.renderOrder=1;
     sil.userData.keep=true; sil.userData.kind='silhouette';
     mesh.add(sil);
+    /* The rim (#99): the same body, every part pushed out a few centimetres
+       and drawn from behind in the sky's colour, so a thin light edge stands
+       round the character against any ground. */
+    var rim=new THREE.SkinnedMesh(geo,RIM_MAT);
+    rim.bind(mesh.skeleton,mesh.bindMatrix);
+    rim.frustumCulled=true; rim.castShadow=false; rim.renderOrder=2;
+    rim.userData.keep=true; rim.userData.kind='rim';
+    mesh.add(rim);
     return {mesh:mesh,bones:byName,def:def,ranges:ranges,tint:{},shown:null,at:-1,
             authored:models?def.parts.filter(function(pt){ return !!models[pt.name]; }).length:0};
   }
@@ -14938,6 +15086,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     {k:'lamps',label:'Lamp light',opts:[[0,'Off'],[2,'2'],[4,'4']]},
     {k:'life',label:'Ambient life',sub:'birds, fish, insects, frogs, lizards',opts:[[false,'Off'],[true,'On']]},
     {k:'detail',label:'Moss & strata',opts:[[false,'Off'],[true,'On']]},
+    {k:'edges',label:'Voxel edges',sub:'a faint light line where faces meet',opts:[[false,'Off'],[true,'On']]},
+    {k:'glow',label:'Glow',sub:'lamps, magma, embers and fireflies',opts:[[false,'Off'],[true,'On']]},
+    {k:'fx',label:'Dust & splashes',sub:'footsteps, landings, water, hits',opts:[[false,'Off'],[true,'On']]},
     {k:'aa',label:'Anti-aliasing',sub:'applies when the page is next loaded',opts:[[false,'Off'],[true,'On']]}
   ];
   var gfxEl=document.getElementById('gfx'), gfxBtn=document.getElementById('gfxbtn'),
@@ -14962,6 +15113,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(all||k==='wind') GRASS_WIND.value=GFX.wind?1:0;
     if(all||k==='clouds') SKY_U.uCloudOn.value=GFX.clouds?1:0;
     if(all||k==='detail') SKY_U.uDetail.value=GFX.detail?1:0;
+    if(all||k==='edges') SKY_U.uEdges.value=GFX.edges?1:0;
     if(all||k==='water'){ if(built&&built.wmat) built.wmat.uniforms.uDetail.value=GFX.water==='full'?1:0; }
     if(all||k==='lamps') lampLights=Math.min(LAMP_POOL,GFX.lamps);
     if((all||k==='parts')&&built) applySky(true);

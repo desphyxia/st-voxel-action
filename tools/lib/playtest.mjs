@@ -4889,3 +4889,38 @@ export async function grassBiomeSuite() {
       m.map((t, i) => `${BIOMES[i].k} ${f2(t.h)}`).join(', '));
   return out;
 }
+
+/**
+ * Contact shadows (#99): a prop darkens the ground it stands on. Measured on
+ * the top faces within a quarter-metre of a prop's foot — the same chunk
+ * meshed with and without its props counted — and nowhere else changes.
+ */
+export function contactShadeSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const w = buildWorld({ seed: 'QUARTERSTONE', size: 64, force: null });
+  const bare = Object.assign({}, w, { propStart: w.pos.length / 3 });
+  const a = meshChunk(w, 0, 0), b = meshChunk(bare, 0, 0);
+  /* Mean occlusion per top-face vertex, keyed by where it is. */
+  const tops = (m) => {
+    const map = new Map();
+    for (let v = 0; v < m.pos.length / 3; v++) {
+      if (m.nor[v * 3 + 1] < 0.5) continue;
+      const k = Math.round(m.pos[v * 3] * 4) + ',' + Math.round(m.pos[v * 3 + 1] * 4) + ',' + Math.round(m.pos[v * 3 + 2] * 4);
+      map.set(k, m.ao[v]);
+    }
+    return map;
+  };
+  const ta = tops(a), tb = tops(b);
+  let darker = 0, lighter = 0, same = 0;
+  for (const [k, ao] of ta) {
+    if (!tb.has(k)) continue;
+    const d = tb.get(k) - ao;
+    if (d > 0) darker++; else if (d < 0) lighter++; else same++;
+  }
+  say('the ground darkens where props stand on it, and nowhere does it lighten',
+      darker > 50 && lighter === 0 && a.faces === b.faces,
+      `${darker} ground corners darker beside a prop, ${lighter} lighter, ${same} unchanged; `
+      + `${a.faces} faces either way, ${a.quads} quads against ${b.quads}`);
+  return out;
+}
