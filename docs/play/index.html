@@ -271,6 +271,12 @@
   .gfxrows .seg button{flex:1 1 auto}
   .gfxrows input[type=range]{width:100%;accent-color:var(--sand)}
   .gfxnote{margin:12px 0 0;color:var(--dim);font-size:10px;line-height:1.5}
+  /* Play online (#95): two codes, swapped by hand. */
+  .netstep{margin:10px 0 6px;color:var(--text);font-size:11px}
+  .netcode{width:100%;box-sizing:border-box;height:62px;resize:vertical;font:10px/1.35 var(--mono);
+           color:var(--text);background:rgba(10,13,17,.72);border:1px solid var(--line2);border-radius:2px;
+           padding:5px;word-break:break-all}
+  #netmsg.bad{color:#e08a6a}
   /* The debug dialog (#92): a panel at the side, over a view that is still
      played, so what a switch does can be watched as it happens. */
   .gfx.dbg{background:none;place-items:start end;pointer-events:none}
@@ -354,6 +360,35 @@
             Remembered in this browser.</p>
         </div>
       </div>
+      <div class="gfx" id="net" hidden>
+        <div class="gfxp" role="dialog" aria-modal="true" aria-labelledby="neth">
+          <div class="gfxtop"><h3 id="neth">Play online</h3><span class="gfxrate" id="netstate"></span>
+            <button type="button" class="gfxdone" id="netclose">Close</button></div>
+          <div class="gfxpre" id="netpick">
+            <button type="button" id="nethost">Invite someone</button>
+            <button type="button" id="netjoin">Join with a code</button></div>
+          <div id="nethostp" hidden>
+            <p class="netstep">1 &middot; Send this invite to the other player &mdash; any chat will do.</p>
+            <textarea class="netcode" id="netinv" readonly aria-label="Invite code" placeholder="making the invite&hellip;"></textarea>
+            <div class="gfxpre"><button type="button" id="netinvcopy">Copy invite</button>
+              <button type="button" id="netinvlink" hidden>Copy link</button></div>
+            <p class="netstep">2 &middot; Paste the reply they send back.</p>
+            <textarea class="netcode" id="netrep" aria-label="Reply code" placeholder="their reply"></textarea>
+            <div class="gfxpre"><button type="button" id="netconnect">Connect</button></div>
+          </div>
+          <div id="netjoinp" hidden>
+            <p class="netstep">1 &middot; Paste the invite the host sent you.</p>
+            <textarea class="netcode" id="netinvin" aria-label="Invite code" placeholder="their invite"></textarea>
+            <div class="gfxpre"><button type="button" id="netmkrep">Make a reply</button></div>
+            <p class="netstep">2 &middot; Send this reply back to the host. You are in when they paste it.</p>
+            <textarea class="netcode" id="netrepout" readonly aria-label="Reply code"></textarea>
+            <div class="gfxpre"><button type="button" id="netrepcopy">Copy reply</button></div>
+          </div>
+          <p class="gfxnote" id="netmsg">No server: the two of you swap two codes and the browsers connect
+            directly. The host&rsquo;s world is the one you play in. Some networks refuse a direct link
+            &mdash; strict office or mobile ones &mdash; and then this cannot connect.</p>
+        </div>
+      </div>
       <div class="gfx dbg" id="dbg" hidden>
         <div class="gfxp" role="dialog" aria-modal="false" aria-labelledby="dbgh">
           <div class="gfxtop"><h3 id="dbgh">Debug</h3><span class="gfxrate"></span>
@@ -409,6 +444,7 @@
       <span class="seedbox"><label for="placein">Place</label><input id="placein" placeholder="paste a code" spellcheck="false" autocomplete="off"></span>
       <button class="ctl" id="placego" type="button" title="Go to the world and the spot a place code names">Go to place</button>
       <button class="ctl" id="hostbtn" type="button">Host a game</button>
+      <button class="ctl" id="onlinebtn" type="button" aria-haspopup="dialog" aria-controls="net" title="Play with someone on another machine: the two of you swap a pair of codes, and nothing else is needed">Play online</button>
       <button class="ctl" id="meshbtn" type="button" aria-pressed="true" title="Draw the terrain as a greedy mesh with baked occlusion. Off is the instanced boxes it replaced, kept so the two can be compared.">Mesh: on</button>
       <button class="ctl" id="streambtn" type="button" aria-pressed="false" title="Stream 32 m chunks around the players instead of one 64 m window. A world with no edge, from the same seed — and a different world, because the generator is not size-invariant.">Streaming: off</button>
       <button class="ctl" id="skybtn" type="button" title="Hold the sun at one hour, or let the day turn. The weather keeps moving either way.">Sky: auto</button>
@@ -9470,18 +9506,23 @@ function makeInput(bindings) {
  *
  *   latency  extra ticks on top of the one tick nothing can travel faster than
  *   loss     0..1, applied per message per direction
+ *   jitter   up to this many more ticks, drawn per message — so messages
+ *            overtake each other, which is what a real network does (#95)
+ *   dup      0..1, the chance a message arrives twice
  *   seed     names the loss stream, so a failing case can be re-run
  */
 function makeLoopback(opts) {
   const o = opts || {};
   const latency = o.latency || 0;
   const loss = o.loss || 0;
+  const jitter = o.jitter || 0;
+  const dup = o.dup || 0;
   const rnd = mulberry32(xmur3(String(o.seed === undefined ? 'loopback' : o.seed))());
 
   let clock = 0;
   const queues = { a: [], b: [] };     /* messages waiting to arrive at each side */
   const handlers = { a: [], b: [] };
-  const stat = { sent: 0, dropped: 0, delivered: 0, bytes: 0 };
+  const stat = { sent: 0, dropped: 0, delivered: 0, bytes: 0, duplicated: 0 };
 
   function endpoint(self, other) {
     let open = true;
@@ -9495,7 +9536,9 @@ function makeLoopback(opts) {
         const wire = JSON.stringify(msg);
         stat.bytes += wire.length;
         if (loss > 0 && rnd() < loss) { stat.dropped++; return; }
-        queues[other].push({ due: clock + 1 + latency, wire });
+        const late = () => (jitter ? Math.floor(rnd() * (jitter + 1)) : 0);
+        queues[other].push({ due: clock + 1 + latency + late(), wire });
+        if (dup > 0 && rnd() < dup) { stat.duplicated++; queues[other].push({ due: clock + 1 + latency + late(), wire }); }
       },
       onMessage(fn) { handlers[self].push(fn); },
       close() { open = false; },
@@ -9566,6 +9609,16 @@ const HELLO_EVERY = 20;
 const MAX_PENDING = 240;
 /** How hard the guest pulls its picture of the host toward the last snapshot. */
 const SMOOTH = 0.25;
+/** How many of its latest inputs the guest sends in every message, so one
+    lost message loses nothing: a real network drops them one at a time. */
+const REDUNDANT = 3;
+/** Inputs the host will hold before it starts consuming two a tick. Two
+    machines' 60 Hz are never quite the same 60 Hz, and a guest whose clock
+    runs fast would otherwise build a queue — and a lag — without bound. */
+const CATCHUP = 8;
+/** Two seconds without a word and the partner is lost: drawn standing where
+    they were, driven by nothing, until they come back. */
+const STALE = 120;
 
 const HOST = 0, GUEST = 1;
 
@@ -9573,6 +9626,17 @@ const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, 
 const copyInput = (i) => ({ mx: i.mx || 0, mz: i.mz || 0, jump: !!i.jump,
                             attack: !!i.attack, dodge: !!i.dodge,
                             aimX: i.aimX || 0, aimZ: i.aimZ || 0 });
+/* An input on the wire: five numbers. The stick is kept to 1/10000 on *both*
+   ends — the guest predicts with the same rounded value the host will apply,
+   so the rounding costs nothing in agreement and a third of the bytes. */
+const q4 = (v) => Math.round((v || 0) * 1e4) / 1e4;
+function packInput(i) {
+  return [q4(i.mx), q4(i.mz), (i.jump ? 1 : 0) | (i.attack ? 2 : 0) | (i.dodge ? 4 : 0), q4(i.aimX), q4(i.aimZ)];
+}
+function unpackInput(w) {
+  return { mx: w[0], mz: w[1], jump: !!(w[2] & 1), attack: !!(w[2] & 2), dodge: !!(w[2] & 4),
+           aimX: w[3], aimZ: w[4] };
+}
 
 /**
  * Seating and unseating a module is **not** an input.
@@ -9615,18 +9679,34 @@ function makeHost(opts) {
      dropping to idle — a player who stutters should keep running, not stop. */
   const inbox = [];
   let last = { seq: 0, input: copyInput(IDLE) };
-  let t = 0, joined = false, seen = 0;
+  let t = 0, joined = false, seen = 0, heard = 0, starved = 0, caught = 0, stale = 0;
+  /* Which guest is talking, and the newest input queued from it. A guest that
+     reloads is a new guest with its count back at one; without its id the
+     host would discard every input it sent as old. */
+  let gid = null, newest = 0;
 
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
+    heard = t;
+    if (m.g !== undefined && m.g !== gid) { gid = m.g; inbox.length = 0; newest = 0; }
     if (m.t === 'join') { joined = true; return; }
     /* The guest asking for its own lattice to change. Authority is not shared:
        it is applied here or it does not happen, and the next snapshot is how
        the guest finds out which. */
     if (m.t === 'act') { applyAct(peer, m); return; }
-    if (m.t === 'input') {
+    if (m.t === 'in') {
       seen++;
-      if (inbox.length < MAX_PENDING) inbox.push({ seq: m.seq, input: copyInput(m) });
+      /* The last few inputs, newest last. Anything already queued or applied
+         is a duplicate, and anything older than that arrived out of order and
+         was covered by a later message: both are dropped, so the queue is
+         always in order and holds each input once. */
+      const first = m.seq - m.i.length + 1;
+      for (let k = 0; k < m.i.length; k++) {
+        const s = first + k;
+        if (s <= newest || inbox.length >= MAX_PENDING) continue;
+        inbox.push({ seq: s, input: unpackInput(m.i[k]) });
+        newest = s;
+      }
     }
   });
 
@@ -9636,6 +9716,8 @@ function makeHost(opts) {
   return {
     role: 'host', me, peer, cfg,
     get connected() { return joined; },
+    /** Joined, and then silent for two seconds. */
+    get lost() { return joined && t - heard > STALE; },
     get tick() { return t; },
     /** Drawn from the same data that is sent, so a gap in one shows in both. */
     get foes() { return encounter ? encounter.wire() : null; },
@@ -9646,25 +9728,40 @@ function makeHost(opts) {
     act(kind, slot, carriedIndex) {
       return applyAct(me, { k: kind, s: slot, c: carriedIndex });
     },
-    get stats() { return { t, joined, queued: inbox.length, inputs: seen }; },
+    get stats() { return { t, joined, queued: inbox.length, inputs: seen, starved, caught, stale, quiet: t - heard }; },
 
     /** One authoritative tick. `localInput` is this machine's own player. */
     step(localInput) {
       t++;
-      if (!joined && t % HELLO_EVERY === 0) announce();
+      const quiet = t - heard > STALE;
+      /* Announced until someone answers, and again whenever the answer stops:
+         a guest that reloaded is waiting for a hello to grow the world from. */
+      if ((!joined || quiet) && t % HELLO_EVERY === 0) announce();
 
-      const next = inbox.length ? inbox.shift() : last;
+      /* A starved tick repeats the last input, so a stutter keeps running. A
+         partner gone quiet does not: they are stood still, not run off a cliff
+         on the last direction they happened to be holding. */
+      let next;
+      if (inbox.length) next = inbox.shift();
+      else if (quiet) { next = { seq: last.seq, input: copyInput(IDLE) }; stale++; }
+      else { next = last; starved++; }
       last = next;
 
       step(col, me, copyInput(localInput || IDLE), targets);
       step(col, peer, next.input, targets);
+      /* A queue that has grown past the jitter it is for is a guest whose
+         clock runs fast: one more of its inputs this tick, in order. */
+      if (inbox.length > CATCHUP) {
+        last = inbox.shift(); caught++;
+        step(col, peer, last.input, targets);
+      }
       /* The world acts after the players do, and it is the host's world: a
          guest predicts its own movement and nothing else. */
       if (encounter) encounter.step([me, peer]);
 
       if (t % sendEvery === 0) {
         transport.send({
-          t: 'snap', tick: t, ack: next.seq,
+          t: 'snap', tick: t, ack: last.seq,
           /* Full state for the guest's own character, because it replays from
              it. Display state for everything it only draws. */
           you: snapshot(peer),
@@ -9689,6 +9786,10 @@ function makeHost(opts) {
  */
 function makeGuest(opts) {
   const { transport, build } = opts;
+  /* Who this guest is, for the host to tell a reload from a late message. Not
+     simulation state — nothing steps from it — so any source will do. */
+  const gid = opts.gid !== undefined ? opts.gid : Math.floor(Math.random() * 0x7fffffff);
+  let quiet = 0;
   let col = null, me = null, peer = null, cfg = null, encounter = null;
   let foes = null, lootBits = 0;
   let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0, hostTick = 0;
@@ -9698,9 +9799,10 @@ function makeGuest(opts) {
 
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
+    quiet = 0;
 
     if (m.t === 'hello') {
-      if (ready) { transport.send({ t: 'join' }); return; }   /* a repeat beacon */
+      if (ready) { transport.send({ t: 'join', g: gid }); return; }   /* a repeat beacon */
       cfg = m.cfg;
       const world = build(m.cfg);
       col = world.col;
@@ -9710,11 +9812,14 @@ function makeGuest(opts) {
       me = spawnNear(col, m.spawn[0], m.spawn[2]);
       peer = placeOnGround(col, m.spawn[0], m.spawn[2]);
       ready = true;
-      transport.send({ t: 'join' });
+      transport.send({ t: 'join', g: gid });
       return;
     }
 
-    if (m.t === 'snap' && ready) {
+    /* A snapshot older than the last one arrived out of order, and one equal
+       to it is a duplicate: restoring either would put the guest back in time
+       and replay inputs the host has already answered. */
+    if (m.t === 'snap' && ready && m.tick > hostTick) {
       /* Wholesale, not a nudge: the host's word replaces ours, and then every
          input it had not seen yet is put back on top. Skipping the replay is
          what makes a corrected client feel like it is being dragged backwards. */
@@ -9742,10 +9847,12 @@ function makeGuest(opts) {
     get peer() { return peer; },
     get cfg() { return cfg; },
     get connected() { return ready; },
+    /** Ready, and then two seconds without a word from the host. */
+    get lost() { return ready && quiet > STALE; },
     /** The host's tick as of its last snapshot: the one clock both windows
         can agree on, which is what the sky (#30) is read from. */
     get tick() { return hostTick; },
-    get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck }; },
+    get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck, quiet }; },
     /** Whatever the host last said was in the world. Drawn, never stepped. */
     get foes() { return foes; },
     /** And what of it has been picked up, by either of them. */
@@ -9754,7 +9861,7 @@ function makeGuest(opts) {
     /** Ask the host to seat a module. It decides; the next snapshot answers. */
     act(kind, slot, carriedIndex) {
       if (!ready) return false;
-      transport.send({ t: 'act', k: kind, s: slot, c: carriedIndex });
+      transport.send({ t: 'act', g: gid, k: kind, s: slot, c: carriedIndex });
       return true;
     },
     /** The last thing the host said about us, before any replay on top of it.
@@ -9763,14 +9870,16 @@ function makeGuest(opts) {
 
     /** One predicted tick. Sends the input, applies it locally straight away. */
     step(localInput) {
+      quiet++;
       if (!ready) return this;
       seq++;
-      const input = copyInput(localInput || IDLE);
-      transport.send({ t: 'input', seq, mx: input.mx, mz: input.mz, jump: input.jump,
-                       attack: input.attack, dodge: input.dodge,
-                       aimX: input.aimX, aimZ: input.aimZ });
-      pending.push({ seq, input });
+      const w = packInput(localInput || IDLE), input = unpackInput(w);
+      pending.push({ seq, input, w });
       if (pending.length > MAX_PENDING) pending.shift();
+      /* This input and the few before it, so a message lost on the way costs
+         nothing as long as one of the next few arrives. */
+      const from = Math.max(0, pending.length - REDUNDANT);
+      transport.send({ t: 'in', g: gid, seq, i: pending.slice(from).map((p) => p.w) });
       step(col, me, input, null);
 
       /* The other player arrives at 20 Hz and is drawn, not simulated, so it is
@@ -9785,6 +9894,190 @@ function makeGuest(opts) {
       return this;
     },
   };
+}
+/* ---------- src/net/rtc.mjs ---------- */
+/**
+ * The wire over a WebRTC data channel (#95), and the codes two players pass
+ * each other to open one.
+ *
+ * DECISIONS §7 names Steam Networking as the transport the game ships on. The
+ * browser build is the test harness, and a data channel is how it plays between
+ * two homes before there is a Steam build: the same three methods as the
+ * loopback and the two-window link (src/net/transport.mjs), so the session
+ * above it cannot tell them apart.
+ *
+ * The channel is **unordered and unreliable** — `CHANNEL` below — because
+ * that is what the session is written for: a late snapshot is ignored, inputs
+ * are queued by sequence and ride the next few messages, and the handshake
+ * repeats until it is answered. A reliable channel would buy nothing but
+ * head-of-line blocking, which is a stall exactly when the network is worst.
+ *
+ * **No server.** A connection needs each side's description — its keys and
+ * the addresses it can be reached at — to reach the other. The host makes an
+ * *invite*, the guest pastes it and makes a *reply*, the host pastes that, and
+ * they are connected. A code is the browser's own session description,
+ * compressed: rebuilding one from a few fields is shorter, but it is a guess
+ * at another browser's format, and this is the part that has to work in
+ * browsers this sandbox cannot run.
+ *
+ * STUN, from public servers, finds each side's address as the internet sees
+ * it. There is no TURN relay: two networks that refuse a direct link cannot
+ * play in the browser, which is recorded in DECISIONS §7.
+ *
+ * DOM-free apart from what it is handed: a channel, a peer connection, and
+ * CompressionStream where the engine has it (every current browser and node
+ * 18+). Nothing here reads the clock the simulation runs on.
+ */
+
+/** Where STUN is asked. Two operators, so one being down does not stop play. */
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
+];
+
+/** The data channel: unordered, no retransmits — see above. */
+const CHANNEL = { ordered: false, maxRetransmits: 0 };
+
+/** Past this much queued in the channel, a message is dropped rather than
+    queued behind it: late state is worse than missing state. */
+const MAX_BUFFER = 256 * 1024;
+
+/** How long to wait for addresses before sending the invite with what there is. */
+const GATHER_MS = 4000;
+
+/**
+ * A transport over a data channel, or anything shaped like one:
+ * `send(string)`, `readyState`, `bufferedAmount`, `close()`, and `message`
+ * events carrying `data`.
+ */
+function channelTransport(ch) {
+  const handlers = [];
+  const stat = { sent: 0, skipped: 0, received: 0, bad: 0, bytes: 0 };
+  const onData = (e) => {
+    let m;
+    try { m = JSON.parse(e.data); } catch (err) { stat.bad++; return; }
+    stat.received++;
+    for (const fn of handlers) fn(m);
+  };
+  if (ch.addEventListener) ch.addEventListener('message', onData);
+  else ch.onmessage = onData;
+  return {
+    stat,
+    get open() { return ch.readyState === 'open'; },
+    send(msg) {
+      if (ch.readyState !== 'open') { stat.skipped++; return; }
+      if (ch.bufferedAmount > MAX_BUFFER) { stat.skipped++; return; }
+      const s = JSON.stringify(msg);
+      stat.sent++; stat.bytes += s.length;
+      try { ch.send(s); } catch (err) { stat.skipped++; }
+    },
+    onMessage(fn) { handlers.push(fn); },
+    close() { try { ch.close(); } catch (err) { /* already gone */ } },
+  };
+}
+
+/* ---------- codes ----------
+   `I` or `R` — invite or reply — then the description, deflated and in URL-safe
+   base64, so it survives a chat app, an email and a URL fragment alike. A code
+   that does not start with one of the two letters is refused, which is what
+   catches a reply pasted where an invite goes. */
+
+const CODE_ABC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+function b64url(bytes) {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const a = bytes[i], b = bytes[i + 1], c = bytes[i + 2];
+    const n = (a << 16) | ((b || 0) << 8) | (c || 0);
+    out += CODE_ABC[(n >> 18) & 63] + CODE_ABC[(n >> 12) & 63];
+    if (i + 1 < bytes.length) out += CODE_ABC[(n >> 6) & 63];
+    if (i + 2 < bytes.length) out += CODE_ABC[n & 63];
+  }
+  return out;
+}
+
+function unb64url(s) {
+  const out = [];
+  let buf = 0, bits = 0;
+  for (const ch of s) {
+    const v = CODE_ABC.indexOf(ch);
+    if (v < 0) throw new Error('not a code');
+    buf = (buf << 6) | v; bits += 6;
+    if (bits >= 8) { bits -= 8; out.push((buf >> bits) & 255); }
+  }
+  return new Uint8Array(out);
+}
+
+async function codeBytes(bytes, stream) {
+  const r = new Blob([bytes]).stream().pipeThrough(stream);
+  return new Uint8Array(await new Response(r).arrayBuffer());
+}
+
+/** An invite (`offer`) or reply (`answer`) description, as a code. */
+async function packCode(desc) {
+  const kind = desc.type === 'offer' ? 'I' : desc.type === 'answer' ? 'R' : null;
+  if (!kind) throw new Error('not an offer or an answer');
+  const raw = new TextEncoder().encode(desc.sdp);
+  if (typeof CompressionStream === 'undefined') return kind + '0' + b64url(raw);
+  return kind + 'Z' + b64url(await codeBytes(raw, new CompressionStream('deflate-raw')));
+}
+
+/**
+ * A code back into a description. Forgiving about what a person pastes —
+ * spaces, line breaks, a whole link with the code after `#join=` — and strict
+ * about what it is: `want` is `'offer'` or `'answer'`, and the other kind is
+ * refused with a message that says which was pasted.
+ */
+async function unpackCode(text, want) {
+  let s = String(text || '').trim();
+  const at = s.indexOf('#join=');
+  if (at >= 0) s = s.slice(at + 6);
+  s = s.replace(/\s+/g, '');
+  const kind = s[0], enc = s[1], body = s.slice(2);
+  const type = kind === 'I' ? 'offer' : kind === 'R' ? 'answer' : null;
+  if (!type || (enc !== 'Z' && enc !== '0') || !body) throw new Error('that is not a code from this game');
+  if (want && type !== want) {
+    throw new Error(type === 'answer' ? 'that is a reply — it goes to the host, who made the invite'
+                                      : 'that is an invite — the host needs the reply made from it');
+  }
+  const damaged = 'that code is damaged — copy it again, all of it';
+  let sdp;
+  try {
+    const bytes = unb64url(body);
+    const raw = enc === 'Z' ? await codeBytes(bytes, new DecompressionStream('deflate-raw')) : bytes;
+    sdp = new TextDecoder().decode(raw);
+  } catch (err) { throw new Error(damaged); }
+  if (sdp.indexOf('v=0') !== 0 || sdp.indexOf('a=fingerprint:') < 0) throw new Error(damaged);
+  return { type, sdp };
+}
+
+/**
+ * Resolves once `pc` has found its addresses, or after `ms` with whatever it
+ * has. A description is only worth sending with its candidates in it, since
+ * there is no server to trickle the rest through; and a STUN server that never
+ * answers must not keep the invite from being made at all.
+ */
+function gathered(pc, ms, later) {
+  const wait = later || setTimeout;
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === 'complete') { resolve(true); return; }
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+    pc.addEventListener('icegatheringstatechange', () => {
+      if (pc.iceGatheringState === 'complete') finish(true);
+    });
+    wait(() => finish(false), ms === undefined ? GATHER_MS : ms);
+  });
+}
+
+/** What kinds of address a description offers — for the player, when it fails. */
+function candidateKinds(sdp) {
+  const kinds = {};
+  for (const line of String(sdp).split(/\r?\n/)) {
+    const m = /^a=candidate:.* typ (\w+)/.exec(line);
+    if (m) kinds[m[1]] = (kinds[m[1]] || 0) + 1;
+  }
+  return kinds;
 }
 /* ---------- assets ---------- */
 const ASSETS={
@@ -9876,7 +10169,7 @@ const ASSETS={
   'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
   'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP8AAAD/'
 };
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,ASSETS:ASSETS};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -13556,7 +13849,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     peerHp.style.width=(100*Math.max(0,o.hp)/mh).toFixed(1)+'%';
     peerSt.style.width=(100*Math.max(0,o.stamina||0)/ms).toFixed(1)+'%';
     peerEl.classList.toggle('down',!!o.dead);
-    peerWho.textContent=o.dead?'partner · down':'partner';
+    peerWho.textContent=session.lost?'partner · lost':(o.dead?'partner · down':'partner');
     var sp=QS.project(cam,{x:o.x,y:o.y+1,z:o.z},vp), m=18;
     var off=sp.x<m||sp.y<m||sp.x>vp.w-m||sp.y>vp.h-m;
     peerPin.style.display=off?'block':'none';
@@ -13590,19 +13883,25 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var peerWin=window.open(location.href.split('#')[0]+'#join','qs-peer',
                             'width=1060,height=760');
     if(!peerWin){ says('The browser blocked the second window — allow pop-ups and try again.'); return; }
+    beginHost(windowTransport(function(){ return peerWin; }));
+    says('<b>Hosting.</b> Waiting for the second window to join…',true);
+  }
+  /** Host a game over any transport: a second window, or a data channel. */
+  function beginHost(t){
     role='host';
-    wire=windowTransport(function(){ return peerWin; });
+    wire=t;
     /* The host announces itself on a beacon until someone answers, so the
        second window can take as long as it likes to load. */
     session=QS.makeHost({col:col,spawn:built.data.spawn,transport:wire,cfg:built.cfg,
                          targets:targets,encounter:encounter});
     if(solo){ session.me.x=solo.x; session.me.y=solo.y; session.me.z=solo.z; }
     hostBtn.disabled=true;
-    says('<b>Hosting.</b> Waiting for the second window to join…',true);
+    says('<b>Hosting.</b> Waiting for the other player…',true);
   }
-  function startGuest(){
+  function startGuest(){ beginGuest(windowTransport(function(){ return window.opener; })); }
+  function beginGuest(t){
     role='guest';
-    wire=windowTransport(function(){ return window.opener; });
+    wire=t;
     session=QS.makeGuest({transport:wire, build:function(cfg){
       /* Nothing about the terrain came over the wire — only its seed did. The
          guest still builds the encounter, but only so that it has models to
@@ -13623,6 +13922,206 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     hostBtn.disabled=true;
     says('<b>Joining.</b> Waiting for the host…',true);
   }
+
+
+  /* ---------- play online (#95) ----------
+     The same session over a WebRTC data channel, opened by two codes swapped
+     by hand: the host's invite, the guest's reply. No server — see
+     src/net/rtc.mjs for why, and DECISIONS §7 for what that costs.
+
+     The session talks to a *relay* rather than to one channel, so a guest who
+     reloads, or whose connection died, can be let back in on a new invite
+     without the host's game starting over: the relay takes the new channel,
+     and the session hears a new guest id and takes it from there. */
+  function relayWire(){
+    var fns=[], cur=null;
+    return {
+      use:function(t){
+        if(cur&&cur!==t) cur.close();
+        cur=t;
+        t.onMessage(function(m){ if(t!==cur) return; for(var q=0;q<fns.length;q++) fns[q](m); });
+      },
+      get current(){ return cur; },
+      send:function(m){ if(cur) cur.send(m); },
+      onMessage:function(f){ fns.push(f); },
+      close:function(){ if(cur) cur.close(); }
+    };
+  }
+  var net={pc:null,role:null,relay:null,busy:false,state:''};
+  var netEl=document.getElementById('net'), netMsg=document.getElementById('netmsg'),
+      netState=document.getElementById('netstate'), netNote=netMsg.innerHTML;
+  function netSay(text,bad){ netMsg.textContent=text; netMsg.classList.toggle('bad',!!bad); }
+  function netIce(){ return net.ice||QS.ICE_SERVERS; }
+  function netDrop(){ if(net.pc){ try{ net.pc.close(); }catch(e){} net.pc=null; } }
+  /** A connection's life, for the player: what it is doing, and when it
+      failed, what that most likely means. */
+  function netWatch(pc){
+    pc.addEventListener('connectionstatechange',function(){
+      if(pc!==net.pc) return;
+      net.state=pc.connectionState; netState.textContent=net.state;
+      if(net.state==='failed'){
+        var k=QS.candidateKinds((pc.localDescription||{}).sdp||'');
+        netSay(k.srflx?'The two browsers could not reach each other. One of the networks refuses a direct link — try another network, such as a phone’s hotspot.'
+                      :'This browser found no public address to offer, so only someone on the same network can connect.',true);
+      }
+    });
+  }
+  function netChannel(ch){
+    ch.addEventListener('open',function(){
+      var t=QS.channelTransport(ch);
+      if(net.role==='host'){
+        if(!net.relay){ net.relay=relayWire(); net.relay.use(t); beginHost(net.relay); }
+        else net.relay.use(t);
+      } else {
+        if(!net.relay){ net.relay=relayWire(); net.relay.use(t); beginGuest(net.relay); }
+        else net.relay.use(t);
+      }
+      netState.textContent='connected';
+      netOpen(false);
+    });
+  }
+  /** Host: a connection with a channel on it, and its description as an invite. */
+  function netInvite(){
+    if(session&&role!=='host'){ netSay('You are playing in someone else’s game.',true); return Promise.resolve(null); }
+    if(session&&!net.relay){ netSay('Leave the two-window game first.',true); return Promise.resolve(null); }
+    netDrop(); net.role='host';
+    var pc=net.pc=new RTCPeerConnection({iceServers:netIce()}); netWatch(pc);
+    netChannel(pc.createDataChannel('qs',QS.CHANNEL));
+    var inv=document.getElementById('netinv'); inv.value='';
+    netState.textContent='finding your address…';
+    return pc.createOffer().then(function(o){ return pc.setLocalDescription(o); })
+      .then(function(){ return QS.gathered(pc,net.gather); })
+      .then(function(){ return QS.packCode(pc.localDescription); })
+      .then(function(code){
+        if(pc!==net.pc) return null;
+        inv.value=code; netState.textContent='invite ready';
+        document.getElementById('netinvlink').hidden=!netLinkable();
+        return code;
+      }).catch(function(e){ netSay('Could not make an invite: '+(e&&e.message||e),true); return null; });
+  }
+  function netAccept(text){
+    if(!net.pc||net.role!=='host') return Promise.resolve(false);
+    return QS.unpackCode(text,'answer').then(function(d){ return net.pc.setRemoteDescription(d); })
+      .then(function(){ netState.textContent='connecting…'; netSay('Connecting…'); return true; })
+      .catch(function(e){ netSay(e&&e.message||String(e),true); return false; });
+  }
+  /** Guest: the host's invite in, a reply out. */
+  function netReply(text){
+    if(session&&role==='host'){ netSay('You are hosting — the other player joins you.',true); return Promise.resolve(null); }
+    if(session&&!net.relay){ netSay('Leave the two-window game first.',true); return Promise.resolve(null); }
+    netDrop(); net.role='guest';
+    var out=document.getElementById('netrepout'); out.value='';
+    var pc=null;
+    return QS.unpackCode(text,'offer').then(function(d){
+      pc=net.pc=new RTCPeerConnection({iceServers:netIce()}); netWatch(pc);
+      pc.addEventListener('datachannel',function(e){ netChannel(e.channel); });
+      netState.textContent='finding your address…';
+      return pc.setRemoteDescription(d);
+    }).then(function(){ return pc.createAnswer(); })
+      .then(function(a){ return pc.setLocalDescription(a); })
+      .then(function(){ return QS.gathered(pc,net.gather); })
+      .then(function(){ return QS.packCode(pc.localDescription); })
+      .then(function(code){
+        if(pc!==net.pc) return null;
+        out.value=code; netState.textContent='reply ready — waiting for the host';
+        return code;
+      }).catch(function(e){ netSay(e&&e.message||String(e),true); return null; });
+  }
+  /* A link carries the invite in its fragment, for a page served from
+     somewhere a friend can open. The published artifact runs framed on an
+     address of its own, so there the code is the only way. */
+  function netLinkable(){
+    try{ return /^https?:$/.test(location.protocol)&&window.top===window; }catch(e){ return false; }
+  }
+  function netCopy(el,what){
+    var text=el.value; if(!text) return;
+    function byHand(){ el.focus(); el.select(); netSay('Select the '+what+' and copy it.'); }
+    try{
+      if(navigator.clipboard&&navigator.clipboard.writeText)
+        navigator.clipboard.writeText(text).then(function(){ netSay(what.charAt(0).toUpperCase()+what.slice(1)+' copied.'); },byHand);
+      else byHand();
+    }catch(e){ byHand(); }
+  }
+  function netShow(which){
+    document.getElementById('nethostp').hidden=which!=='host';
+    document.getElementById('netjoinp').hidden=which!=='join';
+    document.getElementById('nethost').setAttribute('aria-pressed',which==='host'?'true':'false');
+    document.getElementById('netjoin').setAttribute('aria-pressed',which==='join'?'true':'false');
+  }
+  function netOpen(on){
+    if(on===netOpen.on) return;
+    netOpen.on=on; netEl.hidden=!on;
+    if(on){ input.releaseAll(); var f=netEl.querySelector('button'); if(f) f.focus(); }
+    else stage.focus();
+  }
+  netOpen.on=false;
+  document.getElementById('onlinebtn').addEventListener('click',function(){
+    netMsg.innerHTML=netNote; netMsg.classList.remove('bad');
+    if(session&&!net.relay) netSay('Leave the two-window game first — reload the page.',true);
+    netShow(net.role==='guest'?'join':(net.role==='host'?'host':''));
+    netOpen(true);
+  });
+  document.getElementById('nethost').addEventListener('click',function(e){ e.stopPropagation(); netShow('host'); netInvite(); });
+  document.getElementById('netjoin').addEventListener('click',function(e){ e.stopPropagation(); netShow('join');
+    document.getElementById('netinvin').focus(); });
+  document.getElementById('netconnect').addEventListener('click',function(e){ e.stopPropagation();
+    netAccept(document.getElementById('netrep').value); });
+  document.getElementById('netmkrep').addEventListener('click',function(e){ e.stopPropagation();
+    netReply(document.getElementById('netinvin').value); });
+  document.getElementById('netinvcopy').addEventListener('click',function(e){ e.stopPropagation();
+    netCopy(document.getElementById('netinv'),'invite'); });
+  document.getElementById('netrepcopy').addEventListener('click',function(e){ e.stopPropagation();
+    netCopy(document.getElementById('netrepout'),'reply'); });
+  document.getElementById('netinvlink').addEventListener('click',function(e){ e.stopPropagation();
+    var inv=document.getElementById('netinv'); if(!inv.value) return;
+    var t=document.createElement('textarea'); t.value=location.href.split('#')[0]+'#join='+inv.value;
+    netCopy(t,'link'); });
+  document.getElementById('netclose').addEventListener('click',function(e){ e.stopPropagation(); netOpen(false); });
+  ['pointerdown','pointerup','pointermove','touchstart','contextmenu','wheel'].forEach(function(ev){
+    netEl.addEventListener(ev,function(e){ e.stopPropagation(); },{passive:ev!=='contextmenu'});
+  });
+  netEl.addEventListener('click',function(e){ e.stopPropagation(); if(e.target===netEl) netOpen(false); });
+  netEl.addEventListener('keydown',function(e){ e.stopPropagation(); if(e.key==='Escape'){ e.preventDefault(); netOpen(false); } });
+  netEl.addEventListener('keyup',function(e){ e.stopPropagation(); });
+
+  /* ---------- a game that keeps going in a background tab ----------
+     A browser stops calling requestAnimationFrame for a tab nobody is looking
+     at, and the simulation runs from it — so a host who switched tabs froze
+     the game for their partner, and a guest who did went silent and was stood
+     still. While a game is on and the tab is hidden, a worker's timer — which
+     a browser does not throttle the way it does a page's — steps the
+     simulation instead, and nothing is drawn. A plain interval stands in where
+     a worker cannot be made; it is throttled, but it is not stopped. */
+  var metro=null, metroLast=0;
+  function metroTick(){
+    if(!document.hidden||!session||plateMode) return;
+    var now=performance.now(), dt=Math.max(0,Math.min((now-metroLast)/1000,1));
+    metroLast=now; last=Math.max(last,now);
+    acc+=dt;
+    var guard=0;
+    while(acc>=TICK&&guard++<90){ tick(); acc-=TICK; }
+    if(acc>=TICK) acc=0;
+    metro.ticks=(metro.ticks||0)+guard; metro.secs=(metro.secs||0)+dt; metro.calls=(metro.calls||0)+1;
+  }
+  function metroSync(){
+    var want=document.hidden&&!!session&&!plateMode;
+    if(want&&!metro){
+      /* From now, not from whatever the frame loop had fallen behind by: a
+         slow frame runs at most eight ticks and leaves the rest owed, and
+         paying that off in one burst as the tab is hidden is a jump. */
+      metroLast=performance.now(); acc=0;
+      try{
+        var url=URL.createObjectURL(new Blob(['setInterval(function(){postMessage(0);},16);'],{type:'text/javascript'}));
+        var w=new Worker(url);
+        metro={kind:'worker',stop:function(){ w.terminate(); URL.revokeObjectURL(url); }};
+        w.onmessage=metroTick;
+      }catch(e){
+        var id=setInterval(metroTick,16);
+        metro={kind:'interval',stop:function(){ clearInterval(id); }};
+      }
+    } else if(!want&&metro){ metro.stop(); metro=null; }
+  }
+  document.addEventListener('visibilitychange',metroSync);
 
   /* ---------- the lattice panel ----------
      Drawn as the thing it is: cells and the edges between them. The edge is
@@ -13970,7 +14469,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     dbgAfter();
   }
 
-  var acc=0, last=0, frames=0, fpsAt=0, wasConnected=false, paused=false;
+  var acc=0, last=0, frames=0, fpsAt=0, wasConnected=false, wasLost=false, paused=false;
   /* ---------- how often a frame is drawn ----------
      requestAnimationFrame, paced by the display. There is no way off that on
      the web and there is no point wanting one: the compositor presents at the
@@ -14038,6 +14537,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        replay lands on the host's answer rather than near it. */
     var guard=0;
     if(paused) acc=0;
+    else if(metro) acc=0;                          /* hidden: the metronome steps it */
     else while(acc>=TICK&&guard++<8){ tick(); acc-=TICK; }
 
     if(session&&session.connected&&!wasConnected){
@@ -14046,6 +14546,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         ? '<b>Hosting.</b> The other window is in the same world, grown from the same seed — '
           + 'nothing about the terrain crossed between them.'
         : '<b>Joined.</b> You are predicting locally and reconciling against the host.',true);
+    }
+    /* Two seconds without a word (#95): said once when it happens and once
+       when it ends, not every frame. */
+    if(session&&session.connected&&!!session.lost!==wasLost){
+      wasLost=!!session.lost;
+      says(wasLost
+        ? (role==='host'?'<b>Partner lost.</b> Their character stands where it was until they are back — '
+            +'if they reloaded, send them a new invite from <b>Play online</b>.'
+          :'<b>Host lost.</b> Waiting for them — if it does not come back, ask for a new invite.')
+        : '<b>Back.</b> Playing together again.',true);
     }
     if(!built) return;
     applySky(false); skyFrame(dt);
@@ -15684,6 +16194,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get touch(){ return touchMode; },
     draw:draw,
     host:startHost,
+    /* Play online (#95), for the gate: the three steps a person takes, where
+       STUN is asked (nowhere, in a sandbox with no route out), and what the
+       connection and the background metronome are doing. */
+    netInvite:netInvite, netAccept:netAccept, netReply:netReply, metroSync:metroSync,
+    netConfig:function(o){ if(o.ice) net.ice=o.ice; if(o.gather!==undefined) net.gather=o.gather; },
+    get net(){ return {state:net.state,role:net.role,relay:!!net.relay,lost:!!(session&&session.lost),
+                       metro:metro?{kind:metro.kind,ticks:metro.ticks||0,secs:metro.secs||0,calls:metro.calls||0}:null}; },
     screen:function(){ var a=player(); return QS.project(cam,{x:a.x,y:a.y,z:a.z},vp); },
     respawn:spawn
   };

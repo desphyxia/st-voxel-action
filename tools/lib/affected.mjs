@@ -21,7 +21,7 @@ export const GROUPS = {
   render: 'the plate draws a biome',
   build: 'the playable build: move, view, swing, enemy, loot, net, HUD, fullscreen',
   stream: 'the streaming control and a streamed world, from disk',
-  worker: 'the worker pool over HTTP, and a streamed host with a guest',
+  worker: 'the worker pool over HTTP, a streamed host with a guest, and two pages online over WebRTC',
   magma: 'the magma sheet, on the ash seed',
   look: 'the look gate: plates against tools/look-baseline.json',
 };

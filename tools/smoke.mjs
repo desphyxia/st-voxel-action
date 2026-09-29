@@ -89,7 +89,7 @@ import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
-         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { chunkWorld } from '../src/gen/chunk.mjs';
@@ -428,6 +428,7 @@ if (NODE_HALF) for (const r of trailSuite()) check(r.ok, `WALK: ${r.label}`, r.d
    same inputs from the same state has to reproduce the host exactly, or a guest
    can only ever be approximately where it thinks it is. */
 if (NODE_HALF) for (const r of netSuite()) check(r.ok, `NET: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of await rtcSuite()) check(r.ok, `RTC: ${r.label}`, r.detail);
 
 /* ---------- VOX: the authored hero, issue #34 ----------
    The first hand-authored model. What has to hold for it to replace the
@@ -3223,6 +3224,81 @@ if (BROWSER_HALF) {
         await wpeer.close();
         await wp.evaluate(() => window.QSPLAY.pause(false));
         await wp.close();
+
+        /* ---------- ONLINE: two pages over a real WebRTC channel (#95) ----------
+           Served, as a person gets it, and joined the way a person joins: the
+           host makes an invite, the guest makes a reply from it, the host takes
+           the reply. There is no route out of a runner, so STUN is asked
+           nowhere and the two find each other by their host addresses — the
+           same channel, the same codes and the same session a pair on two
+           networks would use; only the address they reach each other by
+           differs, and that part is the one no gate can see.
+
+           Then the thing a browser does to a game nobody is looking at: a host
+           whose tab is hidden gets no animation frames, and keeps the game
+           going from a worker's timer instead. */
+        const onPage = async (who) => {
+          const pg = await browser.newPage({ viewport: { width: 480, height: 300 } });
+          pg.setDefaultTimeout(PATIENCE);
+          pg.on('pageerror', (e) => wErrors.push(`${who}: ${e.message}`));
+          pg.on('console', (m) => { if (m.type() === 'error' && !/ERR_/.test(m.text())) wErrors.push(`${who}: ${m.text()}`); });
+          await pg.goto(`http://127.0.0.1:${srv.address().port}/?stream=0`, { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+          await pg.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+          await pg.evaluate(() => { const P = window.QSPLAY; P.netConfig({ ice: [], gather: 3000 }); P.setSky('noon', 0, true); });
+          return pg;
+        };
+        const oh = await onPage('online host'), og = await onPage('online guest');
+        const invite = await oh.evaluate(() => window.QSPLAY.netInvite());
+        const reply = invite ? await og.evaluate((c) => window.QSPLAY.netReply(c), invite) : null;
+        const took = reply ? await oh.evaluate((c) => window.QSPLAY.netAccept(c), reply) : false;
+        let joined = false;
+        for (let q = 0; q < 120 && !joined; q++) {
+          await oh.evaluate(() => window.QSPLAY.run(4));
+          await og.evaluate(() => window.QSPLAY.run(4));
+          joined = await oh.evaluate(() => window.QSPLAY.connected) && await og.evaluate(() => window.QSPLAY.connected);
+          if (!joined) await new Promise((r) => setTimeout(r, 150));
+        }
+        const onRoles = [await oh.evaluate(() => window.QSPLAY.role), await og.evaluate(() => window.QSPLAY.role)];
+        check(joined && onRoles[0] === 'host' && onRoles[1] === 'guest',
+              'ONLINE: an invite, a reply made from it, and the two pages are playing over WebRTC',
+              `invite ${invite ? invite.length + ' characters' : 'NOT made'}, reply ${reply ? reply.length + ' characters' : 'NOT made'}, `
+              + `${took ? 'taken' : 'NOT taken'}; ${joined ? 'joined' : 'never joined'} as ${onRoles.join(' / ')}`);
+        if (joined) {
+          const ob = await oh.evaluate(() => ({ x: window.QSPLAY.peer.x, z: window.QSPLAY.peer.z }));
+          await og.evaluate(() => window.QSPLAY.input.press('KeyW'));
+          for (let q = 0; q < 20; q++) {
+            await og.evaluate(() => window.QSPLAY.run(4)); await oh.evaluate(() => window.QSPLAY.run(4));
+            await new Promise((r) => setTimeout(r, 20));
+          }
+          await og.evaluate(() => window.QSPLAY.input.release('KeyW'));
+          for (let q = 0; q < 30; q++) {
+            await og.evaluate(() => window.QSPLAY.run(4)); await oh.evaluate(() => window.QSPLAY.run(4));
+            await new Promise((r) => setTimeout(r, 20));
+          }
+          const oa = await oh.evaluate(() => ({ x: window.QSPLAY.peer.x, z: window.QSPLAY.peer.z }));
+          const gi = await og.evaluate(() => ({ x: window.QSPLAY.actor.x, z: window.QSPLAY.actor.z, st: window.QSPLAY.stats }));
+          const omoved = Math.hypot(oa.x - ob.x, oa.z - ob.z), ogap = Math.hypot(oa.x - gi.x, oa.z - gi.z);
+          check(omoved > 1 && ogap < 0.01,
+                'ONLINE: a key in one page moves a character in the other, and both agree where it ended up',
+                `${omoved.toFixed(2)} m moved, ${ogap.toFixed(6)} m apart, ${gi.st.corrections} snapshots taken`);
+
+          const bg = await oh.evaluate(async () => {
+            const P = window.QSPLAY, t0 = P.stats.t, w0 = performance.now();
+            Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+            document.dispatchEvent(new Event('visibilitychange'));
+            await new Promise((r) => setTimeout(r, 1500));
+            const ticks = P.stats.t - t0, secs = (performance.now() - w0) / 1000, m = P.net.metro;
+            Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+            document.dispatchEvent(new Event('visibilitychange'));
+            return { ticks, secs, kind: m && m.kind, after: !!P.net.metro };
+          });
+          const rate = bg.ticks / bg.secs;
+          check(bg.kind === 'worker' && rate > 40 && rate < 75 && !bg.after,
+                'ONLINE: a host whose tab is hidden keeps the game going, from a worker, at the game\'s own rate',
+                `${bg.ticks} ticks in ${bg.secs.toFixed(2)} s hidden (${rate.toFixed(0)}/s) from a ${bg.kind || 'NOTHING'}; `
+                + `${bg.after ? 'still running' : 'handed back'} when shown`);
+        }
+        await og.close(); await oh.close();
         srv.close();
         takes.sort((a, b) => a - b);
         const med = takes.length ? takes[takes.length >> 1] : NaN;

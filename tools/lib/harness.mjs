@@ -73,7 +73,11 @@ export function launch() {
   return chromium.launch({
     executablePath: chromiumPath(),
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-           '--no-sandbox', '--disable-dev-shm-usage'],
+           '--no-sandbox', '--disable-dev-shm-usage',
+           /* Two pages in one browser connect over WebRTC (#95) by their host
+              candidates. Chromium hides those behind mDNS names by default,
+              and a runner with no multicast cannot resolve them. */
+           '--disable-features=WebRtcHideLocalIpsWithMdns'],
   });
 }
 

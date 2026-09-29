@@ -30,7 +30,7 @@ const MODULES = {
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index', 'chunk'],
   'src/mesh': ['greedy', 'carve', 'propmesh', 'vox'],
   'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'loot', 'actor', 'nav', 'enemy', 'anim', 'sky', 'camera', 'input'],
-  'src/net': ['transport', 'session'],
+  'src/net': ['transport', 'session', 'rtc'],
 };
 
 /** The generator's public surface: what the concept plate draws with. */
@@ -77,7 +77,8 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'colliderF
                  'project', 'groundAt', 'heading', 'aimFromPointer', 'aimFromStick',
                  'setView', 'VIEW', 'QUARTER', 'START_YAW',
                  'ACTIONS', 'DEFAULT_BINDINGS', 'defaultBindings', 'makeInput', 'stickFromDrag',
-                 'snapshot', 'restore', 'makeLoopback', 'makeHost', 'makeGuest', 'spawnNear', 'ACT'];
+                 'snapshot', 'restore', 'makeLoopback', 'makeHost', 'makeGuest', 'spawnNear', 'ACT',
+                 'ICE_SERVERS', 'CHANNEL', 'channelTransport', 'packCode', 'unpackCode', 'gathered', 'candidateKinds'];
 
 /**
  * The two pages that carry a bundle. The plate is a design document and gets

@@ -43,6 +43,16 @@ export const HELLO_EVERY = 20;
 export const MAX_PENDING = 240;
 /** How hard the guest pulls its picture of the host toward the last snapshot. */
 export const SMOOTH = 0.25;
+/** How many of its latest inputs the guest sends in every message, so one
+    lost message loses nothing: a real network drops them one at a time. */
+export const REDUNDANT = 3;
+/** Inputs the host will hold before it starts consuming two a tick. Two
+    machines' 60 Hz are never quite the same 60 Hz, and a guest whose clock
+    runs fast would otherwise build a queue — and a lag — without bound. */
+export const CATCHUP = 8;
+/** Two seconds without a word and the partner is lost: drawn standing where
+    they were, driven by nothing, until they come back. */
+export const STALE = 120;
 
 export const HOST = 0, GUEST = 1;
 
@@ -50,6 +60,17 @@ const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, 
 const copyInput = (i) => ({ mx: i.mx || 0, mz: i.mz || 0, jump: !!i.jump,
                             attack: !!i.attack, dodge: !!i.dodge,
                             aimX: i.aimX || 0, aimZ: i.aimZ || 0 });
+/* An input on the wire: five numbers. The stick is kept to 1/10000 on *both*
+   ends — the guest predicts with the same rounded value the host will apply,
+   so the rounding costs nothing in agreement and a third of the bytes. */
+const q4 = (v) => Math.round((v || 0) * 1e4) / 1e4;
+export function packInput(i) {
+  return [q4(i.mx), q4(i.mz), (i.jump ? 1 : 0) | (i.attack ? 2 : 0) | (i.dodge ? 4 : 0), q4(i.aimX), q4(i.aimZ)];
+}
+export function unpackInput(w) {
+  return { mx: w[0], mz: w[1], jump: !!(w[2] & 1), attack: !!(w[2] & 2), dodge: !!(w[2] & 4),
+           aimX: w[3], aimZ: w[4] };
+}
 
 /**
  * Seating and unseating a module is **not** an input.
@@ -92,18 +113,34 @@ export function makeHost(opts) {
      dropping to idle — a player who stutters should keep running, not stop. */
   const inbox = [];
   let last = { seq: 0, input: copyInput(IDLE) };
-  let t = 0, joined = false, seen = 0;
+  let t = 0, joined = false, seen = 0, heard = 0, starved = 0, caught = 0, stale = 0;
+  /* Which guest is talking, and the newest input queued from it. A guest that
+     reloads is a new guest with its count back at one; without its id the
+     host would discard every input it sent as old. */
+  let gid = null, newest = 0;
 
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
+    heard = t;
+    if (m.g !== undefined && m.g !== gid) { gid = m.g; inbox.length = 0; newest = 0; }
     if (m.t === 'join') { joined = true; return; }
     /* The guest asking for its own lattice to change. Authority is not shared:
        it is applied here or it does not happen, and the next snapshot is how
        the guest finds out which. */
     if (m.t === 'act') { applyAct(peer, m); return; }
-    if (m.t === 'input') {
+    if (m.t === 'in') {
       seen++;
-      if (inbox.length < MAX_PENDING) inbox.push({ seq: m.seq, input: copyInput(m) });
+      /* The last few inputs, newest last. Anything already queued or applied
+         is a duplicate, and anything older than that arrived out of order and
+         was covered by a later message: both are dropped, so the queue is
+         always in order and holds each input once. */
+      const first = m.seq - m.i.length + 1;
+      for (let k = 0; k < m.i.length; k++) {
+        const s = first + k;
+        if (s <= newest || inbox.length >= MAX_PENDING) continue;
+        inbox.push({ seq: s, input: unpackInput(m.i[k]) });
+        newest = s;
+      }
     }
   });
 
@@ -113,6 +150,8 @@ export function makeHost(opts) {
   return {
     role: 'host', me, peer, cfg,
     get connected() { return joined; },
+    /** Joined, and then silent for two seconds. */
+    get lost() { return joined && t - heard > STALE; },
     get tick() { return t; },
     /** Drawn from the same data that is sent, so a gap in one shows in both. */
     get foes() { return encounter ? encounter.wire() : null; },
@@ -123,25 +162,40 @@ export function makeHost(opts) {
     act(kind, slot, carriedIndex) {
       return applyAct(me, { k: kind, s: slot, c: carriedIndex });
     },
-    get stats() { return { t, joined, queued: inbox.length, inputs: seen }; },
+    get stats() { return { t, joined, queued: inbox.length, inputs: seen, starved, caught, stale, quiet: t - heard }; },
 
     /** One authoritative tick. `localInput` is this machine's own player. */
     step(localInput) {
       t++;
-      if (!joined && t % HELLO_EVERY === 0) announce();
+      const quiet = t - heard > STALE;
+      /* Announced until someone answers, and again whenever the answer stops:
+         a guest that reloaded is waiting for a hello to grow the world from. */
+      if ((!joined || quiet) && t % HELLO_EVERY === 0) announce();
 
-      const next = inbox.length ? inbox.shift() : last;
+      /* A starved tick repeats the last input, so a stutter keeps running. A
+         partner gone quiet does not: they are stood still, not run off a cliff
+         on the last direction they happened to be holding. */
+      let next;
+      if (inbox.length) next = inbox.shift();
+      else if (quiet) { next = { seq: last.seq, input: copyInput(IDLE) }; stale++; }
+      else { next = last; starved++; }
       last = next;
 
       step(col, me, copyInput(localInput || IDLE), targets);
       step(col, peer, next.input, targets);
+      /* A queue that has grown past the jitter it is for is a guest whose
+         clock runs fast: one more of its inputs this tick, in order. */
+      if (inbox.length > CATCHUP) {
+        last = inbox.shift(); caught++;
+        step(col, peer, last.input, targets);
+      }
       /* The world acts after the players do, and it is the host's world: a
          guest predicts its own movement and nothing else. */
       if (encounter) encounter.step([me, peer]);
 
       if (t % sendEvery === 0) {
         transport.send({
-          t: 'snap', tick: t, ack: next.seq,
+          t: 'snap', tick: t, ack: last.seq,
           /* Full state for the guest's own character, because it replays from
              it. Display state for everything it only draws. */
           you: snapshot(peer),
@@ -166,6 +220,10 @@ export function makeHost(opts) {
  */
 export function makeGuest(opts) {
   const { transport, build } = opts;
+  /* Who this guest is, for the host to tell a reload from a late message. Not
+     simulation state — nothing steps from it — so any source will do. */
+  const gid = opts.gid !== undefined ? opts.gid : Math.floor(Math.random() * 0x7fffffff);
+  let quiet = 0;
   let col = null, me = null, peer = null, cfg = null, encounter = null;
   let foes = null, lootBits = 0;
   let seq = 0, ready = false, corrections = 0, replayed = 0, lastAck = 0, hostTick = 0;
@@ -175,9 +233,10 @@ export function makeGuest(opts) {
 
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
+    quiet = 0;
 
     if (m.t === 'hello') {
-      if (ready) { transport.send({ t: 'join' }); return; }   /* a repeat beacon */
+      if (ready) { transport.send({ t: 'join', g: gid }); return; }   /* a repeat beacon */
       cfg = m.cfg;
       const world = build(m.cfg);
       col = world.col;
@@ -187,11 +246,14 @@ export function makeGuest(opts) {
       me = spawnNear(col, m.spawn[0], m.spawn[2]);
       peer = placeOnGround(col, m.spawn[0], m.spawn[2]);
       ready = true;
-      transport.send({ t: 'join' });
+      transport.send({ t: 'join', g: gid });
       return;
     }
 
-    if (m.t === 'snap' && ready) {
+    /* A snapshot older than the last one arrived out of order, and one equal
+       to it is a duplicate: restoring either would put the guest back in time
+       and replay inputs the host has already answered. */
+    if (m.t === 'snap' && ready && m.tick > hostTick) {
       /* Wholesale, not a nudge: the host's word replaces ours, and then every
          input it had not seen yet is put back on top. Skipping the replay is
          what makes a corrected client feel like it is being dragged backwards. */
@@ -219,10 +281,12 @@ export function makeGuest(opts) {
     get peer() { return peer; },
     get cfg() { return cfg; },
     get connected() { return ready; },
+    /** Ready, and then two seconds without a word from the host. */
+    get lost() { return ready && quiet > STALE; },
     /** The host's tick as of its last snapshot: the one clock both windows
         can agree on, which is what the sky (#30) is read from. */
     get tick() { return hostTick; },
-    get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck }; },
+    get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck, quiet }; },
     /** Whatever the host last said was in the world. Drawn, never stepped. */
     get foes() { return foes; },
     /** And what of it has been picked up, by either of them. */
@@ -231,7 +295,7 @@ export function makeGuest(opts) {
     /** Ask the host to seat a module. It decides; the next snapshot answers. */
     act(kind, slot, carriedIndex) {
       if (!ready) return false;
-      transport.send({ t: 'act', k: kind, s: slot, c: carriedIndex });
+      transport.send({ t: 'act', g: gid, k: kind, s: slot, c: carriedIndex });
       return true;
     },
     /** The last thing the host said about us, before any replay on top of it.
@@ -240,14 +304,16 @@ export function makeGuest(opts) {
 
     /** One predicted tick. Sends the input, applies it locally straight away. */
     step(localInput) {
+      quiet++;
       if (!ready) return this;
       seq++;
-      const input = copyInput(localInput || IDLE);
-      transport.send({ t: 'input', seq, mx: input.mx, mz: input.mz, jump: input.jump,
-                       attack: input.attack, dodge: input.dodge,
-                       aimX: input.aimX, aimZ: input.aimZ });
-      pending.push({ seq, input });
+      const w = packInput(localInput || IDLE), input = unpackInput(w);
+      pending.push({ seq, input, w });
       if (pending.length > MAX_PENDING) pending.shift();
+      /* This input and the few before it, so a message lost on the way costs
+         nothing as long as one of the next few arrives. */
+      const from = Math.max(0, pending.length - REDUNDANT);
+      transport.send({ t: 'in', g: gid, seq, i: pending.slice(from).map((p) => p.w) });
       step(col, me, input, null);
 
       /* The other player arrives at 20 Hz and is drawn, not simulated, so it is
