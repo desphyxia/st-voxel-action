@@ -3206,8 +3206,13 @@ if (BROWSER_HALF) {
           /* An iPhone ended a tab at 30 chunks holding ~25 MB of arrays each,
              most of it grass nobody read again and copies of buffers already
              on the GPU. With grass off what is left is the chunks' own data
-             and the copies of ground not yet drawn, which go when it is. */
-          check(mem.withGrass < 14 && mem.noGrass < mem.withGrass * 0.6 && mem.tilesOff === 0 && mem.tilesOn > 0 && mem.report,
+             and the copies of ground not yet drawn, which go when it is.
+             Grass off must free a real share: at least 1.5 MB a chunk. Not a
+             ratio — what is left depends on which chunks the walk ends on,
+             and since the marshes (#102) it ranges 3.7–4.6 MB on CI, which
+             put a 0.6 ratio on a coin toss while grass freed 2.3–3.1 MB in
+             every run. */
+          check(mem.withGrass < 14 && mem.noGrass <= mem.withGrass - 1.5 && mem.tilesOff === 0 && mem.tilesOn > 0 && mem.report,
                 'MEMORY: and a streamed chunk holds a few MB of arrays, fewer with grass off, and the report says so',
                 `${mem.withGrass.toFixed(1)} MB a chunk with grass, ${mem.noGrass.toFixed(1)} without (was ~25); `
                 + `grass tiles ${mem.tilesOff} off, ${mem.tilesOn} back on; held memory ${mem.report ? 'in' : 'NOT in'} the report`);
