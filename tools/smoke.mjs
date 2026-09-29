@@ -3289,14 +3289,21 @@ if (BROWSER_HALF) {
           const P = window.QSPLAY, dlg = document.getElementById('dbg');
           const btn = (t) => [...dlg.querySelectorAll('.seg[data-k="wire"] button')].find((b) => b.textContent === t);
           btn('On').click();
-          for (let i = 0; i < 4; i++) { P.run(2); await new Promise((r) => setTimeout(r, 60)); P.frameOnce(); }
+          /* On grows the loaded ground again, from the workers: wait for it to
+             come back rather than for a fixed few frames — how long a pool
+             takes is the runner's business, not this check's. */
           let meshes = 0, empty = 0, wired = 0;
-          P.scene.traverse((o) => {
-            if (o.userData.kind !== 'terrain' || !o.isMesh) return;
-            meshes++;
-            if (o.geometry.index && !o.geometry.index.array) empty++;
-            if (o.material && o.material.wireframe) wired++;
-          });
+          for (let i = 0; i < 120; i++) {
+            P.run(2); await new Promise((r) => setTimeout(r, 60)); P.frameOnce();
+            meshes = 0; empty = 0; wired = 0;
+            P.scene.traverse((o) => {
+              if (o.userData.kind !== 'terrain' || !o.isMesh) return;
+              meshes++;
+              if (o.geometry.index && !o.geometry.index.array) empty++;
+              if (o.material && o.material.wireframe) wired++;
+            });
+            if (i >= 3 && meshes > 0) break;
+          }
           btn('Off').click(); P.frameOnce();
           return { meshes, empty, wired };
         });
