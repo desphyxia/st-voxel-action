@@ -2967,13 +2967,15 @@ if (BROWSER_HALF) {
           }
           P.pause(false);
           return { px: w * h, diff, tOn, tOff, cOn, cOff, meshes: meshes.length, culprits, settle, pumped,
-                   pinned: was.filter((v) => !v).length };
+                   pinned: was.filter((v) => !v).length,
+                   pinnedKinds: [...new Set(meshes.filter((o, i) => !was[i]).map((o) => o.userData.kind || o.type))] };
         });
         check(scull.pinned === 0 && scull.tOff > scull.tOn * 2,
               'STREAM: and a frame is charged for the chunks the camera holds, not the field',
               `${scull.tOn.toLocaleString()} triangles of ${scull.tOff.toLocaleString()} `
               + `in ${scull.meshes} meshes, ${scull.cOn} draw calls of ${scull.cOff} `
-              + `— ${(100 * (scull.tOff - scull.tOn) / scull.tOff).toFixed(0)}% never submitted`);
+              + `— ${(100 * (scull.tOff - scull.tOn) / scull.tOff).toFixed(0)}% never submitted`
+              + (scull.pinned ? `; ${scull.pinned} pinned un-culled: ${scull.pinnedKinds.join(', ')}` : ''));
         check(scull.diff === 0,
               'STREAM: and rejecting them changes not one pixel',
               scull.diff === 0 ? `identical over ${scull.px.toLocaleString()} pixels, after ${scull.pumped} frames for the stream and ${scull.settle} to settle`

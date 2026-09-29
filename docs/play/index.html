@@ -12406,18 +12406,27 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      One pool of small glowing blocks carries everything here that is light
      rather than air — a bolt, a bomb, a ring on the magma: one draw, on the
      glow layer, rebuilt each frame from what is alive. */
-  var BITS={max:640,n:0,mesh:null,m4:new THREE.Matrix4(),q:new THREE.Quaternion(),s:new THREE.Vector3(),
+  var BITS={max:640,n:0,mesh:null,lo:[0,0,0],hi:[0,0,0],m4:new THREE.Matrix4(),q:new THREE.Quaternion(),s:new THREE.Vector3(),
             p:new THREE.Vector3(),d:new THREE.Vector3(),up:new THREE.Vector3(0,1,0),c:new THREE.Color()};
   function bitsInit(){
     var m=new THREE.MeshBasicMaterial({fog:false,toneMapped:false});
     BITS.mesh=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),m,BITS.max);
     BITS.mesh.setColorAt(0,BITS.c.setRGB(1,1,1));
-    BITS.mesh.frustumCulled=false; BITS.mesh.count=0; BITS.mesh.renderOrder=4;
+    /* Culled like everything else (the streamed gate pins nothing): its
+       bounds are made each frame to hold the blocks it has. */
+    BITS.mesh.geometry.boundingSphere=new THREE.Sphere();
+    BITS.mesh.frustumCulled=true;   /* r128's InstancedMesh starts with it off */
+    BITS.mesh.count=0; BITS.mesh.renderOrder=4;
     BITS.mesh.layers.enable(GLOW_LAYER); BITS.mesh.userData.kind='bits'; BITS.mesh.userData.keep=true;
   }
   /** A block of light at a point, `k` of the colour's full brightness. */
+  function bitGrow(x,y,z,r){
+    if(x-r<BITS.lo[0]) BITS.lo[0]=x-r; if(y-r<BITS.lo[1]) BITS.lo[1]=y-r; if(z-r<BITS.lo[2]) BITS.lo[2]=z-r;
+    if(x+r>BITS.hi[0]) BITS.hi[0]=x+r; if(y+r>BITS.hi[1]) BITS.hi[1]=y+r; if(z+r>BITS.hi[2]) BITS.hi[2]=z+r;
+  }
   function bit(x,y,z,size,hex,k){
     if(BITS.n>=BITS.max) return;
+    bitGrow(x,y,z,size);
     BITS.m4.makeScale(size,size,size).setPosition(x,y,z);
     BITS.mesh.setMatrixAt(BITS.n,BITS.m4);
     BITS.mesh.setColorAt(BITS.n,BITS.c.setHex(hex).multiplyScalar(Math.max(0,Math.min(1,k))));
@@ -12427,6 +12436,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   function bitBar(ax,ay,az,bx,by,bz,w,hex,k){
     if(BITS.n>=BITS.max) return;
     BITS.d.set(bx-ax,by-ay,bz-az); var L=BITS.d.length(); if(L<1e-4) return;
+    bitGrow(ax,ay,az,w); bitGrow(bx,by,bz,w);
     BITS.q.setFromUnitVectors(BITS.up,BITS.d.multiplyScalar(1/L));
     BITS.m4.compose(BITS.p.set((ax+bx)/2,(ay+by)/2,(az+bz)/2),BITS.q,BITS.s.set(w,L,w));
     BITS.mesh.setMatrixAt(BITS.n,BITS.m4);
@@ -12437,6 +12447,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(!BITS.mesh) return;
     if(BITS.mesh.parent!==built.scene){ if(BITS.mesh.parent) BITS.mesh.parent.remove(BITS.mesh); built.scene.add(BITS.mesh); }
     BITS.mesh.count=BITS.n; BITS.mesh.visible=BITS.n>0&&!plateMode;
+    var bs=BITS.mesh.geometry.boundingSphere;
+    if(BITS.n>0){ bs.center.set((BITS.lo[0]+BITS.hi[0])/2,(BITS.lo[1]+BITS.hi[1])/2,(BITS.lo[2]+BITS.hi[2])/2);
+      bs.radius=0.5*Math.sqrt((BITS.hi[0]-BITS.lo[0])*(BITS.hi[0]-BITS.lo[0])+(BITS.hi[1]-BITS.lo[1])*(BITS.hi[1]-BITS.lo[1])
+        +(BITS.hi[2]-BITS.lo[2])*(BITS.hi[2]-BITS.lo[2]))+0.5; }
+    else { bs.center.set(0,-1e4,0); bs.radius=0; }
     BITS.mesh.instanceMatrix.needsUpdate=true; if(BITS.mesh.instanceColor) BITS.mesh.instanceColor.needsUpdate=true;
   }
   /** One mote of dust or spray placed and aimed by hand, for the shapes a
@@ -12638,7 +12653,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         ' float edge=smoothstep(0.0,0.15,r)*smoothstep(1.0,0.85,r);',
         ' float foot=smoothstep(0.0,0.35,vP.y);',
         ' gl_FragColor=vec4(hue(0.78*(1.0-r))*0.16*edge*foot*uK,1.0); }'].join('\n')});
-    WX.rb=new THREE.Mesh(g,m); WX.rb.frustumCulled=false; WX.rb.renderOrder=1; WX.rb.userData.kind='rainbow'; WX.rb.userData.keep=true;
+    WX.rb=new THREE.Mesh(g,m); WX.rb.renderOrder=1; WX.rb.userData.kind='rainbow'; WX.rb.userData.keep=true;
   }
   /* A rainbow, for a couple of minutes as rain clears under a sun, faded
      where it meets the ground. Not in the rime, the burn or the mesa, which
@@ -12720,7 +12735,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       WX.aurora=0; WX.rainbow=0; WX.bolt=null; EDGE.runs.length=0; MARSH.wisps.length=0; MARSH.at=null; }
     WX.dom=plateMode?'':wxDomAt(cam.tx,cam.tz); WX.mode=skyMode;
     if(!BITS.mesh) bitsInit();
-    BITS.n=0;
+    BITS.n=0; BITS.lo[0]=BITS.lo[1]=BITS.lo[2]=Infinity; BITS.hi[0]=BITS.hi[1]=BITS.hi[2]=-Infinity;
     wxLightning(dt,s);
     wxBombs(dt);
     wxDevils(dt,s);
