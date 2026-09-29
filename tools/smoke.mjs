@@ -3243,9 +3243,18 @@ if (BROWSER_HALF) {
           if (L) { a.x = L[0] + 1.5; a.z = L[2] + 1.5; a.y = L[1]; window.QS.warpTo(P.cam, a.x, a.y, a.z); }
           out.lamp = !!L;
           P.setSky('night', 0, true); P.setGfx('glow', true);
-          const r0 = P.glowRan; P.frameOnce(); P.frameOnce(); P.draw();
+          /* What glow adds is measured on screen, with it and without: the
+             buffer it blurs into holds only the widest pass, and a lamp's head
+             a few pixels across is dim there however bright it lands. */
+          const cv = document.querySelector('#cv');
+          const grab = () => { const g = document.createElement('canvas'); g.width = cv.width; g.height = cv.height;
+            const x2 = g.getContext('2d'); x2.drawImage(cv, 0, 0); return x2.getImageData(0, 0, g.width, g.height).data; };
+          const r0 = P.glowRan; P.frameOnce(); P.frameOnce(); P.draw(); const on = grab();
           out.glowRan = P.glowRan - r0; out.peek = P.glowPeek();
-          P.setGfx('glow', false); const r1 = P.glowRan; P.frameOnce(); out.glowOff = P.glowRan - r1;
+          P.setGfx('glow', false); const r1 = P.glowRan; P.frameOnce(); P.draw(); const off = grab(); out.glowOff = P.glowRan - r1;
+          let lit = 0;
+          for (let i = 0; i < on.length; i += 4) if (on[i] + on[i + 1] + on[i + 2] - off[i] - off[i + 1] - off[i + 2] > 12) lit++;
+          out.lit = lit;
           P.setGfx('glow', true); P.setSky('noon', 0, true);
           P.setGfx('fx', true); P.input.press('KeyW');
           let most = 0;
@@ -3261,9 +3270,10 @@ if (BROWSER_HALF) {
           a.x = was.x; a.y = was.y; a.z = was.z; window.QS.warpTo(P.cam, a.x, a.y, a.z);
           return out;
         });
-        check(lookb.glowRan > 0 && lookb.peek && lookb.peek.lit > 50 && lookb.glowOff === 0,
+        check(lookb.glowRan > 0 && lookb.lit > 50 && lookb.glowOff === 0,
               'LOOK: glow lights the night around what glows, and costs nothing switched off',
-              `${lookb.lamp ? 'by a lamp: ' : 'NO LAMP LOADED: '}${lookb.glowRan} passes at night, ${lookb.peek ? lookb.peek.lit : 0} pixels lit (peak ${lookb.peek ? lookb.peek.max : 0}); ${lookb.glowOff} passes off`);
+              `${lookb.lamp ? 'by a lamp: ' : 'NO LAMP LOADED: '}${lookb.glowRan} passes at night, ${lookb.lit} pixels brighter than without it `
+              + `(the wide buffer's peak ${lookb.peek ? lookb.peek.max : 0}); ${lookb.glowOff} passes off`);
         check(lookb.dust > 3 && lookb.dustOff <= lookb.dust,
               'LOOK: walking raises dust, and the setting takes it away',
               `${lookb.dust} motes at most while walking; ${lookb.dustOff} with Dust & splashes off (the last ones fading)`);
