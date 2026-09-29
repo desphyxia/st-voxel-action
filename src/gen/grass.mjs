@@ -58,13 +58,14 @@ export function buildGrass(w) {
     x=-half+i*V+V/2; z=-half+j*V+V/2;
     var n0b=i>0?Hs[k-NZ]:Hs[k], n1b=j>0?Hs[k-1]:Hs[k];
     if(Hs[k]-Math.min(n0b,n1b)>0.6) continue;
-    var cq=cellAt(x,z), dsum=0,hbase=0,hvar=0,cr=0,cg=0,cb=0,dr=0,dg=0,db=0;
+    var cq=cellAt(x,z), dsum=0,hbase=0,hvar=0,cr=0,cg=0,cb=0,dr=0,dg=0,db=0,dshare=0,bare=0,clump=0;
     /* Nothing grows through ice, on a fungal tower or on vitrified glass (#76). */
     if(cq.rime===1||cq.rime===3||cq.spore===1||cq.spore===2||cq.glass===3||cq.glass===5) continue;
     for(var q2=0;q2<cq.w.length;q2++){var B2=BIOMES[q2],w2b=cq.w[q2];
       dsum+=w2b*B2.gr.d; hbase+=w2b*B2.gr.h[0]; hvar+=w2b*B2.gr.h[1];
       cr+=w2b*shadeR(B2.gr.c,1); cg+=w2b*shadeG(B2.gr.c,1); cb+=w2b*shadeB(B2.gr.c,1);
       dr+=w2b*shadeR(B2.gr.dry,1); dg+=w2b*shadeG(B2.gr.dry,1); db+=w2b*shadeB(B2.gr.dry,1);
+      dshare+=w2b*B2.gr.ds; bare+=w2b*B2.gr.patch; clump+=w2b*B2.gr.clump;
     }
     var R=G.pstream(PASS.GRASS,i+vx0,j+vz0);
     var want=dsum*3.2*dmul;
@@ -73,10 +74,27 @@ export function buildGrass(w) {
     var bloom=cq.w[BIO.MEADOW]>0.45?patchField(sw,wmx,wmz,0x5f1):0;
     var turn=cq.w[BIO.RIME]>0.5?0:patchField(sw,wmx,wmz,0x2a7);
     var flowerK=bloom>0.66?(bloom-0.66)/0.34:0, autumnK=turn>0.68?(turn-0.68)/0.32:0;
+    /* Each biome's habit (#99). `patch` is the share of its ground left bare,
+       as a third positional field so bare ground comes in patches a few metres
+       across, not as noise; the edge of a patch thins rather than stops.
+       `clump` gathers what is left into tufts: fewer cells grow, each one
+       denser and tighter, so the same mean reads as tussocks rather than a
+       carpet. `ds` is the share of blades drawn in the dry colour. */
+    if(bare>0){
+      var cover=patchField(sw,wmx,wmz,0x6c3), edge=0.12;
+      if(cover<bare-edge) continue;
+      if(cover<bare+edge) want*=(cover-(bare-edge))/(2*edge);
+    }
+    var spread=0.5;
+    if(clump>0){
+      var keep=1-clump*0.72;
+      if(R()>keep) continue;
+      want/=keep; spread=0.5*(1-clump*0.55);
+    }
     var nb=Math.floor(want); if(R()<want-nb) nb++;
     for(var g2=0;g2<nb;g2++){
-      gpos.push(x+(R()-0.5)*0.5,Hs[k],z+(R()-0.5)*0.5);
-      gph.push(R()*6.28); gtint.push(R()<0.15+autumnK*0.45?1:0);
+      gpos.push(x+(R()-0.5)*spread,Hs[k],z+(R()-0.5)*spread);
+      gph.push(R()*6.28); gtint.push(R()<Math.min(1,dshare+autumnK*0.45)?1:0);
       gsc.push(hbase+R()*hvar); gyaw.push(R()*3.14);
       if(flowerK>0&&R()<flowerK*0.45){
         var fl=FLOWERS[(R()*FLOWERS.length)|0];

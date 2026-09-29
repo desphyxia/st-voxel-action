@@ -146,6 +146,27 @@ export function chunkOccupancy(w, cx, cz, pad, org) {
   return { occ: occ, nx: nx, nz: nz, ny: ny, i0: i0, j0: j0, pad: pad };
 }
 
+/**
+ * Where props stand, on the same grid as a chunk's occupancy (#99): a cell
+ * holding a prop voxel is 1. Only the occlusion reads it — a face is still a
+ * face whether a trunk stands beside it or not — so the ground darkens where
+ * a boulder, a wall or a trunk meets it, and nothing about the geometry moves.
+ * A prop voxel is centred on a multiple of V where terrain cells are offset by
+ * half of one, so each is counted in the column holding most of it.
+ */
+export function propShade(w, g) {
+  if (!w.pos || w.propStart === undefined) return null;
+  var n = w.pos.length / 3; if (w.propStart >= n) return null;
+  var a = new Uint8Array(g.occ.length), half = w.half, ny = g.ny, nz = g.nz, q;
+  for (q = w.propStart; q < n; q++) {
+    var gi = Math.floor((w.pos[q * 3] + half) / V) - g.i0, gj = Math.floor((w.pos[q * 3 + 2] + half) / V) - g.j0;
+    var y = Math.floor(w.pos[q * 3 + 1] / V);
+    if (gi < 0 || gj < 0 || gi >= g.nx || gj >= nz || y < 0 || y >= ny) continue;
+    a[(gi * nz + gj) * ny + y] = 1;
+  }
+  return a;
+}
+
 /** One past the highest solid level anywhere in an occupancy grid; 0 if empty. */
 export function topOf(g) {
   if (g.top !== undefined) return g.top;
@@ -283,6 +304,9 @@ export function meshChunk(w, cx, cz, org) {
   var top = topOf(g);
   var STR = [nz * ny, 1, ny];                     /* strides, index order (a, y, b) */
   function occY(k, y) { return (y < 0 || y >= ny) ? 0 : occ[k]; }
+  /* What shades a corner: the ground and the props standing on it. */
+  var pro = propShade(w, g);
+  function aoY(k, y) { return (y < 0 || y >= ny) ? 0 : (occ[k] || (pro ? pro[k] : 0)); }
   for (var d = 0; d < DIRS.length; d++) {
     var axis = DIRS[d][0], sign = DIRS[d][1];
     /* u and v are the two axes of the slice; n is the one being swept. */
@@ -318,10 +342,10 @@ export function meshChunk(w, cx, cz, org) {
               /* the four corners of the face, in the slice's own axes */
               var uMk = nk - su, uPk = nk + su, vMk = nk - sv, vPk = nk + sv;
               var uMy = nyy - yU, uPy = nyy + yU, vMy = nyy - yV, vPy = nyy + yV;
-              var c0 = cornerAO(occY(uMk, uMy), occY(vMk, vMy), occY(uMk - sv, uMy - yV));
-              var c1 = cornerAO(occY(uPk, uPy), occY(vMk, vMy), occY(uPk - sv, uPy - yV));
-              var c2 = cornerAO(occY(uPk, uPy), occY(vPk, vPy), occY(uPk + sv, uPy + yV));
-              var c3 = cornerAO(occY(uMk, uMy), occY(vPk, vPy), occY(uMk + sv, uMy + yV));
+              var c0 = cornerAO(aoY(uMk, uMy), aoY(vMk, vMy), aoY(uMk - sv, uMy - yV));
+              var c1 = cornerAO(aoY(uPk, uPy), aoY(vMk, vMy), aoY(uPk - sv, uPy - yV));
+              var c2 = cornerAO(aoY(uPk, uPy), aoY(vPk, vPy), aoY(uPk + sv, uPy + yV));
+              var c3 = cornerAO(aoY(uMk, uMy), aoY(vPk, vPy), aoY(uMk + sv, uMy + yV));
               packed = c0 | (c1 << 2) | (c2 << 4) | (c3 << 6);
               faces++;
             } else m = 0;

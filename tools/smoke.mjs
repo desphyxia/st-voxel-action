@@ -89,7 +89,7 @@ import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
-         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { chunkWorld } from '../src/gen/chunk.mjs';
@@ -429,6 +429,8 @@ if (NODE_HALF) for (const r of trailSuite()) check(r.ok, `WALK: ${r.label}`, r.d
    can only ever be approximately where it thinks it is. */
 if (NODE_HALF) for (const r of netSuite()) check(r.ok, `NET: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of await rtcSuite()) check(r.ok, `RTC: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of await grassBiomeSuite()) check(r.ok, `GRASS: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of contactShadeSuite()) check(r.ok, `MESH: ${r.label}`, r.detail);
 
 /* ---------- VOX: the authored hero, issue #34 ----------
    The first hand-authored model. What has to hold for it to replace the
@@ -1180,10 +1182,10 @@ if (BROWSER_HALF) {
               reads.wound ? `wound up: blade ${reads.wound.armR.ry.toFixed(2)}, body ${reads.wound.torso.ry.toFixed(2)}; `
                             + `cutting: blade ${reads.cut.armR.ry.toFixed(2)}, body ${reads.cut.torso.ry.toFixed(2)}` : 'no rig');
         /* Issue #62: characters, machines, posts and loot were 57 meshes, each its
-           own draw call. */
+           own draw call. #99 gave each batch an outline, one more draw per batch. */
         const ad = await bp.evaluate(() => window.QSPLAY.actorDraws);
         const tally = {}; for (const k of ad.list) tally[k] = (tally[k] || 0) + 1;
-        check(ad.n <= 16, 'BUILD: characters, machines, posts and loot cost a handful of draw calls',
+        check(ad.n <= 20, 'BUILD: characters, machines, posts and loot cost a handful of draw calls',
               `${ad.n} draws: ${Object.entries(tally).map(([k, n]) => k + ' ' + n).join(', ')} (were 57 meshes)`);
         check(reads.windup && reads.sweeping, 'BUILD: a swing has a wind-up and shows its arc',
               `${reads.windup ? 'wound up' : 'no wind-up'}, ${reads.sweeping ? 'arc drawn' : 'ARC MISSING'}`);
@@ -2589,7 +2591,7 @@ if (BROWSER_HALF) {
           P.setGfx('grassMode', 'classic'); const back = frame();
           return { was, open, rows, stepped, low, closed, saved, high, classic, lean, leanMode, back };
         });
-        check(gfx.open && gfx.rows === 14 && !gfx.stepped && gfx.closed,
+        check(gfx.open && gfx.rows === 17 && !gfx.stepped && gfx.closed,
               'SETTINGS: the gear opens every graphics setting over the view, keeps its keys, and Escape closes it',
               `${gfx.open ? 'open' : 'NOT open'}, ${gfx.rows} settings, a key inside it ${gfx.stepped ? 'MOVED the player' : 'moved nothing'}, `
               + `${gfx.closed ? 'closed' : 'still open'} on Escape`);
@@ -3226,6 +3228,41 @@ if (BROWSER_HALF) {
               'STREAM: zoomed all the way out, the screen stays on loaded ground',
               `asked for 40, held at ${zoom.capped.toFixed(1)} with every corner inside the loaded chunks; `
               + `back to ${zoom.back} when asked`);
+
+        /* ---------- LOOK: the #99 batch in a streamed world ----------
+           Glow runs when something is glowing — at night, lamps are — and puts
+           light in its buffer, and does not run when switched off. Walking
+           raises dust, which the setting turns off. The opening flyover
+           starts, comes down toward the player, and a key hands over. */
+        const lookb = await wp.evaluate(async () => {
+          const P = window.QSPLAY, out = {};
+          P.setSky('night', 0, true); P.setGfx('glow', true);
+          const r0 = P.glowRan; P.frameOnce(); P.frameOnce(); P.draw();
+          out.glowRan = P.glowRan - r0; out.peek = P.glowPeek();
+          P.setGfx('glow', false); const r1 = P.glowRan; P.frameOnce(); out.glowOff = P.glowRan - r1;
+          P.setGfx('glow', true); P.setSky('noon', 0, true);
+          P.setGfx('fx', true); P.input.press('KeyW');
+          let most = 0;
+          for (let i = 0; i < 30; i++) { P.run(2); await new Promise((r) => setTimeout(r, 10)); P.frameOnce(); most = Math.max(most, P.fxAlive); }
+          out.dust = most;
+          P.setGfx('fx', false); most = 0;
+          for (let i = 0; i < 40; i++) { P.run(2); P.frameOnce(); most = Math.max(most, P.fxAlive); }
+          P.input.release('KeyW'); out.dustOff = most; P.setGfx('fx', true);
+          const v = P.cam.view; out.fly = P.flyStart(); P.frameOnce(); P.frameOnce();
+          out.flyView = P.cam.view; out.flying = P.flying;
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
+          out.handed = !P.flying && Math.abs(P.cam.view - v) < 1e-6;
+          return out;
+        });
+        check(lookb.glowRan > 0 && lookb.peek && lookb.peek.lit > 50 && lookb.glowOff === 0,
+              'LOOK: glow lights the night around what glows, and costs nothing switched off',
+              `${lookb.glowRan} passes at night, ${lookb.peek ? lookb.peek.lit : 0} pixels lit (peak ${lookb.peek ? lookb.peek.max : 0}); ${lookb.glowOff} passes off`);
+        check(lookb.dust > 3 && lookb.dustOff <= lookb.dust,
+              'LOOK: walking raises dust, and the setting takes it away',
+              `${lookb.dust} motes at most while walking; ${lookb.dustOff} with Dust & splashes off (the last ones fading)`);
+        check(lookb.fly && lookb.flying && lookb.flyView > 0 && lookb.handed,
+              'LOOK: the opening flyover comes down to the player, and a key hands over',
+              `${lookb.fly ? 'started' : 'NOT started'}, ${lookb.handed ? 'handed over on a key' : 'NOT handed over'}`);
 
         /* ---------- DEBUG: wireframe in a streamed world (#92) ----------
            three builds a wireframe from a geometry's own arrays, and a streamed
