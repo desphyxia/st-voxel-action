@@ -41,8 +41,15 @@ export const SEND_EVERY = 3;
 export const HELLO_EVERY = 20;
 /** Longest replay after a correction. Four seconds of input at 60 Hz. */
 export const MAX_PENDING = 240;
-/** How hard the guest pulls its picture of the host toward the last snapshot. */
-export const SMOOTH = 0.25;
+/** How far behind the latest the guest *draws* what it only draws — the
+    host's character and the machines — in ticks, on top of however late the
+    snapshots have lately been arriving: one snapshot's interval and a tick,
+    so there is nearly always one on each side of the moment being drawn and
+    the picture is a blend between them rather than a hop to each as it
+    lands. */
+export const INTERP = SEND_EVERY + 1;
+/** Snapshots kept for that, which is well over a second of them. */
+const PAST = 24;
 /** How many of its latest inputs the guest sends in every message, so one
     lost message loses nothing: a real network drops them one at a time. */
 export const REDUNDANT = 3;
@@ -82,6 +89,10 @@ export function unpackInput(w) {
  * the round trip; the reconciliation cannot afford a non-idempotent input.
  */
 export const ACT = { SOCKET: 0, UNSOCKET: 1 };
+/** How often, in ticks, a guest sends again a lattice change the host has not
+    yet confirmed. Everything else on the wire can be lost and the next
+    message covers it; a click that is lost is simply gone (#95). */
+export const ACT_RESEND = 10;
 
 function applyAct(a, m) {
   return m.k === ACT.SOCKET ? seatOn(a, m.s, m.c) : pullFrom(a, m.s);
@@ -118,16 +129,24 @@ export function makeHost(opts) {
      reloads is a new guest with its count back at one; without its id the
      host would discard every input it sent as old. */
   let gid = null, newest = 0;
+  /* The last lattice change applied, by the guest's own count. Each is applied
+     once and in order: a repeat is ignored, and one that overtook the change
+     before it waits to be sent again. */
+  let acted = 0;
 
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
     heard = t;
-    if (m.g !== undefined && m.g !== gid) { gid = m.g; inbox.length = 0; newest = 0; }
+    if (m.g !== undefined && m.g !== gid) { gid = m.g; inbox.length = 0; newest = 0; acted = 0; }
     if (m.t === 'join') { joined = true; return; }
     /* The guest asking for its own lattice to change. Authority is not shared:
        it is applied here or it does not happen, and the next snapshot is how
        the guest finds out which. */
-    if (m.t === 'act') { applyAct(peer, m); return; }
+    if (m.t === 'act') {
+      if (m.a === undefined) { applyAct(peer, m); return; }
+      if (m.a === acted + 1) { applyAct(peer, m); acted = m.a; }
+      return;
+    }
     if (m.t === 'in') {
       seen++;
       /* The last few inputs, newest last. Anything already queued or applied
@@ -203,6 +222,8 @@ export function makeHost(opts) {
           foes: encounter ? encounter.wire() : null,
           /* Every drop in the world, as one integer — see src/sim/loot.mjs. */
           lt: encounter && encounter.loot ? encounter.loot.wire() : 0,
+          /* The last lattice change applied, so the guest stops sending it. */
+          ak: acted,
         });
       }
       return this;
@@ -211,6 +232,17 @@ export function makeHost(opts) {
 }
 
 /* ----------------------------------------------------------------- guest ---- */
+
+/** Position and facing between two drawn states, `f` of the way from a to b.
+    Facing is blended and put back to unit length; opposite facings, which
+    blend to nothing, take the nearer one's. */
+function blend(a, b, f) {
+  const fx = a.fx + (b.fx - a.fx) * f, fz = a.fz + (b.fz - a.fz) * f;
+  const l = Math.sqrt(fx * fx + fz * fz);
+  const n = f < 0.5 ? a : b;
+  return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, z: a.z + (b.z - a.z) * f,
+           fx: l > 1e-6 ? fx / l : n.fx, fz: l > 1e-6 ? fz / l : n.fz };
+}
 
 /**
  * `build(cfg)` is handed the host's world config and must return
@@ -230,6 +262,18 @@ export function makeGuest(opts) {
   const pending = [];
   let target = null;                       /* last authoritative host state */
   let lastYou = null;                      /* ...and the last word on us */
+  /* What is only drawn — the host's character and the machines — as the last
+     second or so of snapshots, stamped with the host tick each was sent at,
+     and the host's clock as this end reckons it: its own tick count plus an
+     offset learned from the stamps. The offset follows a *late* snapshot
+     quickly and an early one slowly, so it settles on how late they have
+     lately been — which is how far back the picture has to sit for the
+     snapshot after the moment it draws to have arrived already. */
+  const past = [];
+  let local = 0, offset = null, view = null;
+  /* Lattice changes asked for and not yet confirmed by a snapshot. */
+  const acts = [];
+  let actN = 0;
 
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
@@ -269,7 +313,13 @@ export function makeGuest(opts) {
       for (const p of pending) { step(col, me, p.input, null); replayed++; }
       target = m.them;
       foes = m.foes;
+      past.push({ tick: m.tick, them: m.them, foes: m.foes });
+      if (past.length > PAST) past.shift();
+      const sample = m.tick - local;
+      if (offset === null || Math.abs(sample - offset) > 60) offset = sample;
+      else offset += (sample - offset) * (sample < offset ? 0.3 : 0.01);
       lootBits = m.lt || 0;
+      while (acts.length && acts[0].a <= (m.ak || 0)) acts.shift();
       if (encounter && encounter.observeWire) encounter.observeWire(foes, lootBits);
     }
   });
@@ -286,16 +336,19 @@ export function makeGuest(opts) {
     /** The host's tick as of its last snapshot: the one clock both windows
         can agree on, which is what the sky (#30) is read from. */
     get tick() { return hostTick; },
-    get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck, quiet }; },
-    /** Whatever the host last said was in the world. Drawn, never stepped. */
-    get foes() { return foes; },
+    get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck, quiet, acts: acts.length }; },
+    /** Whatever the host said was in the world, as of the moment being drawn —
+        blended between the snapshots either side of it. Drawn, never stepped. */
+    get foes() { return view || foes; },
     /** And what of it has been picked up, by either of them. */
     get loot() { return lootBits; },
 
     /** Ask the host to seat a module. It decides; the next snapshot answers. */
     act(kind, slot, carriedIndex) {
       if (!ready) return false;
-      transport.send({ t: 'act', g: gid, k: kind, s: slot, c: carriedIndex });
+      const a = { t: 'act', g: gid, a: ++actN, k: kind, s: slot, c: carriedIndex };
+      acts.push(a);
+      transport.send(a);
       return true;
     },
     /** The last thing the host said about us, before any replay on top of it.
@@ -306,6 +359,7 @@ export function makeGuest(opts) {
     step(localInput) {
       quiet++;
       if (!ready) return this;
+      if (acts.length && local % ACT_RESEND === 0) for (const a of acts) transport.send(a);
       seq++;
       const w = packInput(localInput || IDLE), input = unpackInput(w);
       pending.push({ seq, input, w });
@@ -316,14 +370,26 @@ export function makeGuest(opts) {
       transport.send({ t: 'in', g: gid, seq, i: pending.slice(from).map((p) => p.w) });
       step(col, me, input, null);
 
-      /* The other player arrives at 20 Hz and is drawn, not simulated, so it is
-         eased rather than snapped. Proper snapshot interpolation on a delay
-         buffer is a refinement; this is enough to see someone move. */
-      if (target) {
-        peer.x += (target.x - peer.x) * SMOOTH;
-        peer.y += (target.y - peer.y) * SMOOTH;
-        peer.z += (target.z - peer.z) * SMOOTH;
-        applyDisplay(peer, target);
+      local++;
+      /* The other player and the machines arrive at 20 Hz, late by a varying
+         amount, and are drawn, not simulated. So they are drawn INTERP ticks
+         in the past, between the two snapshots either side of that moment:
+         steady motion looks steady, whatever the wire did to when each one
+         landed. Past the newest they hold rather than guess. */
+      if (past.length) {
+        const at = local + offset - INTERP;
+        let i = past.length - 1;
+        while (i > 0 && past[i].tick > at) i--;
+        const a = past[i], b = past[i + 1] || a;
+        const f = b === a ? 0 : Math.max(0, Math.min(1, (at - a.tick) / (b.tick - a.tick)));
+        const near = f < 0.5 ? a : b;
+        const t = blend(a.them, b.them, f);
+        applyDisplay(peer, near.them);
+        peer.x = t.x; peer.y = t.y; peer.z = t.z; peer.faceX = t.fx; peer.faceZ = t.fz;
+        if (a.them.sw >= 0 && b.them.sw >= a.them.sw) peer.swing = { t: a.them.sw + (b.them.sw - a.them.sw) * f, hit: 0 };
+        view = a.foes && b.foes && a.foes.length === b.foes.length
+          ? a.foes.map((fa, k) => Object.assign({}, f < 0.5 ? fa : b.foes[k], blend(fa, b.foes[k], f)))
+          : (near.foes || null);
       }
       return this;
     },

@@ -814,6 +814,52 @@ export function netSuite() {
         `rejoined after ${joinedAt} ticks, ${d.toFixed(9)} m apart`);
   }
 
+  /* 9e. What the guest only draws — the host's character — is drawn a little
+         in the past, between two snapshots, not eased toward whichever one
+         last landed. Measured as jerk (the second difference of position, per
+         tick) against the host's own path: easing at 20 Hz over a jittery
+         wire was ~27 times as jerky as the path it followed. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 4, jitter: 4, seed: 'smooth' }));
+    const hp = [], gp = [];
+    for (let t = 0; t < 900; t++) {
+      p.wire.pump();
+      p.host.step({ mx: cos(t * 0.01), mz: sin(t * 0.01) });
+      p.guest.step({});
+      if (t > 200) { hp.push([p.host.me.x, p.host.me.z]); gp.push([p.guest.peer.x, p.guest.peer.z]); }
+    }
+    const jerk = (q) => { let sum = 0; for (let i = 1; i < q.length - 1; i++)
+      sum += Math.sqrt((q[i + 1][0] - 2 * q[i][0] + q[i - 1][0]) ** 2 + (q[i + 1][1] - 2 * q[i][1] + q[i - 1][1]) ** 2);
+      return sum / (q.length - 2); };
+    let lag = 0;
+    for (let i = 0; i < hp.length; i++) lag = Math.max(lag, Math.sqrt((hp[i][0] - gp[i][0]) ** 2 + (hp[i][1] - gp[i][1]) ** 2));
+    const ratio = jerk(gp) / jerk(hp);
+    say('the partner is drawn between snapshots: steady, and not far behind', ratio < 4 && lag < 1.2,
+        `${ratio.toFixed(1)}x the jerk of the path it follows (easing was ~27x), at most ${lag.toFixed(2)} m behind`);
+  }
+
+  /* 9f. Seating a module is sent once and is not an input, so nothing else
+         covers for it if it is lost: it is numbered, sent again until a
+         snapshot confirms it, and applied once and in order on the host —
+         here over a wire that loses and duplicates a third of everything. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 4, jitter: 4, loss: 0.35, dup: 0.35, seed: 'acts' }));
+    run(p, 60, scripted(0), scripted(2));
+    LT.takeModule(p.host.peer.gear, LT.MOD.SIGIL);
+    LT.takeModule(p.host.peer.gear, LT.MOD.SIGIL);
+    run(p, 40, scripted(0), scripted(2));
+    const carried = p.guest.me.gear.carried.length;
+    p.guest.act(ACT.SOCKET, 1, 0);
+    p.guest.act(ACT.SOCKET, 2, 0);
+    run(p, 240, scripted(0), scripted(2));
+    const g = p.host.peer.gear;
+    say('a lattice change survives a lossy wire, and is applied exactly once',
+        carried === 2 && g.slots[1] === LT.MOD.SIGIL && g.slots[2] === LT.MOD.SIGIL && g.carried.length === 0
+          && p.guest.stats.acts === 0,
+        `carried ${carried}; host slots ${g.slots.join(',')}, ${g.carried.length} still carried; `
+        + `${p.guest.stats.acts} unconfirmed; ${p.wire.stat.dropped} dropped, ${p.wire.stat.duplicated} duplicated`);
+  }
+
   /* 8. The point of all of it: each of them can see the other move. */
   {
     const p = twoPlayers('meadow', makeLoopback({ latency: 4 }));

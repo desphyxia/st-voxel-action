@@ -3180,6 +3180,29 @@ if (BROWSER_HALF) {
               `asked for 40, held at ${zoom.capped.toFixed(1)} with every corner inside the loaded chunks; `
               + `back to ${zoom.back} when asked`);
 
+        /* ---------- DEBUG: wireframe in a streamed world (#92) ----------
+           three builds a wireframe from a geometry's own arrays, and a streamed
+           chunk lets those go once they are on the GPU — so the switch drew
+           nothing at all. On, the loaded ground is grown again keeping them. */
+        const wire = await wp.evaluate(async () => {
+          const P = window.QSPLAY, dlg = document.getElementById('dbg');
+          const btn = (t) => [...dlg.querySelectorAll('.seg[data-k="wire"] button')].find((b) => b.textContent === t);
+          btn('On').click();
+          for (let i = 0; i < 4; i++) { P.run(2); await new Promise((r) => setTimeout(r, 60)); P.frameOnce(); }
+          let meshes = 0, empty = 0, wired = 0;
+          P.scene.traverse((o) => {
+            if (o.userData.kind !== 'terrain' || !o.isMesh) return;
+            meshes++;
+            if (o.geometry.index && !o.geometry.index.array) empty++;
+            if (o.material && o.material.wireframe) wired++;
+          });
+          btn('Off').click(); P.frameOnce();
+          return { meshes, empty, wired };
+        });
+        check(wire.meshes > 0 && wire.empty === 0 && wire.wired === wire.meshes,
+              'DEBUG: wireframe in a streamed world draws the ground, not nothing',
+              `${wire.meshes} terrain meshes, ${wire.wired} in wireframe, ${wire.empty} without the arrays a wireframe is built from`);
+
         /* ---------- NET, streamed: a guest grows the kind of world its host has ----------
            The host's cfg did not say whether it streamed, so a streamed host and
            its guest stood in two different worlds from one seed. */
