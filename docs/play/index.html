@@ -17033,6 +17033,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     flyStart:function(){ return flyStart(true); }, get flying(){ return FLY.on; },
     /** Dust and sparks alive right now. */
     get fxAlive(){ return FX.n; },
+    /** The lamp nearest the view, anywhere loaded, as [x, y, z]: for the gate,
+        which needs something that glows in view without depending on where
+        the trails happen to put their lamps. */
+    nearestLamp:function(){
+      var best=null, bd=Infinity, kids=built?built.scene.children:[];
+      for(var k=0;k<kids.length;k++){ var ls=kids[k].userData.lamps; if(!ls) continue; var o=kids[k].position;
+        for(var i=0;i<ls.length;i++){ var x=ls[i][0]+o.x, z=ls[i][2]+o.z, d=(x-cam.tx)*(x-cam.tx)+(z-cam.tz)*(z-cam.tz);
+          if(d<bd){ bd=d; best=[x,ls[i][1]+o.y,z]; } } }
+      return best;
+    },
     /** How many times the glow pass has run (#99). */
     get glowRan(){ return GLOW.ran; },
     /** The glow buffer's brightest pixel and how many pixels hold any glow,

@@ -3237,6 +3237,11 @@ if (BROWSER_HALF) {
            starts, comes down toward the player, and a key hands over. */
         const lookb = await wp.evaluate(async () => {
           const P = window.QSPLAY, out = {};
+          /* Stand by a lamp: which lamps the spawn can see is the trails'
+             business, and a change of route should not decide this check. */
+          const L = P.nearestLamp(), a = P.actor, was = { x: a.x, y: a.y, z: a.z };
+          if (L) { a.x = L[0] + 1.5; a.z = L[2] + 1.5; a.y = L[1]; window.QS.warpTo(P.cam, a.x, a.y, a.z); }
+          out.lamp = !!L;
           P.setSky('night', 0, true); P.setGfx('glow', true);
           const r0 = P.glowRan; P.frameOnce(); P.frameOnce(); P.draw();
           out.glowRan = P.glowRan - r0; out.peek = P.glowPeek();
@@ -3253,11 +3258,12 @@ if (BROWSER_HALF) {
           out.flyView = P.cam.view; out.flying = P.flying;
           window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
           out.handed = !P.flying && Math.abs(P.cam.view - v) < 1e-6;
+          a.x = was.x; a.y = was.y; a.z = was.z; window.QS.warpTo(P.cam, a.x, a.y, a.z);
           return out;
         });
         check(lookb.glowRan > 0 && lookb.peek && lookb.peek.lit > 50 && lookb.glowOff === 0,
               'LOOK: glow lights the night around what glows, and costs nothing switched off',
-              `${lookb.glowRan} passes at night, ${lookb.peek ? lookb.peek.lit : 0} pixels lit (peak ${lookb.peek ? lookb.peek.max : 0}); ${lookb.glowOff} passes off`);
+              `${lookb.lamp ? 'by a lamp: ' : 'NO LAMP LOADED: '}${lookb.glowRan} passes at night, ${lookb.peek ? lookb.peek.lit : 0} pixels lit (peak ${lookb.peek ? lookb.peek.max : 0}); ${lookb.glowOff} passes off`);
         check(lookb.dust > 3 && lookb.dustOff <= lookb.dust,
               'LOOK: walking raises dust, and the setting takes it away',
               `${lookb.dust} motes at most while walking; ${lookb.dustOff} with Dust & splashes off (the last ones fading)`);
