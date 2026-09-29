@@ -4842,3 +4842,50 @@ export function stampSuite() {
       fl.length ? fl.join('; ') : `none over ${flw.length} windows; a stone lifted eight metres is found`);
   return out;
 }
+
+/* ---------------------------------------------------------------- grass ---- */
+
+/**
+ * Grass is each biome's own (#99): how much ground it covers, how tall, how
+ * dry, and whether it grows as a carpet or in tufts. Measured over two forced
+ * worlds per biome, on cells at least 80% one biome, from the blades the
+ * generator emits — which is what every renderer draws from.
+ */
+export async function grassBiomeSuite() {
+  const { BIOMES, BIO } = await import('../../src/gen/biomes.mjs');
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const st = BIOMES.map(() => ({ cells: 0, n: 0, h: 0, dry: 0, green: 0, occ: new Set() }));
+  for (let f = 0; f < BIOMES.length; f++) for (const s of ['a', 'b']) {
+    const w = buildWorld({ seed: s + f, size: 64, force: f });
+    const M = w.M, half = w.half, g = w.grass;
+    for (const c of w.cells) if (c.w[c.dom] > 0.8) st[c.dom].cells++;
+    for (let i = 0; i < g.sc.length; i++) {
+      const a = Math.floor(g.p[i * 3] + half), b = Math.floor(g.p[i * 3 + 2] + half);
+      if (a < 0 || b < 0 || a >= M || b >= M) continue;
+      const c = w.cells[a * M + b]; if (c.w[c.dom] <= 0.8) continue;
+      const t = st[c.dom], j = i * 3, col = g.ti[i] ? g.dc : g.c;
+      t.n++; t.h += g.sc[i]; t.dry += g.ti[i];
+      t.green += col[j + 1] - Math.max(col[j], col[j + 2]);
+      t.occ.add(s + f + ':' + Math.floor(g.p[j] * 2) + ',' + Math.floor(g.p[j + 2] * 2));
+    }
+  }
+  const m = st.map((t) => ({ per: t.n / Math.max(1, t.cells), h: t.h / Math.max(1, t.n), dry: t.dry / Math.max(1, t.n),
+                            green: t.green / Math.max(1, t.n), cover: t.occ.size / Math.max(1, t.cells * 4) }));
+  const f2 = (v) => v.toFixed(2);
+  const row = (k) => `${k} ${m[BIO[k.toUpperCase()]].per.toFixed(1)}/m², ${f2(m[BIO[k.toUpperCase()]].h)} tall, `
+    + `${Math.round(m[BIO[k.toUpperCase()]].cover * 100)}% of ground`;
+  const me = m[BIO.MEADOW], mesa = m[BIO.MESA], ash = m[BIO.ASH], rime = m[BIO.RIME], glass = m[BIO.GLASS];
+  say('the desert is sparse, dry, straw-coloured and long, in tufts over bare ground',
+      mesa.per < me.per * 0.25 && mesa.h > me.h * 1.2 && mesa.dry > 0.6 && mesa.green < 0 && mesa.cover < me.cover * 0.35,
+      `${row('mesa')}; ${Math.round(mesa.dry * 100)}% dry, green ${f2(mesa.green)} — against ${row('meadow')}`);
+  say('the scars barely grow: ash and glass almost bare, the Rimewaste thin and short',
+      ash.per < me.per * 0.06 && glass.per < me.per * 0.06 && rime.per < me.per * 0.35 && rime.h < me.h * 0.7,
+      `${row('ash')}; ${row('glass')}; ${row('rime')}`);
+  say('meadow is the green carpet the palette is calibrated against',
+      me.per > 60 && me.green > 0.05 && me.cover > 0.8 && me.dry < 0.3, `${row('meadow')}, green ${f2(me.green)}`);
+  const hs = new Set(m.map((t) => Math.round(t.h * 20)));
+  say('and the biomes differ in height, not only in colour', hs.size >= 5,
+      m.map((t, i) => `${BIOMES[i].k} ${f2(t.h)}`).join(', '));
+  return out;
+}
