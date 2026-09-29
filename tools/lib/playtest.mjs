@@ -3536,6 +3536,26 @@ export function skySuite() {
   say('rain wets the ground, and it dries after',
       spell > 0 && during > 0.5 && after > 0 && after < during && dry === 0,
       `spell ${spell}: wetness ${during.toFixed(2)} in the rain, ${after.toFixed(2)} a spell later, ${dry.toFixed(2)} four on`);
+
+  /* Storms (#102): some of the rain, and none of anything else. Lightning is
+     the sky's too — a function of the seed and the second — so it strikes at
+     the same moment on both machines, only in a storm, every few seconds. */
+  let storms = 0, dryStorms = 0;
+  for (let k = 0; k < 400; k++) { const sp = SKY.spellAt(SKY.skyWord('X' + k), k); if (sp.storm) { storms++; if (!sp.rain) dryStorms++; } }
+  let stormAt = -1;
+  for (let k = 0; k < 400 && stormAt < 0; k++) if (SKY.spellAt(SKY.skyWord(11), k).storm) stormAt = k;
+  const strikes = new Set(); let calmFlash = 0, twice = 0, frames = 0;
+  if (stormAt >= 0) for (let t = (stormAt + 0.05) * S; t < (stormAt + 0.8) * S; t += 1 / 30) {
+    const a = SKY.lightningAt(11, t); frames++;
+    if (JSON.stringify(a) === JSON.stringify(SKY.lightningAt(11, t))) twice++;
+    if (a.flash > 0) strikes.add(a.id);
+  }
+  for (let t = 0; t < 3000; t += 0.25) if (SKY.lightningAt(11, t, { cloud: 0.9, rain: 1, wetness: 1, storm: 0 }).flash > 0) calmFlash++;
+  const perMin = strikes.size / (0.75 * S / 60);
+  say('about a third of the rain is a storm, and a storm strikes every few seconds — the same strikes on both machines',
+      storms > 0 && dryStorms === 0 && storms < 400 / 5 && perMin >= 4 && perMin <= 20 && twice === frames && calmFlash === 0,
+      `${storms} of 400 spells storm, ${dryStorms} without rain; ${perMin.toFixed(1)} strikes a minute in one; `
+      + `${twice}/${frames} moments identical twice; ${calmFlash} flashes in rain that is not a storm`);
   return out;
 }
 
@@ -5002,5 +5022,61 @@ export async function crossingSuite() {
   say('where Ashfall\'s magma cuts a route, a causeway of rock carries it across',
       paved > 0 && magmaLeft === 0 && pavedSteps === 0,
       `${paved} causeway cells in the windows, ${magmaLeft} still magma, ${pavedSteps} trail steps onto it past the budget`);
+  return out;
+}
+
+/**
+ * Marshes (#102): low, flat, wet ground in the meadow and the thornwood,
+ * a place rather than a biome. Measured, not looked at: how much of those
+ * biomes it takes, that its water is wadeable and one level to a marsh,
+ * that the water knows it is a marsh (the build draws it murky), and that
+ * it is dressed — reeds, which a body walks through.
+ */
+export async function marshSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  /* How common: a share of the meadow and the thornwood, over four fields. */
+  const shares = [];
+  for (const sd of ['QUARTERSTONE', 'ALDER-RUN', 'X1', 'X2']) {
+    const G = makeGen(sd); let m = 0, mt = 0;
+    for (let x = -600; x < 600; x += 4) for (let z = -600; z < 600; z += 4) {
+      const c = G.cell(x, z); if (c.dom === 0 || c.dom === 3) mt++; if (c.marsh) m++; }
+    G.forget(); shares.push(100 * m / Math.max(1, mt));
+  }
+  say('marshes take a little of the meadow and the thornwood in every field, not none and not most of it',
+      shares.every((p) => p > 0.4 && p < 8), shares.map((p) => p.toFixed(1) + '%').join(', ') + ' of meadow and thorn');
+  /* In the golden thorn window: wadeable, one level to each body of it. */
+  const s = GOLDEN_SEEDS.find((q) => q.nm === 'thorn');
+  const w = buildWorld({ seed: s.seed, size: 64, force: s.force, ox: s.ox, oz: s.oz });
+  const M = w.M || Math.round(Math.sqrt(w.cells.length));
+  let wet = 0, deep = 0, over = 0, levels = 0; const seen = new Uint8Array(M * M);
+  for (let k = 0; k < M * M; k++) {
+    const c = w.cells[k]; if (!c.marsh || !c.water) continue; wet++;
+    /* Half a metre as the field lays it; where a bank drains the surface a
+       quarter, the bed is carved in whole metres (containWater), so a cell
+       beside a low bank can reach a metre. */
+    if (c.wl - c.H > MOVE.wade + 1e-6) deep++;
+    if (c.wl - c.H > 1 + 1e-6) over++;
+    if (seen[k]) continue;
+    const lv = new Set(), q = [k]; seen[k] = 1;
+    while (q.length) { const a = q.pop(), ai = (a / M) | 0, aj = a % M; lv.add(w.cells[a].wl);
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const bi = ai + di, bj = aj + dj;
+        if (bi < 0 || bj < 0 || bi >= M || bj >= M) continue; const b = bi * M + bj, cb = w.cells[b];
+        if (!seen[b] && cb.marsh && cb.water) { seen[b] = 1; q.push(b); } } }
+    /* The banks drain a surface a quarter at a time (containWater), never a step. */
+    const l = [...lv]; if (Math.max(...l) - Math.min(...l) >= 0.4) levels++;
+  }
+  say('a marsh is wadeable water — most of it, and none of it past a metre — and each body of it one level',
+      wet > 0 && deep <= wet * 0.25 && over === 0 && levels === 0,
+      `${wet} marsh water cells in the thorn window; ${deep} deeper than a wade, ${over} past a metre; ${levels} bodies with a step in them`);
+  let murk = 0; for (const v of w.water.m) if (v > 0.9) murk++;
+  let reeds = 0;
+  for (let q = w.propStart; q < w.pos.length / 3; q++) {
+    if (w.mat[q] !== MAT.LEAF) continue;
+    const ci = Math.round(w.pos[q * 3] + w.half), cj = Math.round(w.pos[q * 3 + 2] + w.half);
+    const c = w.cells[Math.min(M - 1, Math.max(0, ci)) * M + Math.min(M - 1, Math.max(0, cj))]; if (c && c.marsh) reeds++;
+  }
+  say('its water is marked murky for the build to draw, and reeds stand in it that a body walks through',
+      murk > 0 && reeds > 0, `${murk} murky water vertices; ${reeds} reed voxels, foliage`);
   return out;
 }

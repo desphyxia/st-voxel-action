@@ -785,3 +785,49 @@ export function placeMesaNubs(w, kit) {
     }
   }
 }
+
+/**
+ * A marsh's dressing (#102): reeds where water meets a hummock and standing
+ * in the shallows, and now and then a dead snag on a hummock. Reeds are
+ * foliage — soft, a body walks through them — and never stand in a trail.
+ * Lily pads and duckweed are the water's own (the build's water shader), not
+ * voxels: a voxel on the surface is a quarter-metre block, not a leaf.
+ * Drawn from the place, so a marsh on a seam is dressed the same both sides.
+ */
+export function placeMarsh(w, kit) {
+  var M = w.M, cells = w.cells, half = w.half, G = w.G, OX = w.OX, OZ = w.OZ,
+      addVox = kit.addVox, surfAt = kit.surfAt, onTrail = kit.onTrail, nearFeature = kit.nearFeature, i, j;
+  function wetAt(a, b) {
+    if (a >= 0 && b >= 0 && a < M && b < M) return cells[a * M + b].water;
+    return groundCellAt(w, -half + a + OX, -half + b + OZ).water;
+  }
+  function reed(px, pz, top, R) {
+    if (onTrail(px, pz)) return;
+    var s = surfAt(px, pz), y;
+    for (y = s.y; y < top - 1e-6; y += V)
+      addVox(px, y + V / 2, pz, y > top - 2 * V && R() < 0.6 ? pickPal(PAL.BUSH_DRY, R) : pickPal(PAL.BUSH_GREEN, R), 0.8 + R() * 0.3, MAT.LEAF);
+  }
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    var c = cells[i * M + j];
+    if (!c.marsh) continue;
+    var R = G.pstream(PASS.MARSH, -half + i + OX, -half + j + OZ);
+    var cx = -half + i, cz = -half + j, edge = false;
+    for (var q = 0; q < 4; q++) if (wetAt(i + DIRS4[q][0], j + DIRS4[q][1]) !== c.water) edge = true;
+    /* Reeds: a clump or two where the water's edge is, fewer out in it. */
+    var clumps = edge ? (R() < 0.7 ? 1 + (R() < 0.4 ? 1 : 0) : 0) : (c.water && R() < 0.15 ? 1 : 0);
+    for (var k = 0; k < clumps; k++) {
+      var ox = Math.round((R() - 0.5) * 3) * V, oz = Math.round((R() - 0.5) * 3) * V, n = 3 + ((R() * 4) | 0);
+      /* In water, from the level this window's water actually stands at —
+         the field's is its ideal, and drained banks bring it down. */
+      var base = surfAt(cx + ox, cz + oz).y;
+      if (c.water) { var wi2 = clamp(Math.round((cx + ox + half) / V), 0, w.NX - 1), wj2 = clamp(Math.round((cz + oz + half) / V), 0, w.NZ - 1);
+        if (w.FLG[wi2 * w.NZ + wj2] & 1) base = w.WL[wi2 * w.NZ + wj2]; }
+      for (var r = 0; r < n; r++) {
+        var rx = cx + ox + Math.round((R() - 0.5) * 3) * V, rz = cz + oz + Math.round((R() - 0.5) * 3) * V;
+        reed(rx, rz, base + 0.5 + R() * 0.75, R);
+      }
+    }
+    /* A snag: the dead tree a marsh drowns, on a hummock, clear of the way. */
+    if (!c.water && R() < 0.05 && !nearFeature(cx, cz) && !onTrail(cx, cz)) kit.tree(cx, cz, BIOMES[c.dom], 'snag', R);
+  }
+}
