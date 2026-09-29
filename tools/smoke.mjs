@@ -2434,6 +2434,9 @@ if (BROWSER_HALF) {
         const cap = await bp.evaluate(() => {
           const P = window.QSPLAY, cv = document.querySelector('#cv'), gl = cv.getContext('webgl2') || cv.getContext('webgl');
           const at = P.cutSpot(); if (!at) return null;
+          /* Under a calm sky: the seed's third spell is a storm (#102), and
+             its fog and a flash between the two frames are not the cut. */
+          P.setSky('noon', undefined, true);
           const sample = (caps) => {
             P.setCaps(caps); P.frameOnce(); P.frameOnce(); P.draw();
             const s = P.screen(), k = cv.width / cv.clientWidth;
@@ -2444,7 +2447,7 @@ if (BROWSER_HALF) {
             for (let i = 0; i < px.length; i += 4) { const v = (px[i] + px[i + 1] + px[i + 2]) / 3; n++; l += v; if (v > 200) pale++; }
             return { px, l: l / n, pale: pale / n };
           };
-          const on = sample(true), off = sample(false); P.setCaps(true);
+          const on = sample(true), off = sample(false); P.setCaps(true); P.setSky('noon', undefined, false);
           let c = 0; for (let i = 0; i < on.px.length; i += 4)
             if (Math.abs(on.px[i] - off.px[i]) + Math.abs(on.px[i + 1] - off.px[i + 1]) + Math.abs(on.px[i + 2] - off.px[i + 2]) > 30) c++;
           return { at, cut: P.cut, on: { l: on.l, pale: on.pale }, off: { l: off.l, pale: off.pale }, changed: c / (on.px.length / 4) };

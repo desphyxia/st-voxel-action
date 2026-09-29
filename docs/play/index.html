@@ -11429,14 +11429,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' #include <fog_fragment>',
     ' gl_FragColor.rgb=qsPost(gl_FragColor.rgb,gw);',
     '}'].join('\n');
-  var WATER_VS=['uniform float uTime;','attribute float aDepth; attribute float aFoam; attribute vec2 aFlow; attribute float aMurk;',
+  var WATER_VS=['uniform float uTime;','attribute float aDepth; attribute float aFoam; attribute vec2 aFlow;',
     'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl; varying float vM;',
     '#include <fog_pars_vertex>',
     /* In world space, not the mesh's own: a streamed chunk's water is local
        to its chunk, so a lift or a ripple read from `position` put the two
        sides of a seam at different heights and phases — a dark crack down
        every chunk edge a river crossed, seen at x 144 on QUARTERSTONE. */
-    'void main(){ vec3 p=(modelMatrix*vec4(position,1.0)).xyz; vD=aDepth; vF=aFoam; vFl=aFlow; vM=aMurk;',
+    /* Foam carries the murk (#102) above 4, where foam never reaches: a quad's
+       four corners share it, so it interpolates to itself. */
+    'void main(){ vec3 p=(modelMatrix*vec4(position,1.0)).xyz; vD=aDepth; float mk=floor(aFoam*0.25+0.001);',
+    ' vF=aFoam-4.0*mk; vM=mk>1.5?1.0:(mk>0.5?0.8:0.0); vFl=aFlow;',
     /* Everything ripples, falls included: the ripple is a function of where a
        vertex is, so a fall's lip moves with the pool above it and its base
        with the pool below, and neither edge can open. Falls used to hold still
@@ -12686,7 +12689,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   function marshPoints(d){
     if(d._marsh) return d._marsh;
     var out=[], wt=d.water;
-    if(wt&&wt.m) for(var q=0;q<wt.m.length;q+=4*3) if(wt.m[q]>0.9) out.push(wt.v[q*3]+0.125,wt.v[q*3+1],wt.v[q*3+2]+0.125);
+    var packed=wt&&wt.m instanceof Uint8Array;   /* 2 is marsh once the build has packed it */
+    if(wt&&wt.m) for(var q=0;q<wt.m.length;q+=4*3) if(packed?wt.m[q]===2:wt.m[q]>0.9) out.push(wt.v[q*3]+0.125,wt.v[q*3+1],wt.v[q*3+2]+0.125);
     d._marsh=out; return out;
   }
   function marshInView(){
@@ -13276,9 +13280,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         var wg=new THREE.BufferGeometry();
         wg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(wv),3));
         wg.setAttribute('aDepth',new THREE.BufferAttribute(new Float32Array(data.water.d),1));
-        wg.setAttribute('aFoam',new THREE.BufferAttribute(new Float32Array(data.water.f),1));
+        /* Murk (#102) held as a byte a vertex — 2 marsh, 1 bog — and drawn
+           as foam plus four times it, not an attribute of its own. */
+        var mk=data.water.m;
+        if(mk&&!(mk instanceof Uint8Array)) data.water.m=mk=Uint8Array.from(mk,function(v){ return v>0.9?2:(v>0.5?1:0); });
+        var foam=new Float32Array(data.water.f);
+        if(mk) for(var fq=0;fq<foam.length;fq++) foam[fq]+=4*mk[fq];
+        wg.setAttribute('aFoam',new THREE.BufferAttribute(foam,1));
         wg.setAttribute('aFlow',new THREE.BufferAttribute(new Float32Array(data.water.fl),2));
-        wg.setAttribute('aMurk',new THREE.BufferAttribute(new Float32Array(data.water.m||new Array(wv.length/3).fill(0)),1));
         wg.setIndex(wid);
         var wm=new THREE.Mesh(wg,mats.water); wm.userData.kind='water';
         /* The water shader lifts a vertex by up to 3.4 cm, which the buffer
