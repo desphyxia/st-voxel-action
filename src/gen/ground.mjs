@@ -27,7 +27,9 @@ export function groundCellAt(w, x, z) {
   if (i >= 0 && j >= 0 && i < w.M && j < w.M) return w.cells[i * w.M + j];
   var c = w.G.cell(x, z);
   var H = clamp(erodeAt(w.G, x, z, c), 0, CEIL);
-  var g = regionAt(w.G, regionOf(x), regionOf(z)).grade.get(cellKey(x, z));
+  var rg = regionAt(w.G, regionOf(x), regionOf(z)), kk = cellKey(x, z), g = rg.grade.get(kk);
+  var pv = rg.paved && rg.paved.get(kk);
+  if (pv !== undefined) H = pv;
   if (g !== undefined) H = g;
-  return { H: H, water: c.water, magma: c.magma, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa, basalt: c.basalt, cliff: c.cliff, thorn: c.thorn, rime: c.rime, spore: c.spore, glass: c.glass, hedge: c.hedge };
+  return { H: H, water: c.water, magma: c.magma && pv === undefined, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa, basalt: c.basalt, cliff: c.cliff, thorn: c.thorn, rime: c.rime, spore: c.spore, glass: c.glass, hedge: c.hedge };
 }

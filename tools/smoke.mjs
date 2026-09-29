@@ -89,7 +89,7 @@ import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
-         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { chunkWorld } from '../src/gen/chunk.mjs';
@@ -431,6 +431,7 @@ if (NODE_HALF) for (const r of netSuite()) check(r.ok, `NET: ${r.label}`, r.deta
 if (NODE_HALF) for (const r of await rtcSuite()) check(r.ok, `RTC: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of await grassBiomeSuite()) check(r.ok, `GRASS: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of contactShadeSuite()) check(r.ok, `MESH: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of await crossingSuite()) check(r.ok, `CROSS: ${r.label}`, r.detail);
 
 /* ---------- VOX: the authored hero, issue #34 ----------
    The first hand-authored model. What has to hold for it to replace the
@@ -551,11 +552,11 @@ if (NODE_HALF) {
         /* The property that actually matters is not "there is water, so there
            must be a bridge" — a river you never have to cross needs nothing.
            It is that the route never asks you to swim: wherever a trail cell
-           sits on water, there is a crossing. The old form passed vacuously on
+           sits on water, there is a crossing — a deck or stepping stones. The old form passed vacuously on
            meadow, whose window happened to contain no water at all. */
-        check(m.wetTrail === 0 || m.bridges > 0,
+        check(m.wetTrail === 0 || m.bridges > 0 || m.stones > 0,
               `SANITY: ${m.seed} a trail over water has a crossing`,
-              `${m.wetTrail} trail cells in water, ${m.bridges} crossings, `
+              `${m.wetTrail} trail cells in water, ${m.bridges} bridges and ${m.stones} stepping stones, `
               + `${m.waterCells} water cells in all`);
         /* Issue #43: the router spends an A* keeping the trail walkable, and
            props were stamped on top of it afterwards — a boulder could stand
@@ -3236,10 +3237,24 @@ if (BROWSER_HALF) {
            starts, comes down toward the player, and a key hands over. */
         const lookb = await wp.evaluate(async () => {
           const P = window.QSPLAY, out = {};
+          /* Stand by a lamp: which lamps the spawn can see is the trails'
+             business, and a change of route should not decide this check. */
+          const L = P.nearestLamp(), a = P.actor, was = { x: a.x, y: a.y, z: a.z };
+          if (L) { a.x = L[0] + 1.5; a.z = L[2] + 1.5; a.y = L[1]; window.QS.warpTo(P.cam, a.x, a.y, a.z); }
+          out.lamp = !!L;
           P.setSky('night', 0, true); P.setGfx('glow', true);
-          const r0 = P.glowRan; P.frameOnce(); P.frameOnce(); P.draw();
+          /* What glow adds is measured on screen, with it and without: the
+             buffer it blurs into holds only the widest pass, and a lamp's head
+             a few pixels across is dim there however bright it lands. */
+          const cv = document.querySelector('#cv');
+          const grab = () => { const g = document.createElement('canvas'); g.width = cv.width; g.height = cv.height;
+            const x2 = g.getContext('2d'); x2.drawImage(cv, 0, 0); return x2.getImageData(0, 0, g.width, g.height).data; };
+          const r0 = P.glowRan; P.frameOnce(); P.frameOnce(); P.draw(); const on = grab();
           out.glowRan = P.glowRan - r0; out.peek = P.glowPeek();
-          P.setGfx('glow', false); const r1 = P.glowRan; P.frameOnce(); out.glowOff = P.glowRan - r1;
+          P.setGfx('glow', false); const r1 = P.glowRan; P.frameOnce(); P.draw(); const off = grab(); out.glowOff = P.glowRan - r1;
+          let lit = 0;
+          for (let i = 0; i < on.length; i += 4) if (on[i] + on[i + 1] + on[i + 2] - off[i] - off[i + 1] - off[i + 2] > 12) lit++;
+          out.lit = lit;
           P.setGfx('glow', true); P.setSky('noon', 0, true);
           P.setGfx('fx', true); P.input.press('KeyW');
           let most = 0;
@@ -3252,11 +3267,13 @@ if (BROWSER_HALF) {
           out.flyView = P.cam.view; out.flying = P.flying;
           window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x' }));
           out.handed = !P.flying && Math.abs(P.cam.view - v) < 1e-6;
+          a.x = was.x; a.y = was.y; a.z = was.z; window.QS.warpTo(P.cam, a.x, a.y, a.z);
           return out;
         });
-        check(lookb.glowRan > 0 && lookb.peek && lookb.peek.lit > 50 && lookb.glowOff === 0,
+        check(lookb.glowRan > 0 && lookb.lit > 50 && lookb.glowOff === 0,
               'LOOK: glow lights the night around what glows, and costs nothing switched off',
-              `${lookb.glowRan} passes at night, ${lookb.peek ? lookb.peek.lit : 0} pixels lit (peak ${lookb.peek ? lookb.peek.max : 0}); ${lookb.glowOff} passes off`);
+              `${lookb.lamp ? 'by a lamp: ' : 'NO LAMP LOADED: '}${lookb.glowRan} passes at night, ${lookb.lit} pixels brighter than without it `
+              + `(the wide buffer's peak ${lookb.peek ? lookb.peek.max : 0}); ${lookb.glowOff} passes off`);
         check(lookb.dust > 3 && lookb.dustOff <= lookb.dust,
               'LOOK: walking raises dust, and the setting takes it away',
               `${lookb.dust} motes at most while walking; ${lookb.dustOff} with Dust & splashes off (the last ones fading)`);
@@ -3272,14 +3289,21 @@ if (BROWSER_HALF) {
           const P = window.QSPLAY, dlg = document.getElementById('dbg');
           const btn = (t) => [...dlg.querySelectorAll('.seg[data-k="wire"] button')].find((b) => b.textContent === t);
           btn('On').click();
-          for (let i = 0; i < 4; i++) { P.run(2); await new Promise((r) => setTimeout(r, 60)); P.frameOnce(); }
+          /* On grows the loaded ground again, from the workers: wait for it to
+             come back rather than for a fixed few frames — how long a pool
+             takes is the runner's business, not this check's. */
           let meshes = 0, empty = 0, wired = 0;
-          P.scene.traverse((o) => {
-            if (o.userData.kind !== 'terrain' || !o.isMesh) return;
-            meshes++;
-            if (o.geometry.index && !o.geometry.index.array) empty++;
-            if (o.material && o.material.wireframe) wired++;
-          });
+          for (let i = 0; i < 120; i++) {
+            P.run(2); await new Promise((r) => setTimeout(r, 60)); P.frameOnce();
+            meshes = 0; empty = 0; wired = 0;
+            P.scene.traverse((o) => {
+              if (o.userData.kind !== 'terrain' || !o.isMesh) return;
+              meshes++;
+              if (o.geometry.index && !o.geometry.index.array) empty++;
+              if (o.material && o.material.wireframe) wired++;
+            });
+            if (i >= 3 && meshes > 0) break;
+          }
           btn('Off').click(); P.frameOnce();
           return { meshes, empty, wired };
         });

@@ -1004,7 +1004,7 @@ function posStream(sw, x, z, salt) {
  */
 const PASS = {
   SPAN: 1, VOX: 2, GRASS: 3, TREE: 4, CLUTTER: 5, SCREE: 6,
-  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12, THICKET: 13, SHARD: 14, HEDGE: 15, NUB: 16,
+  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12, THICKET: 13, SHARD: 14, HEDGE: 15, NUB: 16, STONE: 17,
 };
 
 /** The seed word a pass draws under. */
@@ -2409,12 +2409,21 @@ function makeGrid(G, rx, rz) {
    has always been inert. Kept, and marked, rather than quietly dropped: it is
    what the cost *means* once spans move ahead of routing. */
 
+/** What a metre of magma costs a route (#55, the #53 leftover): dear enough
+    that a route goes round a seam wherever it can, cheap enough that it
+    crosses one rather than leave Ashfall's trail in pieces. Where it crosses,
+    the region paves the seam: see `pave`. */
+const MAGMA_STEP = 26;
+
 function passCost(a, b) {
   /* A route never crosses a feature's face (#76): a trail along a ledge line
      is graded level and the ledges go with it. Nor a thicket, nor the two
      metres round one: the thicket is props on a quarter-metre offset from
      the ground, and a trail at its foot had thorn standing in it. */
-  if (b.magma || b.hold || b.block || b.thorn || b.rime || b.spore || b.glass || b.hedge) return -1;
+  if (b.hold || b.block || b.thorn || b.rime || b.spore || b.glass || b.hedge) return -1;
+  /* Magma is crossed at its banks' height, whatever the crust below: the
+     causeway is built there, so the drop to the crust is not the route's. */
+  if (b.magma || a.magma) return MAGMA_STEP;
   var dh = b.H - a.H;
   if (dh > MOVE.climb2) return -1;
   var c = 1 + (dh > 0 ? dh * 3.2 : (-dh) * 1.1);
@@ -2492,6 +2501,10 @@ function buildRegion(G, rx, rz) {
   var R = function () { return G.prand(rx, rz, 0x5100 + (n++)); };
 
   var trail = new Set(), grade = new Map(), bridges = [], sites = [];
+  /* Magma this region's routes cross, paved over as a causeway at the banks'
+     height (world key to height), and the stepping stones its routes cross
+     water on ([x, z, top], world metres). Both travel to a window as data. */
+  var paved = new Map(), stones = [];
   /* Trail cells that are road, not path (#55 item 12): see markPath. */
   var roads = new Set();
   /* Trail cells in the order the routes laid them down. reach.mjs walks this to
@@ -2699,6 +2712,53 @@ function buildRegion(G, rx, rz) {
     bridges.push([bx, bz, di, dj, len, y]);
   }
 
+  /* ---- a causeway over magma ----
+     Where a route crosses a magma seam, the seam is filled under it with
+     rock from the crust to the height of the banks either side — ramped
+     between them when they differ — so the route walks across instead of
+     ending at the edge. The cells are replaced in this grid, never changed in
+     place: they are the field's own objects, which other grids read too. The
+     window is told through `paved`, as it is told the grading. */
+  function pave(path) {
+    if (!path) return;
+    var w = 0;
+    while (w < path.length) {
+      if (!cells[path[w]].magma) { w++; continue; }
+      var st = w;
+      while (w < path.length && cells[path[w]].magma) w++;
+      var pre = cells[path[Math.max(0, st - 1)]], post = cells[path[Math.min(path.length - 1, w)]];
+      var h0 = pre.magma ? post.H : pre.H, h1 = post.magma ? pre.H : post.H, n = w - st;
+      for (var q = st; q < w; q++) {
+        var t = n > 1 ? (q - st) / (n - 1) : 0.5, h = Math.round(h0 + (h1 - h0) * t);
+        var pi = (path[q] / N) | 0, pj = path[q] % N, k = key(x0 + pi, z0 + pj);
+        cells[path[q]] = Object.assign({}, cells[path[q]], { magma: false, H: h, paved: true });
+        if (own(pi, pj)) paved.set(k, h);
+        /* One cell either side of the causeway too, so it is two lanes wide
+           and a step off it is not a step into the seam. */
+        var ln = laneOf(path, q);
+        if (ln >= 0 && cells[ln].magma) {
+          var li = (ln / N) | 0, lj = ln % N;
+          cells[ln] = Object.assign({}, cells[ln], { magma: false, H: h, paved: true });
+          if (own(li, lj)) paved.set(key(x0 + li, z0 + lj), h);
+        }
+      }
+    }
+  }
+
+  /* ---- stepping stones ----
+     A route that wades — no deck lands dry at both ends — gets stones
+     instead: a block of rock on every metre of the wet stretch, its top a
+     quarter-metre over the water, so it can be walked across with a hop
+     between stones and never a swim. A ford is laid the same way. */
+  function stoneRun(cellsIdx) {
+    for (var q = 0; q < cellsIdx.length; q++) {
+      var c = cells[cellsIdx[q]], pi = (cellsIdx[q] / N) | 0, pj = cellsIdx[q] % N;
+      if (!c.water || !own(pi, pj)) continue;
+      var top = Math.max(c.wl === undefined ? c.H : c.wl, c.H) + 0.25;
+      stones.push([x0 + pi, z0 + pj, top]);
+    }
+  }
+
   /* `road` marks a route that joins this region to a neighbour — hub to
      port — as road; everything else (hub to its second site, a ford's way
      over) is path. The two are drawn differently, not routed differently. */
@@ -2717,6 +2777,12 @@ function buildRegion(G, rx, rz) {
       var st = w;
       while (w < path.length && cells[path[w]].water) w++;
       var len = w - st;
+      /* A path — not a road — over a narrow, shallow stream crosses on
+         stones: a deck is for the roads between regions, and a line of stones
+         is what a path through a stream looks like. */
+      var shallow = true;
+      for (var sq = st; sq < w; sq++) { var sc2 = cells[path[sq]]; if (sc2.wl !== undefined && sc2.wl - sc2.H > MOVE.wade + 0.5) shallow = false; }
+      if (!road && len <= 4 && shallow) { stoneRun(path.slice(st, w)); continue; }
       if (len <= 12) {
         var pre = path[Math.max(0, st - 1)], post = path[Math.min(path.length - 1, w)];
         var d = deckOver(path, st, w, pre, post);
@@ -2730,8 +2796,8 @@ function buildRegion(G, rx, rz) {
             if (mi >= 0 && mj >= 0 && mi < N && mj < N && !at(mi, mj).magma) mark(x0 + mi, z0 + mj);
           }
           addBridge(x0 + (d.ai + d.bi) / 2, z0 + (d.aj + d.bj) / 2, d.di, d.dj, d.len + 2, deckHeight(d.a, d.b));
-        }
-      }
+        } else stoneRun(path.slice(st, w));
+      } else stoneRun(path.slice(st, w));
     }
   }
 
@@ -2816,6 +2882,7 @@ function buildRegion(G, rx, rz) {
     if (ports[i] === hub) continue;
     routes.push(aStar(g, hub[0], hub[1], ports[i][0], ports[i][1])); isRoad.push(true);
   }
+  for (i = 0; i < routes.length; i++) pave(routes[i]);
   for (i = 0; i < routes.length; i++) gradePath(routes[i]);
   for (i = 0; i < routes.length; i++) markPath(routes[i], isRoad[i]);
 
@@ -2847,8 +2914,18 @@ function buildRegion(G, rx, rz) {
           if (!at(xx, zz).magma) mark(x0 + xx, z0 + zz);
         }
         gradePath(on); markPath(on);
-        addBridge(x0 + (fd.ai + fd.bi) / 2, z0 + (fd.aj + fd.bj) / 2, fd.di, fd.dj, fd.len + 3,
-                  deckHeight(at(fd.ai, fd.aj), at(fd.bi, fd.bj)));
+        /* A ford is stones, not a deck: shallow water a route wades through
+           reads as a ford only if something marks the way. Deeper than a
+           wade and it keeps its deck. */
+        var fordCells = [], deep = false;
+        for (q3 = 1; q3 <= fd.len; q3++) {
+          var fx = fd.ai + fd.di * q3, fz = fd.aj + fd.dj * q3, fcq = at(fx, fz);
+          fordCells.push(fx * N + fz);
+          if (fcq.water && fcq.wl !== undefined && fcq.wl - fcq.H > MOVE.wade + 0.5) deep = true;
+        }
+        if (deep) addBridge(x0 + (fd.ai + fd.bi) / 2, z0 + (fd.aj + fd.bj) / 2, fd.di, fd.dj, fd.len + 3,
+                            deckHeight(at(fd.ai, fd.aj), at(fd.bi, fd.bj)));
+        else stoneRun(fordCells);
       }
     }
   }
@@ -3145,7 +3222,7 @@ function buildRegion(G, rx, rz) {
   aff.sort(function (a, b) { return a.k < b.k ? -1 : (a.k > b.k ? 1 : (a.x - b.x || a.z - b.z)); });
 
   return {
-    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff, roads: roads, lamps: lamps,
+    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff, roads: roads, lamps: lamps, paved: paved, stones: stones,
     /* World-coordinate keys, every one of them. A window converts on the way in
        and on the way out; nothing in here knows a window exists. */
     trail: trail, order: order, grade: grade, bridges: bridges, landmark: lm,
@@ -3225,9 +3302,11 @@ function groundCellAt(w, x, z) {
   if (i >= 0 && j >= 0 && i < w.M && j < w.M) return w.cells[i * w.M + j];
   var c = w.G.cell(x, z);
   var H = clamp(erodeAt(w.G, x, z, c), 0, CEIL);
-  var g = regionAt(w.G, regionOf(x), regionOf(z)).grade.get(cellKey(x, z));
+  var rg = regionAt(w.G, regionOf(x), regionOf(z)), kk = cellKey(x, z), g = rg.grade.get(kk);
+  var pv = rg.paved && rg.paved.get(kk);
+  if (pv !== undefined) H = pv;
   if (g !== undefined) H = g;
-  return { H: H, water: c.water, magma: c.magma, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa, basalt: c.basalt, cliff: c.cliff, thorn: c.thorn, rime: c.rime, spore: c.spore, glass: c.glass, hedge: c.hedge };
+  return { H: H, water: c.water, magma: c.magma && pv === undefined, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa, basalt: c.basalt, cliff: c.cliff, thorn: c.thorn, rime: c.rime, spore: c.spore, glass: c.glass, hedge: c.hedge };
 }
 /* ---------- src/gen/routes.mjs ---------- */
 /**
@@ -3251,7 +3330,7 @@ function groundCellAt(w, x, z) {
 
 function layRoutes(w) {
   var M = w.M, cells = w.cells, half = w.half, OX = w.OX, OZ = w.OZ, G = w.G;
-  var TRAIL = new Uint8Array(M * M), sites = [], bridges = [], trailPath = [];
+  var TRAIL = new Uint8Array(M * M), sites = [], bridges = [], trailPath = [], stones = [];
 
   /* The window's world-space box, in cell coordinates. */
   var wx0 = -half + OX, wz0 = -half + OZ, wx1 = wx0 + (M - 1), wz1 = wz0 + (M - 1);
@@ -3268,6 +3347,18 @@ function layRoutes(w) {
   function inside(x, z) { return idx(x, z) >= 0; }
 
   var q, k;
+
+  /* 0. Causeways (#55): magma a region's route crosses is rock in this
+        window too. Copied, never changed in place — the cell is the field's
+        own object — and before the grading, which has the last word on its
+        height as it does everywhere else. */
+  for (q = 0; q < regions.length; q++) {
+    if (!regions[q].paved) continue;
+    regions[q].paved.forEach(function (h, key) {
+      var at = idx(keyX(key), keyZ(key));
+      if (at >= 0) cells[at] = Object.assign({}, cells[at], { magma: false, H: h, paved: true });
+    });
+  }
 
   /* 1. The cuttings. A graded trail moved the ground under it, and a window
         that did not apply the same moves would have a trail running along a
@@ -3314,6 +3405,9 @@ function layRoutes(w) {
       if (!inside(Math.round(b[0]), Math.round(b[1]))) continue;
       bridges.push([b[0] - OX, b[1] - OZ, b[2], b[3], b[4], b[5]]);
     }
+    /* Stepping stones, window-local metres to the middle of their cell. */
+    var st = regions[q].stones || [];
+    for (k = 0; k < st.length; k++) if (inside(st[k][0], st[k][1])) stones.push([st[k][0] - OX, st[k][1] - OZ, st[k][2]]);
   }
 
   /* 4. Encounter affordances (#42), clipped to the window like everything else
@@ -3329,7 +3423,7 @@ function layRoutes(w) {
     }
   }
   w.affordances = affordances;
-  w.TRAIL = TRAIL; w.sites = sites; w.bridges = bridges; w.trailPath = trailPath;
+  w.TRAIL = TRAIL; w.sites = sites; w.bridges = bridges; w.trailPath = trailPath; w.stones = stones;
   /* The regions this window is a view onto, so later passes can read the
      landmark without deciding one of their own. */
   w.regions = regions;
@@ -4312,9 +4406,23 @@ function makeStamps(w) {
       addVox(rx2,y+0.5,rz2,PAL.DECK_RAIL.at,0.95,MAT.WOOD);
     }
   }
+  /* A stepping stone (#55 item 12): a block of the biome's rock, three voxels
+     a side, founded on the bed under each of its columns and standing to
+     `top` — a quarter-metre clear of the water. A corner or two knocked off
+     and a column a voxel short, so a line of them reads as stones and not as
+     a row of posts. */
+  function stepStone(px,pz,top,dom,R){
+    var b=BIOMES[dom], t0=Math.round(top/V)*V, a,c,y;
+    for(a=-V;a<=V+1e-6;a+=V)for(c=-V;c<=V+1e-6;c+=V){
+      var corner=Math.abs(a)>1e-6&&Math.abs(c)>1e-6;
+      if(corner&&R()<0.35) continue;
+      var t=t0-(corner&&R()<0.5?V:0), bed=surfAt(px+a,pz+c).y;
+      for(y=bed;y<t-1e-6;y+=V) addVox(px+a,y+V/2,pz+c,pickPal(b.rock,R),0.82+R()*0.28,b.mat.rock);
+    }
+  }
   return { addVox: addVox, addEm: addEm, surfAt: surfAt, footing: footing, onTrail: onTrail, nearFeature: nearFeature, tree: tree, boulder: boulder, scree: scree,
            bush: bush, stump: stump, fallenTrunk: fallenTrunk, fence: fence, lamp: lamp,
-           wallRun: wallRun, pillarRuin: pillarRuin, hut: hut, deckBridge: deckBridge };
+           wallRun: wallRun, pillarRuin: pillarRuin, hut: hut, deckBridge: deckBridge, stepStone: stepStone };
 }
 
 /** Trees, boulders and the arcs that span a canyon. */
@@ -4391,7 +4499,7 @@ function placeClutter(w, kit) {
       bridges = w.bridges, nearFeature = kit.nearFeature, scree = kit.scree, bush = kit.bush, stump = kit.stump,
       fallenTrunk = kit.fallenTrunk, fence = kit.fence, lamp = kit.lamp,
       wallRun = kit.wallRun, pillarRuin = kit.pillarRuin, hut = kit.hut,
-      deckBridge = kit.deckBridge, surfAt = kit.surfAt, i, j;
+      deckBridge = kit.deckBridge, surfAt = kit.surfAt, stepStone = kit.stepStone, i, j;
   var lamps=[];
   /* Both loops run the full grid rather than an inset one. The old bounds were
      a border-ring skip of the kind erosion had: a cliff foot two metres inside
@@ -4464,6 +4572,29 @@ function placeClutter(w, kit) {
     deckBridge(bd[0],bd[1],bd[2],bd[3],bd[4],bd[5],
                G.pstream(PASS.CROSS,Math.round(bd[0]+OX),Math.round(bd[1]+OZ)));
   }
+  /* and stepping stones where a route wades (#55) */
+  /* The region knows where; only this window knows how high the water
+     actually stands once its banks have drained it, so the top is taken
+     here — and a stone whose metre ended up dry is not placed at all. */
+  var stones=w.stones||[], sNX=w.NX, sNZ=w.NZ, stonesLaid=[], stoneAt=new Set();
+  for(var sq=0;sq<stones.length;sq++){
+    var sn=stones[sq];
+    if(sn[0]<-half+1||sn[1]<-half+1||sn[0]>half-1||sn[1]>half-1) continue;
+    var sgi=clamp(Math.round((sn[0]+half)/V),0,sNX-1), sgj=clamp(Math.round((sn[1]+half)/V),0,sNZ-1), sk=sgi*sNZ+sgj;
+    if(!(w.FLG[sk]&1)) continue;
+    /* Two regions can both name a cell on their shared edge: one stone. */
+    if(stoneAt.has(sk)) continue; stoneAt.add(sk);
+    /* Nor under a deck: where a road's bridge and a path's stones meet the
+       same water, the bridge is the crossing. */
+    var decked=false;
+    for(var bq2=0;bq2<bridges.length&&!decked;bq2++){ var bb=bridges[bq2];
+      var al=(sn[0]-bb[0])*bb[2]+(sn[1]-bb[1])*bb[3], ac=(sn[0]-bb[0])*bb[3]-(sn[1]-bb[1])*bb[2];
+      if(Math.abs(al)<=bb[4]/2+0.5&&Math.abs(ac)<=1.25) decked=true; }
+    if(decked) continue;
+    stepStone(sn[0],sn[1],w.WL[sk]+0.25,w.cellAt(sn[0],sn[1]).dom,G.pstream(PASS.STONE,Math.round(sn[0]+OX),Math.round(sn[1]+OZ)));
+    stonesLaid.push([sn[0],sn[1],w.WL[sk]+0.25]);
+  }
+  w.stonesLaid = stonesLaid;
   w.lamps = lamps;
 }
 
@@ -5054,6 +5185,9 @@ function buildWorld(cfg) {
     grass: w.grass, water: w.water, lamps: w.lamps,
     ovhPos: w.ovhPos, lmPos: w.lmPos, trail: w.TRAIL, topi: w.TOPI,
     unreach: w.UNREACH, reach: w.REACH, bridges: w.bridges,
+    /* The stepping stones laid where a route wades (#55), as [x, z, top]:
+       like a deck, a stone belongs on the trail. */
+    stones: w.stonesLaid,
     /* The two places the trails were routed to, as cell indices. A ruin and a
        holding stand on them (props.mjs), which makes them the places worth
        putting something in — see src/sim/loot.mjs. */
@@ -16899,6 +17033,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     flyStart:function(){ return flyStart(true); }, get flying(){ return FLY.on; },
     /** Dust and sparks alive right now. */
     get fxAlive(){ return FX.n; },
+    /** The lamp nearest the view, anywhere loaded, as [x, y, z]: for the gate,
+        which needs something that glows in view without depending on where
+        the trails happen to put their lamps. */
+    nearestLamp:function(){
+      var best=null, bd=Infinity, kids=built?built.scene.children:[];
+      for(var k=0;k<kids.length;k++){ var ls=kids[k].userData.lamps; if(!ls) continue; var o=kids[k].position;
+        for(var i=0;i<ls.length;i++){ var x=ls[i][0]+o.x, z=ls[i][2]+o.z, d=(x-cam.tx)*(x-cam.tx)+(z-cam.tz)*(z-cam.tz);
+          if(d<bd){ bd=d; best=[x,ls[i][1]+o.y,z]; } } }
+      return best;
+    },
     /** How many times the glow pass has run (#99). */
     get glowRan(){ return GLOW.ran; },
     /** The glow buffer's brightest pixel and how many pixels hold any glow,

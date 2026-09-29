@@ -108,6 +108,9 @@ export function buildWorld(cfg) {
     grass: w.grass, water: w.water, lamps: w.lamps,
     ovhPos: w.ovhPos, lmPos: w.lmPos, trail: w.TRAIL, topi: w.TOPI,
     unreach: w.UNREACH, reach: w.REACH, bridges: w.bridges,
+    /* The stepping stones laid where a route wades (#55), as [x, z, top]:
+       like a deck, a stone belongs on the trail. */
+    stones: w.stonesLaid,
     /* The two places the trails were routed to, as cell indices. A ruin and a
        holding stand on them (props.mjs), which makes them the places worth
        putting something in — see src/sim/loot.mjs. */

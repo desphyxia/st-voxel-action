@@ -146,12 +146,21 @@ function makeGrid(G, rx, rz) {
    has always been inert. Kept, and marked, rather than quietly dropped: it is
    what the cost *means* once spans move ahead of routing. */
 
+/** What a metre of magma costs a route (#55, the #53 leftover): dear enough
+    that a route goes round a seam wherever it can, cheap enough that it
+    crosses one rather than leave Ashfall's trail in pieces. Where it crosses,
+    the region paves the seam: see `pave`. */
+const MAGMA_STEP = 26;
+
 function passCost(a, b) {
   /* A route never crosses a feature's face (#76): a trail along a ledge line
      is graded level and the ledges go with it. Nor a thicket, nor the two
      metres round one: the thicket is props on a quarter-metre offset from
      the ground, and a trail at its foot had thorn standing in it. */
-  if (b.magma || b.hold || b.block || b.thorn || b.rime || b.spore || b.glass || b.hedge) return -1;
+  if (b.hold || b.block || b.thorn || b.rime || b.spore || b.glass || b.hedge) return -1;
+  /* Magma is crossed at its banks' height, whatever the crust below: the
+     causeway is built there, so the drop to the crust is not the route's. */
+  if (b.magma || a.magma) return MAGMA_STEP;
   var dh = b.H - a.H;
   if (dh > MOVE.climb2) return -1;
   var c = 1 + (dh > 0 ? dh * 3.2 : (-dh) * 1.1);
@@ -229,6 +238,10 @@ function buildRegion(G, rx, rz) {
   var R = function () { return G.prand(rx, rz, 0x5100 + (n++)); };
 
   var trail = new Set(), grade = new Map(), bridges = [], sites = [];
+  /* Magma this region's routes cross, paved over as a causeway at the banks'
+     height (world key to height), and the stepping stones its routes cross
+     water on ([x, z, top], world metres). Both travel to a window as data. */
+  var paved = new Map(), stones = [];
   /* Trail cells that are road, not path (#55 item 12): see markPath. */
   var roads = new Set();
   /* Trail cells in the order the routes laid them down. reach.mjs walks this to
@@ -436,6 +449,53 @@ function buildRegion(G, rx, rz) {
     bridges.push([bx, bz, di, dj, len, y]);
   }
 
+  /* ---- a causeway over magma ----
+     Where a route crosses a magma seam, the seam is filled under it with
+     rock from the crust to the height of the banks either side — ramped
+     between them when they differ — so the route walks across instead of
+     ending at the edge. The cells are replaced in this grid, never changed in
+     place: they are the field's own objects, which other grids read too. The
+     window is told through `paved`, as it is told the grading. */
+  function pave(path) {
+    if (!path) return;
+    var w = 0;
+    while (w < path.length) {
+      if (!cells[path[w]].magma) { w++; continue; }
+      var st = w;
+      while (w < path.length && cells[path[w]].magma) w++;
+      var pre = cells[path[Math.max(0, st - 1)]], post = cells[path[Math.min(path.length - 1, w)]];
+      var h0 = pre.magma ? post.H : pre.H, h1 = post.magma ? pre.H : post.H, n = w - st;
+      for (var q = st; q < w; q++) {
+        var t = n > 1 ? (q - st) / (n - 1) : 0.5, h = Math.round(h0 + (h1 - h0) * t);
+        var pi = (path[q] / N) | 0, pj = path[q] % N, k = key(x0 + pi, z0 + pj);
+        cells[path[q]] = Object.assign({}, cells[path[q]], { magma: false, H: h, paved: true });
+        if (own(pi, pj)) paved.set(k, h);
+        /* One cell either side of the causeway too, so it is two lanes wide
+           and a step off it is not a step into the seam. */
+        var ln = laneOf(path, q);
+        if (ln >= 0 && cells[ln].magma) {
+          var li = (ln / N) | 0, lj = ln % N;
+          cells[ln] = Object.assign({}, cells[ln], { magma: false, H: h, paved: true });
+          if (own(li, lj)) paved.set(key(x0 + li, z0 + lj), h);
+        }
+      }
+    }
+  }
+
+  /* ---- stepping stones ----
+     A route that wades — no deck lands dry at both ends — gets stones
+     instead: a block of rock on every metre of the wet stretch, its top a
+     quarter-metre over the water, so it can be walked across with a hop
+     between stones and never a swim. A ford is laid the same way. */
+  function stoneRun(cellsIdx) {
+    for (var q = 0; q < cellsIdx.length; q++) {
+      var c = cells[cellsIdx[q]], pi = (cellsIdx[q] / N) | 0, pj = cellsIdx[q] % N;
+      if (!c.water || !own(pi, pj)) continue;
+      var top = Math.max(c.wl === undefined ? c.H : c.wl, c.H) + 0.25;
+      stones.push([x0 + pi, z0 + pj, top]);
+    }
+  }
+
   /* `road` marks a route that joins this region to a neighbour — hub to
      port — as road; everything else (hub to its second site, a ford's way
      over) is path. The two are drawn differently, not routed differently. */
@@ -454,6 +514,12 @@ function buildRegion(G, rx, rz) {
       var st = w;
       while (w < path.length && cells[path[w]].water) w++;
       var len = w - st;
+      /* A path — not a road — over a narrow, shallow stream crosses on
+         stones: a deck is for the roads between regions, and a line of stones
+         is what a path through a stream looks like. */
+      var shallow = true;
+      for (var sq = st; sq < w; sq++) { var sc2 = cells[path[sq]]; if (sc2.wl !== undefined && sc2.wl - sc2.H > MOVE.wade + 0.5) shallow = false; }
+      if (!road && len <= 4 && shallow) { stoneRun(path.slice(st, w)); continue; }
       if (len <= 12) {
         var pre = path[Math.max(0, st - 1)], post = path[Math.min(path.length - 1, w)];
         var d = deckOver(path, st, w, pre, post);
@@ -467,8 +533,8 @@ function buildRegion(G, rx, rz) {
             if (mi >= 0 && mj >= 0 && mi < N && mj < N && !at(mi, mj).magma) mark(x0 + mi, z0 + mj);
           }
           addBridge(x0 + (d.ai + d.bi) / 2, z0 + (d.aj + d.bj) / 2, d.di, d.dj, d.len + 2, deckHeight(d.a, d.b));
-        }
-      }
+        } else stoneRun(path.slice(st, w));
+      } else stoneRun(path.slice(st, w));
     }
   }
 
@@ -553,6 +619,7 @@ function buildRegion(G, rx, rz) {
     if (ports[i] === hub) continue;
     routes.push(aStar(g, hub[0], hub[1], ports[i][0], ports[i][1])); isRoad.push(true);
   }
+  for (i = 0; i < routes.length; i++) pave(routes[i]);
   for (i = 0; i < routes.length; i++) gradePath(routes[i]);
   for (i = 0; i < routes.length; i++) markPath(routes[i], isRoad[i]);
 
@@ -584,8 +651,18 @@ function buildRegion(G, rx, rz) {
           if (!at(xx, zz).magma) mark(x0 + xx, z0 + zz);
         }
         gradePath(on); markPath(on);
-        addBridge(x0 + (fd.ai + fd.bi) / 2, z0 + (fd.aj + fd.bj) / 2, fd.di, fd.dj, fd.len + 3,
-                  deckHeight(at(fd.ai, fd.aj), at(fd.bi, fd.bj)));
+        /* A ford is stones, not a deck: shallow water a route wades through
+           reads as a ford only if something marks the way. Deeper than a
+           wade and it keeps its deck. */
+        var fordCells = [], deep = false;
+        for (q3 = 1; q3 <= fd.len; q3++) {
+          var fx = fd.ai + fd.di * q3, fz = fd.aj + fd.dj * q3, fcq = at(fx, fz);
+          fordCells.push(fx * N + fz);
+          if (fcq.water && fcq.wl !== undefined && fcq.wl - fcq.H > MOVE.wade + 0.5) deep = true;
+        }
+        if (deep) addBridge(x0 + (fd.ai + fd.bi) / 2, z0 + (fd.aj + fd.bj) / 2, fd.di, fd.dj, fd.len + 3,
+                            deckHeight(at(fd.ai, fd.aj), at(fd.bi, fd.bj)));
+        else stoneRun(fordCells);
       }
     }
   }
@@ -882,7 +959,7 @@ function buildRegion(G, rx, rz) {
   aff.sort(function (a, b) { return a.k < b.k ? -1 : (a.k > b.k ? 1 : (a.x - b.x || a.z - b.z)); });
 
   return {
-    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff, roads: roads, lamps: lamps,
+    rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff, roads: roads, lamps: lamps, paved: paved, stones: stones,
     /* World-coordinate keys, every one of them. A window converts on the way in
        and on the way out; nothing in here knows a window exists. */
     trail: trail, order: order, grade: grade, bridges: bridges, landmark: lm,

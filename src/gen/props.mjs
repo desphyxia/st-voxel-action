@@ -320,9 +320,23 @@ export function makeStamps(w) {
       addVox(rx2,y+0.5,rz2,PAL.DECK_RAIL.at,0.95,MAT.WOOD);
     }
   }
+  /* A stepping stone (#55 item 12): a block of the biome's rock, three voxels
+     a side, founded on the bed under each of its columns and standing to
+     `top` — a quarter-metre clear of the water. A corner or two knocked off
+     and a column a voxel short, so a line of them reads as stones and not as
+     a row of posts. */
+  function stepStone(px,pz,top,dom,R){
+    var b=BIOMES[dom], t0=Math.round(top/V)*V, a,c,y;
+    for(a=-V;a<=V+1e-6;a+=V)for(c=-V;c<=V+1e-6;c+=V){
+      var corner=Math.abs(a)>1e-6&&Math.abs(c)>1e-6;
+      if(corner&&R()<0.35) continue;
+      var t=t0-(corner&&R()<0.5?V:0), bed=surfAt(px+a,pz+c).y;
+      for(y=bed;y<t-1e-6;y+=V) addVox(px+a,y+V/2,pz+c,pickPal(b.rock,R),0.82+R()*0.28,b.mat.rock);
+    }
+  }
   return { addVox: addVox, addEm: addEm, surfAt: surfAt, footing: footing, onTrail: onTrail, nearFeature: nearFeature, tree: tree, boulder: boulder, scree: scree,
            bush: bush, stump: stump, fallenTrunk: fallenTrunk, fence: fence, lamp: lamp,
-           wallRun: wallRun, pillarRuin: pillarRuin, hut: hut, deckBridge: deckBridge };
+           wallRun: wallRun, pillarRuin: pillarRuin, hut: hut, deckBridge: deckBridge, stepStone: stepStone };
 }
 
 /** Trees, boulders and the arcs that span a canyon. */
@@ -399,7 +413,7 @@ export function placeClutter(w, kit) {
       bridges = w.bridges, nearFeature = kit.nearFeature, scree = kit.scree, bush = kit.bush, stump = kit.stump,
       fallenTrunk = kit.fallenTrunk, fence = kit.fence, lamp = kit.lamp,
       wallRun = kit.wallRun, pillarRuin = kit.pillarRuin, hut = kit.hut,
-      deckBridge = kit.deckBridge, surfAt = kit.surfAt, i, j;
+      deckBridge = kit.deckBridge, surfAt = kit.surfAt, stepStone = kit.stepStone, i, j;
   var lamps=[];
   /* Both loops run the full grid rather than an inset one. The old bounds were
      a border-ring skip of the kind erosion had: a cliff foot two metres inside
@@ -472,6 +486,29 @@ export function placeClutter(w, kit) {
     deckBridge(bd[0],bd[1],bd[2],bd[3],bd[4],bd[5],
                G.pstream(PASS.CROSS,Math.round(bd[0]+OX),Math.round(bd[1]+OZ)));
   }
+  /* and stepping stones where a route wades (#55) */
+  /* The region knows where; only this window knows how high the water
+     actually stands once its banks have drained it, so the top is taken
+     here — and a stone whose metre ended up dry is not placed at all. */
+  var stones=w.stones||[], sNX=w.NX, sNZ=w.NZ, stonesLaid=[], stoneAt=new Set();
+  for(var sq=0;sq<stones.length;sq++){
+    var sn=stones[sq];
+    if(sn[0]<-half+1||sn[1]<-half+1||sn[0]>half-1||sn[1]>half-1) continue;
+    var sgi=clamp(Math.round((sn[0]+half)/V),0,sNX-1), sgj=clamp(Math.round((sn[1]+half)/V),0,sNZ-1), sk=sgi*sNZ+sgj;
+    if(!(w.FLG[sk]&1)) continue;
+    /* Two regions can both name a cell on their shared edge: one stone. */
+    if(stoneAt.has(sk)) continue; stoneAt.add(sk);
+    /* Nor under a deck: where a road's bridge and a path's stones meet the
+       same water, the bridge is the crossing. */
+    var decked=false;
+    for(var bq2=0;bq2<bridges.length&&!decked;bq2++){ var bb=bridges[bq2];
+      var al=(sn[0]-bb[0])*bb[2]+(sn[1]-bb[1])*bb[3], ac=(sn[0]-bb[0])*bb[3]-(sn[1]-bb[1])*bb[2];
+      if(Math.abs(al)<=bb[4]/2+0.5&&Math.abs(ac)<=1.25) decked=true; }
+    if(decked) continue;
+    stepStone(sn[0],sn[1],w.WL[sk]+0.25,w.cellAt(sn[0],sn[1]).dom,G.pstream(PASS.STONE,Math.round(sn[0]+OX),Math.round(sn[1]+OZ)));
+    stonesLaid.push([sn[0],sn[1],w.WL[sk]+0.25]);
+  }
+  w.stonesLaid = stonesLaid;
   w.lamps = lamps;
 }
 
