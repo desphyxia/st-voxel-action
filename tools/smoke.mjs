@@ -3568,6 +3568,26 @@ if (BROWSER_HALF) {
       check(bow.wx.rainbow > 0.5,
             'WEATHER: as rain clears under a sun, a rainbow',
             `rainbow at ${bow.wx.rainbow.toFixed(2)}`);
+      /* The air follows the ground every frame, not in two-second steps, and
+         settles in about two seconds rather than a quarter at a time — so
+         walking into the rime thickens it smoothly, and walking out clears
+         it before the next biome is reached. */
+      const air = await wxp.evaluate((cfg) => {
+        const P = window.QSPLAY, dlg = document.getElementById('dbg');
+        P.grow(cfg); P.setSky('noon', 0, false);
+        const b = [...dlg.querySelectorAll('.seg[data-k="wx"] button')].find((x) => x.textContent === 'Snow'); if (b) b.click();
+        P.wxStep(0.01);
+        const steps = P.airSteps(0, 1 / 60, 180), to = steps[steps.length - 1];
+        let jump = 0;
+        for (let i = 1; i < steps.length; i++) jump = Math.max(jump, steps[i][0] - steps[i - 1][0], steps[i][1] - steps[i - 1][1]);
+        const at2 = steps[119];
+        const reset = [...dlg.querySelectorAll('.seg[data-k="wx"] button')].find((x) => x.textContent === 'Seed'); if (reset) reset.click();
+        return { hazeTo: to[0], snowTo: to[1], haze2: at2[0], snow2: at2[1], jump };
+      }, cfgOf('rime'));
+      check(air.hazeTo > 0.2 && air.snowTo > 0.9 && air.haze2 >= 0.9 * air.hazeTo && air.snow2 >= 0.9 * air.snowTo && air.jump < 0.05,
+            'WEATHER: walking into the rime, the air and the snow come in smoothly and within a couple of seconds',
+            `haze ${air.haze2.toFixed(2)} of ${air.hazeTo.toFixed(2)} and snow ${air.snow2.toFixed(2)} of ${air.snowTo.toFixed(2)} after 2 s; `
+            + `largest change in one frame ${air.jump.toFixed(3)}`);
       check(wxErr.length === 0, 'WEATHER: and none of it errors', wxErr.slice(0, 2).join(' | '));
       await wxp.close();
     }

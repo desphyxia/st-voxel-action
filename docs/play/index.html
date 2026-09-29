@@ -12025,16 +12025,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       built.hemi.intensity=s.hemiI;
     }
     paintSky(s);
-    /* Scar haze (#32), eased like the snow so walking into a scar thickens
-       the air over a few steps rather than on one. */
-    var hzNow=hazeFor(plateMode?null:scarsUnderView()), mixTo=hzNow.mix, farTo=hzNow.far;
-    /* A storm of something (#102) colours the air with it. */
-    var stc=STORM_HAZE[plateMode?'':partMode(s,domUnderView())];
-    if(stc){ hzNow.col=stc; mixTo=Math.max(mixTo,0.75*Math.min(1,s.rain*1.2)); }
-    if(mixTo>0){ hazeCol[0]=hzNow.col[0]; hazeCol[1]=hzNow.col[1]; hazeCol[2]=hzNow.col[2]; }
-    hazeMix=force?mixTo:hazeMix+(mixTo-hazeMix)*0.25; hazeFar=force?farTo:hazeFar+(farTo-hazeFar)*0.25;
-    if(built.scene.fog) built.scene.fog.color.setRGB(s.fogCol[0]+(hazeCol[0]-s.fogCol[0])*hazeMix,
-      s.fogCol[1]+(hazeCol[1]-s.fogCol[1])*hazeMix,s.fogCol[2]+(hazeCol[2]-s.fogCol[2])*hazeMix);
+    /* The air — scar haze, a storm's colour, snow cover — is followed every
+       frame (airFrame), not here: at a step every two seconds it thickened
+       in visible steps, and trailed the player across a border. */
+    if(force) airFrame(0,true);
     if(built.gmat){
       var gu=built.gmat.uniforms;
       gu.uSun.value.copy(sunDirV);
@@ -12049,10 +12043,6 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     SKY_U.uCloud.value=s.cloud; SKY_U.uWet.value=s.wetness;
     gradeAndMist(s);
     var dom=plateMode?0:domUnderView();
-    var snowTo=dom===QS.BIO.RIME?Math.min(1,s.wetness*1.3):0;
-    if(!plateMode&&DBG.wx==='snow') snowTo=1;
-    skySnow=force?snowTo:skySnow+(snowTo-skySnow)*0.25;
-    SKY_U.uSnow.value=skySnow;
     var p=built.parts;
     if(p){
       var mode=plateMode?'':partMode(s,dom), md=PART_MODES[mode];
@@ -12111,9 +12101,37 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var rk=0.55+0.5*s.day;
     RIM_MAT.color.setRGB(Math.min(1,s.skyHorizon[0]*rk+0.12),Math.min(1,s.skyHorizon[1]*rk+0.12),Math.min(1,s.skyHorizon[2]*rk+0.14));
   }
+  /**
+   * The air where the view is, per frame: how far the fog leans to a scar's
+   * colour or a storm's, how much of the view it takes, and how much snow
+   * lies on up-facing ground. Asked of the field under the view each frame —
+   * its weights blend across a border over a few metres — and eased with a
+   * time constant of AIR_EASE seconds, so crossing into the rime thickens
+   * the air smoothly and leaving clears it about as fast as walking out.
+   */
+  var AIR_EASE=0.7;
+  function airFrame(dt,snap){
+    if(!built) return;
+    var s=skyNow, w=plateMode?null:scarsUnderView(), hz=hazeFor(w), mixTo=hz.mix, farTo=hz.far, col=hz.col;
+    /* A storm of something (#102) colours the air with it. */
+    var stc=STORM_HAZE[plateMode?'':partMode(s,domUnderView())];
+    if(stc){ col=stc; mixTo=Math.max(mixTo,0.75*Math.min(1,s.rain*1.2)); }
+    /* Snow lies by how much of the ground is rime, not by which biome wins. */
+    var rw=w?(w[QS.BIO.RIME]||0):0, rk=Math.max(0,Math.min(1,(rw-0.3)/0.4));
+    var snowTo=plateMode?0:rk*rk*(3-2*rk)*Math.min(1,s.wetness*1.3);
+    if(!plateMode&&DBG.wx==='snow') snowTo=1;
+    var k=snap?1:1-Math.exp(-dt/AIR_EASE);
+    /* The colour eases too, so leaving one scar for another blends them. */
+    if(mixTo>0) for(var c=0;c<3;c++) hazeCol[c]+=(col[c]-hazeCol[c])*(hazeMix<0.01?1:k);
+    hazeMix+=(mixTo-hazeMix)*k; hazeFar+=(farTo-hazeFar)*k; skySnow+=(snowTo-skySnow)*k;
+    SKY_U.uSnow.value=skySnow;
+    if(built.scene.fog) built.scene.fog.color.setRGB(s.fogCol[0]+(hazeCol[0]-s.fogCol[0])*hazeMix,
+      s.fogCol[1]+(hazeCol[1]-s.fogCol[1])*hazeMix,s.fogCol[2]+(hazeCol[2]-s.fogCol[2])*hazeMix);
+  }
   /** Per frame: fog that follows the zoom, drifting clouds, moving motes. */
   function skyFrame(dt){
     if(!built) return;
+    airFrame(dt,false);
     if(plateMode) SKY_U.uCloudOff.value.set(0,0);
     else SKY_U.uCloudOff.value.addScaledVector(wind,-dt*0.09);
     SKY_U.uMistOff.value.copy(SKY_U.uCloudOff.value).multiplyScalar(1.6);
@@ -17772,6 +17790,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     partModeFor:function(s,domKey){ var B=QS.BIO; return partMode(s,B[domKey.toUpperCase()]); },
     /** Vents in view, and a launch on demand — the gate cannot wait on chance. */
     bombNow:function(anywhere){ return wxBombLaunch(!!anywhere); },
+    /** The air, started from `from` and followed n frames of dt: how the gate
+        sees whether crossing a border thickens it smoothly and soon. */
+    airSteps:function(from,dt,n){ hazeMix=from; skySnow=from; var out=[];
+      for(var i=0;i<n;i++){ airFrame(dt,false); out.push([hazeMix,skySnow]); } return out; },
     /** The air, advanced by dt seconds without drawing a frame: the gate
         watches a storm for a minute this way, not at a frame a second. */
     wxStep:function(dt){ applySky(false); wxFrame(dt); fxFrame(dt); return this.wx; },
