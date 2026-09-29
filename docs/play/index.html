@@ -11167,6 +11167,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     }
     return false;
   }
+  /** How far the ground on the camera's side stands above the line of
+      sight to the top of the head, at most: the gate's measure of a bank. */
+  function cutDepth(a){
+    var V=QS.V, py=a.y+1.7, d=-Infinity;
+    for(var t=0.5;t<30;t+=V){
+      var y=py-cutF.y*t; if(y>QS.CEIL) break;
+      var top=terrainTop(a.x-cutF.x*t,a.z-cutF.z*t); if(top===null) break;
+      if(top-y>d) d=top-y;
+    }
+    return d;
+  }
   function cutEase(q,want){
     if(DBG.cutFreeze&&!cutSnap&&!plateMode) return cutS[q];
     cutS[q]=cutSnap?want:cutS[q]+(want-cutS[q])*0.2;
@@ -17561,8 +17572,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* The cut's dark faces shown or not, for the gate to diff a frame both ways. */
     setCaps:function(on){ capOff=!on; return !!on; },
     /* Stand the player on flat ground where the ground on the camera's side
-       hides even the top of their head, somewhere loaded near where they
-       are: a place the cut has to open on rock. Null if there is none. */
+       hides even the top of their head by a metre or more, somewhere loaded
+       near where they are: a place the cut has to open on rock. A bank that
+       only just hides the head leaves the faces a sliver to cover, and a
+       check of them nothing to measure. Null if there is none. */
     cutSpot:function(){
       var a=player(); if(!a) return null; camera.getWorldDirection(cutF);
       for(var r=0;r<=40;r+=1)for(var i=-r;i<=r;i++)for(var j=-r;j<=r;j++){
@@ -17571,7 +17584,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         for(var u=-0.5;ok&&u<=0.5;u+=0.25)for(var v=-0.5;ok&&v<=0.5;v+=0.25){ var t=terrainTop(x+u,z+v); if(t===null||Math.abs(t-y)>0.01) ok=false; }
         if(!ok) continue;
         var was=[a.x,a.y,a.z]; a.x=x; a.z=z; a.y=y;
-        if(!cutOcc(a)){ a.x=was[0]; a.y=was[1]; a.z=was[2]; continue; }
+        if(!cutOcc(a)||cutDepth(a)<1){ a.x=was[0]; a.y=was[1]; a.z=was[2]; continue; }
         a.vx=a.vy=a.vz=0; a.grounded=true; cutSnap=true;
         return [x,y,z];
       }

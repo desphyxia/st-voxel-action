@@ -2438,7 +2438,11 @@ if (BROWSER_HALF) {
              move its mean by a level or two, and the check passed or failed
              on a rounding. At 10 m they take it from ~105 to ~75. */
           const view = P.cam.view; P.cam.view = 10; P.frameOnce();
-          const at = P.cutSpot(); if (!at) { P.cam.view = view; return null; }
+          /* The spot can be a way off, and the checks after this one expect
+             the player where they left them: put them back afterwards. */
+          const a = P.actor, was = [a.x, a.y, a.z];
+          const back = () => { a.x = was[0]; a.y = was[1]; a.z = was[2]; a.vx = a.vy = a.vz = 0; P.cam.view = view; P.frameOnce(); };
+          const at = P.cutSpot(); if (!at) { back(); return null; }
           /* Under a calm sky: the seed's third spell is a storm (#102), and
              its fog and a flash between the two frames are not the cut. */
           P.setSky('noon', undefined, true);
@@ -2452,10 +2456,10 @@ if (BROWSER_HALF) {
             for (let i = 0; i < px.length; i += 4) { const v = (px[i] + px[i + 1] + px[i + 2]) / 3; n++; l += v; if (v > 200) pale++; }
             return { px, l: l / n, pale: pale / n };
           };
-          const on = sample(true), off = sample(false); P.setCaps(true); P.setSky('noon', undefined, false); P.cam.view = view;
+          const on = sample(true), off = sample(false); P.setCaps(true); P.setSky('noon', undefined, false); const cut = P.cut; back();
           let c = 0; for (let i = 0; i < on.px.length; i += 4)
             if (Math.abs(on.px[i] - off.px[i]) + Math.abs(on.px[i + 1] - off.px[i + 1]) + Math.abs(on.px[i + 2] - off.px[i + 2]) > 30) c++;
-          return { at, cut: P.cut, on: { l: on.l, pale: on.pale }, off: { l: off.l, pale: off.pale }, changed: c / (on.px.length / 4) };
+          return { at, cut, on: { l: on.l, pale: on.pale }, off: { l: off.l, pale: off.pale }, changed: c / (on.px.length / 4) };
         });
         check(!!cap && cap.cut.a === 1 && cap.changed > 0.03 && cap.on.l < cap.off.l && cap.on.pale < 0.02,
               'VISIBILITY: and where it cuts through rock, the cut face is drawn dark, not the sky',
