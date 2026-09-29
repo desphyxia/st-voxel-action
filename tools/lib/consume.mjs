@@ -132,7 +132,6 @@ export const ONE_SIDED = [
   'OX->play',         /* the window's origin, added back for the where-am-I label */
   'OZ->play',
   'bridges->play',    /* a deck is wood underfoot: the sound gate finds one (#36) */
-  'lmPos->plate',
   'ovhPos->plate',
   'sites->play',      /* where a trail was routed to: the debug dialog's feature map (#92) */
   'propStart->play',  /* where terrain ends and props begin — the mesher's split (#12) */
