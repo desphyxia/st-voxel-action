@@ -2425,39 +2425,6 @@ if (BROWSER_HALF) {
                 `open ground: cut ${vis.openCut}; behind a wall: cut ${vis.wallCut}`);
         }
 
-        /* The cut face. Terrain has no inside, so a cut through a bank showed
-           the sky where the rock had been: a pale stain that read as low
-           ground. Where the ground on the camera's side hides even the top of
-           the head, the cut opens, and its dark faces cover what it opened: with
-           them the hole is darker than without, and no brighter than the
-           ground round the player. */
-        const cap = await bp.evaluate(() => {
-          const P = window.QSPLAY, cv = document.querySelector('#cv'), gl = cv.getContext('webgl2') || cv.getContext('webgl');
-          const at = P.cutSpot(); if (!at) return null;
-          /* Under a calm sky: the seed's third spell is a storm (#102), and
-             its fog and a flash between the two frames are not the cut. */
-          P.setSky('noon', undefined, true);
-          const sample = (caps) => {
-            P.setCaps(caps); P.frameOnce(); P.frameOnce(); P.draw();
-            const s = P.screen(), k = cv.width / cv.clientWidth;
-            const w = Math.round(120 * k), h = Math.round(120 * k);
-            const x0 = Math.max(0, Math.round((s.x - 60) * k)), y0 = Math.max(0, Math.round(cv.height - (s.y + 40) * k));
-            const px = new Uint8Array(w * h * 4); gl.readPixels(x0, y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
-            let n = 0, l = 0, pale = 0;
-            for (let i = 0; i < px.length; i += 4) { const v = (px[i] + px[i + 1] + px[i + 2]) / 3; n++; l += v; if (v > 200) pale++; }
-            return { px, l: l / n, pale: pale / n };
-          };
-          const on = sample(true), off = sample(false); P.setCaps(true); P.setSky('noon', undefined, false);
-          let c = 0; for (let i = 0; i < on.px.length; i += 4)
-            if (Math.abs(on.px[i] - off.px[i]) + Math.abs(on.px[i + 1] - off.px[i + 1]) + Math.abs(on.px[i + 2] - off.px[i + 2]) > 30) c++;
-          return { at, cut: P.cut, on: { l: on.l, pale: on.pale }, off: { l: off.l, pale: off.pale }, changed: c / (on.px.length / 4) };
-        });
-        check(!!cap && cap.cut.a === 1 && cap.changed > 0.03 && cap.on.l < cap.off.l && cap.on.pale < 0.02,
-              'VISIBILITY: and where it cuts through rock, the cut face is drawn dark, not the sky',
-              cap ? `at ${cap.at.map((v) => v.toFixed(1)).join(',')}: cut ${cap.cut.a}; the faces change ${(100 * cap.changed).toFixed(1)}% `
-                + `of the region, ${cap.off.l.toFixed(0)} → ${cap.on.l.toFixed(0)} bright, pale ${(100 * cap.off.pale).toFixed(1)}% → ${(100 * cap.on.pale).toFixed(1)}%`
-                : 'nowhere in reach where the ground hides a head');
-
         /* ---------- BUILD ID: which code a screenshot came from ----------
            GitHub Pages serves this file unstamped and is where the game is
            tested, so the view carries a hash of the page's own code, which
@@ -2557,6 +2524,52 @@ if (BROWSER_HALF) {
                 'LIFE: host and guest see the same fish and butterflies in the same places',
                 `${shared} seen by both, ${worst.toExponential(1)} m apart at most`);
         }
+
+        /* The cut face. Terrain has no inside, so a cut through a bank showed
+           the sky where the rock had been: a pale stain that read as low
+           ground. Where the ground on the camera's side hides even the top of
+           the head, the cut opens, and its dark faces cover what it opened: with
+           them the hole is darker than without, and no brighter than the
+           ground round the player.
+           After LIFE: this stands the host on a bank some way off, and a
+           creature there that reacts to them does so in the host's window
+           only. Putting the player back does not undo that, so it runs once
+           host and guest have been compared. */
+        const cap = await bp.evaluate(() => {
+          const P = window.QSPLAY, cv = document.querySelector('#cv'), gl = cv.getContext('webgl2') || cv.getContext('webgl');
+          /* At the default zoom: the zoom checks leave the camera at 40 m,
+             where the 120 px region spans so much ground that the faces
+             move its mean by a level or two, and the check passed or failed
+             on a rounding. At 10 m they take it from ~105 to ~75. */
+          const view = P.cam.view; P.cam.view = 10; P.frameOnce();
+          /* The spot can be a way off, and the checks after this one expect
+             the player where they left them: put them back afterwards. */
+          const a = P.actor, was = [a.x, a.y, a.z];
+          const back = () => { a.x = was[0]; a.y = was[1]; a.z = was[2]; a.vx = a.vy = a.vz = 0; P.cam.view = view; P.frameOnce(); };
+          const at = P.cutSpot(); if (!at) { back(); return null; }
+          /* Under a calm sky: the seed's third spell is a storm (#102), and
+             its fog and a flash between the two frames are not the cut. */
+          P.setSky('noon', undefined, true);
+          const sample = (caps) => {
+            P.setCaps(caps); P.frameOnce(); P.frameOnce(); P.draw();
+            const s = P.screen(), k = cv.width / cv.clientWidth;
+            const w = Math.round(120 * k), h = Math.round(120 * k);
+            const x0 = Math.max(0, Math.round((s.x - 60) * k)), y0 = Math.max(0, Math.round(cv.height - (s.y + 40) * k));
+            const px = new Uint8Array(w * h * 4); gl.readPixels(x0, y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+            let n = 0, l = 0, pale = 0;
+            for (let i = 0; i < px.length; i += 4) { const v = (px[i] + px[i + 1] + px[i + 2]) / 3; n++; l += v; if (v > 200) pale++; }
+            return { px, l: l / n, pale: pale / n };
+          };
+          const on = sample(true), off = sample(false); P.setCaps(true); P.setSky('noon', undefined, false); const cut = P.cut; back();
+          let c = 0; for (let i = 0; i < on.px.length; i += 4)
+            if (Math.abs(on.px[i] - off.px[i]) + Math.abs(on.px[i + 1] - off.px[i + 1]) + Math.abs(on.px[i + 2] - off.px[i + 2]) > 30) c++;
+          return { at, cut, on: { l: on.l, pale: on.pale }, off: { l: off.l, pale: off.pale }, changed: c / (on.px.length / 4) };
+        });
+        check(!!cap && cap.cut.a === 1 && cap.changed > 0.03 && cap.on.l < cap.off.l && cap.on.pale < 0.02,
+              'VISIBILITY: and where it cuts through rock, the cut face is drawn dark, not the sky',
+              cap ? `at ${cap.at.map((v) => v.toFixed(1)).join(',')}: cut ${cap.cut.a}; the faces change ${(100 * cap.changed).toFixed(1)}% `
+                + `of the region, ${cap.off.l.toFixed(0)} → ${cap.on.l.toFixed(0)} bright, pale ${(100 * cap.off.pale).toFixed(1)}% → ${(100 * cap.on.pale).toFixed(1)}%`
+                : 'nowhere in reach where the ground hides a head');
 
         /* ---------- SETTINGS: the graphics dialog (#70) ----------
            The gear opens it over the view; every row is a way of drawing the
@@ -3201,8 +3214,13 @@ if (BROWSER_HALF) {
           /* An iPhone ended a tab at 30 chunks holding ~25 MB of arrays each,
              most of it grass nobody read again and copies of buffers already
              on the GPU. With grass off what is left is the chunks' own data
-             and the copies of ground not yet drawn, which go when it is. */
-          check(mem.withGrass < 14 && mem.noGrass < mem.withGrass * 0.6 && mem.tilesOff === 0 && mem.tilesOn > 0 && mem.report,
+             and the copies of ground not yet drawn, which go when it is.
+             Grass off must free a real share: at least 1.5 MB a chunk. Not a
+             ratio — what is left depends on which chunks the walk ends on,
+             and since the marshes (#102) it ranges 3.7–4.6 MB on CI, which
+             put a 0.6 ratio on a coin toss while grass freed 2.3–3.1 MB in
+             every run. */
+          check(mem.withGrass < 14 && mem.noGrass <= mem.withGrass - 1.5 && mem.tilesOff === 0 && mem.tilesOn > 0 && mem.report,
                 'MEMORY: and a streamed chunk holds a few MB of arrays, fewer with grass off, and the report says so',
                 `${mem.withGrass.toFixed(1)} MB a chunk with grass, ${mem.noGrass.toFixed(1)} without (was ~25); `
                 + `grass tiles ${mem.tilesOff} off, ${mem.tilesOn} back on; held memory ${mem.report ? 'in' : 'NOT in'} the report`);
@@ -3560,14 +3578,37 @@ if (BROWSER_HALF) {
             'WEATHER: light runs along the shards\' edges',
             `${glass.wx.edgePaths.length} traced props in view (${[...new Set(glass.wx.edgePaths)].join(', ')}); `
             + `${glass.wx.edgesMade} runs, ${JSON.stringify(glass.wx.edgeKinds)}`);
+      const wispsBefore = await wxp.evaluate(() => window.QSPLAY.wx.wispsMade);
       const marsh = await wxIn(cfgOf('thorn'), 'night', 'Clear', 20);
-      check(marsh.wx.marshPts > 0 && marsh.wx.bubbles > 0 && marsh.wx.wisps > 0,
+      /* Wisps made, not wisps alive: each lives 8-16 s and the next comes at
+         about one in two seconds, so at any one instant there can be none. */
+      check(marsh.wx.marshPts > 0 && marsh.wx.bubbles > 0 && marsh.wx.wispsMade - wispsBefore > 0,
             'WEATHER: a marsh bubbles, and at night its wisps drift over it',
-            `${marsh.wx.marshPts} marsh points in view, ${marsh.wx.bubbles} bubbles, ${marsh.wx.wisps} wisps`);
+            `${marsh.wx.marshPts} marsh points in view, ${marsh.wx.bubbles} bubbles, ${marsh.wx.wispsMade - wispsBefore} wisps in 20 s (${marsh.wx.wisps} at the end)`);
       const bow = await wxIn(cfgOf('meadow'), 'noon', 'Rainbow', 10);
       check(bow.wx.rainbow > 0.5,
             'WEATHER: as rain clears under a sun, a rainbow',
             `rainbow at ${bow.wx.rainbow.toFixed(2)}`);
+      /* The air follows the ground every frame, not in two-second steps, and
+         settles in about two seconds rather than a quarter at a time — so
+         walking into the rime thickens it smoothly, and walking out clears
+         it before the next biome is reached. */
+      const air = await wxp.evaluate((cfg) => {
+        const P = window.QSPLAY, dlg = document.getElementById('dbg');
+        P.grow(cfg); P.setSky('noon', 0, false);
+        const b = [...dlg.querySelectorAll('.seg[data-k="wx"] button')].find((x) => x.textContent === 'Snow'); if (b) b.click();
+        P.wxStep(0.01);
+        const steps = P.airSteps(0, 1 / 60, 180), to = steps[steps.length - 1];
+        let jump = 0;
+        for (let i = 1; i < steps.length; i++) jump = Math.max(jump, steps[i][0] - steps[i - 1][0], steps[i][1] - steps[i - 1][1]);
+        const at2 = steps[119];
+        const reset = [...dlg.querySelectorAll('.seg[data-k="wx"] button')].find((x) => x.textContent === 'Seed'); if (reset) reset.click();
+        return { hazeTo: to[0], snowTo: to[1], haze2: at2[0], snow2: at2[1], jump };
+      }, cfgOf('rime'));
+      check(air.hazeTo > 0.2 && air.snowTo > 0.9 && air.haze2 >= 0.9 * air.hazeTo && air.snow2 >= 0.9 * air.snowTo && air.jump < 0.05,
+            'WEATHER: walking into the rime, the air and the snow come in smoothly and within a couple of seconds',
+            `haze ${air.haze2.toFixed(2)} of ${air.hazeTo.toFixed(2)} and snow ${air.snow2.toFixed(2)} of ${air.snowTo.toFixed(2)} after 2 s; `
+            + `largest change in one frame ${air.jump.toFixed(3)}`);
       check(wxErr.length === 0, 'WEATHER: and none of it errors', wxErr.slice(0, 2).join(' | '));
       await wxp.close();
     }

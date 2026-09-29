@@ -11167,6 +11167,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     }
     return false;
   }
+  /** How far the ground on the camera's side stands above the line of
+      sight to the top of the head, at most: the gate's measure of a bank. */
+  function cutDepth(a){
+    var V=QS.V, py=a.y+1.7, d=-Infinity;
+    for(var t=0.5;t<30;t+=V){
+      var y=py-cutF.y*t; if(y>QS.CEIL) break;
+      var top=terrainTop(a.x-cutF.x*t,a.z-cutF.z*t); if(top===null) break;
+      if(top-y>d) d=top-y;
+    }
+    return d;
+  }
   function cutEase(q,want){
     if(DBG.cutFreeze&&!cutSnap&&!plateMode) return cutS[q];
     cutS[q]=cutSnap?want:cutS[q]+(want-cutS[q])*0.2;
@@ -12025,16 +12036,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       built.hemi.intensity=s.hemiI;
     }
     paintSky(s);
-    /* Scar haze (#32), eased like the snow so walking into a scar thickens
-       the air over a few steps rather than on one. */
-    var hzNow=hazeFor(plateMode?null:scarsUnderView()), mixTo=hzNow.mix, farTo=hzNow.far;
-    /* A storm of something (#102) colours the air with it. */
-    var stc=STORM_HAZE[plateMode?'':partMode(s,domUnderView())];
-    if(stc){ hzNow.col=stc; mixTo=Math.max(mixTo,0.75*Math.min(1,s.rain*1.2)); }
-    if(mixTo>0){ hazeCol[0]=hzNow.col[0]; hazeCol[1]=hzNow.col[1]; hazeCol[2]=hzNow.col[2]; }
-    hazeMix=force?mixTo:hazeMix+(mixTo-hazeMix)*0.25; hazeFar=force?farTo:hazeFar+(farTo-hazeFar)*0.25;
-    if(built.scene.fog) built.scene.fog.color.setRGB(s.fogCol[0]+(hazeCol[0]-s.fogCol[0])*hazeMix,
-      s.fogCol[1]+(hazeCol[1]-s.fogCol[1])*hazeMix,s.fogCol[2]+(hazeCol[2]-s.fogCol[2])*hazeMix);
+    /* The air — scar haze, a storm's colour, snow cover — is followed every
+       frame (airFrame), not here: at a step every two seconds it thickened
+       in visible steps, and trailed the player across a border. */
+    if(force) airFrame(0,true);
     if(built.gmat){
       var gu=built.gmat.uniforms;
       gu.uSun.value.copy(sunDirV);
@@ -12049,10 +12054,6 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     SKY_U.uCloud.value=s.cloud; SKY_U.uWet.value=s.wetness;
     gradeAndMist(s);
     var dom=plateMode?0:domUnderView();
-    var snowTo=dom===QS.BIO.RIME?Math.min(1,s.wetness*1.3):0;
-    if(!plateMode&&DBG.wx==='snow') snowTo=1;
-    skySnow=force?snowTo:skySnow+(snowTo-skySnow)*0.25;
-    SKY_U.uSnow.value=skySnow;
     var p=built.parts;
     if(p){
       var mode=plateMode?'':partMode(s,dom), md=PART_MODES[mode];
@@ -12111,9 +12112,37 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var rk=0.55+0.5*s.day;
     RIM_MAT.color.setRGB(Math.min(1,s.skyHorizon[0]*rk+0.12),Math.min(1,s.skyHorizon[1]*rk+0.12),Math.min(1,s.skyHorizon[2]*rk+0.14));
   }
+  /**
+   * The air where the view is, per frame: how far the fog leans to a scar's
+   * colour or a storm's, how much of the view it takes, and how much snow
+   * lies on up-facing ground. Asked of the field under the view each frame —
+   * its weights blend across a border over a few metres — and eased with a
+   * time constant of AIR_EASE seconds, so crossing into the rime thickens
+   * the air smoothly and leaving clears it about as fast as walking out.
+   */
+  var AIR_EASE=0.7;
+  function airFrame(dt,snap){
+    if(!built) return;
+    var s=skyNow, w=plateMode?null:scarsUnderView(), hz=hazeFor(w), mixTo=hz.mix, farTo=hz.far, col=hz.col;
+    /* A storm of something (#102) colours the air with it. */
+    var stc=STORM_HAZE[plateMode?'':partMode(s,domUnderView())];
+    if(stc){ col=stc; mixTo=Math.max(mixTo,0.75*Math.min(1,s.rain*1.2)); }
+    /* Snow lies by how much of the ground is rime, not by which biome wins. */
+    var rw=w?(w[QS.BIO.RIME]||0):0, rk=Math.max(0,Math.min(1,(rw-0.3)/0.4));
+    var snowTo=plateMode?0:rk*rk*(3-2*rk)*Math.min(1,s.wetness*1.3);
+    if(!plateMode&&DBG.wx==='snow') snowTo=1;
+    var k=snap?1:1-Math.exp(-dt/AIR_EASE);
+    /* The colour eases too, so leaving one scar for another blends them. */
+    if(mixTo>0) for(var c=0;c<3;c++) hazeCol[c]+=(col[c]-hazeCol[c])*(hazeMix<0.01?1:k);
+    hazeMix+=(mixTo-hazeMix)*k; hazeFar+=(farTo-hazeFar)*k; skySnow+=(snowTo-skySnow)*k;
+    SKY_U.uSnow.value=skySnow;
+    if(built.scene.fog) built.scene.fog.color.setRGB(s.fogCol[0]+(hazeCol[0]-s.fogCol[0])*hazeMix,
+      s.fogCol[1]+(hazeCol[1]-s.fogCol[1])*hazeMix,s.fogCol[2]+(hazeCol[2]-s.fogCol[2])*hazeMix);
+  }
   /** Per frame: fog that follows the zoom, drifting clouds, moving motes. */
   function skyFrame(dt){
     if(!built) return;
+    airFrame(dt,false);
     if(plateMode) SKY_U.uCloudOff.value.set(0,0);
     else SKY_U.uCloudOff.value.addScaledVector(wind,-dt*0.09);
     SKY_U.uMistOff.value.copy(SKY_U.uCloudOff.value).multiplyScalar(1.6);
@@ -12702,7 +12731,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     else if(built&&built.data) add(built.data,0,0);
     return out;
   }
-  var MARSH={bubNext:0,bubbles:0,wisps:[],at:null,atT:-1};
+  var MARSH={bubNext:0,bubbles:0,wisps:[],wispsMade:0,at:null,atT:-1};
   function wxMarsh(dt,s){
     if(plateMode){ MARSH.wisps.length=0; return; }
     /* The points in view, looked up twice a second rather than every frame. */
@@ -12718,6 +12747,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var want=GFX.glow&&s.day<0.3?Math.min(3,1+Math.floor(pts.length/40)):0;
     if(MARSH.wisps.length<want&&Math.random()<dt*0.5){
       var q=pts[Math.floor(Math.random()*pts.length)];
+      MARSH.wispsMade++;
       MARSH.wisps.push({x:q[0],y:q[1]+0.6,z:q[2],t:0,T:8+8*Math.random(),ph:Math.random()*6.28,vx:(Math.random()-0.5)*0.4,vz:(Math.random()-0.5)*0.4});
     }
     for(var i=MARSH.wisps.length-1;i>=0;i--){
@@ -17543,17 +17573,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* The cut's dark faces shown or not, for the gate to diff a frame both ways. */
     setCaps:function(on){ capOff=!on; return !!on; },
     /* Stand the player on flat ground where the ground on the camera's side
-       hides even the top of their head, somewhere loaded near where they
-       are: a place the cut has to open on rock. Null if there is none. */
+       hides even the top of their head by a metre or more, the nearest such
+       place to the world's spawn — wherever the checks before this one left
+       them — so the gate always measures the same bank: a place the cut has
+       to open on rock. A bank that
+       only just hides the head leaves the faces a sliver to cover, and a
+       check of them nothing to measure. Null if there is none. */
     cutSpot:function(){
-      var a=player(); if(!a) return null; camera.getWorldDirection(cutF);
+      var a=player(); if(!a||!built) return null; camera.getWorldDirection(cutF);
+      var sx=Math.round(built.data.spawn[0]), sz=Math.round(built.data.spawn[2]);
       for(var r=0;r<=40;r+=1)for(var i=-r;i<=r;i++)for(var j=-r;j<=r;j++){
         if(Math.max(Math.abs(i),Math.abs(j))!==r) continue;
-        var x=Math.round(a.x)+i+0.5, z=Math.round(a.z)+j+0.5, y=terrainTop(x,z), ok=y!==null;
+        var x=sx+i+0.5, z=sz+j+0.5, y=terrainTop(x,z), ok=y!==null;
         for(var u=-0.5;ok&&u<=0.5;u+=0.25)for(var v=-0.5;ok&&v<=0.5;v+=0.25){ var t=terrainTop(x+u,z+v); if(t===null||Math.abs(t-y)>0.01) ok=false; }
         if(!ok) continue;
         var was=[a.x,a.y,a.z]; a.x=x; a.z=z; a.y=y;
-        if(!cutOcc(a)){ a.x=was[0]; a.y=was[1]; a.z=was[2]; continue; }
+        if(!cutOcc(a)||cutDepth(a)<1){ a.x=was[0]; a.y=was[1]; a.z=was[2]; continue; }
         a.vx=a.vy=a.vz=0; a.grounded=true; cutSnap=true;
         return [x,y,z];
       }
@@ -17766,12 +17801,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
                       devils:WX.devils.length,devilsMade:WX.devilsMade,bursts:WX.bursts,
                       aurora:WX.aurora,rainbow:WX.rainbow,bits:BITS.n,fog:wxFogK(),rainOnWater:SKY_U.uRain.value,
                       edgeRuns:EDGE.runs.length,edgesMade:EDGE.made,edgeKinds:EDGE.byKind,
-                      marshPts:MARSH.at?MARSH.at.length:0,bubbles:MARSH.bubbles,wisps:MARSH.wisps.length,
+                      marshPts:MARSH.at?MARSH.at.length:0,bubbles:MARSH.bubbles,wisps:MARSH.wisps.length,wispsMade:MARSH.wispsMade,
                       edgePaths:edgesInView(skyNow).map(function(c){ return c.e.kind.k; })}; },
     /** Which motes a sky and a biome make, without a world to stand in. */
     partModeFor:function(s,domKey){ var B=QS.BIO; return partMode(s,B[domKey.toUpperCase()]); },
     /** Vents in view, and a launch on demand — the gate cannot wait on chance. */
     bombNow:function(anywhere){ return wxBombLaunch(!!anywhere); },
+    /** The air, started from `from` and followed n frames of dt: how the gate
+        sees whether crossing a border thickens it smoothly and soon. */
+    airSteps:function(from,dt,n){ hazeMix=from; skySnow=from; var out=[];
+      for(var i=0;i<n;i++){ airFrame(dt,false); out.push([hazeMix,skySnow]); } return out; },
     /** The air, advanced by dt seconds without drawing a frame: the gate
         watches a storm for a minute this way, not at a frame a second. */
     wxStep:function(dt){ applySky(false); wxFrame(dt); fxFrame(dt); return this.wx; },
