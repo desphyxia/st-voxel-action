@@ -11471,6 +11471,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   var skyNow=QS.skyAt(0,0), sunDirV=new THREE.Vector3(-16,26,12).normalize();
   var SKY_FIXES=[null,0.27,0.5,0.73,0.02], SKY_NAMES=['auto','dawn','noon','dusk','night'];
   var SKY_CLEAR={cloud:0,rain:0,wetness:0};
+  /* The glow pass's layer, and the particle modes that are light (#99):
+     declared here because the first world is built before the pass is. */
+  var GLOW_LAYER=1, GLOW_MODES={embers:1,fireflies:1,glint:1,spores:1};
   /* The debug dialog's state (#92), here rather than with the dialog because
      the sky, the cutaway and the loop all read it from the first world on. */
   var DBG_DEF={wx:'',borders:false,skirt:false,cut:'auto',cutRing:false,cutFreeze:false,noOutline:false,
@@ -11694,6 +11697,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(p){
       var mode=plateMode?'':partMode(s,dom), md=PART_MODES[mode];
       skyMode=mode; p.visible=!!md;
+      /* Embers, fireflies, glints and spores glow (#99); rain and dust do not. */
+      if(GLOW_MODES[mode]) p.layers.enable(GLOW_LAYER); else p.layers.disable(GLOW_LAYER);
       if(md){
         var u=p.material.uniforms;
         u.uCol.value.setRGB(md.col[0],md.col[1],md.col[2]);
@@ -11936,9 +11941,139 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(!a.grounded&&!a.inWater) return;
     var key=a.inWater?'splash':(kind==='sentry'?'metal':QS.MATERIALS[matUnder(a.x,a.y,a.z)].step);
     if(key==='none') return;
+    /* A puff of the ground at the foot, or a little spray in the shallows. */
+    if(key==='splash') fxEmit(a.x,a.y+0.25,a.z,4,0xd6ecf2,0.8,1.6,0.08,0.45,8);
+    else fxEmit(a.x,a.y+0.04,a.z,kind==='sentry'?3:2,fxGround(a.x,a.y,a.z),0.9,0.55,0.11,0.55,1.2);
     if(o===avatar){ SND.steps++; SND.byKey[key]=(SND.byKey[key]||0)+1; }
     sndPlay(key,a.x,a.z,kind==='sentry'?0.5:(o===avatar?0.7:0.55));
   }
+  /* ---------- dust, splashes and sparks (#99) ----------
+     A puff of the ground's own colour where a foot comes down and a burst
+     where a body lands from a height; spray where one goes into water; sparks
+     where a swing lands. One pool of points, one draw, simulated here in world
+     space with a little gravity — drawn, never read by anything that
+     simulates. The Dust & splashes setting turns it off. */
+  var FX={max:320,n:0,pts:null,px:null,vel:null,age:null,ttl:null,col:null,sz:null,grav:null,made:0,tmp:new THREE.Color()};
+  function fxInit(){
+    var M=FX.max, g=new THREE.BufferGeometry();
+    FX.px=new Float32Array(M*3); FX.col=new Float32Array(M*3); FX.sz=new Float32Array(M); FX.life=new Float32Array(M);
+    FX.vel=new Float32Array(M*3); FX.age=new Float32Array(M); FX.ttl=new Float32Array(M); FX.grav=new Float32Array(M);
+    g.setAttribute('position',new THREE.BufferAttribute(FX.px,3).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('color',new THREE.BufferAttribute(FX.col,3).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('aSize',new THREE.BufferAttribute(FX.sz,1).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('aLife',new THREE.BufferAttribute(FX.life,1).setUsage(THREE.DynamicDrawUsage));
+    g.setDrawRange(0,0);
+    var m=new THREE.ShaderMaterial({transparent:true,depthWrite:false,vertexColors:true,
+      uniforms:{uPx:{value:40}},
+      vertexShader:'attribute float aSize; attribute float aLife; uniform float uPx; varying vec3 vC; varying float vL;\n'
+        +'void main(){ vC=color; vL=aLife; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);\n'
+        +' gl_PointSize=max(1.0,aSize*uPx*(0.6+0.4*aLife)); }',
+      fragmentShader:'varying vec3 vC; varying float vL;\n'
+        +'void main(){ vec2 d=gl_PointCoord-0.5; float r=dot(d,d); if(r>0.25) discard;\n'
+        +' gl_FragColor=vec4(vC,vL*(1.0-r*4.0)*0.85); }'});
+    FX.pts=new THREE.Points(g,m); FX.pts.frustumCulled=false; FX.pts.renderOrder=3;
+    FX.pts.userData.keep=true; FX.pts.userData.kind='fx';
+  }
+  /** Scatter `n` of them from a point: speed across, speed up, size, life. */
+  function fxEmit(x,y,z,n,hex,spd,up,size,ttl,grav){
+    if(!GFX.fx||plateMode||!built) return;
+    if(!FX.pts) fxInit();
+    var c=FX.tmp.setHex(hex);
+    for(var q=0;q<n;q++){
+      var i=FX.n<FX.max?FX.n++:((FX.made++)%FX.max);
+      var a=Math.random()*6.2832, s=spd*(0.4+0.6*Math.random());
+      FX.px[i*3]=x+(Math.random()-0.5)*0.2; FX.px[i*3+1]=y+Math.random()*0.1; FX.px[i*3+2]=z+(Math.random()-0.5)*0.2;
+      FX.vel[i*3]=Math.cos(a)*s; FX.vel[i*3+1]=up*(0.6+0.4*Math.random()); FX.vel[i*3+2]=Math.sin(a)*s;
+      var k=0.85+0.3*Math.random();
+      FX.col[i*3]=Math.min(1,c.r*k); FX.col[i*3+1]=Math.min(1,c.g*k); FX.col[i*3+2]=Math.min(1,c.b*k);
+      FX.sz[i]=size*(0.7+0.6*Math.random()); FX.age[i]=0; FX.ttl[i]=ttl*(0.7+0.6*Math.random()); FX.grav[i]=grav; FX.life[i]=1;
+    }
+  }
+  function fxFrame(dt){
+    if(!FX.pts) return;
+    if(FX.pts.parent!==built.scene){ if(FX.pts.parent) FX.pts.parent.remove(FX.pts); built.scene.add(FX.pts); }
+    var i=0;
+    while(i<FX.n){
+      FX.age[i]+=dt;
+      if(FX.age[i]>=FX.ttl[i]){
+        /* dead: the last one takes its place */
+        var j=--FX.n;
+        if(i!==j){ for(var c=0;c<3;c++){ FX.px[i*3+c]=FX.px[j*3+c]; FX.vel[i*3+c]=FX.vel[j*3+c]; FX.col[i*3+c]=FX.col[j*3+c]; }
+          FX.sz[i]=FX.sz[j]; FX.age[i]=FX.age[j]; FX.ttl[i]=FX.ttl[j]; FX.grav[i]=FX.grav[j]; }
+        continue;
+      }
+      FX.vel[i*3+1]-=FX.grav[i]*dt;
+      var drag=Math.max(0,1-dt*2.2);
+      FX.vel[i*3]*=drag; FX.vel[i*3+2]*=drag;
+      FX.px[i*3]+=FX.vel[i*3]*dt; FX.px[i*3+1]+=FX.vel[i*3+1]*dt; FX.px[i*3+2]+=FX.vel[i*3+2]*dt;
+      FX.life[i]=1-FX.age[i]/FX.ttl[i];
+      i++;
+    }
+    var g=FX.pts.geometry;
+    g.setDrawRange(0,FX.n);
+    ['position','color','aSize','aLife'].forEach(function(k){ g.attributes[k].needsUpdate=true; });
+    renderer.getDrawingBufferSize(GLOW.size);
+    FX.pts.material.uniforms.uPx.value=(GLOW.size.y/2)/cam.view;
+    FX.pts.visible=FX.n>0&&!plateMode;
+  }
+  /** The ground's colour under a point, a little lighter: dust is fine grains of it. */
+  function fxGround(x,y,z){
+    var at=worldAt(x,z); if(!at) return 0x9a8a70;
+    var d=at.d, V=QS.V, gi=Math.floor((at.x+d.half)/V), gj=Math.floor((at.z+d.half)/V);
+    if(gi<0||gj<0||gi>=d.NX||gj>=d.NZ) return 0x9a8a70;
+    var hh=d.Hs[gi*d.NZ+gj], sf=QS.surfaceAt(d,gi,gj,Math.floor((hh-0.001)/V));
+    var c=FX.tmp.setHex(QS.PALETTE[sf.pal]);
+    c.r=Math.min(1,c.r*1.15+0.08); c.g=Math.min(1,c.g*1.15+0.08); c.b=Math.min(1,c.b*1.15+0.08);
+    return c.getHex();
+  }
+  /** One body's events, from how it is drawn this frame: landing and water. */
+  function fxBody(o,a){
+    if(!a.grounded&&!a.inWater) o.fxPeak=Math.max(o.fxPeak===undefined?a.y:o.fxPeak,a.y);
+    if(a.grounded&&o.fxAir&&o.fxPeak!==undefined&&o.fxPeak-a.y>0.9)
+      fxEmit(a.x,a.y+0.05,a.z,Math.min(18,6+Math.round((o.fxPeak-a.y)*3)),fxGround(a.x,a.y,a.z),2.2,1.4,0.16,0.7,3.5);
+    if(a.inWater&&o.fxDry===true) fxEmit(a.x,a.y+0.3,a.z,14,0xd6ecf2,1.6,3.2,0.12,0.8,9);
+    if(a.grounded||a.inWater) o.fxPeak=undefined;
+    o.fxAir=!a.grounded&&!a.inWater; o.fxDry=!a.inWater;
+  }
+
+  /* ---------- the opening flyover (#99) ----------
+     On load the camera comes down from the landmark to where you stand, a few
+     seconds, and hands over. Any key or tap skips it. Not for a guest, whose
+     world is someone else's; not in a plate; not when a browser is being
+     driven by the gate, which has to see the spawn at once. */
+  var FLY={on:false,t:0,dur:4.8,from:null,to:null,v0:0,v1:0};
+  function flyStart(force){
+    if(plateMode||session||role==='guest'||(navigator.webdriver&&!force)) return false;
+    if(/[?&]flyover=0/.test(location.search)) return false;
+    var a=player(); if(!a||!built||!built.data) return false;
+    var lm=built.data.lmPos, dx, dz;
+    if(lm){ dx=lm[0]-a.x; dz=lm[2]-a.z; }
+    else { dx=-18; dz=-22; }
+    /* Never further than the ground that exists yet. */
+    var l=Math.sqrt(dx*dx+dz*dz)||1, k=Math.min(1,26/l);
+    FLY.from={x:a.x+dx*k,y:a.y+4,z:a.z+dz*k}; FLY.to={x:a.x,y:a.y,z:a.z};
+    FLY.v1=cam.view; FLY.v0=Math.min(cam.view*1.9,22);
+    FLY.t=0; FLY.on=true;
+    QS.warpTo(cam,FLY.from.x,FLY.from.y,FLY.from.z); QS.setView(cam,FLY.v0);
+    return true;
+  }
+  function flyEnd(){
+    if(!FLY.on) return;
+    FLY.on=false; QS.setView(cam,FLY.v1);
+    var a=player(); if(a) QS.warpTo(cam,a.x,a.y,a.z);
+  }
+  function flyFrame(dt){
+    if(!FLY.on) return;
+    FLY.t+=dt;
+    var u=Math.min(1,FLY.t/FLY.dur), e=u<0.5?4*u*u*u:1-Math.pow(-2*u+2,3)/2;
+    QS.warpTo(cam,FLY.from.x+(FLY.to.x-FLY.from.x)*e,FLY.from.y+(FLY.to.y-FLY.from.y)*e,FLY.from.z+(FLY.to.z-FLY.from.z)*e);
+    QS.setView(cam,FLY.v0+(FLY.v1-FLY.v0)*e);
+    if(u>=1) flyEnd();
+  }
+  ['keydown','pointerdown','touchstart','wheel'].forEach(function(ev){
+    window.addEventListener(ev,function(){ if(FLY.on) flyEnd(); },{passive:true,capture:true});
+  });
+
   /** Per frame: the beds follow the wind, the height and the water near. */
   function sndFrame(){
     var a=player();
@@ -12242,7 +12377,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       for(i=0;i<data.mpos.length/3;i++)
         if(data.mmat[i]!==QS.MAT.MAGMA&&keep(data.mpos[i*3],data.mpos[i*3+2])) msrc.push(i);
       var mg=magmaSheet(data,keep);
-      if(mg){ var mgm=new THREE.Mesh(mg,mats.magma); mgm.userData.kind='magma'; fitBounds(mgm,0.06); g.add(mgm); }
+      if(mg){ var mgm=new THREE.Mesh(mg,mats.magma); mgm.userData.kind='magma'; mgm.layers.enable(GLOW_LAYER); fitBounds(mgm,0.06); g.add(mgm); }
       if(msrc.length){
         var em=new THREE.InstancedMesh(boxGeo,new THREE.MeshBasicMaterial({vertexColors:true}),msrc.length);
         for(i=0;i<msrc.length;i++){ var mk=msrc[i];
@@ -12250,7 +12385,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
           col.setRGB(QS.palR(data.mpal[mk],data.mshd[mk]),QS.palG(data.mpal[mk],data.mshd[mk]),
                     QS.palB(data.mpal[mk],data.mshd[mk])); em.setColorAt(i,col); }
         em.instanceMatrix.needsUpdate=true; if(em.instanceColor) em.instanceColor.needsUpdate=true;
-        em.userData.kind='emissive'; fitBounds(em,VOX_PAD); g.add(em);
+        em.userData.kind='emissive'; em.layers.enable(GLOW_LAYER); fitBounds(em,VOX_PAD); g.add(em);
       }
     }
 
@@ -12757,6 +12892,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(dead) f.blob.visible=false; else seatBlob(f.blob,m.x,m.y,m.z);
     stride(f,m.x,m.z,QS.SENTRY_STRIDE);
     if(!dead) footfall(f,{x:m.x,y:m.y,z:m.z,grounded:true,inWater:false},'sentry');
+    /* Struck: its hurt timer jumps. Sparks off the metal where it stands. */
+    if(f.fxU!==undefined&&m.u>f.fxU+0.05) fxEmit(m.x,m.y+1.0,m.z,14,0xffc466,3.2,2.6,0.07,0.35,9);
+    f.fxU=m.u;
     if(f.lastH!==undefined&&m.h<f.lastH) sndPlay(dead?'down':'hit',m.x,m.z,1);
     f.lastH=m.h;
     /* The strike is committed the way the player's swing is: its pose is its
@@ -12809,6 +12947,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     seatBlob(av.blob,a.x,a.y,a.z);
     stride(av,a.x,a.z,QS.STRIDE);
     footfall(av,a,'hero');
+    fxBody(av,a);
     var ph=QS.phase(a);
     if(ph===QS.PHASE.ACTIVE&&av.lastPh!==QS.PHASE.ACTIVE) sndPlay('swing',a.x,a.z,av===avatar?0.8:0.6);
     av.lastPh=ph;
@@ -14752,7 +14891,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Hits are a bitmask cleared every tick, and the loop runs several ticks a
        frame — so they have to be read here, not in draw. */
     var hits=player().hits;
-    if(hits) for(var q=0;q<postHits.length;q++) if(hits&(1<<q)){ postHits[q]++; postFlash[q]=0.18; }
+    if(hits) for(var q=0;q<postHits.length;q++) if(hits&(1<<q)){ postHits[q]++; postFlash[q]=0.18;
+      var pt=postMesh&&postMesh.userData.posts[q]; if(pt) fxEmit(pt.x,pt.y+1.0,pt.z,10,0xffe0a0,2.6,2.2,0.07,0.3,9); }
 
     watchPickups();
 
@@ -14841,7 +14981,94 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       shadowKey=sk; renderer.shadowMap.needsUpdate=true;
     }
     renderer.render(built.scene,camera);
+    glowPass();
     dbgAfter();
+  }
+
+  /* ---------- glow (#99) ----------
+     Lamps, magma, glowing props and the particles that are light — embers,
+     fireflies, glints, spores — bloom into the air around them. Selective, so
+     nothing else can: the world is drawn once more at half resolution in flat
+     black, which is only there to hide what stands in front of a light, then
+     the lights alone on top of it, blurred both ways and added over the frame.
+     Grass, ambient life and the dialog's lines are left out of the black pass:
+     they are most of the triangles and they rarely hide a lamp.
+
+     It runs only when something is glowing — lamps lit, magma in the world, a
+     glowing particle mode — so a noon meadow pays nothing for it, and it is a
+     Graphics setting, off on Low and Medium. */
+  var GLOW={a:null,b:null,w:0,h:0,scene:null,cam:null,quad:null,blur:null,add:null,black:null,rev:-1,any:false,ran:0,
+            size:new THREE.Vector2(),skip:{grass:1,life:1,silhouette:1,rim:1,debug:1,cutcap:1,loot:1}};
+  function glowSetup(){
+    GLOW.black=new THREE.MeshBasicMaterial({color:0x000000,fog:false});
+    GLOW.cam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+    GLOW.scene=new THREE.Scene();
+    var vs='varying vec2 vUv; void main(){ vUv=uv; gl_Position=vec4(position.xy,0.0,1.0); }';
+    GLOW.blur=new THREE.ShaderMaterial({uniforms:{tMap:{value:null},uDir:{value:new THREE.Vector2()}},vertexShader:vs,
+      fragmentShader:['uniform sampler2D tMap; uniform vec2 uDir; varying vec2 vUv;',
+        'void main(){ vec3 c=texture2D(tMap,vUv).rgb*0.227;',
+        ' c+=(texture2D(tMap,vUv+uDir*1.385).rgb+texture2D(tMap,vUv-uDir*1.385).rgb)*0.316;',
+        ' c+=(texture2D(tMap,vUv+uDir*3.231).rgb+texture2D(tMap,vUv-uDir*3.231).rgb)*0.070;',
+        ' gl_FragColor=vec4(c,1.0); }'].join('\n'),depthTest:false,depthWrite:false});
+    GLOW.add=new THREE.ShaderMaterial({uniforms:{tMap:{value:null},uK:{value:1}},vertexShader:vs,
+      fragmentShader:'uniform sampler2D tMap; uniform float uK; varying vec2 vUv; void main(){ gl_FragColor=vec4(texture2D(tMap,vUv).rgb*uK,1.0); }',
+      blending:THREE.AdditiveBlending,transparent:true,depthTest:false,depthWrite:false});
+    GLOW.quad=new THREE.Mesh(new THREE.PlaneGeometry(2,2),GLOW.blur); GLOW.quad.frustumCulled=false;
+    GLOW.scene.add(GLOW.quad);
+  }
+  function glowTargets(){
+    renderer.getDrawingBufferSize(GLOW.size);
+    var w=Math.max(8,GLOW.size.x>>1), h=Math.max(8,GLOW.size.y>>1);
+    if(GLOW.a&&GLOW.w===w&&GLOW.h===h) return;
+    if(GLOW.a){ GLOW.a.dispose(); GLOW.b.dispose(); }
+    var o={minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter,format:THREE.RGBAFormat,depthBuffer:true,stencilBuffer:false};
+    GLOW.a=new THREE.WebGLRenderTarget(w,h,o); GLOW.b=new THREE.WebGLRenderTarget(w,h,{minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter,format:THREE.RGBAFormat,depthBuffer:false});
+    GLOW.w=w; GLOW.h=h;
+  }
+  /** Is anything glowing? Re-read when the world changes, not every frame. */
+  function glowWanted(){
+    if(GLOW.rev!==worldRev){
+      GLOW.rev=worldRev; GLOW.any=false;
+      built.scene.traverse(function(o){ if(o.userData.kind==='magma'||o.userData.kind==='emissive') GLOW.any=true; });
+    }
+    return GLOW.any||skyNow.lamps>0.05||!!GLOW_MODES[skyMode];
+  }
+  function glowPass(){
+    if(!GFX.glow||plateMode||!built||!glowWanted()) return;
+    if(!GLOW.quad) glowSetup();
+    glowTargets();
+    var hid=[], bg=built.scene.background, fog=built.scene.fog, auto=renderer.autoClear, sm=renderer.shadowMap.needsUpdate;
+    built.scene.traverse(function(o){ if(GLOW.skip[o.userData.kind]&&o.visible){ o.visible=false; hid.push(o); } });
+    renderer.shadowMap.needsUpdate=false;
+    built.scene.background=null; built.scene.fog=null;
+    renderer.setRenderTarget(GLOW.a); renderer.setClearColor(0x000000,1); renderer.clear(true,true,false);
+    built.scene.overrideMaterial=GLOW.black; renderer.render(built.scene,camera); built.scene.overrideMaterial=null;
+    renderer.autoClear=false;
+    camera.layers.set(GLOW_LAYER); renderer.render(built.scene,camera); camera.layers.set(0);
+    for(var q=0;q<hid.length;q++) hid[q].visible=true;
+    built.scene.background=bg; built.scene.fog=fog;
+    /* Blurred across and down three times, each wider. A small light is a few
+       pixels, and blurred wide alone it spread to nothing (a peak of 14 in
+       255): so the tight blur is added too — a core — and the wide one around
+       it is the halo. */
+    var U=GLOW.blur.uniforms, g=1.0-0.55*skyNow.day;
+    var addOn=function(k){
+      renderer.setRenderTarget(null);
+      GLOW.quad.material=GLOW.add; GLOW.add.uniforms.tMap.value=GLOW.a.texture; GLOW.add.uniforms.uK.value=k;
+      renderer.render(GLOW.scene,GLOW.cam);
+    };
+    for(var pass=0;pass<3;pass++){
+      var k=pass===0?1.0:(pass===1?2.4:4.5);
+      GLOW.quad.material=GLOW.blur;
+      U.tMap.value=GLOW.a.texture; U.uDir.value.set(k/GLOW.w,0);
+      renderer.setRenderTarget(GLOW.b); renderer.render(GLOW.scene,GLOW.cam);
+      U.tMap.value=GLOW.b.texture; U.uDir.value.set(0,k/GLOW.h);
+      renderer.setRenderTarget(GLOW.a); renderer.render(GLOW.scene,GLOW.cam);
+      if(pass===0) addOn(0.9*g);
+    }
+    addOn(3.2*g);
+    renderer.autoClear=auto; renderer.shadowMap.needsUpdate=sm; renderer.setClearColor(0x0b0f14,1);
+    GLOW.ran++;
   }
 
   var acc=0, last=0, frames=0, fpsAt=0, wasConnected=false, wasLost=false, paused=false;
@@ -14913,6 +15140,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var guard=0;
     if(paused) acc=0;
     else if(metro) acc=0;                          /* hidden: the metronome steps it */
+    else if(FLY.on){ acc=0; flyFrame(dt); }        /* the opening flyover holds the game */
     else while(acc>=TICK&&guard++<8){ tick(); acc-=TICK; }
     /* A frame that ran its eight ticks and still owes more carries at most
        another frame's worth. Carried without limit, a slow stretch — a
@@ -14939,7 +15167,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         : '<b>Back.</b> Playing together again.',true);
     }
     if(!built) return;
-    applySky(false); skyFrame(dt);
+    applySky(false); skyFrame(dt); fxFrame(dt);
     if(streaming) followSun();
 
     frames++;
@@ -15036,6 +15264,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       regen(seedin.value||'QUARTERSTONE');
       syncStreamBtn(); syncGrassCtl(); drawFps();
       recSnap(); checkLastSession(false);
+      flyStart();
     };
     /* ---------- streaming by default, where it can be done off-thread ----------
        A streamed chunk costs this thread ~7 ms now (#64), inside a frame — but
@@ -16653,6 +16882,22 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        STUN is asked (nowhere, in a sandbox with no route out), and what the
        connection and the background metronome are doing. */
     netInvite:netInvite, netAccept:netAccept, netReply:netReply, metroSync:metroSync,
+    /** The opening flyover (#99): start it by hand — the gate is never shown
+        one on its own — and whether it is running. */
+    flyStart:function(){ return flyStart(true); }, get flying(){ return FLY.on; },
+    /** Dust and sparks alive right now. */
+    get fxAlive(){ return FX.n; },
+    /** How many times the glow pass has run (#99). */
+    get glowRan(){ return GLOW.ran; },
+    /** The glow buffer's brightest pixel and how many pixels hold any glow,
+        after the last pass: for the gate, which cannot see the halo itself. */
+    glowPeek:function(){
+      if(!GLOW.a) return null;
+      var px=new Uint8Array(GLOW.w*GLOW.h*4), mx=0, lit=0;
+      renderer.readRenderTargetPixels(GLOW.a,0,0,GLOW.w,GLOW.h,px);
+      for(var q=0;q<px.length;q+=4){ var v=Math.max(px[q],px[q+1],px[q+2]); if(v>mx) mx=v; if(v>8) lit++; }
+      return {max:mx,lit:lit,of:GLOW.w*GLOW.h};
+    },
     /** The rules a game of two runs under (#93), as this window has them. */
     get rules(){ return session&&session.rules?session.rules:null; },
     netConfig:function(o){ if(o.ice) net.ice=o.ice; if(o.gather!==undefined) net.gather=o.gather; },
