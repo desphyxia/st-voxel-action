@@ -89,7 +89,7 @@ import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
-         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { chunkWorld } from '../src/gen/chunk.mjs';
@@ -431,6 +431,7 @@ if (NODE_HALF) for (const r of netSuite()) check(r.ok, `NET: ${r.label}`, r.deta
 if (NODE_HALF) for (const r of await rtcSuite()) check(r.ok, `RTC: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of await grassBiomeSuite()) check(r.ok, `GRASS: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of contactShadeSuite()) check(r.ok, `MESH: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of await crossingSuite()) check(r.ok, `CROSS: ${r.label}`, r.detail);
 
 /* ---------- VOX: the authored hero, issue #34 ----------
    The first hand-authored model. What has to hold for it to replace the
@@ -551,11 +552,11 @@ if (NODE_HALF) {
         /* The property that actually matters is not "there is water, so there
            must be a bridge" — a river you never have to cross needs nothing.
            It is that the route never asks you to swim: wherever a trail cell
-           sits on water, there is a crossing. The old form passed vacuously on
+           sits on water, there is a crossing — a deck or stepping stones. The old form passed vacuously on
            meadow, whose window happened to contain no water at all. */
-        check(m.wetTrail === 0 || m.bridges > 0,
+        check(m.wetTrail === 0 || m.bridges > 0 || m.stones > 0,
               `SANITY: ${m.seed} a trail over water has a crossing`,
-              `${m.wetTrail} trail cells in water, ${m.bridges} crossings, `
+              `${m.wetTrail} trail cells in water, ${m.bridges} bridges and ${m.stones} stepping stones, `
               + `${m.waterCells} water cells in all`);
         /* Issue #43: the router spends an A* keeping the trail walkable, and
            props were stamped on top of it afterwards — a boulder could stand

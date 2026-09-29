@@ -4924,3 +4924,83 @@ export function contactShadeSuite() {
       + `${a.faces} faces either way, ${a.quads} quads against ${b.quads}`);
   return out;
 }
+
+/* -------------------------------------------------------------- crossings ---- */
+
+/**
+ * Two ways across that #55 left open. Ashfall's magma cut its trail network in
+ * pieces, and a route that could not lay a deck waded; now the one is crossed
+ * on a causeway of rock at the banks' height and the other on stepping stones.
+ * Over the nine golden seeds, as windows see them.
+ */
+export async function crossingSuite() {
+  const { GOLDEN_SEEDS } = await import('./harness.mjs');
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  let stones = 0, wet = 0, far = 0, high = 0, paved = 0, magmaLeft = 0, pavedSteps = 0;
+  const bad = [];
+  for (const s of GOLDEN_SEEDS) {
+    const w = buildWorld({ seed: s.seed, size: 64, force: s.force, ox: s.ox, oz: s.oz });
+    const M = w.M, half = w.half, OX = s.ox || 0, OZ = s.oz || 0, idx = (x, z) => { const i = Math.round(x + half), j = Math.round(z + half);
+      return i >= 0 && j >= 0 && i < M && j < M ? i * M + j : -1; };
+    /* The stones the regions under this window laid, in its frame. */
+    const G = makeGen(s.seed, s.force), list = [];
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+      const r = regionAt(G, regionOf(OX) + a, regionOf(OZ) + b);
+      for (const t of r.stones || []) list.push([t[0] - OX, t[1] - OZ, t[2]]);
+    }
+    /* Each placed stone's top, read back from the props the window emitted:
+       the highest prop voxel over the column at its middle. */
+    const V2 = 0.25, NX = w.NX, NZ = w.NZ, tops = new Map();
+    for (let q = w.propStart; q < w.pos.length / 3; q++) {
+      const ci = Math.round((w.pos[q * 3] + half) / V2), cj = Math.round((w.pos[q * 3 + 2] + half) / V2), kk = ci * NZ + cj;
+      const t = w.pos[q * 3 + 1] + V2 / 2; if (!tops.has(kk) || t > tops.get(kk)) tops.set(kk, t);
+    }
+    const col = (x, z) => Math.min(NX - 1, Math.max(0, Math.round((x + half) / V2))) * NZ + Math.min(NZ - 1, Math.max(0, Math.round((z + half) / V2)));
+    const placed = new Map();
+    for (const t of list) {
+      const k = col(t[0], t[1]);
+      if (idx(t[0], t[1]) < 0 || !(w.FLG[k] & 1) || !tops.has(k)) continue;
+      /* Under a deck there are no stones: the bridge is the crossing. */
+      if (w.bridges.some((bb) => Math.abs((t[0] - bb[0]) * bb[2] + (t[1] - bb[1]) * bb[3]) <= bb[4] / 2 + 0.5
+                                 && Math.abs((t[0] - bb[0]) * bb[3] - (t[1] - bb[1]) * bb[2]) <= 1.25)) continue;
+      placed.set(t[0] + ',' + t[1], { x: t[0], z: t[1], top: tops.get(k), wl: w.WL[k] });
+    }
+    for (const t of placed.values()) {
+      stones++;
+      if (t.top - t.wl < 0.1 || t.top - t.wl > 0.45) { wet++; bad.push(`${s.nm} stone at ${t.x},${t.z} top ${t.top.toFixed(2)} over water ${t.wl.toFixed(2)}`); }
+      let next = 0;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const o = placed.get((t.x + dx) + ',' + (t.z + dz));
+        if (o) { if (Math.abs(o.top - t.top) <= MOVE.climb2) next++; continue; }
+        const nk = col(t.x + dx, t.z + dz);
+        if (!(w.FLG[nk] & 1) && Math.abs(w.Hs[nk] - t.top) <= MOVE.climb2) next++;
+      }
+      if (!next) { far++; bad.push(`${s.nm} stone at ${t.x},${t.z} leads nowhere`); }
+    }
+    for (let k = 0; k < w.cells.length; k++) {
+      const c = w.cells[k];
+      if (!c.paved) continue;
+      paved++;
+      if (c.magma) magmaLeft++;
+      const i = (k / M) | 0, j = k % M;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const a = i + di, b = j + dj; if (a < 0 || b < 0 || a >= M || b >= M) continue;
+        const n = w.cells[a * M + b];
+        if (w.trail[a * M + b] && w.trail[k] && !n.water && Math.abs(n.H - c.H) > MOVE.climb2) pavedSteps++;
+      }
+    }
+  }
+  say('a route that wades crosses on stepping stones, each clear of the water and a step from the next',
+      stones > 5 && wet === 0 && far === 0,
+      `${stones} stones over nine seeds; ${wet} awash or too tall, ${far} leading nowhere${bad.length ? ' — ' + bad.slice(0, 3).join('; ') : ''}`);
+  /* And the network it joins: Ashfall's 3x3 block of regions was in pieces. */
+  const ashS = GOLDEN_SEEDS.find((q) => q.nm === 'ash');
+  const ashN = netShape(trailNet(makeGen(ashS.seed, ashS.force), regionOf(ashS.ox), regionOf(ashS.oz)));
+  say('and Ashfall\'s trail is one network across a 3x3 block of regions, magma and all',
+      ashN.pieces === 1, `${ashN.pieces} piece${ashN.pieces === 1 ? '' : 's'} over ${ashN.cells} trail cells`);
+  say('where Ashfall\'s magma cuts a route, a causeway of rock carries it across',
+      paved > 0 && magmaLeft === 0 && pavedSteps === 0,
+      `${paved} causeway cells in the windows, ${magmaLeft} still magma, ${pavedSteps} trail steps onto it past the budget`);
+  return out;
+}

@@ -85,6 +85,10 @@ export const EXEMPT = {
   bridges: 'read by the gate, not by a renderer: the SANITY check counts them '
     + 'per seed, which is how making them route-driven was caught removing them '
     + 'from every world.',
+  stones: 'read by the gate, not by a renderer: the stones are voxels in the '
+    + 'record like any prop, and this list is where they stand, so the TRAIL '
+    + 'check can let them stand on the route and SANITY can count them as a '
+    + 'crossing (#55).',
   mmat: 'the emissive record kept parallel to the solid one — pos/pal/shd/mat '
     + 'against mpos/mpal/mshd/mmat (#28). Only the golden digest reads it. It is '
     + 'the one field of the record that has not yet earned its place, and the '

@@ -19,7 +19,7 @@ import { regionAt, regionsFor, keyX, keyZ, cellKey } from './region.mjs';
 
 export function layRoutes(w) {
   var M = w.M, cells = w.cells, half = w.half, OX = w.OX, OZ = w.OZ, G = w.G;
-  var TRAIL = new Uint8Array(M * M), sites = [], bridges = [], trailPath = [];
+  var TRAIL = new Uint8Array(M * M), sites = [], bridges = [], trailPath = [], stones = [];
 
   /* The window's world-space box, in cell coordinates. */
   var wx0 = -half + OX, wz0 = -half + OZ, wx1 = wx0 + (M - 1), wz1 = wz0 + (M - 1);
@@ -36,6 +36,18 @@ export function layRoutes(w) {
   function inside(x, z) { return idx(x, z) >= 0; }
 
   var q, k;
+
+  /* 0. Causeways (#55): magma a region's route crosses is rock in this
+        window too. Copied, never changed in place — the cell is the field's
+        own object — and before the grading, which has the last word on its
+        height as it does everywhere else. */
+  for (q = 0; q < regions.length; q++) {
+    if (!regions[q].paved) continue;
+    regions[q].paved.forEach(function (h, key) {
+      var at = idx(keyX(key), keyZ(key));
+      if (at >= 0) cells[at] = Object.assign({}, cells[at], { magma: false, H: h, paved: true });
+    });
+  }
 
   /* 1. The cuttings. A graded trail moved the ground under it, and a window
         that did not apply the same moves would have a trail running along a
@@ -82,6 +94,9 @@ export function layRoutes(w) {
       if (!inside(Math.round(b[0]), Math.round(b[1]))) continue;
       bridges.push([b[0] - OX, b[1] - OZ, b[2], b[3], b[4], b[5]]);
     }
+    /* Stepping stones, window-local metres to the middle of their cell. */
+    var st = regions[q].stones || [];
+    for (k = 0; k < st.length; k++) if (inside(st[k][0], st[k][1])) stones.push([st[k][0] - OX, st[k][1] - OZ, st[k][2]]);
   }
 
   /* 4. Encounter affordances (#42), clipped to the window like everything else
@@ -97,7 +112,7 @@ export function layRoutes(w) {
     }
   }
   w.affordances = affordances;
-  w.TRAIL = TRAIL; w.sites = sites; w.bridges = bridges; w.trailPath = trailPath;
+  w.TRAIL = TRAIL; w.sites = sites; w.bridges = bridges; w.trailPath = trailPath; w.stones = stones;
   /* The regions this window is a view onto, so later passes can read the
      landmark without deciding one of their own. */
   w.regions = regions;

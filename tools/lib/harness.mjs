@@ -185,7 +185,7 @@ export function measureWorld(d, name) {
      but lands on the terrain lattice, so it never reaches this test.
 
      A crossing is exempt because a deck belongs on the trail — that is what it
-     is for. */
+     is for — and so is a stepping stone (#55). */
   let trailProps = 0;
   {
     /* Inlined rather than imported: this function is stringified into the page
@@ -202,6 +202,8 @@ export function measureWorld(d, name) {
       }
       return false;
     };
+    const stones = d.stones || [];
+    const onStone = (x, z) => stones.some((t) => Math.abs(x - t[0]) <= 0.5 && Math.abs(z - t[1]) <= 0.5);
     for (let q = 0; q < d.pos.length; q += 3) {
       const x = d.pos[q], y = d.pos[q + 1], z = d.pos[q + 2];
       /* half-offset means terrain, so only whole-V positions are stamps */
@@ -214,7 +216,7 @@ export function measureWorld(d, name) {
               + Math.min(NZ - 1, Math.max(0, Math.round((z + half) / VV - 0.5)));
       const surf = d.Hs[k];
       if (y < surf - 0.3 || y > surf + 1.8) continue;          /* the walkable band */
-      if (onDeck(x, z)) continue;
+      if (onDeck(x, z) || onStone(x, z)) continue;
       trailProps++;
     }
   }
@@ -288,6 +290,7 @@ export function measureWorld(d, name) {
     trailCells: trail,
     wetTrail,
     bridges: d.bridges.length,
+    stones: (d.stones || []).length,
     landmark: !!d.lmPos,
     overhang: !!d.ovhPos,
     unreachPct: +(100 * unreach / d.unreach.length).toFixed(1),
