@@ -89,7 +89,7 @@ import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
 import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
-         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
+         carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, marshSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
 import { chunkWorld } from '../src/gen/chunk.mjs';
@@ -432,6 +432,7 @@ if (NODE_HALF) for (const r of await rtcSuite()) check(r.ok, `RTC: ${r.label}`, 
 if (NODE_HALF) for (const r of await grassBiomeSuite()) check(r.ok, `GRASS: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of contactShadeSuite()) check(r.ok, `MESH: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of await crossingSuite()) check(r.ok, `CROSS: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of await marshSuite()) check(r.ok, `MARSH: ${r.label}`, r.detail);
 
 /* ---------- VOX: the authored hero, issue #34 ----------
    The first hand-authored model. What has to hold for it to replace the
@@ -3492,6 +3493,78 @@ if (BROWSER_HALF) {
       check(mg.hot > 150 && mg.moved > mg.hot * 0.1,
             'MAGMA: and it moves',
             `${mg.hot} molten pixels in the frame, ${mg.moved} changed between two moments 1.5 s apart`);
+      /* ---------- WEATHER: storms, bombs, light and marshes (#102) ----------
+         One page, a window grown for each biome with that biome forced, and
+         the air stepped without drawing — a minute of storm is 600 steps, not
+         600 frames. What a storm is in each biome; lightning that strikes and
+         draws a bolt; bombs out of the magma that come down in magma; devils on
+         the mesa; the aurora over the rime at night; spore bursts; light
+         travelling a shard's edges; a marsh's bubbles and its wisps at night;
+         a rainbow as the rain clears. */
+      const wxp = await browser.newPage({ viewport: { width: 640, height: 400 } });
+      const wxErr = [];
+      wxp.on('pageerror', (e) => wxErr.push(e.message));
+      await wxp.goto(`file://${preparePage({ target: PLAY_TARGET, outDir: OUT, name: 'weather.html' })}?stream=0`,
+                     { waitUntil: 'domcontentloaded', timeout: PATIENCE });
+      await wxp.waitForFunction(() => !!(window.QSPLAY && window.QSPLAY.ready), null, { timeout: PATIENCE });
+      const cfgOf = (nm) => { const g = GOLDEN_SEEDS.find((q) => q.nm === nm); return { seed: g.seed, size: 64, force: g.force }; };
+      const wxIn = (cfg, sky, wx, secs, fn) => wxp.evaluate(([cfg, sky, wx, secs, fn]) => {
+        const P = window.QSPLAY, dlg = document.getElementById('dbg');
+        P.grow(cfg); P.setGfx('fx', true); P.setGfx('glow', true);
+        const b = [...dlg.querySelectorAll('.seg[data-k="wx"] button')].find((x) => x.textContent === wx); if (b) b.click();
+        P.setSky(sky, 0, false);
+        const out = { bits: 0, flash: 0, launched: 0 };
+        P.wxStep(0.01);       /* the first step clears what the last world left in the air */
+        if (fn === 'bombs') for (let q = 0; q < 6; q++) out.launched += P.bombNow(true) ? 1 : 0;
+        for (let i = 0; i < secs * 10; i++) { P.run(6); const w = P.wxStep(0.1); out.bits = Math.max(out.bits, w.bits); out.flash = Math.max(out.flash, w.flash); }
+        out.wx = P.wx; out.vents = P.ventsAll;
+        const reset = [...dlg.querySelectorAll('.seg[data-k="wx"] button')].find((x) => x.textContent === 'Seed'); if (reset) reset.click();
+        return out;
+      }, [cfg, sky, wx, secs, fn]);
+      const modes = await wxp.evaluate(() => {
+        const P = window.QSPLAY, S = { rain: 1, storm: 1, cloud: 0.95, day: 1, phase: 0.5 };
+        return ['meadow', 'ash', 'mesa', 'rime', 'spore'].map((k) => k + ':' + P.partModeFor(S, k)).join(' ');
+      });
+      check(modes === 'meadow:storm ash:ashstorm mesa:duststorm rime:blizzard spore:storm',
+            'WEATHER: a storm is the biome\'s own — thunder on green ground, ash in the burn, dust on the mesa, a blizzard in the rime',
+            modes);
+      const storm = await wxIn(cfgOf('meadow'), 'noon', 'Storm', 40);
+      check(storm.wx.strikes > 0 && storm.flash > 0.5 && storm.bits > 10 && storm.wx.rainOnWater > 0.5 && storm.wx.mode === 'storm',
+            'WEATHER: lightning strikes in a storm, flashes and draws its bolt, and rain rings the water',
+            `${storm.wx.strikes} strikes in 40 s, brightest flash ${storm.flash.toFixed(2)}, ${storm.bits} blocks of light at most; `
+            + `rain on the water ${storm.wx.rainOnWater.toFixed(2)}, air "${storm.wx.mode}"`);
+      /* The golden ash window, where the magma is known to be. */
+      const ash = await wxIn({ seed: s.seed, size: 64, force: s.force, ox: s.ox, oz: s.oz }, 'noon', 'Clear', 4, 'bombs');
+      check(ash.launched > 0 && ash.wx.landed === ash.launched && ash.wx.offMagma === 0 && ash.bits > 0,
+            'WEATHER: magma throws bombs that arc and come down in magma, never on rock',
+            `${ash.vents} vents; ${ash.launched} thrown, ${ash.wx.landed} came down, ${ash.wx.offMagma} of them off the magma; ${ash.bits} blocks of light at most`);
+      const mesa = await wxIn(cfgOf('mesa'), 'noon', 'Storm', 30);
+      check(mesa.wx.mode === 'duststorm' && mesa.wx.devilsMade > 0 && mesa.wx.fog < 1,
+            'WEATHER: the mesa storms dust, not rain, and dust devils wander it',
+            `air "${mesa.wx.mode}", fog pulled to ${mesa.wx.fog}, ${mesa.wx.devilsMade} devils`);
+      const rime = await wxIn(cfgOf('rime'), 'night', 'Clear', 20);
+      check(rime.wx.aurora > 0.3,
+            'WEATHER: over the rime on a clear night, the aurora',
+            `aurora ${rime.wx.aurora.toFixed(2)} after 20 s`);
+      const spore = await wxIn(cfgOf('spore'), 'noon', 'Clear', 20);
+      check(spore.wx.bursts > 0,
+            'WEATHER: the bloom\'s lit towers let go of spores now and then',
+            `${spore.wx.bursts} bursts in 20 s`);
+      const glass = await wxIn(cfgOf('glass'), 'noon', 'Clear', 12);
+      check(glass.wx.edgesMade > 0 && (glass.wx.edgeKinds.glass || 0) > 0,
+            'WEATHER: light runs along the shards\' edges',
+            `${glass.wx.edgePaths.length} traced props in view (${[...new Set(glass.wx.edgePaths)].join(', ')}); `
+            + `${glass.wx.edgesMade} runs, ${JSON.stringify(glass.wx.edgeKinds)}`);
+      const marsh = await wxIn(cfgOf('thorn'), 'night', 'Clear', 20);
+      check(marsh.wx.marshPts > 0 && marsh.wx.bubbles > 0 && marsh.wx.wisps > 0,
+            'WEATHER: a marsh bubbles, and at night its wisps drift over it',
+            `${marsh.wx.marshPts} marsh points in view, ${marsh.wx.bubbles} bubbles, ${marsh.wx.wisps} wisps`);
+      const bow = await wxIn(cfgOf('meadow'), 'noon', 'Rainbow', 10);
+      check(bow.wx.rainbow > 0.5,
+            'WEATHER: as rain clears under a sun, a rainbow',
+            `rainbow at ${bow.wx.rainbow.toFixed(2)}`);
+      check(wxErr.length === 0, 'WEATHER: and none of it errors', wxErr.slice(0, 2).join(' | '));
+      await wxp.close();
     }
 
     /* ---------- LOOK: does the world still look like itself? (#29) ----------

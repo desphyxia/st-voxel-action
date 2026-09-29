@@ -64,10 +64,13 @@ export function skyWord(seed) {
  */
 export function spellAt(seed, n) {
   const r = skyHash(seed, n, 0x51);
-  if (r < 0.34) return { cloud: 0.1 * skyHash(seed, n, 0x52), rain: 0 };
-  if (r < 0.67) return { cloud: 0.35 + 0.25 * skyHash(seed, n, 0x53), rain: 0 };
+  if (r < 0.34) return { cloud: 0.1 * skyHash(seed, n, 0x52), rain: 0, storm: 0 };
+  if (r < 0.67) return { cloud: 0.35 + 0.25 * skyHash(seed, n, 0x53), rain: 0, storm: 0 };
   const wet = skyHash(seed, n, 0x54) < 0.5;
-  return { cloud: 0.75 + 0.2 * skyHash(seed, n, 0x55), rain: wet ? 0.6 + 0.4 * skyHash(seed, n, 0x56) : 0 };
+  /* Of the rain, a little under half is a storm (#102): the same rain, with
+     lightning in it. Its own salt, so no spell's cloud or rain moved. */
+  const storm = wet && skyHash(seed, n, 0x57) < 0.45 ? 1 : 0;
+  return { cloud: 0.75 + 0.2 * skyHash(seed, n, 0x55), rain: wet ? 0.6 + 0.4 * skyHash(seed, n, 0x56) : 0, storm };
 }
 
 /**
@@ -82,6 +85,7 @@ export function weatherAt(seed, seconds) {
   const a = spellAt(seed, n), b = spellAt(seed, n + 1);
   const k = skySmooth(0.8, 1.0, f);
   const cloud = a.cloud + (b.cloud - a.cloud) * k, rain = a.rain + (b.rain - a.rain) * k;
+  const storm = a.storm + (b.storm - a.storm) * k;
   /* Wet: each of the last four spells' rain, fading with how long ago it
      stopped. Rain that is falling now counts in full. */
   let wet = 0;
@@ -91,7 +95,42 @@ export function weatherAt(seed, seconds) {
     const since = q === 0 ? 0 : (s - (n - q + 1));        /* spells since it ended */
     wet = Math.max(wet, sp.rain * skyClamp(1 - since / 2.5));
   }
-  return { cloud, rain, wetness: skyClamp(wet) };
+  /* How long since rain last fell, in spells, for a rainbow as it clears:
+     0 while it rains, and large when it has not rained lately. */
+  let dry = 9;
+  for (let q = 0; q < 3; q++) if (spellAt(seed, n - q).rain) { dry = q === 0 ? 0 : s - (n - q + 1); break; }
+  return { cloud, rain, wetness: skyClamp(wet), storm, dry };
+}
+
+/** Seconds a flash of lightning takes to die away. */
+export const FLASH_SECONDS = 0.45;
+
+/**
+ * Lightning at `seconds` (#102): how bright the flash is now (0..1), which
+ * strike it is, and two numbers 0..1 that say where it falls. Pure, like the
+ * weather: a strike is decided by the seed and the second it lands in, so both
+ * players see the same flash at the same moment without a byte on the wire.
+ * Only a storm has any, about one every seven seconds at its height; a
+ * strike flickers — a bright stroke, a dip, a second stroke — then fades.
+ * `wx`, if given, is the weather to use instead of the seed's.
+ */
+export function lightningAt(seed, seconds, wx) {
+  seed = skyWord(seed);
+  const w = wx || weatherAt(seed, seconds);
+  const none = { flash: 0, id: -1, u: 0, v: 0, age: 0 };
+  if (!(w.storm > 0.5)) return none;
+  const now = Math.floor(seconds);
+  for (let q = 0; q < 2; q++) {
+    const sec = now - q;
+    if (skyHash(seed, sec, 0x61) >= 0.15) continue;
+    const at = sec + 0.8 * skyHash(seed, sec, 0x62), age = seconds - at;
+    if (age < 0 || age > FLASH_SECONDS) continue;
+    const t = age / FLASH_SECONDS;
+    /* Two strokes: full, a dip at a fifth of the way, a second at 0.7. */
+    const flicker = t < 0.12 ? 1 : (t < 0.22 ? 0.25 : (t < 0.36 ? 0.7 : 0.7 * (1 - (t - 0.36) / 0.64)));
+    return { flash: flicker, id: sec, u: skyHash(seed, sec, 0x63), v: skyHash(seed, sec, 0x64), age };
+  }
+  return none;
 }
 
 /**
@@ -136,6 +175,7 @@ export function skyAt(seconds, seed, wx) {
     hemiSky, hemiGround, hemiI,
     /* Lamps come on before the sun is down and go off after it is up. */
     lamps: 1 - skySmooth(0.02, 0.2, up),
-    cloud: w.cloud, rain: w.rain, wetness: w.wetness,
+    cloud: w.cloud, rain: w.rain, wetness: w.wetness, storm: w.storm || 0,
+    dry: w.dry === undefined ? 9 : w.dry,
   };
 }

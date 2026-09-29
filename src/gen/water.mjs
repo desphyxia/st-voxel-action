@@ -11,6 +11,7 @@
 import { V, DIRS4, clamp } from './constants.mjs';
 import { hyp } from './exact.mjs';
 import { groundCellAt } from './ground.mjs';
+import { BIO } from './biomes.mjs';
 
 /* ---------- water is held by its banks (issue #57) ----------
    The field lays a river 0.75 m deep in a bed cut a metre into the ground, and
@@ -251,7 +252,7 @@ export function flowField(w) {
 export function buildWaterGeometry(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, WL = w.WL, FLG = w.FLG, half = w.half,
       cellAt = w.cellAt, i, j, k, x, z, y;
-  var wv=[],wi=[],wd=[],wf=[],wfl=[],wn=0;
+  var wv=[],wi=[],wd=[],wf=[],wfl=[],wm=[],wn=0,murk=0;
   /* Everything a quad carries is given per corner: depth, foam and flow. A
      fall carries depth 0 at its lip and 1 at its base, so the shader knows how
      far the water has dropped, and foam 2 on all four corners. A surface quad
@@ -260,7 +261,7 @@ export function buildWaterGeometry(w) {
      like the level, runs across the surface without a seam. */
   function wquad(q,dep,foam,fl){
     for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]);
-      wd.push(dep[a]); wf.push(foam[a]); wfl.push(fl[a*2],fl[a*2+1]); }
+      wd.push(dep[a]); wf.push(foam[a]); wfl.push(fl[a*2],fl[a*2+1]); wm.push(murk); }
     wi.push(wn,wn+2,wn+1, wn,wn+3,wn+2); wn+=4;
   }
   var WDIR=[[1,0],[-1,0],[0,1],[0,-1]];
@@ -318,6 +319,9 @@ export function buildWaterGeometry(w) {
   for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
     k=i*NZ+j; if(!(FLG[k]&1)) continue;
     x=-half+i*V; z=-half+j*V; y=WL[k];
+    /* Murk (#102): a marsh's water is brown-green and still, and the bloom's
+       is its bog. Per quad, from the cell the column stands in. */
+    var mc=cellAt(x+V/2,z+V/2); murk=mc&&mc.marsh?1:(mc&&mc.dom===BIO.SPORE?0.8:0);
     var dd2, c00=corner(i,j,y), c10=corner(i+1,j,y), c11=corner(i+1,j+1,y), c01=corner(i,j+1,y);
     wquad([x,c00[0],z, x+V,c10[0],z, x+V,c11[0],z+V, x,c01[0],z+V],[c00[1],c10[1],c11[1],c01[1]],
           [c00[2],c10[2],c11[2],c01[2]],[c00[3],c00[4],c10[3],c10[4],c11[3],c11[4],c01[3],c01[4]]);
@@ -339,5 +343,5 @@ export function buildWaterGeometry(w) {
       wquad([ex0,u0,ez0, ex1,u1,ez1, ex1,l1,ez1, ex0,l0,ez0],FALL_DEP,FALL_FOAM,[di3,dj3,di3,dj3,di3,dj3,di3,dj3]);
     }
   }
-  w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl };
+  w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl, m: wm };
 }

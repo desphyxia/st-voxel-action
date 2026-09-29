@@ -106,7 +106,10 @@ what a hit is worth and what a module is worth at the same time.
 
 **Four natural biomes**, in the climate field: Meadowlands · Redrock Mesa · Cloudpine
 Highlands · Thornwood. (Boreal Fen and Frostmoor are dropped — they overlapped their scar
-counterparts and wasted contrast.)
+counterparts and wasted contrast.) **Marshes stay, as a place rather than a biome** (#102): low,
+flat, wet ground in Meadowlands and Thornwood breaks into wadeable standing water half a metre
+deep between grassy hummocks, one level per marsh, crossed on stepping stones or a deck where a
+route meets it. Sporeverge's slow water is its bog.
 
 **Four scars**, painted as an **overlay on the climate field** rather than as biomes of their
 own, so a scar can cut across several biomes and you can still see what the land used to be
@@ -128,7 +131,7 @@ underneath:
 | Biome traversal features | **Each biome has one way the ground stands in your way.** Redrock Mesa: mesas, tables with sheer 4–6 m sides reached by stepping-stone routes of 1 m rises. Cloudpine: cliff bands climbed by ledge lines. Thornwood: thickets with fallen-log shortcuts. Ashfall: basalt column fields over magma. Rimewaste: ice and crevasses. Sporeverge: fungal towers of shelf steps. Glasslands: shard fields crossed on vitrified plates. Meadowlands: low walls and hedges. A feature counts as traversable only if the reach pass finds a route under the movement budget; the generator adds stones or breaches until it does |
 | Seeing into the ground | **A cutaway around each player, and silhouettes through the rest.** Terrain and props in front of a player and above their head are cut away inside a dithered oval, cut faces shown dark; players, machines and loot are drawn as silhouettes wherever they are hidden. Shadows are cast by the whole world. Deep ground is not playable without it |
 | Materials | Full material ids driving audio, carve hardness, flammability, conduction, friction, emission |
-| Weather | Full day/night and weather; rain wets materials, snow accumulates, fog for distance |
+| Weather | Full day/night and weather; rain wets materials, snow accumulates, fog for distance. **A storm is the sky's too** (#102): some rain carries lightning, struck by the seed and the second so both players see the same flash. What a storm makes of a biome is that biome's — thunder over green ground, ash in the burn, dust on the mesa, a blizzard in the rime. Display only: nothing in the simulation reads it yet |
 | Terrain edits | Persist near settlements; wilderness heals over a few in-game days |
 | Scar hazards | **A distinct hazard per scar** — ashfall burns and blocks sight, rime drains stamina and freezes water, spores infect over time. Each scar is a place you prepare for differently |
 | Navigation | A map you fill by walking |

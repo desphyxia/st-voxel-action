@@ -794,7 +794,7 @@ function posStream(sw, x, z, salt) {
  */
 const PASS = {
   SPAN: 1, VOX: 2, GRASS: 3, TREE: 4, CLUTTER: 5, SCREE: 6,
-  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12, THICKET: 13, SHARD: 14, HEDGE: 15, NUB: 16, STONE: 17,
+  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12, THICKET: 13, SHARD: 14, HEDGE: 15, NUB: 16, STONE: 17, MARSH: 18,
 };
 
 /** The seed word a pass draws under. */
@@ -1847,6 +1847,59 @@ function makeGen(seedStr,force){
       }
     return null;
   }
+  /* Marshes (#102). The zone is where the meadow or the thornwood lies low
+     under its own moisture; in it, water stands wherever the hummock noise is
+     low. Two pools that meet only at a corner are joined through it, as a
+     river's are (riverCorner), and a lone cell of water is a hummock — so a
+     marsh is one body of water, never a scatter of puddles touching
+     diagonally. Asked of neighbours, so it is a function of the place alone. */
+  var MARSH_Z=new Map();
+  function marshZone(x,z,w,hm){
+    if(N.s.fbm(x*0.021+57,z*0.021+57,2)<=0.665) return false;
+    var k=(x+32768)*65536+(z+32768), v=MARSH_Z.get(k);
+    if(v!==undefined) return v;
+    v=false;
+    if(!w) w=climate(x,z);
+    if(w[BIO.MEADOW]+w[BIO.THORN]>0.55){
+      if(hm===undefined) hm=macro(x,z,w);
+      var e=rawH(x+6,z), wv=rawH(x-6,z), n=rawH(x,z+6), sv=rawH(x,z-6);
+      /* Low, and flat: a marsh lies still, and on a slope its level would step. */
+      v=hm<(e+wv+n+sv)/4-0.1&&Math.max(e,wv,n,sv)-Math.min(e,wv,n,sv)<1.2;
+      /* Not where the level would round the other way a step on: two
+         marshes at different levels are kept apart by dry ground, never
+         joined water a metre apart. */
+      if(v){ var mm=marshMean(x,z); v=Math.abs(mm-Math.round(mm))<0.3; }
+      /* Three metres clear of any traversal feature — a mesa's apron, a
+         thicket, a hedge — whose climbs and faces are measured from the
+         ground beside them. */
+      for(var a=-3;a<=3&&v;a+=3)for(var b=-3;b<=3&&v;b+=3)
+        if(mesaAt(x+a,z+b)||basaltAt(x+a,z+b)||cliffAt(x+a,z+b)||thornAt(x+a,z+b)||rimeAt(x+a,z+b)||sporeAt(x+a,z+b)||glassAt(x+a,z+b)||meadowAt(x+a,z+b)) v=false;
+    }
+    if(MARSH_Z.size>=CELL_CAP) MARSH_Z.clear();
+    MARSH_Z.set(k,v); return v;
+  }
+  /* The ground a marsh lies in, as a whole metre: the mean of eight points
+     ten metres out. Its water stands half a metre under that and its
+     hummocks at it, so every pool of one marsh is at one level. */
+  var MARSH_RING=[[10,0],[7,7],[0,10],[-7,7],[-10,0],[-7,-7],[0,-10],[7,-7]];
+  function marshMean(x,z){
+    var s=0; for(var q=0;q<8;q++) s+=rawH(x+MARSH_RING[q][0],z+MARSH_RING[q][1]);
+    return s/8;
+  }
+  function marshGround(x,z){ return Math.round(marshMean(x,z)); }
+  function marshLevel(x,z){ return marshGround(x,z)-0.5; }
+  function marshRaw(x,z){ return N.s.fbm(x*0.37+3,z*0.37+11,1)<0.55&&marshZone(x,z); }
+  function marshWet(x,z){
+    if(N.s.fbm(x*0.37+3,z*0.37+11,1)<0.55){
+      for(var q=0;q<4;q++) if(marshRaw(x+DIRS4[q][0],z+DIRS4[q][1])) return true;
+      return false;
+    }
+    for(var q2=0;q2<4;q2++){
+      var dx=(q2<2?1:-1), dz=(q2%2?1:-1);
+      if(marshRaw(x+dx,z)&&marshRaw(x,z+dz)&&!marshRaw(x+dx,z+dz)) return true;
+    }
+    return false;
+  }
   /* one 1 m cell: everything sized in whole metres */
   function cell(x,z){
     var w=climate(x,z);
@@ -1878,6 +1931,20 @@ function makeGen(seedStr,force){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
+    /* A marsh (#102): low, wet ground in the meadow and the thornwood — the
+       fen that was dropped as a biome (docs/DECISIONS.md §5), kept as a place.
+       Where its own moisture field runs high and the land lies no higher than
+       what is around it, the ground breaks into standing water half a metre
+       deep — wadeable — between grassy hummocks that stand just clear of it. */
+    var marsh=false, mwl=0;
+    if(!water&&!ft&&!(c&&c.body)&&marshZone(x,z,w,hm)){
+      /* One level for a marsh's water, from the lie of the land around it and
+         in quarters, so neighbouring pools never step and none stands perched
+         above the rest; a hummock stands a little clear of it. */
+      marsh=true; mwl=marshLevel(x,z);
+      if(marshWet(x,z)) { H=mwl-0.5; water=true; }
+      else H=mwl+0.5;
+    }
     var magma=false;
     /* A river quenches a seam: no magma in or within two metres of one. The
        burn is a scar now and crosses rivers the old ash biome never had, and
@@ -1891,9 +1958,9 @@ function makeGen(seedStr,force){
       if(f<0.022){ H=Math.min(H-1,riverBed(x,z,w)); magma=true; water=false; } }
     if(bs&&bs.h!==null){ H=bs.h; magma=bs.kind===2; water=false; pond=false; }
     H=clamp(H,0,CEIL);
-    if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
+    if(water) wl=marsh?mwl:(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,rime:rs?rs.kind:0,spore:ps?ps.kind:0,glass:gs?gs.kind:0,glassTop:gs&&gs.top?gs.top:0,hedge:ws?ws.kind:0,hedgeTop:ws&&ws.top?ws.top:0,
+    return {w:w,H:H,water:water,pond:pond,marsh:marsh,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,rime:rs?rs.kind:0,spore:ps?ps.kind:0,glass:gs?gs.kind:0,glassTop:gs&&gs.top?gs.top:0,hedge:ws?ws.kind:0,hedgeTop:ws&&ws.top?ws.top:0,
       /* a shelf high enough to walk under: the ground's height under it */
       sporeLo:ps&&ps.kind===2&&H-1>=lo+2?lo:0,
       /* block: a route may not cross it — the thicket and its log's lane */
@@ -1962,12 +2029,12 @@ function makeGen(seedStr,force){
       if(CELLS.size>=CELL_CAP) CELLS.clear();
       c=cell(x,z); CELLS.set(k,c);
     }
-    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,rime:c.rime,spore:c.spore,sporeLo:c.sporeLo,glass:c.glass,glassTop:c.glassTop,hedge:c.hedge,hedgeTop:c.hedgeTop,block:c.block,hold:c.hold,bare:c.bare};
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,marsh:c.marsh,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,rime:c.rime,spore:c.spore,sporeLo:c.sporeLo,glass:c.glass,glassTop:c.glassTop,hedge:c.hedge,hedgeTop:c.hedgeTop,block:c.block,hold:c.hold,bare:c.bare};
   }
   /* A world keeps its generator (w.G) for as long as it lives, and a streamed
      field holds sixteen of them — so the cache is let go when generation ends,
      and whatever reads the field afterwards starts from empty. */
-  function forget(){ CELLS.clear(); }
+  function forget(){ CELLS.clear(); MARSH_Z.clear(); }
   /* The mesa whose top covers (x, z), for a test that wants to walk its
      stones: centre, radii, top, the stones' direction and where each stands. */
   function mesaOver(x,z){
@@ -3308,6 +3375,7 @@ function cutSpans(w) {
 
 
 
+
 /* ---------- water is held by its banks (issue #57) ----------
    The field lays a river 0.75 m deep in a bed cut a metre into the ground, and
    a pond 1.25 m deep, so on level ground the surface sits a quarter-metre under
@@ -3547,7 +3615,7 @@ function flowField(w) {
 function buildWaterGeometry(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, WL = w.WL, FLG = w.FLG, half = w.half,
       cellAt = w.cellAt, i, j, k, x, z, y;
-  var wv=[],wi=[],wd=[],wf=[],wfl=[],wn=0;
+  var wv=[],wi=[],wd=[],wf=[],wfl=[],wm=[],wn=0,murk=0;
   /* Everything a quad carries is given per corner: depth, foam and flow. A
      fall carries depth 0 at its lip and 1 at its base, so the shader knows how
      far the water has dropped, and foam 2 on all four corners. A surface quad
@@ -3556,7 +3624,7 @@ function buildWaterGeometry(w) {
      like the level, runs across the surface without a seam. */
   function wquad(q,dep,foam,fl){
     for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]);
-      wd.push(dep[a]); wf.push(foam[a]); wfl.push(fl[a*2],fl[a*2+1]); }
+      wd.push(dep[a]); wf.push(foam[a]); wfl.push(fl[a*2],fl[a*2+1]); wm.push(murk); }
     wi.push(wn,wn+2,wn+1, wn,wn+3,wn+2); wn+=4;
   }
   var WDIR=[[1,0],[-1,0],[0,1],[0,-1]];
@@ -3614,6 +3682,9 @@ function buildWaterGeometry(w) {
   for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
     k=i*NZ+j; if(!(FLG[k]&1)) continue;
     x=-half+i*V; z=-half+j*V; y=WL[k];
+    /* Murk (#102): a marsh's water is brown-green and still, and the bloom's
+       is its bog. Per quad, from the cell the column stands in. */
+    var mc=cellAt(x+V/2,z+V/2); murk=mc&&mc.marsh?1:(mc&&mc.dom===BIO.SPORE?0.8:0);
     var dd2, c00=corner(i,j,y), c10=corner(i+1,j,y), c11=corner(i+1,j+1,y), c01=corner(i,j+1,y);
     wquad([x,c00[0],z, x+V,c10[0],z, x+V,c11[0],z+V, x,c01[0],z+V],[c00[1],c10[1],c11[1],c01[1]],
           [c00[2],c10[2],c11[2],c01[2]],[c00[3],c00[4],c10[3],c10[4],c11[3],c11[4],c01[3],c01[4]]);
@@ -3635,7 +3706,7 @@ function buildWaterGeometry(w) {
       wquad([ex0,u0,ez0, ex1,u1,ez1, ex1,l1,ez1, ex0,l0,ez0],FALL_DEP,FALL_FOAM,[di3,dj3,di3,dj3,di3,dj3,di3,dj3]);
     }
   }
-  w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl };
+  w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl, m: wm };
 }
 /* ---------- src/gen/surface.mjs ---------- */
 /**
@@ -4661,6 +4732,52 @@ function placeMesaNubs(w, kit) {
     }
   }
 }
+
+/**
+ * A marsh's dressing (#102): reeds where water meets a hummock and standing
+ * in the shallows, and now and then a dead snag on a hummock. Reeds are
+ * foliage — soft, a body walks through them — and never stand in a trail.
+ * Lily pads and duckweed are the water's own (the build's water shader), not
+ * voxels: a voxel on the surface is a quarter-metre block, not a leaf.
+ * Drawn from the place, so a marsh on a seam is dressed the same both sides.
+ */
+function placeMarsh(w, kit) {
+  var M = w.M, cells = w.cells, half = w.half, G = w.G, OX = w.OX, OZ = w.OZ,
+      addVox = kit.addVox, surfAt = kit.surfAt, onTrail = kit.onTrail, nearFeature = kit.nearFeature, i, j;
+  function wetAt(a, b) {
+    if (a >= 0 && b >= 0 && a < M && b < M) return cells[a * M + b].water;
+    return groundCellAt(w, -half + a + OX, -half + b + OZ).water;
+  }
+  function reed(px, pz, top, R) {
+    if (onTrail(px, pz)) return;
+    var s = surfAt(px, pz), y;
+    for (y = s.y; y < top - 1e-6; y += V)
+      addVox(px, y + V / 2, pz, y > top - 2 * V && R() < 0.6 ? pickPal(PAL.BUSH_DRY, R) : pickPal(PAL.BUSH_GREEN, R), 0.8 + R() * 0.3, MAT.LEAF);
+  }
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    var c = cells[i * M + j];
+    if (!c.marsh) continue;
+    var R = G.pstream(PASS.MARSH, -half + i + OX, -half + j + OZ);
+    var cx = -half + i, cz = -half + j, edge = false;
+    for (var q = 0; q < 4; q++) if (wetAt(i + DIRS4[q][0], j + DIRS4[q][1]) !== c.water) edge = true;
+    /* Reeds: a clump or two where the water's edge is, fewer out in it. */
+    var clumps = edge ? (R() < 0.7 ? 1 + (R() < 0.4 ? 1 : 0) : 0) : (c.water && R() < 0.15 ? 1 : 0);
+    for (var k = 0; k < clumps; k++) {
+      var ox = Math.round((R() - 0.5) * 3) * V, oz = Math.round((R() - 0.5) * 3) * V, n = 3 + ((R() * 4) | 0);
+      /* In water, from the level this window's water actually stands at —
+         the field's is its ideal, and drained banks bring it down. */
+      var base = surfAt(cx + ox, cz + oz).y;
+      if (c.water) { var wi2 = clamp(Math.round((cx + ox + half) / V), 0, w.NX - 1), wj2 = clamp(Math.round((cz + oz + half) / V), 0, w.NZ - 1);
+        if (w.FLG[wi2 * w.NZ + wj2] & 1) base = w.WL[wi2 * w.NZ + wj2]; }
+      for (var r = 0; r < n; r++) {
+        var rx = cx + ox + Math.round((R() - 0.5) * 3) * V, rz = cz + oz + Math.round((R() - 0.5) * 3) * V;
+        reed(rx, rz, base + 0.5 + R() * 0.75, R);
+      }
+    }
+    /* A snag: the dead tree a marsh drowns, on a hummock, clear of the way. */
+    if (!c.water && R() < 0.05 && !nearFeature(cx, cz) && !onTrail(cx, cz)) kit.tree(cx, cz, BIOMES[c.dom], 'snag', R);
+  }
+}
 /* ---------- src/gen/grass.mjs ---------- */
 /**
  * Grass. One blade cloud per world: position, phase, tint, scale, yaw and two
@@ -4959,6 +5076,7 @@ function buildWorld(cfg) {
   placeMesaNubs(w, kit);        /* a mesa's footholds up its wall */
   scatterProps(w, kit);        /* trees, boulders, canyon arcs */
   placeClutter(w, kit);        /* scree, clutter, the sites, lamps, bridges */
+  placeMarsh(w, kit);          /* a marsh's reeds and snags (#102) */
   placeLandmark(w, kit);       /* one landmark, visible three chunks away */
   buildGrass(w);
   buildWaterGeometry(w);

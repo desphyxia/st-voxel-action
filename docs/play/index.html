@@ -1004,7 +1004,7 @@ function posStream(sw, x, z, salt) {
  */
 const PASS = {
   SPAN: 1, VOX: 2, GRASS: 3, TREE: 4, CLUTTER: 5, SCREE: 6,
-  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12, THICKET: 13, SHARD: 14, HEDGE: 15, NUB: 16, STONE: 17,
+  SITE: 7, LAMP: 8, CROSS: 9, LANDMARK: 10, SPAWN: 11, ARC: 12, THICKET: 13, SHARD: 14, HEDGE: 15, NUB: 16, STONE: 17, MARSH: 18,
 };
 
 /** The seed word a pass draws under. */
@@ -2057,6 +2057,59 @@ function makeGen(seedStr,force){
       }
     return null;
   }
+  /* Marshes (#102). The zone is where the meadow or the thornwood lies low
+     under its own moisture; in it, water stands wherever the hummock noise is
+     low. Two pools that meet only at a corner are joined through it, as a
+     river's are (riverCorner), and a lone cell of water is a hummock — so a
+     marsh is one body of water, never a scatter of puddles touching
+     diagonally. Asked of neighbours, so it is a function of the place alone. */
+  var MARSH_Z=new Map();
+  function marshZone(x,z,w,hm){
+    if(N.s.fbm(x*0.021+57,z*0.021+57,2)<=0.665) return false;
+    var k=(x+32768)*65536+(z+32768), v=MARSH_Z.get(k);
+    if(v!==undefined) return v;
+    v=false;
+    if(!w) w=climate(x,z);
+    if(w[BIO.MEADOW]+w[BIO.THORN]>0.55){
+      if(hm===undefined) hm=macro(x,z,w);
+      var e=rawH(x+6,z), wv=rawH(x-6,z), n=rawH(x,z+6), sv=rawH(x,z-6);
+      /* Low, and flat: a marsh lies still, and on a slope its level would step. */
+      v=hm<(e+wv+n+sv)/4-0.1&&Math.max(e,wv,n,sv)-Math.min(e,wv,n,sv)<1.2;
+      /* Not where the level would round the other way a step on: two
+         marshes at different levels are kept apart by dry ground, never
+         joined water a metre apart. */
+      if(v){ var mm=marshMean(x,z); v=Math.abs(mm-Math.round(mm))<0.3; }
+      /* Three metres clear of any traversal feature — a mesa's apron, a
+         thicket, a hedge — whose climbs and faces are measured from the
+         ground beside them. */
+      for(var a=-3;a<=3&&v;a+=3)for(var b=-3;b<=3&&v;b+=3)
+        if(mesaAt(x+a,z+b)||basaltAt(x+a,z+b)||cliffAt(x+a,z+b)||thornAt(x+a,z+b)||rimeAt(x+a,z+b)||sporeAt(x+a,z+b)||glassAt(x+a,z+b)||meadowAt(x+a,z+b)) v=false;
+    }
+    if(MARSH_Z.size>=CELL_CAP) MARSH_Z.clear();
+    MARSH_Z.set(k,v); return v;
+  }
+  /* The ground a marsh lies in, as a whole metre: the mean of eight points
+     ten metres out. Its water stands half a metre under that and its
+     hummocks at it, so every pool of one marsh is at one level. */
+  var MARSH_RING=[[10,0],[7,7],[0,10],[-7,7],[-10,0],[-7,-7],[0,-10],[7,-7]];
+  function marshMean(x,z){
+    var s=0; for(var q=0;q<8;q++) s+=rawH(x+MARSH_RING[q][0],z+MARSH_RING[q][1]);
+    return s/8;
+  }
+  function marshGround(x,z){ return Math.round(marshMean(x,z)); }
+  function marshLevel(x,z){ return marshGround(x,z)-0.5; }
+  function marshRaw(x,z){ return N.s.fbm(x*0.37+3,z*0.37+11,1)<0.55&&marshZone(x,z); }
+  function marshWet(x,z){
+    if(N.s.fbm(x*0.37+3,z*0.37+11,1)<0.55){
+      for(var q=0;q<4;q++) if(marshRaw(x+DIRS4[q][0],z+DIRS4[q][1])) return true;
+      return false;
+    }
+    for(var q2=0;q2<4;q2++){
+      var dx=(q2<2?1:-1), dz=(q2%2?1:-1);
+      if(marshRaw(x+dx,z)&&marshRaw(x,z+dz)&&!marshRaw(x+dx,z+dz)) return true;
+    }
+    return false;
+  }
   /* one 1 m cell: everything sized in whole metres */
   function cell(x,z){
     var w=climate(x,z);
@@ -2088,6 +2141,20 @@ function makeGen(seedStr,force){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
+    /* A marsh (#102): low, wet ground in the meadow and the thornwood — the
+       fen that was dropped as a biome (docs/DECISIONS.md §5), kept as a place.
+       Where its own moisture field runs high and the land lies no higher than
+       what is around it, the ground breaks into standing water half a metre
+       deep — wadeable — between grassy hummocks that stand just clear of it. */
+    var marsh=false, mwl=0;
+    if(!water&&!ft&&!(c&&c.body)&&marshZone(x,z,w,hm)){
+      /* One level for a marsh's water, from the lie of the land around it and
+         in quarters, so neighbouring pools never step and none stands perched
+         above the rest; a hummock stands a little clear of it. */
+      marsh=true; mwl=marshLevel(x,z);
+      if(marshWet(x,z)) { H=mwl-0.5; water=true; }
+      else H=mwl+0.5;
+    }
     var magma=false;
     /* A river quenches a seam: no magma in or within two metres of one. The
        burn is a scar now and crosses rivers the old ash biome never had, and
@@ -2101,9 +2168,9 @@ function makeGen(seedStr,force){
       if(f<0.022){ H=Math.min(H-1,riverBed(x,z,w)); magma=true; water=false; } }
     if(bs&&bs.h!==null){ H=bs.h; magma=bs.kind===2; water=false; pond=false; }
     H=clamp(H,0,CEIL);
-    if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
+    if(water) wl=marsh?mwl:(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,rime:rs?rs.kind:0,spore:ps?ps.kind:0,glass:gs?gs.kind:0,glassTop:gs&&gs.top?gs.top:0,hedge:ws?ws.kind:0,hedgeTop:ws&&ws.top?ws.top:0,
+    return {w:w,H:H,water:water,pond:pond,marsh:marsh,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,rime:rs?rs.kind:0,spore:ps?ps.kind:0,glass:gs?gs.kind:0,glassTop:gs&&gs.top?gs.top:0,hedge:ws?ws.kind:0,hedgeTop:ws&&ws.top?ws.top:0,
       /* a shelf high enough to walk under: the ground's height under it */
       sporeLo:ps&&ps.kind===2&&H-1>=lo+2?lo:0,
       /* block: a route may not cross it — the thicket and its log's lane */
@@ -2172,12 +2239,12 @@ function makeGen(seedStr,force){
       if(CELLS.size>=CELL_CAP) CELLS.clear();
       c=cell(x,z); CELLS.set(k,c);
     }
-    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,rime:c.rime,spore:c.spore,sporeLo:c.sporeLo,glass:c.glass,glassTop:c.glassTop,hedge:c.hedge,hedgeTop:c.hedgeTop,block:c.block,hold:c.hold,bare:c.bare};
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,marsh:c.marsh,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,rime:c.rime,spore:c.spore,sporeLo:c.sporeLo,glass:c.glass,glassTop:c.glassTop,hedge:c.hedge,hedgeTop:c.hedgeTop,block:c.block,hold:c.hold,bare:c.bare};
   }
   /* A world keeps its generator (w.G) for as long as it lives, and a streamed
      field holds sixteen of them — so the cache is let go when generation ends,
      and whatever reads the field afterwards starts from empty. */
-  function forget(){ CELLS.clear(); }
+  function forget(){ CELLS.clear(); MARSH_Z.clear(); }
   /* The mesa whose top covers (x, z), for a test that wants to walk its
      stones: centre, radii, top, the stones' direction and where each stands. */
   function mesaOver(x,z){
@@ -3518,6 +3585,7 @@ function cutSpans(w) {
 
 
 
+
 /* ---------- water is held by its banks (issue #57) ----------
    The field lays a river 0.75 m deep in a bed cut a metre into the ground, and
    a pond 1.25 m deep, so on level ground the surface sits a quarter-metre under
@@ -3757,7 +3825,7 @@ function flowField(w) {
 function buildWaterGeometry(w) {
   var NX = w.NX, NZ = w.NZ, Hs = w.Hs, WL = w.WL, FLG = w.FLG, half = w.half,
       cellAt = w.cellAt, i, j, k, x, z, y;
-  var wv=[],wi=[],wd=[],wf=[],wfl=[],wn=0;
+  var wv=[],wi=[],wd=[],wf=[],wfl=[],wm=[],wn=0,murk=0;
   /* Everything a quad carries is given per corner: depth, foam and flow. A
      fall carries depth 0 at its lip and 1 at its base, so the shader knows how
      far the water has dropped, and foam 2 on all four corners. A surface quad
@@ -3766,7 +3834,7 @@ function buildWaterGeometry(w) {
      like the level, runs across the surface without a seam. */
   function wquad(q,dep,foam,fl){
     for(var a=0;a<4;a++){ wv.push(q[a*3],q[a*3+1],q[a*3+2]);
-      wd.push(dep[a]); wf.push(foam[a]); wfl.push(fl[a*2],fl[a*2+1]); }
+      wd.push(dep[a]); wf.push(foam[a]); wfl.push(fl[a*2],fl[a*2+1]); wm.push(murk); }
     wi.push(wn,wn+2,wn+1, wn,wn+3,wn+2); wn+=4;
   }
   var WDIR=[[1,0],[-1,0],[0,1],[0,-1]];
@@ -3824,6 +3892,9 @@ function buildWaterGeometry(w) {
   for(i=1;i<NX-1;i++)for(j=1;j<NZ-1;j++){
     k=i*NZ+j; if(!(FLG[k]&1)) continue;
     x=-half+i*V; z=-half+j*V; y=WL[k];
+    /* Murk (#102): a marsh's water is brown-green and still, and the bloom's
+       is its bog. Per quad, from the cell the column stands in. */
+    var mc=cellAt(x+V/2,z+V/2); murk=mc&&mc.marsh?1:(mc&&mc.dom===BIO.SPORE?0.8:0);
     var dd2, c00=corner(i,j,y), c10=corner(i+1,j,y), c11=corner(i+1,j+1,y), c01=corner(i,j+1,y);
     wquad([x,c00[0],z, x+V,c10[0],z, x+V,c11[0],z+V, x,c01[0],z+V],[c00[1],c10[1],c11[1],c01[1]],
           [c00[2],c10[2],c11[2],c01[2]],[c00[3],c00[4],c10[3],c10[4],c11[3],c11[4],c01[3],c01[4]]);
@@ -3845,7 +3916,7 @@ function buildWaterGeometry(w) {
       wquad([ex0,u0,ez0, ex1,u1,ez1, ex1,l1,ez1, ex0,l0,ez0],FALL_DEP,FALL_FOAM,[di3,dj3,di3,dj3,di3,dj3,di3,dj3]);
     }
   }
-  w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl };
+  w.water = { v: wv, i: wi, d: wd, f: wf, fl: wfl, m: wm };
 }
 /* ---------- src/gen/surface.mjs ---------- */
 /**
@@ -4871,6 +4942,52 @@ function placeMesaNubs(w, kit) {
     }
   }
 }
+
+/**
+ * A marsh's dressing (#102): reeds where water meets a hummock and standing
+ * in the shallows, and now and then a dead snag on a hummock. Reeds are
+ * foliage — soft, a body walks through them — and never stand in a trail.
+ * Lily pads and duckweed are the water's own (the build's water shader), not
+ * voxels: a voxel on the surface is a quarter-metre block, not a leaf.
+ * Drawn from the place, so a marsh on a seam is dressed the same both sides.
+ */
+function placeMarsh(w, kit) {
+  var M = w.M, cells = w.cells, half = w.half, G = w.G, OX = w.OX, OZ = w.OZ,
+      addVox = kit.addVox, surfAt = kit.surfAt, onTrail = kit.onTrail, nearFeature = kit.nearFeature, i, j;
+  function wetAt(a, b) {
+    if (a >= 0 && b >= 0 && a < M && b < M) return cells[a * M + b].water;
+    return groundCellAt(w, -half + a + OX, -half + b + OZ).water;
+  }
+  function reed(px, pz, top, R) {
+    if (onTrail(px, pz)) return;
+    var s = surfAt(px, pz), y;
+    for (y = s.y; y < top - 1e-6; y += V)
+      addVox(px, y + V / 2, pz, y > top - 2 * V && R() < 0.6 ? pickPal(PAL.BUSH_DRY, R) : pickPal(PAL.BUSH_GREEN, R), 0.8 + R() * 0.3, MAT.LEAF);
+  }
+  for (i = 0; i < M; i++) for (j = 0; j < M; j++) {
+    var c = cells[i * M + j];
+    if (!c.marsh) continue;
+    var R = G.pstream(PASS.MARSH, -half + i + OX, -half + j + OZ);
+    var cx = -half + i, cz = -half + j, edge = false;
+    for (var q = 0; q < 4; q++) if (wetAt(i + DIRS4[q][0], j + DIRS4[q][1]) !== c.water) edge = true;
+    /* Reeds: a clump or two where the water's edge is, fewer out in it. */
+    var clumps = edge ? (R() < 0.7 ? 1 + (R() < 0.4 ? 1 : 0) : 0) : (c.water && R() < 0.15 ? 1 : 0);
+    for (var k = 0; k < clumps; k++) {
+      var ox = Math.round((R() - 0.5) * 3) * V, oz = Math.round((R() - 0.5) * 3) * V, n = 3 + ((R() * 4) | 0);
+      /* In water, from the level this window's water actually stands at —
+         the field's is its ideal, and drained banks bring it down. */
+      var base = surfAt(cx + ox, cz + oz).y;
+      if (c.water) { var wi2 = clamp(Math.round((cx + ox + half) / V), 0, w.NX - 1), wj2 = clamp(Math.round((cz + oz + half) / V), 0, w.NZ - 1);
+        if (w.FLG[wi2 * w.NZ + wj2] & 1) base = w.WL[wi2 * w.NZ + wj2]; }
+      for (var r = 0; r < n; r++) {
+        var rx = cx + ox + Math.round((R() - 0.5) * 3) * V, rz = cz + oz + Math.round((R() - 0.5) * 3) * V;
+        reed(rx, rz, base + 0.5 + R() * 0.75, R);
+      }
+    }
+    /* A snag: the dead tree a marsh drowns, on a hummock, clear of the way. */
+    if (!c.water && R() < 0.05 && !nearFeature(cx, cz) && !onTrail(cx, cz)) kit.tree(cx, cz, BIOMES[c.dom], 'snag', R);
+  }
+}
 /* ---------- src/gen/grass.mjs ---------- */
 /**
  * Grass. One blade cloud per world: position, phase, tint, scale, yaw and two
@@ -5169,6 +5286,7 @@ function buildWorld(cfg) {
   placeMesaNubs(w, kit);        /* a mesa's footholds up its wall */
   scatterProps(w, kit);        /* trees, boulders, canyon arcs */
   placeClutter(w, kit);        /* scree, clutter, the sites, lamps, bridges */
+  placeMarsh(w, kit);          /* a marsh's reeds and snags (#102) */
   placeLandmark(w, kit);       /* one landmark, visible three chunks away */
   buildGrass(w);
   buildWaterGeometry(w);
@@ -9270,10 +9388,13 @@ function skyWord(seed) {
  */
 function spellAt(seed, n) {
   const r = skyHash(seed, n, 0x51);
-  if (r < 0.34) return { cloud: 0.1 * skyHash(seed, n, 0x52), rain: 0 };
-  if (r < 0.67) return { cloud: 0.35 + 0.25 * skyHash(seed, n, 0x53), rain: 0 };
+  if (r < 0.34) return { cloud: 0.1 * skyHash(seed, n, 0x52), rain: 0, storm: 0 };
+  if (r < 0.67) return { cloud: 0.35 + 0.25 * skyHash(seed, n, 0x53), rain: 0, storm: 0 };
   const wet = skyHash(seed, n, 0x54) < 0.5;
-  return { cloud: 0.75 + 0.2 * skyHash(seed, n, 0x55), rain: wet ? 0.6 + 0.4 * skyHash(seed, n, 0x56) : 0 };
+  /* Of the rain, a little under half is a storm (#102): the same rain, with
+     lightning in it. Its own salt, so no spell's cloud or rain moved. */
+  const storm = wet && skyHash(seed, n, 0x57) < 0.45 ? 1 : 0;
+  return { cloud: 0.75 + 0.2 * skyHash(seed, n, 0x55), rain: wet ? 0.6 + 0.4 * skyHash(seed, n, 0x56) : 0, storm };
 }
 
 /**
@@ -9288,6 +9409,7 @@ function weatherAt(seed, seconds) {
   const a = spellAt(seed, n), b = spellAt(seed, n + 1);
   const k = skySmooth(0.8, 1.0, f);
   const cloud = a.cloud + (b.cloud - a.cloud) * k, rain = a.rain + (b.rain - a.rain) * k;
+  const storm = a.storm + (b.storm - a.storm) * k;
   /* Wet: each of the last four spells' rain, fading with how long ago it
      stopped. Rain that is falling now counts in full. */
   let wet = 0;
@@ -9297,7 +9419,42 @@ function weatherAt(seed, seconds) {
     const since = q === 0 ? 0 : (s - (n - q + 1));        /* spells since it ended */
     wet = Math.max(wet, sp.rain * skyClamp(1 - since / 2.5));
   }
-  return { cloud, rain, wetness: skyClamp(wet) };
+  /* How long since rain last fell, in spells, for a rainbow as it clears:
+     0 while it rains, and large when it has not rained lately. */
+  let dry = 9;
+  for (let q = 0; q < 3; q++) if (spellAt(seed, n - q).rain) { dry = q === 0 ? 0 : s - (n - q + 1); break; }
+  return { cloud, rain, wetness: skyClamp(wet), storm, dry };
+}
+
+/** Seconds a flash of lightning takes to die away. */
+const FLASH_SECONDS = 0.45;
+
+/**
+ * Lightning at `seconds` (#102): how bright the flash is now (0..1), which
+ * strike it is, and two numbers 0..1 that say where it falls. Pure, like the
+ * weather: a strike is decided by the seed and the second it lands in, so both
+ * players see the same flash at the same moment without a byte on the wire.
+ * Only a storm has any, about one every seven seconds at its height; a
+ * strike flickers — a bright stroke, a dip, a second stroke — then fades.
+ * `wx`, if given, is the weather to use instead of the seed's.
+ */
+function lightningAt(seed, seconds, wx) {
+  seed = skyWord(seed);
+  const w = wx || weatherAt(seed, seconds);
+  const none = { flash: 0, id: -1, u: 0, v: 0, age: 0 };
+  if (!(w.storm > 0.5)) return none;
+  const now = Math.floor(seconds);
+  for (let q = 0; q < 2; q++) {
+    const sec = now - q;
+    if (skyHash(seed, sec, 0x61) >= 0.15) continue;
+    const at = sec + 0.8 * skyHash(seed, sec, 0x62), age = seconds - at;
+    if (age < 0 || age > FLASH_SECONDS) continue;
+    const t = age / FLASH_SECONDS;
+    /* Two strokes: full, a dip at a fifth of the way, a second at 0.7. */
+    const flicker = t < 0.12 ? 1 : (t < 0.22 ? 0.25 : (t < 0.36 ? 0.7 : 0.7 * (1 - (t - 0.36) / 0.64)));
+    return { flash: flicker, id: sec, u: skyHash(seed, sec, 0x63), v: skyHash(seed, sec, 0x64), age };
+  }
+  return none;
 }
 
 /**
@@ -9342,7 +9499,8 @@ function skyAt(seconds, seed, wx) {
     hemiSky, hemiGround, hemiI,
     /* Lamps come on before the sun is down and go off after it is up. */
     lamps: 1 - skySmooth(0.02, 0.2, up),
-    cloud: w.cloud, rain: w.rain, wetness: w.wetness,
+    cloud: w.cloud, rain: w.rain, wetness: w.wetness, storm: w.storm || 0,
+    dry: w.dry === undefined ? 9 : w.dry,
   };
 }
 /* ---------- src/sim/camera.mjs ---------- */
@@ -10542,7 +10700,7 @@ const ASSETS={
   'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
   'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP8AAAD/'
 };
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,lightningAt:lightningAt,FLASH_SECONDS:FLASH_SECONDS,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -11108,10 +11266,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
              uGradeLift:{value:new THREE.Vector3(0,0,0)},uGradeGain:{value:new THREE.Vector3(1,1,1)},uGradeSat:{value:1},
              uMist:{value:0},uMistTop:{value:0},uMistCol:{value:new THREE.Color(0.8,0.85,0.9)},uMistOff:{value:new THREE.Vector2()},
              /* The water's sky: what its surface reflects. */
-             uSkyCol:{value:new THREE.Color(0.7,0.8,0.9)}};
+             uSkyCol:{value:new THREE.Color(0.7,0.8,0.9)},
+             /* Weather and light (#102): a lightning flash and its colour, the
+                aurora over the rime, and how hard it is raining on the water. */
+             uFlash:{value:0},uFlashCol:{value:new THREE.Color(0.8,0.85,1.0)},
+             uAurora:{value:0},uAuroraT:{value:0},uRain:{value:0}};
   /** The post uniforms, for a material with uniforms of its own. */
   function postUniforms(u){
-    ['uGradeLift','uGradeGain','uGradeSat','uMist','uMistTop','uMistCol','uMistOff'].forEach(function(k){ u[k]=SKY_U[k]; });
+    ['uGradeLift','uGradeGain','uGradeSat','uMist','uMistTop','uMistCol','uMistOff','uFlash','uFlashCol','uAurora','uAuroraT'].forEach(function(k){ u[k]=SKY_U[k]; });
     return u;
   }
   var SKY_GLSL=['uniform float uCloud; uniform vec2 uCloudOff; uniform float uWet; uniform float uSnow;',
@@ -11130,6 +11292,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      saturation, gain and lift, blended by the biomes under the view. */
   var POST_GLSL=['uniform vec3 uGradeLift; uniform vec3 uGradeGain; uniform float uGradeSat;',
     'uniform float uMist; uniform float uMistTop; uniform vec3 uMistCol; uniform vec2 uMistOff;',
+    'uniform float uFlash; uniform vec3 uFlashCol; uniform float uAurora; uniform float uAuroraT;',
     'float qsPH(vec2 p){ vec3 q=fract(vec3(p.xyx)*0.1031); q+=dot(q,q.yzx+33.33); return fract((q.x+q.y)*q.z); }',
     'float qsPN(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);',
     ' return mix(mix(qsPH(i),qsPH(i+vec2(1.0,0.0)),f.x),mix(qsPH(i+vec2(0.0,1.0)),qsPH(i+vec2(1.0,1.0)),f.x),f.y); }',
@@ -11137,6 +11300,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' if(uMist>0.001){ float mk=uMist*smoothstep(uMistTop,uMistTop-3.5,w.y);',
     '   mk*=0.45+0.55*qsPN(w.xz*0.07+uMistOff);',
     '   c=mix(c,uMistCol,clamp(mk,0.0,0.8)); }',
+    /* The aurora (#102): slow bands of green shading to violet, drifting
+       across the ground as the light of a sky the camera cannot see. */
+    ' if(uAurora>0.001){ vec2 ap=vec2(w.x*0.06+w.z*0.02+uAuroraT*0.02,w.z*0.012-uAuroraT*0.004);',
+    '   float n=qsPN(ap)*0.8+qsPN(ap*3.1+vec2(1.7,4.2))*0.2;',
+    '   float band=smoothstep(0.50,0.56,n)*(1.0-smoothstep(0.58,0.70,n))*smoothstep(0.2,0.55,qsPN(ap*0.3+vec2(4.0,9.0)));',
+    '   vec3 ac=mix(vec3(0.18,1.0,0.52),vec3(0.60,0.32,1.0),smoothstep(0.585,0.67,n));',
+    '   c+=ac*band*uAurora*0.34; }',
+    /* Lightning (#102): everything lit at once, for a moment, in its colour. */
+    ' if(uFlash>0.001) c=c*(1.0+1.4*uFlash)+uFlashCol*0.10*uFlash;',
     ' float l=dot(c,vec3(0.299,0.587,0.114)); c=mix(vec3(l),c,uGradeSat);',
     ' return c*uGradeGain+uGradeLift; }'].join('\n');
   var CUT_GLSL=['uniform vec4 uCutA; uniform vec4 uCutB; uniform vec3 uCutF; uniform float uCutR;',
@@ -11257,14 +11429,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' #include <fog_fragment>',
     ' gl_FragColor.rgb=qsPost(gl_FragColor.rgb,gw);',
     '}'].join('\n');
-  var WATER_VS=['uniform float uTime;','attribute float aDepth; attribute float aFoam; attribute vec2 aFlow;',
-    'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
+  var WATER_VS=['uniform float uTime;','attribute float aDepth; attribute float aFoam; attribute vec2 aFlow; attribute float aMurk;',
+    'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl; varying float vM;',
     '#include <fog_pars_vertex>',
     /* In world space, not the mesh's own: a streamed chunk's water is local
        to its chunk, so a lift or a ripple read from `position` put the two
        sides of a seam at different heights and phases — a dark crack down
        every chunk edge a river crossed, seen at x 144 on QUARTERSTONE. */
-    'void main(){ vec3 p=(modelMatrix*vec4(position,1.0)).xyz; vD=aDepth; vF=aFoam; vFl=aFlow;',
+    'void main(){ vec3 p=(modelMatrix*vec4(position,1.0)).xyz; vD=aDepth; vF=aFoam; vFl=aFlow; vM=aMurk;',
     /* Everything ripples, falls included: the ripple is a function of where a
        vertex is, so a fall's lip moves with the pool above it and its base
        with the pool below, and neither edge can open. Falls used to hold still
@@ -11273,8 +11445,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ' vP=p; vec4 mvPosition=viewMatrix*vec4(p,1.0); gl_Position=projectionMatrix*mvPosition;',
     ' #include <fog_vertex>',
     '}'].join('\n');
-  var WATER_FS=['uniform float uTime; uniform vec2 uWind; uniform float uLight; uniform float uDetail; uniform vec3 uSkyCol;',
-    'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl;',
+  var WATER_FS=['uniform float uTime; uniform vec2 uWind; uniform float uLight; uniform float uDetail; uniform vec3 uSkyCol; uniform float uRain;',
+    'varying vec3 vP; varying float vD; varying float vF; varying vec2 vFl; varying float vM;',
     '#include <fog_pars_fragment>',
     POST_GLSL,
     /* Value noise for the falls, sin-free like the terrain grain. */
@@ -11303,6 +11475,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* The sky in it (#99): a surface seen at 45 degrees reflects a good share
        of the sky, more where a ripple tilts it toward the viewer. */
     ' c=mix(c,uSkyCol,0.16+0.14*rip);',
+    /* Rain on it (#102): rings spreading from where drops land, one drop per
+       cell every second or so, each cell on its own beat. */
+    ' if(uRain>0.01){ vec2 rc=vP.xz*2.5; vec2 ri=floor(rc); float rh=fallH(ri*1.7+3.1);',
+    '   float rt=fract(uTime*0.9+rh); vec2 ro=ri+0.25+0.5*vec2(fallH(ri+floor(uTime*0.9+rh)),fallH(ri.yx+floor(uTime*0.9+rh)+9.0));',
+    '   float rd=length(rc-ro), rr=rt*0.45;',
+    '   float ring=(1.0-smoothstep(0.0,0.06,abs(rd-rr)))*(1.0-rt)*step(rh,uRain);',
+    '   c+=vec3(0.16,0.19,0.20)*ring; }',
     /* And light playing on a shallow bed: two wandering wave fields whose
        crossings pinch into thin bright lines, as sunlight through ripples does.
        Only where the bed shows, and only with the full water setting. */
@@ -11348,6 +11527,23 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        is thicker in some places than others, not a curtain of holes. */
     '   c*=0.90+0.10*n;',
     '   a=mix(0.86,0.97,froth); }',
+    /* A marsh's water (#102), and the bloom's bog: brown-green and still,
+       seen into less, with duckweed in drifts and lily pads on it. The pads
+       are discs on a jittered grid, a few to a square metre where the
+       duckweed is thin; the weed is noise that drifts with the wind. */
+    ' if(vM>0.01&&vF<1.5){',
+    '   vec3 bog=mix(vec3(0.24,0.27,0.14),vec3(0.20,0.17,0.21),1.0-step(0.95,vM));',
+    '   c=mix(c,bog+vec3(0.04,0.05,0.02)*rip,0.8*vM); a=max(a,0.9*vM+a*(1.0-vM));',
+    '   float weed=smoothstep(0.55,0.75,fallN(vP.xz*1.3+uWind*uTime*0.02)*0.7+fallN(vP.xz*6.0)*0.3);',
+    '   c=mix(c,vec3(0.36,0.50,0.16),weed*0.75*vM);',
+    '   vec2 pc=vP.xz*1.6, pi=floor(pc), po=pi+0.2+0.6*vec2(fallH(pi+5.1),fallH(pi+9.7));',
+    '   float pr=0.16+0.12*fallH(pi+2.3), pd=length(pc-po);',
+    '   float pad=(1.0-smoothstep(pr-0.02,pr,pd))*step(0.45,fallH(pi+13.0))*step(0.9,vM);',
+    '   float notch=step(0.0,dot(normalize(pc-po+1e-4),vec2(fallH(pi)-0.5,fallH(pi+1.0)-0.5)*2.0)-0.85);',
+    '   pad*=1.0-notch;',
+    '   c=mix(c,mix(vec3(0.22,0.44,0.14),vec3(0.30,0.56,0.18),fallH(pi+3.0)),pad);',
+    '   float bloom=pad*step(0.85,fallH(pi+21.0))*(1.0-smoothstep(0.03,0.06,pd));',
+    '   c=mix(c,vec3(0.95,0.88,0.94),bloom); }',
     ' gl_FragColor=vec4(c*uLight,a);',
     ' #include <tonemapping_fragment>',
     ' #include <fog_fragment>',
@@ -11488,7 +11684,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(pos),3));
     g.setAttribute('aHeat',new THREE.BufferAttribute(new Float32Array(heat),1));
     g.setIndex(idx);
-    g.userData={cols:ncol,falls:nfall};
+    /* Where a magma bomb (#102) can leave from or come down in: a column
+       not on the bank, one every half metre, at its surface. A seam is a
+       metre or two across, so that is most of its middle. */
+    var vents=[];
+    list.forEach(function(c){
+      if(!keep(c[0],c[2])||(c[3]&1)||(c[4]&1)||heatAt(c[3],c[4])<0.25) return;
+      vents.push(c[0],topOf.get(key(c[3],c[4])),c[2]); });
+    g.userData={cols:ncol,falls:nfall,vents:new Float32Array(vents)};
     return g;
   }
 
@@ -11608,7 +11811,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   var SKY_CLEAR={cloud:0,rain:0,wetness:0};
   /* The glow pass's layer, and the particle modes that are light (#99):
      declared here because the first world is built before the pass is. */
-  var GLOW_LAYER=1, GLOW_MODES={embers:1,fireflies:1,glint:1,spores:1};
+  var GLOW_LAYER=1, GLOW_MODES={embers:1,fireflies:1,glint:1,spores:1,diamond:1};
   /* The debug dialog's state (#92), here rather than with the dialog because
      the sky, the cutaway and the loop all read it from the first world on. */
   var DBG_DEF={wx:'',borders:false,skirt:false,cut:'auto',cutRing:false,cutFreeze:false,noOutline:false,
@@ -11632,7 +11835,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      rain with the Rimewaste's answer to it, fog is a low grey sky with the
      distance pulled in. */
   var DBG_WX={clear:{cloud:0,rain:0,wetness:0},rain:{cloud:0.9,rain:0.9,wetness:0.9},
-              snow:{cloud:0.9,rain:0.9,wetness:0.9},fog:{cloud:0.75,rain:0,wetness:0.3}};
+              snow:{cloud:0.9,rain:0.9,wetness:0.9},fog:{cloud:0.75,rain:0,wetness:0.3},
+              /* #102: a storm at its height, and the minutes after rain. */
+              storm:{cloud:0.95,rain:1,wetness:1,storm:1},rainbow:{cloud:0.3,rain:0,wetness:0.8,dry:0.25}};
   function dbgWeather(){ return DBG.wx&&DBG_WX[DBG.wx]||null; }
   /* The background: a vertical gradient, one canvas shared by every scene and
      repainted on each sky step. */
@@ -11661,7 +11866,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      spindrift in the rime, spores in the bloom, glints off the glass and
      fireflies over green ground at night. One shader for all of them; a mode is a
      handful of uniforms and a draw range. */
-  var PART_N=900;
+  var PART_N=1400;
   var PART_MODES={
     rain:     {n:900,vel:[0,-15,0],wind:3.0,col:[0.74,0.80,0.92],dia:0.40,op:0.50,streak:1,wob:0.0,pulse:0,add:false},
     snow:     {n:700,vel:[0,-1.5,0],wind:1.2,col:[0.96,0.97,1.00],dia:0.11,op:0.85,wob:0.6,pulse:0,add:false},
@@ -11676,6 +11881,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ashfall:  {n:560,vel:[0,-0.55,0],wind:1.0,col:[0.56,0.54,0.51],dia:0.10,op:0.80,wob:0.5,pulse:0,add:false},
     spores:   {n:380,vel:[0,0.22,0],wind:0.35,col:[0.78,1.00,0.62],dia:0.09,op:0.85,wob:1.0,pulse:0.8,add:true},
     glint:    {n:220,vel:[0,0,0],wind:0.15,col:[0.80,1.00,0.96],dia:0.06,op:1.00,wob:0.3,pulse:1,add:true},
+    /* What a storm makes of each biome (#102). Green ground and the scars that
+       take rain get a thunderstorm — the rain, heavier and driven; the burn
+       never rains, it storms ash; the mesa's rain never reaches the ground, it
+       lifts the dust; the rime's snow turns to a blizzard. And on a clear cold
+       dawn in the rime, the air glitters. */
+    storm:    {n:1400,vel:[0,-19,0],wind:6.5,col:[0.70,0.76,0.88],dia:0.44,op:0.55,streak:1,wob:0.0,pulse:0,add:false},
+    ashstorm: {n:1200,vel:[0,-0.9,0],wind:4.0,col:[0.50,0.46,0.43],dia:0.12,op:0.85,wob:0.7,pulse:0,add:false},
+    duststorm:{n:1400,vel:[0,-0.2,0],wind:6.0,col:[0.95,0.85,0.70],dia:0.26,op:0.8,wob:0.9,pulse:0,add:false},
+    blizzard: {n:1400,vel:[0,-2.6,0],wind:7.5,col:[0.95,0.97,1.00],dia:0.12,op:0.90,wob:0.9,pulse:0,add:false},
+    diamond:  {n:260,vel:[0,-0.08,0],wind:0.3,col:[1.00,1.00,1.00],dia:0.05,op:1.00,wob:0.4,pulse:1,add:true},
   };
   /* How much each scar thickens and tints the air (#32): the colour the fog
      leans to and how much of the view it takes, at full strength. Ash takes
@@ -11683,6 +11898,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   var SCAR_HAZE={ASH:{col:[0.40,0.38,0.36],mix:0.70,far:0.55},RIME:{col:[0.86,0.91,0.97],mix:0.40,far:0.25},
                  SPORE:{col:[0.52,0.48,0.60],mix:0.60,far:0.40},GLASS:{col:[0.62,0.74,0.72],mix:0.30,far:0.15}};
   var hazeMix=0, hazeFar=0, hazeCol=[0,0,0];
+  var STORM_HAZE={duststorm:[0.90,0.80,0.66],ashstorm:[0.34,0.31,0.29],blizzard:[0.90,0.93,0.97]};
   /** What the scars under a cell's weights do to the air: how far the fog
       leans to their colour, how much of the view it takes, and that colour. */
   function hazeFor(sw){
@@ -11730,7 +11946,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /** Which motes the air holds, from the biome under the view and the sky. */
   function partMode(s,dom){
     var B=QS.BIO, cold=dom===B.RIME||DBG.wx==='snow', green=dom===B.MEADOW||dom===B.PINE||dom===B.THORN;
-    if(s.rain>0.2) return cold?'snow':'rain';
+    var storm=(s.storm||0)>0.5;
+    /* The burn and the mesa turn rain into what they have instead (#102). */
+    if(s.rain>0.2&&!cold&&dom===B.ASH) return 'ashstorm';
+    if(s.rain>0.2&&!cold&&dom===B.MESA) return 'duststorm';
+    if(s.rain>0.2) return cold?(storm?'blizzard':'snow'):(storm?'storm':'rain');
+    if(cold&&dom===B.RIME&&s.cloud<0.3){ var ph=((s.phase%1)+1)%1; if(ph>0.23&&ph<0.36) return 'diamond'; }
     if(dom===B.ASH) return s.day<0.35?'embers':'ashfall';
     if(dom===B.SPORE) return 'spores';
     if(dom===B.GLASS) return 'glint';
@@ -11740,18 +11961,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     return green||dom===B.SPORE?'pollen':'';
   }
   /** The scars' weights under the view, for the haze. */
-  function scarsUnderView(){
-    try{
-      var g=built&&built.data&&built.data.G;
-      return g?g.cell(Math.round(cam.tx),Math.round(cam.tz)).w:null;
-    }catch(e){ return null; }
+  /* The field's cell under the view. A window grown somewhere out in the
+     field (a config with an origin) is drawn around zero, so its origin goes
+     back on before the field is asked; a streamed world is drawn where it is. */
+  function cellUnderView(){
+    var g=built&&built.data&&built.data.G; if(!g) return null;
+    var ox=streaming?0:(built.data.OX||0), oz=streaming?0:(built.data.OZ||0);
+    return g.cell(Math.round(cam.tx+ox),Math.round(cam.tz+oz));
   }
-  function domUnderView(){
-    try{
-      var g=built&&built.data&&built.data.G;
-      return g?g.cell(Math.round(cam.tx),Math.round(cam.tz)).dom:0;
-    }catch(e){ return 0; }
-  }
+  function scarsUnderView(){ try{ var c=cellUnderView(); return c?c.w:null; }catch(e){ return null; } }
+  function domUnderView(){ try{ var c=cellUnderView(); return c?c.dom:0; }catch(e){ return 0; } }
   function skySeconds(){
     if(plateMode) return (0.5-QS.DAWN_START)*QS.DAY_SECONDS;
     if(skyFix!==null) return (skyFix-QS.DAWN_START)*QS.DAY_SECONDS;
@@ -11806,6 +12025,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Scar haze (#32), eased like the snow so walking into a scar thickens
        the air over a few steps rather than on one. */
     var hzNow=hazeFor(plateMode?null:scarsUnderView()), mixTo=hzNow.mix, farTo=hzNow.far;
+    /* A storm of something (#102) colours the air with it. */
+    var stc=STORM_HAZE[plateMode?'':partMode(s,domUnderView())];
+    if(stc){ hzNow.col=stc; mixTo=Math.max(mixTo,0.75*Math.min(1,s.rain*1.2)); }
     if(mixTo>0){ hazeCol[0]=hzNow.col[0]; hazeCol[1]=hzNow.col[1]; hazeCol[2]=hzNow.col[2]; }
     hazeMix=force?mixTo:hazeMix+(mixTo-hazeMix)*0.25; hazeFar=force?farTo:hazeFar+(farTo-hazeFar)*0.25;
     if(built.scene.fog) built.scene.fog.color.setRGB(s.fogCol[0]+(hazeCol[0]-s.fogCol[0])*hazeMix,
@@ -11838,11 +12060,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         var u=p.material.uniforms;
         u.uCol.value.setRGB(md.col[0],md.col[1],md.col[2]);
         u.uSize.value=md.dia; u.uStreak.value=md.streak||0; u.uWob.value=md.wob; u.uPulse.value=md.pulse;
-        u.uOpacity.value=md.op*(mode==='rain'||mode==='snow'?Math.min(1,0.4+s.rain):1)
-          *(mode==='fireflies'?(1-s.day):1)*(mode==='embers'||mode==='fireflies'||mode==='spores'||mode==='glint'?1:0.6+0.4*s.day);
+        var falls=mode==='rain'||mode==='snow'||mode==='storm'||mode==='blizzard'||mode==='ashstorm'||mode==='duststorm';
+        u.uOpacity.value=md.op*(falls?Math.min(1,0.4+s.rain):1)
+          *(mode==='fireflies'?(1-s.day):1)*(GLOW_MODES[mode]?1:0.6+0.4*s.day);
         p.userData.wind=md.wind;
         p.material.blending=md.add?THREE.AdditiveBlending:THREE.NormalBlending;
-        var n=Math.round(md.n*(mode==='rain'||mode==='snow'?Math.min(1,0.3+s.rain):1)*GFX.parts);
+        var n=Math.round(md.n*(falls?Math.min(1,0.3+s.rain):1)*GFX.parts);
         if(n<1) p.visible=false;
         p.geometry.setDrawRange(0,n); p.userData.n=n;
       }
@@ -11907,9 +12130,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   function skyFog(){
     var D=camera.position.distanceTo(camT), v=cam.view;
     if(built.scene.fog){
-      built.scene.fog.near=D+0.15*v;
+      /* A storm of dust, ash or snow closes in on the view itself, not only
+         the distance (#102). */
+      built.scene.fog.near=D+0.15*v-(1-wxFogK())*1.1*v;
       built.scene.fog.far=D+v*(3.6-1.6*Math.max(skyNow.rain,skyNow.cloud*0.6))*(1-hazeFar)
-        *(!plateMode&&DBG.wx==='fog'?0.3:1);
+        *(!plateMode&&DBG.wx==='fog'?0.3:1)*wxFogK();
     }
     var p=built.parts;
     if(p&&p.visible){
@@ -12088,7 +12313,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      where a swing lands. One pool of points, one draw, simulated here in world
      space with a little gravity — drawn, never read by anything that
      simulates. The Dust & splashes setting turns it off. */
-  var FX={max:320,n:0,pts:null,px:null,vel:null,age:null,ttl:null,col:null,sz:null,grav:null,made:0,tmp:new THREE.Color()};
+  var FX={max:640,n:0,pts:null,px:null,vel:null,age:null,ttl:null,col:null,sz:null,grav:null,made:0,tmp:new THREE.Color()};
   function fxInit(){
     var M=FX.max, g=new THREE.BufferGeometry();
     FX.px=new Float32Array(M*3); FX.col=new Float32Array(M*3); FX.sz=new Float32Array(M); FX.life=new Float32Array(M);
@@ -12169,6 +12394,467 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(a.inWater&&o.fxDry===true) fxEmit(a.x,a.y+0.3,a.z,14,0xd6ecf2,1.6,3.2,0.12,0.8,9);
     if(a.grounded||a.inWater) o.fxPeak=undefined;
     o.fxAir=!a.grounded&&!a.inWater; o.fxDry=!a.inWater;
+  }
+
+  /* ---------- weather and light (#102) ----------
+     All of this is drawn and never simulated: it reads the sky, which both
+     players already agree on (src/sim/sky.mjs), and the ground each window
+     has, and nothing in src/sim reads anything back. A lightning strike is
+     the sky's, so it lands at the same moment on both machines; a magma bomb
+     or a dust devil is this window's own.
+
+     One pool of small glowing blocks carries everything here that is light
+     rather than air — a bolt, a bomb, a ring on the magma: one draw, on the
+     glow layer, rebuilt each frame from what is alive. */
+  var BITS={max:640,n:0,mesh:null,m4:new THREE.Matrix4(),q:new THREE.Quaternion(),s:new THREE.Vector3(),
+            p:new THREE.Vector3(),d:new THREE.Vector3(),up:new THREE.Vector3(0,1,0),c:new THREE.Color()};
+  function bitsInit(){
+    var m=new THREE.MeshBasicMaterial({fog:false,toneMapped:false});
+    BITS.mesh=new THREE.InstancedMesh(new THREE.BoxGeometry(1,1,1),m,BITS.max);
+    BITS.mesh.setColorAt(0,BITS.c.setRGB(1,1,1));
+    BITS.mesh.frustumCulled=false; BITS.mesh.count=0; BITS.mesh.renderOrder=4;
+    BITS.mesh.layers.enable(GLOW_LAYER); BITS.mesh.userData.kind='bits'; BITS.mesh.userData.keep=true;
+  }
+  /** A block of light at a point, `k` of the colour's full brightness. */
+  function bit(x,y,z,size,hex,k){
+    if(BITS.n>=BITS.max) return;
+    BITS.m4.makeScale(size,size,size).setPosition(x,y,z);
+    BITS.mesh.setMatrixAt(BITS.n,BITS.m4);
+    BITS.mesh.setColorAt(BITS.n,BITS.c.setHex(hex).multiplyScalar(Math.max(0,Math.min(1,k))));
+    BITS.n++;
+  }
+  /** A bar of light from one point to another: a bolt is made of these. */
+  function bitBar(ax,ay,az,bx,by,bz,w,hex,k){
+    if(BITS.n>=BITS.max) return;
+    BITS.d.set(bx-ax,by-ay,bz-az); var L=BITS.d.length(); if(L<1e-4) return;
+    BITS.q.setFromUnitVectors(BITS.up,BITS.d.multiplyScalar(1/L));
+    BITS.m4.compose(BITS.p.set((ax+bx)/2,(ay+by)/2,(az+bz)/2),BITS.q,BITS.s.set(w,L,w));
+    BITS.mesh.setMatrixAt(BITS.n,BITS.m4);
+    BITS.mesh.setColorAt(BITS.n,BITS.c.setHex(hex).multiplyScalar(Math.max(0,Math.min(1,k))));
+    BITS.n++;
+  }
+  function bitsFlush(){
+    if(!BITS.mesh) return;
+    if(BITS.mesh.parent!==built.scene){ if(BITS.mesh.parent) BITS.mesh.parent.remove(BITS.mesh); built.scene.add(BITS.mesh); }
+    BITS.mesh.count=BITS.n; BITS.mesh.visible=BITS.n>0&&!plateMode;
+    BITS.mesh.instanceMatrix.needsUpdate=true; if(BITS.mesh.instanceColor) BITS.mesh.instanceColor.needsUpdate=true;
+  }
+  /** One mote of dust or spray placed and aimed by hand, for the shapes a
+      scatter cannot make — a devil's spiral, a spore cloud's slow rise. */
+  function fxPut(x,y,z,vx,vy,vz,hex,size,ttl,grav){
+    if(!GFX.fx||plateMode||!built) return;
+    if(!FX.pts) fxInit();
+    var i=FX.n<FX.max?FX.n++:((FX.made++)%FX.max), c=FX.tmp.setHex(hex);
+    FX.px[i*3]=x; FX.px[i*3+1]=y; FX.px[i*3+2]=z; FX.vel[i*3]=vx; FX.vel[i*3+1]=vy; FX.vel[i*3+2]=vz;
+    FX.col[i*3]=c.r; FX.col[i*3+1]=c.g; FX.col[i*3+2]=c.b;
+    FX.sz[i]=size; FX.age[i]=0; FX.ttl[i]=ttl; FX.grav[i]=grav; FX.life[i]=1;
+  }
+  /** The highest thing standing at a point — ground or prop — in world terms. */
+  function wxTop(x,z){
+    var at=worldAt(x,z); if(!at) return null;
+    var d=at.d, V=QS.V, gi=Math.floor((at.x+d.half)/V), gj=Math.floor((at.z+d.half)/V);
+    if(gi<0||gj<0||gi>=d.NX||gj>=d.NZ) return null;
+    var y=d.Hs[gi*d.NZ+gj], t=propTops(d).get((Math.round(at.x/V)+8192)*16384+(Math.round(at.z/V)+8192));
+    return t&&t[0]>y?t[0]:y;
+  }
+  /** The biome under a point, as its key ('meadow', 'ash', ...). */
+  function wxDomAt(x,z){
+    try{ var g=built&&built.data&&built.data.G; if(!g) return '';
+      var ox=streaming?0:(built.data.OX||0), oz=streaming?0:(built.data.OZ||0);
+      return QS.BIOMES[g.cell(Math.round(x+ox),Math.round(z+oz)).dom].k; }catch(e){ return ''; }
+  }
+  var WX={dom:'',mode:'',flash:0,strike:-1,strikes:0,bolt:null,boltHex:0xdfe8ff,
+          bombs:[],rings:[],bombNext:1.5,launched:0,landed:0,offMagma:0,
+          devils:[],devilNext:2,devilsMade:0,burstNext:2,bursts:0,
+          aurora:0,rainbow:0,rb:null,gust:1,t:0};
+
+  /* Lightning. The sky says when and roughly where; this window finds the
+     tallest thing near that spot and draws a jagged bolt down to it. */
+  var FLASH_COL={ash:0xff9a5a,mesa:0xffd9a8};
+  function wxLightning(dt,s){
+    var seed=built.cfg?built.cfg.seed:'', wx=plateMode||skyCalm?SKY_CLEAR:(dbgWeather()||null);
+    var L=plateMode?{flash:0,id:-1}:QS.lightningAt(seed,skySec,wx&&wx.storm!==undefined?wx:(wx?SKY_CLEAR:null));
+    /* In the rime a storm is snow, and snow has no lightning. */
+    if(WX.dom==='rime') L={flash:0,id:-1};
+    WX.flash=L.flash;
+    SKY_U.uFlash.value=L.flash*(GFX.glow?1:0.6);
+    if(L.id>=0&&L.id!==WX.strike){
+      WX.strike=L.id; WX.strikes++;
+      var R=Math.max(6,cam.view*1.1), x=cam.tx+(L.u-0.5)*2*R, z=cam.tz+(L.v-0.5)*2*R, best=null;
+      /* The tallest point within a couple of metres: a tree, a column, a landmark. */
+      for(var a=-2;a<=2;a++)for(var b=-2;b<=2;b++){
+        var y=wxTop(x+a,z+b); if(y!==null&&(best===null||y>best.y)) best={x:x+a,y:y,z:z+b}; }
+      if(!best) best={x:x,y:cam.ty,z:z};
+      /* The path is the strike's own: the same bolt on both screens if both
+         look at the same ground. */
+      var h=(L.id*2654435761)>>>0, rn=function(){ h^=h<<13; h^=h>>>17; h^=h<<5; return (h>>>0)/4294967296; };
+      var pts=[], top=best.y+26, n=16, px=best.x+(rn()-0.5)*6, pz=best.z+(rn()-0.5)*6;
+      for(var i=0;i<=n;i++){ var t=i/n;
+        pts.push([px+(best.x-px)*t+(i&&i<n?(rn()-0.5)*1.6:0),top+(best.y-top)*t,pz+(best.z-pz)*t+(i&&i<n?(rn()-0.5)*1.6:0)]); }
+      var forks=[];
+      for(var f=0;f<2;f++){ var at=3+Math.floor(rn()*8), p0=pts[at], fk=[p0], dx=(rn()-0.5)*2.2, dz=(rn()-0.5)*2.2;
+        for(var j=1;j<=4;j++){ var q=fk[j-1]; fk.push([q[0]+dx+(rn()-0.5)*0.8,q[1]-1.3,q[2]+dz+(rn()-0.5)*0.8]); }
+        forks.push(fk); }
+      WX.bolt={pts:pts,forks:forks,x:best.x,y:best.y,z:best.z};
+      WX.boltHex=FLASH_COL[WX.dom]||0xdfe8ff;
+      SKY_U.uFlashCol.value.setHex(WX.boltHex);
+      /* Thunder, later the further away the strike, and a burst where it hit. */
+      var pa=player(), dist=pa?Math.sqrt((best.x-pa.x)*(best.x-pa.x)+(best.z-pa.z)*(best.z-pa.z)):10;
+      wxThunder(0.25+dist*0.04,Math.max(0.25,1-dist/60));
+      fxEmit(best.x,best.y+0.1,best.z,14,0xfff4d0,3.2,2.6,0.12,0.6,6);
+    }
+    if(L.flash<=0.001) WX.bolt=null;
+    if(WX.bolt){
+      var bp=WX.bolt.pts, k=Math.min(1,L.flash*1.2);
+      for(var i2=1;i2<bp.length;i2++) bitBar(bp[i2-1][0],bp[i2-1][1],bp[i2-1][2],bp[i2][0],bp[i2][1],bp[i2][2],0.16,WX.boltHex,k);
+      WX.bolt.forks.forEach(function(fk){ for(var j2=1;j2<fk.length;j2++)
+        bitBar(fk[j2-1][0],fk[j2-1][1],fk[j2-1][2],fk[j2][0],fk[j2][1],fk[j2][2],0.08,WX.boltHex,k*0.7); });
+    }
+  }
+  function wxThunder(delay,vol){
+    SND.events++; SND.last='thunder';
+    if(!SND.on||!SND.ctx||SND.ctx.state!=='running') return;
+    var t0=SND.ctx.currentTime+delay;
+    burst(SND.ctx,SND.out,SND.noise,t0,'lowpass',420,0.6,0.55*vol,0.01,0.35);
+    burst(SND.ctx,SND.out,SND.noise,t0+0.08,'lowpass',140,0.8,0.9*vol,0.06,2.4,0.5);
+    burst(SND.ctx,SND.out,SND.noise,t0+0.5,'lowpass',90,0.7,0.6*vol,0.3,2.8,1.0);
+  }
+
+  /* Magma bombs. Now and then a blob leaves a magma surface in view, arcs a
+     metre or few into the air trailing embers, and comes down in magma two to
+     five metres away — picked before it leaves, so it never lands on rock or
+     on anyone — with a splash of sparks and a ring on the surface. */
+  var BOMB_G=9.8;
+  function wxVents(anywhere){
+    var out=[], R=cam.view*1.7, R2=anywhere?Infinity:R*R;
+    built.scene.traverse(function(o){
+      if(o.userData.kind!=='magma'||!o.visible) return;
+      var v=o.geometry.userData&&o.geometry.userData.vents; if(!v||!v.length) return;
+      var gx=o.parent?o.parent.position.x:0, gz=o.parent?o.parent.position.z:0;
+      for(var i=0;i<v.length;i+=3){ var x=v[i]+gx, z=v[i+2]+gz, dx=x-cam.tx, dz=z-cam.tz;
+        if(dx*dx+dz*dz<R2) out.push([x,v[i+1],z]); }
+    });
+    return out;
+  }
+  function wxBombLaunch(anywhere){
+    var vs=wxVents(anywhere); if(vs.length<2) return false;
+    for(var tries=0;tries<10;tries++){
+      var a=vs[Math.floor(Math.random()*vs.length)], b=null;
+      for(var k=0;k<14&&!b;k++){ var c=vs[Math.floor(Math.random()*vs.length)];
+        var d=Math.sqrt((c[0]-a[0])*(c[0]-a[0])+(c[2]-a[2])*(c[2]-a[2])); if(d>=2&&d<=5) b=c; }
+      if(!b) continue;
+      var h=1+3*Math.random(), vy=Math.sqrt(2*BOMB_G*h), dy=a[1]-b[1];
+      var T=(vy+Math.sqrt(Math.max(0,vy*vy+2*BOMB_G*dy)))/BOMB_G;
+      WX.bombs.push({x0:a[0],y0:a[1],z0:a[2],vx:(b[0]-a[0])/T,vy:vy,vz:(b[2]-a[2])/T,T:T,t:0,to:b,trail:0});
+      WX.launched++;
+      fxEmit(a[0],a[1]+0.05,a[2],6,0xffa040,1.2,2.0,0.08,0.5,6);
+      return true;
+    }
+    return false;
+  }
+  function wxBombs(dt){
+    if(!GFX.fx||plateMode){ WX.bombs.length=0; WX.rings.length=0; return; }
+    WX.bombNext-=dt;
+    if(WX.bombNext<=0){ WX.bombNext=3+3*Math.random(); wxBombLaunch(); }
+    for(var i=WX.bombs.length-1;i>=0;i--){
+      var b=WX.bombs[i]; b.t+=dt;
+      if(b.t>=b.T){
+        WX.bombs.splice(i,1); WX.landed++;
+        /* Did it come down in magma? The gate asks; by construction it should. */
+        var hit=false, vs=wxVents(true);
+        for(var q=0;q<vs.length&&!hit;q++) if(Math.abs(vs[q][0]-b.to[0])<0.2&&Math.abs(vs[q][2]-b.to[2])<0.2) hit=true;
+        if(!hit) WX.offMagma++;
+        fxEmit(b.to[0],b.to[1]+0.05,b.to[2],12,0xffb050,2.0,2.4,0.1,0.6,8);
+        WX.rings.push({x:b.to[0],y:b.to[1]+0.03,z:b.to[2],t:0});
+        continue;
+      }
+      var x=b.x0+b.vx*b.t, y=b.y0+b.vy*b.t-0.5*BOMB_G*b.t*b.t, z=b.z0+b.vz*b.t;
+      bit(x,y,z,0.22,0xff7a20,1); bit(x+0.1,y+0.08,z-0.05,0.14,0xffc060,1);
+      bit(x-0.08,y-0.06,z+0.07,0.12,0xff5010,0.9);
+      b.trail+=dt; if(b.trail>0.05){ b.trail=0; fxPut(x,y,z,0,0.3,0,0xff8a30,0.07,0.5,-0.4); }
+    }
+    for(var r=WX.rings.length-1;r>=0;r--){
+      var g=WX.rings[r]; g.t+=dt; if(g.t>0.6){ WX.rings.splice(r,1); continue; }
+      var rad=0.15+g.t*1.4, kk=1-g.t/0.6;
+      for(var j=0;j<10;j++){ var an=j/10*6.2832; bit(g.x+Math.cos(an)*rad,g.y,g.z+Math.sin(an)*rad,0.07,0xffd080,kk); }
+    }
+  }
+
+  /* Dust devils, on the mesa by day: a spinning column that wanders a dry
+     wash for a quarter of a minute and falls apart. More in a dust storm. */
+  function wxDevils(dt,s){
+    if(!GFX.fx||plateMode){ WX.devils.length=0; return; }
+    var want=WX.dom==='mesa'&&s.day>0.5?(WX.mode==='duststorm'?2:1):0;
+    WX.devilNext-=dt;
+    if(WX.devils.length<want&&WX.devilNext<=0){
+      WX.devilNext=6+8*Math.random();
+      var an=Math.random()*6.2832, rr=cam.view*(0.4+0.5*Math.random());
+      WX.devils.push({x:cam.tx+Math.cos(an)*rr,z:cam.tz+Math.sin(an)*rr,dx:(Math.random()-0.5)*1.2,dz:(Math.random()-0.5)*1.2,
+                      t:0,T:14+10*Math.random(),spin:0,acc:0});
+      WX.devilsMade++;
+    }
+    for(var i=WX.devils.length-1;i>=0;i--){
+      var d=WX.devils[i]; d.t+=dt; if(d.t>d.T){ WX.devils.splice(i,1); continue; }
+      d.x+=(d.dx+wind.x*0.6)*dt; d.z+=(d.dz+wind.y*0.6)*dt;
+      var y=wxTop(d.x,d.z); if(y===null) continue;
+      var life=Math.min(1,d.t/2,(d.T-d.t)/2); d.acc+=dt*28*life;
+      while(d.acc>=1){ d.acc-=1; d.spin+=0.9;
+        var r=0.25+Math.random()*0.35;
+        fxPut(d.x+Math.cos(d.spin)*r,y+0.05+Math.random()*0.4,d.z+Math.sin(d.spin)*r,
+              -Math.sin(d.spin)*3.2,2.2+Math.random()*1.4,Math.cos(d.spin)*3.2,0xd8b48a,0.14,1.3,-0.3); }
+    }
+  }
+
+  /* Spore bursts, in the bloom: now and then a lit tower's gills let go a
+     slow cloud that drifts off and thins — brighter at night. */
+  function wxSpores(dt,s){
+    if(!GFX.fx||plateMode||WX.dom!=='spore') return;
+    WX.burstNext-=dt; if(WX.burstNext>0) return;
+    WX.burstNext=2.5+3*Math.random();
+    var cand=[], R=cam.view*1.4, R2=R*R, m4=BITS.m4;
+    built.scene.traverse(function(o){
+      if(o.userData.kind!=='emissive'||!o.isInstancedMesh) return;
+      var gx=o.parent?o.parent.position.x:0, gz=o.parent?o.parent.position.z:0;
+      for(var i=0;i<o.count;i+=7){ o.getMatrixAt(i,m4); var e=m4.elements, x=e[12]+gx, z=e[14]+gz;
+        if((x-cam.tx)*(x-cam.tx)+(z-cam.tz)*(z-cam.tz)<R2) cand.push([x,e[13],z]); }
+    });
+    if(!cand.length) return;
+    var c=cand[Math.floor(Math.random()*cand.length)], hex=s.day<0.4?0xc8ff9a:0xb9a6d8;
+    for(var q=0;q<26;q++){ var an=Math.random()*6.2832, sp=0.3+Math.random()*0.5;
+      fxPut(c[0],c[1],c[2],Math.cos(an)*sp+wind.x*0.4,0.25+Math.random()*0.35,Math.sin(an)*sp+wind.y*0.4,hex,0.2+Math.random()*0.12,3.5+Math.random()*2,-0.05); }
+    WX.bursts++;
+  }
+
+  /** The rainbow's arc, made once — at the first world, with the programs. */
+  function rainbowInit(){
+    if(WX.rb) return;
+    var g=new THREE.RingGeometry(0.86,1,96,1,0,Math.PI);
+    var m=new THREE.ShaderMaterial({transparent:true,depthWrite:false,depthTest:false,blending:THREE.AdditiveBlending,side:THREE.DoubleSide,
+      uniforms:{uK:{value:0}},
+      vertexShader:'varying vec2 vP; void main(){ vP=position.xy; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+      fragmentShader:['uniform float uK; varying vec2 vP;',
+        'vec3 hue(float t){ return clamp(abs(fract(t+vec3(0.0,0.667,0.333))*6.0-3.0)-1.0,0.0,1.0); }',
+        'void main(){ float r=(length(vP)-0.86)/0.14;',
+        ' float edge=smoothstep(0.0,0.15,r)*smoothstep(1.0,0.85,r);',
+        ' float foot=smoothstep(0.0,0.35,vP.y);',
+        ' gl_FragColor=vec4(hue(0.78*(1.0-r))*0.16*edge*foot*uK,1.0); }'].join('\n')});
+    WX.rb=new THREE.Mesh(g,m); WX.rb.frustumCulled=false; WX.rb.renderOrder=1; WX.rb.userData.kind='rainbow'; WX.rb.userData.keep=true;
+  }
+  /* A rainbow, for a couple of minutes as rain clears under a sun, faded
+     where it meets the ground. Not in the rime, the burn or the mesa, which
+     never had the rain. */
+  function wxRainbow(dt,s){
+    var dry=s.dry===undefined?9:s.dry, dom=WX.dom;
+    var want=!plateMode&&s.rain<0.05&&dry>0.02&&dry<0.8&&s.day>0.55&&s.cloud<0.8
+      &&dom!=='rime'&&dom!=='ash'&&dom!=='mesa'?Math.min(1,dry/0.1)*(1-Math.max(0,(dry-0.5)/0.3)):0;
+    WX.rainbow+=(want-WX.rainbow)*Math.min(1,dt*0.8);
+    if(WX.rainbow<0.01){ if(WX.rb) WX.rb.visible=false; return; }
+    rainbowInit();
+    if(WX.rb.parent!==built.scene){ if(WX.rb.parent) WX.rb.parent.remove(WX.rb); built.scene.add(WX.rb); }
+
+    if(WX.rb.parent!==built.scene){ if(WX.rb.parent) WX.rb.parent.remove(WX.rb); built.scene.add(WX.rb); }
+    /* Seen from above, there is little sky to hang it in: it is light in the
+       air, not a thing in the world, so it is drawn facing the camera across
+       the upper part of the view, over what is there, and faint. */
+    var R=cam.view*1.5;
+    WX.rb.quaternion.copy(camera.quaternion);
+    BITS.d.set(0,1,0).applyQuaternion(camera.quaternion);
+    WX.rb.position.copy(camT).addScaledVector(BITS.d,-R*0.35);
+    WX.rb.scale.set(R*1.25,R,R);
+    WX.rb.material.uniforms.uK.value=WX.rainbow;
+    WX.rb.visible=true;
+  }
+
+  /* Marshes (#102): bubbles rising through the still water, and at night a
+     few will-o'-wisps — cold lights that drift low over it and bob. Where the
+     marsh is comes from the water itself: the quads its generator marked murky. */
+  function marshPoints(d){
+    if(d._marsh) return d._marsh;
+    var out=[], wt=d.water;
+    if(wt&&wt.m) for(var q=0;q<wt.m.length;q+=4*3) if(wt.m[q]>0.9) out.push(wt.v[q*3]+0.125,wt.v[q*3+1],wt.v[q*3+2]+0.125);
+    d._marsh=out; return out;
+  }
+  function marshInView(){
+    var out=[], R=cam.view*1.4, R2=R*R;
+    var add=function(d,gx,gz){ if(!d||!d.water) return; var m=marshPoints(d);
+      for(var i=0;i<m.length;i+=3){ var x=m[i]+gx, z=m[i+2]+gz;
+        if((x-cam.tx)*(x-cam.tx)+(z-cam.tz)*(z-cam.tz)<R2) out.push([x,m[i+1],z]); } };
+    if(streaming&&nodes){ for(var k in nodes){ var nd=nodes[k]; if(nd&&nd.data) add(nd.data,nd.g.position.x,nd.g.position.z); } }
+    else if(built&&built.data) add(built.data,0,0);
+    return out;
+  }
+  var MARSH={bubNext:0,bubbles:0,wisps:[],at:null,atT:-1};
+  function wxMarsh(dt,s){
+    if(plateMode){ MARSH.wisps.length=0; return; }
+    /* The points in view, looked up twice a second rather than every frame. */
+    if(WX.t-MARSH.atT>0.5||!MARSH.at){ MARSH.at=marshInView(); MARSH.atT=WX.t; }
+    var pts=MARSH.at; if(!pts.length){ MARSH.wisps.length=0; return; }
+    MARSH.bubNext-=dt;
+    if(GFX.fx&&MARSH.bubNext<=0){
+      MARSH.bubNext=0.15+0.3*Math.random();
+      var p=pts[Math.floor(Math.random()*pts.length)];
+      fxPut(p[0]+(Math.random()-0.5)*0.5,p[1]+0.02,p[2]+(Math.random()-0.5)*0.5,0,0.35,0,0xd8e6c8,0.06,0.5,-0.2);
+      MARSH.bubbles++;
+    }
+    var want=GFX.glow&&s.day<0.3?Math.min(3,1+Math.floor(pts.length/40)):0;
+    if(MARSH.wisps.length<want&&Math.random()<dt*0.5){
+      var q=pts[Math.floor(Math.random()*pts.length)];
+      MARSH.wisps.push({x:q[0],y:q[1]+0.6,z:q[2],t:0,T:8+8*Math.random(),ph:Math.random()*6.28,vx:(Math.random()-0.5)*0.4,vz:(Math.random()-0.5)*0.4});
+    }
+    for(var i=MARSH.wisps.length-1;i>=0;i--){
+      var w=MARSH.wisps[i]; w.t+=dt; if(w.t>w.T||MARSH.wisps.length>want){ MARSH.wisps.splice(i,1); continue; }
+      w.x+=w.vx*dt; w.z+=w.vz*dt;
+      var fade=Math.min(1,w.t/1.5,(w.T-w.t)/1.5), fl=0.7+0.3*Math.sin(WX.t*7+w.ph)*Math.sin(WX.t*3.1+w.ph*2);
+      var y=w.y+0.25*Math.sin(WX.t*1.3+w.ph);
+      bit(w.x,y,w.z,0.14,0xa8f0ff,fade*fl); bit(w.x,y,w.z,0.28,0x3a7a9a,fade*fl*0.6);
+    }
+  }
+
+  /** Per frame, after the sky: everything above. */
+  function wxFrame(dt){
+    if(!built) return;
+    var s=skyNow;
+    WX.t+=dt;
+    /* A new world keeps nothing of the last one's air. */
+    if(WX.world!==built){ WX.world=built; WX.bombs.length=0; WX.rings.length=0; WX.devils.length=0;
+      WX.aurora=0; WX.rainbow=0; WX.bolt=null; EDGE.runs.length=0; MARSH.wisps.length=0; MARSH.at=null; }
+    WX.dom=plateMode?'':wxDomAt(cam.tx,cam.tz); WX.mode=skyMode;
+    if(!BITS.mesh) bitsInit();
+    BITS.n=0;
+    wxLightning(dt,s);
+    wxBombs(dt);
+    wxDevils(dt,s);
+    wxSpores(dt,s);
+    wxRainbow(dt,s);
+    edgeFrame(dt,s);
+    wxMarsh(dt,s);
+    /* The aurora: over the rime, at night, under a sky clear enough to show it. */
+    var au=!plateMode&&WX.dom==='rime'&&s.cloud<0.5?(1-s.day)*(1-s.cloud*1.6):0;
+    WX.aurora+=(Math.max(0,au)-WX.aurora)*Math.min(1,dt*0.5);
+    SKY_U.uAurora.value=WX.aurora; SKY_U.uAuroraT.value=WX.t;
+    /* Rain on the water: what falls as rain, not as ash or dust or snow. */
+    SKY_U.uRain.value=WX.mode==='rain'||WX.mode==='storm'?s.rain:0;
+    /* A blizzard comes in gusts: the view closes and opens over a few seconds. */
+    WX.gust=WX.mode==='blizzard'?0.35+0.65*(0.5+0.5*Math.sin(WX.t*0.8)*Math.sin(WX.t*0.31+1.3)):1;
+    bitsFlush();
+  }
+  /** How far a storm pulls the fog in: dust and ash and snow blind you. */
+  function wxFogK(){
+    var m=WX.mode;
+    return m==='duststorm'?0.4:m==='ashstorm'?0.5:m==='blizzard'?0.45*WX.gust:m==='storm'?0.8:1;
+  }
+
+  /* ---------- light that travels along a prop's edges (#102) ----------
+     Glass shards, fungal towers, basalt columns, the rime's frozen trees and
+     the landmark each carry a path traced once from their voxels: up one
+     corner of the tallest column, around its top, and down the far corner.
+     Now and then a short bright run of light travels it and is gone — fast
+     and prismatic on glass, a slow pulse on the fungus, an ember creeping up
+     basalt, a cold sparkle on ice at dawn, a rune line on the landmark at dusk.
+     Each window traces its own; the Glow setting turns it off. */
+  var EDGE_KIND={};
+  EDGE_KIND[QS.MAT.GLASS]={k:'glass',hex:0xbff8ff,speed:6.0,len:0.7,min:1.0,every:1.4,prism:true};
+  EDGE_KIND[QS.MAT.FUNGUS]={k:'fungus',hex:0xb8ff90,speed:1.1,len:1.3,min:1.5,every:2.8,night:1.8};
+  EDGE_KIND[QS.MAT.BASALT]={k:'basalt',hex:0xff7a2a,speed:0.8,len:0.9,min:1.5,every:3.0};
+  EDGE_KIND[QS.MAT.ICE]={k:'ice',hex:0xdff4ff,speed:3.0,len:0.5,min:1.5,every:2.6,dawn:true};
+  var EDGE_LANDMARK={k:'landmark',hex:0xffe2a0,speed:2.0,len:1.6,min:1.5,every:5.0,dusk:true};
+  var EDGE={runs:[],next:0,made:0,byKind:{}};
+  /** The paths in one world, in its own frame: traced once and kept. */
+  function edgePaths(d){
+    if(d._edges) return d._edges;
+    var V=QS.V, s=d.propStart===undefined?d.pos.length/3:d.propStart, cols=new Map(), out=[];
+    var own=streaming?QS.CHUNK/2:Infinity;
+    var key=function(ix,iz){ return (ix+8192)*16384+(iz+8192); };
+    for(var q=s;q<d.pos.length/3;q++){
+      var mt=d.mat[q]; if(!EDGE_KIND[mt]) continue;
+      var x=d.pos[q*3], y=d.pos[q*3+1], z=d.pos[q*3+2];
+      if(Math.abs(x)>own||Math.abs(z)>own) continue;
+      var ix=Math.round(x/V), iz=Math.round(z/V), k=key(ix,iz), c=cols.get(k);
+      if(!c) cols.set(k,c={ix:ix,iz:iz,x:x,z:z,lo:y-V/2,hi:y+V/2,mt:mt,seen:false});
+      else { if(y-V/2<c.lo) c.lo=y-V/2; if(y+V/2>c.hi){ c.hi=y+V/2; c.mt=mt; } }
+    }
+    /* Columns that touch, of one material, are one prop. */
+    cols.forEach(function(c){
+      if(c.seen) return;
+      var grp=[c], best=c; c.seen=true;
+      for(var h=0;h<grp.length;h++){ var g=grp[h];
+        for(var a=-1;a<=1;a++)for(var b=-1;b<=1;b++){ var n=cols.get(key(g.ix+a,g.iz+b));
+          if(n&&!n.seen&&n.mt===c.mt){ n.seen=true; grp.push(n); if(n.hi>best.hi) best=n; } } }
+      var kind=EDGE_KIND[c.mt], lo=Infinity;
+      grp.forEach(function(g){ if(g.lo<lo) lo=g.lo; });
+      if(best.hi-lo<kind.min||grp.length>400) return;
+      out.push(edgeRoute(best.x,best.z,lo,best.hi,kind));
+    });
+    if(d.lmPos){
+      /* The landmark: its tallest column within two metres of where it stands,
+         from the ground under it. */
+      var L=d.lmPos, top=null, t=propTops(d);
+      for(var a2=-8;a2<=8;a2++)for(var b2=-8;b2<=8;b2++){
+        var ix2=Math.round(L[0]/V)+a2, iz2=Math.round(L[2]/V)+b2, e=t.get(key(ix2,iz2));
+        if(e&&(!top||e[0]>top.y)) top={x:ix2*V,z:iz2*V,y:e[0]}; }
+      if(top){
+        var gi=Math.floor((top.x+d.half)/V), gj=Math.floor((top.z+d.half)/V);
+        var base=gi>=0&&gj>=0&&gi<d.NX&&gj<d.NZ?d.Hs[gi*d.NZ+gj]:top.y-4;
+        if(top.y-base>=EDGE_LANDMARK.min&&Math.abs(top.x)<=own&&Math.abs(top.z)<=own)
+          out.push(edgeRoute(top.x,top.z,base,top.y,EDGE_LANDMARK)); }
+    }
+    d._edges=out; return out;
+  }
+  /** Up a corner, around the top, down the opposite corner. */
+  function edgeRoute(x,z,lo,hi,kind){
+    var h=QS.V/2+0.01, pts=[[x+h,lo,z+h],[x+h,hi+0.01,z+h],[x-h,hi+0.01,z+h],[x-h,hi+0.01,z-h],[x+h,hi+0.01,z-h],[x+h,lo,z-h]];
+    var acc=[0];
+    for(var i=1;i<pts.length;i++){ var p=pts[i],q=pts[i-1];
+      acc.push(acc[i-1]+Math.sqrt((p[0]-q[0])*(p[0]-q[0])+(p[1]-q[1])*(p[1]-q[1])+(p[2]-q[2])*(p[2]-q[2]))); }
+    return {pts:pts,acc:acc,L:acc[acc.length-1],kind:kind};
+  }
+  function edgeAt(e,u,o){
+    if(u<=0){ o[0]=e.pts[0][0]; o[1]=e.pts[0][1]; o[2]=e.pts[0][2]; return; }
+    for(var i=1;i<e.acc.length;i++) if(u<=e.acc[i]){
+      var t=(u-e.acc[i-1])/Math.max(1e-6,e.acc[i]-e.acc[i-1]), a=e.pts[i-1], b=e.pts[i];
+      o[0]=a[0]+(b[0]-a[0])*t; o[1]=a[1]+(b[1]-a[1])*t; o[2]=a[2]+(b[2]-a[2])*t; return; }
+    var l=e.pts[e.pts.length-1]; o[0]=l[0]; o[1]=l[1]; o[2]=l[2];
+  }
+  /** The paths in view, in world terms, and whether the hour suits each. */
+  function edgesInView(s){
+    var out=[], R=cam.view*1.5, R2=R*R, ph=((s.phase%1)+1)%1;
+    var add=function(d,gx,gz){ if(!d||!d.pos) return;
+      edgePaths(d).forEach(function(e){
+        var x=e.pts[0][0]+gx, z=e.pts[0][2]+gz;
+        if((x-cam.tx)*(x-cam.tx)+(z-cam.tz)*(z-cam.tz)>R2) return;
+        if(e.kind.dusk&&s.day>0.6) return;
+        if(e.kind.dawn&&!(ph>0.2&&ph<0.4)&&Math.random()>0.2) return;
+        out.push({e:e,gx:gx,gz:gz}); }); };
+    if(streaming&&nodes){ for(var k in nodes){ var nd=nodes[k]; if(nd&&nd.data) add(nd.data,nd.g.position.x,nd.g.position.z); } }
+    else if(built&&built.data) add(built.data,0,0);
+    return out;
+  }
+  var EDGE_P=[0,0,0], EDGE_C=new THREE.Color();
+  function edgeFrame(dt,s){
+    if(!GFX.glow||plateMode){ EDGE.runs.length=0; return; }
+    EDGE.next-=dt;
+    if(EDGE.next<=0&&EDGE.runs.length<10){
+      var cand=edgesInView(s);
+      if(cand.length){
+        var c=cand[Math.floor(Math.random()*cand.length)], kd=c.e.kind;
+        EDGE.runs.push({e:c.e,gx:c.gx,gz:c.gz,u:-kd.len*0.2,hue:Math.random()});
+        EDGE.made++; EDGE.byKind[kd.k]=(EDGE.byKind[kd.k]||0)+1;
+        /* More props in view, more often — a shard field glitters. */
+        EDGE.next=kd.every*(0.5+Math.random())/Math.max(1,Math.sqrt(cand.length)/2);
+      } else EDGE.next=1.5;
+    }
+    for(var i=EDGE.runs.length-1;i>=0;i--){
+      var r=EDGE.runs[i], kd2=r.e.kind; r.u+=kd2.speed*dt;
+      if(r.u-kd2.len>r.e.L){ EDGE.runs.splice(i,1); continue; }
+      var bright=kd2.night?Math.min(1,0.55+kd2.night*(1-s.day)*0.5):1;
+      for(var j=0;j<8;j++){
+        var u=r.u-kd2.len*j/8; if(u<0||u>r.e.L) continue;
+        edgeAt(r.e,u,EDGE_P);
+        var hex=kd2.hex;
+        if(kd2.prism){ EDGE_C.setHSL((r.hue+u*0.35)%1,0.9,0.72); hex=EDGE_C.getHex(); }
+        bit(EDGE_P[0]+r.gx,EDGE_P[1],EDGE_P[2]+r.gz,0.075*(1-j/12),hex,bright*(1-j/8));
+      }
+    }
   }
 
   /* ---------- the opening flyover (#99) ----------
@@ -12577,6 +13263,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         wg.setAttribute('aDepth',new THREE.BufferAttribute(new Float32Array(data.water.d),1));
         wg.setAttribute('aFoam',new THREE.BufferAttribute(new Float32Array(data.water.f),1));
         wg.setAttribute('aFlow',new THREE.BufferAttribute(new Float32Array(data.water.fl),2));
+        wg.setAttribute('aMurk',new THREE.BufferAttribute(new Float32Array(data.water.m||new Array(wv.length/3).fill(0)),1));
         wg.setIndex(wid);
         var wm=new THREE.Mesh(wg,mats.water); wm.userData.kind='water';
         /* The water shader lifts a vertex by up to 3.4 cm, which the buffer
@@ -12662,7 +13349,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         vertexShader:MAGMA_VS,fragmentShader:MAGMA_FS}),
       water:new THREE.ShaderMaterial({transparent:true,side:THREE.DoubleSide,fog:true,
         polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-4,
-        uniforms:postUniforms({uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)},uLight:{value:1},uSkyCol:SKY_U.uSkyCol,
+        uniforms:postUniforms({uTime:{value:0},uWind:{value:new THREE.Vector2(0.72,0.69)},uLight:{value:1},uSkyCol:SKY_U.uSkyCol,uRain:SKY_U.uRain,
                   uDetail:{value:GFX.water==='full'?1:0},fogColor:{value:new THREE.Color()},fogNear:{value:1},fogFar:{value:2000},fogDensity:{value:0}}),
         vertexShader:WATER_VS,fragmentShader:WATER_FS}),
     };
@@ -13858,6 +14545,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* The dust a first footstep kicks up (#99) is a material of its own. */
     if(!FX.pts) fxInit();
     g.add(new THREE.Points(FX.pts.geometry,FX.pts.material));
+    /* And the blocks of light a bolt or a bomb is made of (#102). */
+    if(!BITS.mesh) bitsInit();
+    var bw=new THREE.InstancedMesh(BITS.mesh.geometry,BITS.mesh.material,1); bw.setColorAt(0,BITS.c.setRGB(1,1,1)); g.add(bw);
+    rainbowInit(); g.add(new THREE.Mesh(WX.rb.geometry,WX.rb.material));
     built.scene.add(g);
     renderer.compile(built.scene,camera);
     built.scene.remove(g); g.children.forEach(function(o){ if(o.isInstancedMesh) o.dispose(); }); box.dispose();
@@ -15144,7 +15835,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      glowing particle mode — so a noon meadow pays nothing for it, and it is a
      Graphics setting, off on Low and Medium. */
   var GLOW={a:null,b:null,w:0,h:0,scene:null,cam:null,quad:null,blur:null,add:null,black:null,rev:-1,any:false,ran:0,
-            size:new THREE.Vector2(),skip:{grass:1,life:1,silhouette:1,rim:1,debug:1,cutcap:1,loot:1}};
+            size:new THREE.Vector2(),skip:{grass:1,life:1,silhouette:1,rim:1,debug:1,cutcap:1,loot:1,rainbow:1}};
   function glowSetup(){
     GLOW.black=new THREE.MeshBasicMaterial({color:0x000000,fog:false});
     GLOW.cam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
@@ -15313,7 +16004,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         : '<b>Back.</b> Playing together again.',true);
     }
     if(!built) return;
-    applySky(false); skyFrame(dt); fxFrame(dt);
+    applySky(false); skyFrame(dt); wxFrame(dt); fxFrame(dt);
     if(streaming) followSun();
 
     frames++;
@@ -15981,7 +16672,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     dbgRange(seg,0,1439,5,Math.round((((skyNow.phase%1)+1)%1)*1440),function(v){ dbgTime(v); seg.previousSibling.querySelector('small').textContent='held at '+dayClock(); },'Time of day');
     seg.appendChild(gfxButton('Clock',skyFix===null,function(){ dbgTime(skyFix===null?Math.round((((skyNow.phase%1)+1)%1)*1440):null); dbgSync(); }));
     seg=dbgRow(rows,'Weather','only this window’s sky','wx');
-    [['','Seed'],['clear','Clear'],['rain','Rain'],['snow','Snow'],['fog','Fog']].forEach(function(o){
+    [['','Seed'],['clear','Clear'],['rain','Rain'],['storm','Storm'],['snow','Snow'],['fog','Fog'],['rainbow','Rainbow']].forEach(function(o){
       seg.appendChild(gfxButton(o[1],DBG.wx===o[0],function(){ dbgSet('wx',o[0]); })); });
     seg=dbgRow(rows,'Grass height',null,'grassLen');
     var gl=dbgRange(seg,5,120,1,Math.round(grassLen*100),function(v){ setGrassLength(v/100); DBG.grassLen=v/100; dbgSave(); },'Grass height');
@@ -17043,6 +17734,28 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
           if(d<bd){ bd=d; best=[x,ls[i][1]+o.y,z]; } } }
       return best;
     },
+    /** Weather and light (#102): what the air is doing over this view, for
+        the gate — which strike, how bright, how many bombs flew and whether
+        each came down in magma, the devils, bursts, aurora and rainbow. */
+    get wx(){ return {dom:WX.dom,mode:WX.mode,flash:WX.flash,strikes:WX.strikes,bolt:!!WX.bolt,
+                      launched:WX.launched,landed:WX.landed,offMagma:WX.offMagma,inAir:WX.bombs.length,
+                      devils:WX.devils.length,devilsMade:WX.devilsMade,bursts:WX.bursts,
+                      aurora:WX.aurora,rainbow:WX.rainbow,bits:BITS.n,fog:wxFogK(),rainOnWater:SKY_U.uRain.value,
+                      edgeRuns:EDGE.runs.length,edgesMade:EDGE.made,edgeKinds:EDGE.byKind,
+                      marshPts:MARSH.at?MARSH.at.length:0,bubbles:MARSH.bubbles,wisps:MARSH.wisps.length,
+                      edgePaths:edgesInView(skyNow).map(function(c){ return c.e.kind.k; })}; },
+    /** Which motes a sky and a biome make, without a world to stand in. */
+    partModeFor:function(s,domKey){ var B=QS.BIO; return partMode(s,B[domKey.toUpperCase()]); },
+    /** Vents in view, and a launch on demand — the gate cannot wait on chance. */
+    bombNow:function(anywhere){ return wxBombLaunch(!!anywhere); },
+    /** The air, advanced by dt seconds without drawing a frame: the gate
+        watches a storm for a minute this way, not at a frame a second. */
+    wxStep:function(dt){ applySky(false); wxFrame(dt); fxFrame(dt); return this.wx; },
+    /** Grow one window from a full config — a biome forced, somewhere far
+        out — and play in it: the gate's way to stand in the burn or the rime. */
+    grow:function(cfg){ if(session) return false; if(streaming){ streaming=false; syncStreamBtn(); } buildFor(cfg); return true; },
+    get vents(){ return wxVents().length; }, get ventsAll(){ return wxVents(true).length; },
+    ventNear:function(x,z){ var v=wxVents(true), b=null, bd=Infinity; v.forEach(function(p){ var d=(p[0]-x)*(p[0]-x)+(p[2]-z)*(p[2]-z); if(d<bd){ bd=d; b=p; } }); return b; },
     /** How many times the glow pass has run (#99). */
     get glowRan(){ return GLOW.ran; },
     /** The glow buffer's brightest pixel and how many pixels hold any glow,

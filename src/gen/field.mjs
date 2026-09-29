@@ -937,6 +937,59 @@ export function makeGen(seedStr,force){
       }
     return null;
   }
+  /* Marshes (#102). The zone is where the meadow or the thornwood lies low
+     under its own moisture; in it, water stands wherever the hummock noise is
+     low. Two pools that meet only at a corner are joined through it, as a
+     river's are (riverCorner), and a lone cell of water is a hummock — so a
+     marsh is one body of water, never a scatter of puddles touching
+     diagonally. Asked of neighbours, so it is a function of the place alone. */
+  var MARSH_Z=new Map();
+  function marshZone(x,z,w,hm){
+    if(N.s.fbm(x*0.021+57,z*0.021+57,2)<=0.665) return false;
+    var k=(x+32768)*65536+(z+32768), v=MARSH_Z.get(k);
+    if(v!==undefined) return v;
+    v=false;
+    if(!w) w=climate(x,z);
+    if(w[BIO.MEADOW]+w[BIO.THORN]>0.55){
+      if(hm===undefined) hm=macro(x,z,w);
+      var e=rawH(x+6,z), wv=rawH(x-6,z), n=rawH(x,z+6), sv=rawH(x,z-6);
+      /* Low, and flat: a marsh lies still, and on a slope its level would step. */
+      v=hm<(e+wv+n+sv)/4-0.1&&Math.max(e,wv,n,sv)-Math.min(e,wv,n,sv)<1.2;
+      /* Not where the level would round the other way a step on: two
+         marshes at different levels are kept apart by dry ground, never
+         joined water a metre apart. */
+      if(v){ var mm=marshMean(x,z); v=Math.abs(mm-Math.round(mm))<0.3; }
+      /* Three metres clear of any traversal feature — a mesa's apron, a
+         thicket, a hedge — whose climbs and faces are measured from the
+         ground beside them. */
+      for(var a=-3;a<=3&&v;a+=3)for(var b=-3;b<=3&&v;b+=3)
+        if(mesaAt(x+a,z+b)||basaltAt(x+a,z+b)||cliffAt(x+a,z+b)||thornAt(x+a,z+b)||rimeAt(x+a,z+b)||sporeAt(x+a,z+b)||glassAt(x+a,z+b)||meadowAt(x+a,z+b)) v=false;
+    }
+    if(MARSH_Z.size>=CELL_CAP) MARSH_Z.clear();
+    MARSH_Z.set(k,v); return v;
+  }
+  /* The ground a marsh lies in, as a whole metre: the mean of eight points
+     ten metres out. Its water stands half a metre under that and its
+     hummocks at it, so every pool of one marsh is at one level. */
+  var MARSH_RING=[[10,0],[7,7],[0,10],[-7,7],[-10,0],[-7,-7],[0,-10],[7,-7]];
+  function marshMean(x,z){
+    var s=0; for(var q=0;q<8;q++) s+=rawH(x+MARSH_RING[q][0],z+MARSH_RING[q][1]);
+    return s/8;
+  }
+  function marshGround(x,z){ return Math.round(marshMean(x,z)); }
+  function marshLevel(x,z){ return marshGround(x,z)-0.5; }
+  function marshRaw(x,z){ return N.s.fbm(x*0.37+3,z*0.37+11,1)<0.55&&marshZone(x,z); }
+  function marshWet(x,z){
+    if(N.s.fbm(x*0.37+3,z*0.37+11,1)<0.55){
+      for(var q=0;q<4;q++) if(marshRaw(x+DIRS4[q][0],z+DIRS4[q][1])) return true;
+      return false;
+    }
+    for(var q2=0;q2<4;q2++){
+      var dx=(q2<2?1:-1), dz=(q2%2?1:-1);
+      if(marshRaw(x+dx,z)&&marshRaw(x,z+dz)&&!marshRaw(x+dx,z+dz)) return true;
+    }
+    return false;
+  }
   /* one 1 m cell: everything sized in whole metres */
   function cell(x,z){
     var w=climate(x,z);
@@ -968,6 +1021,20 @@ export function makeGen(seedStr,force){
       var h4=(rawH(x+3,z)+rawH(x-3,z)+rawH(x,z+3)+rawH(x,z-3))/4;
       if(hm<h4-0.7){ H=Math.round(hm)-1; water=true; pond=true; }
     }
+    /* A marsh (#102): low, wet ground in the meadow and the thornwood — the
+       fen that was dropped as a biome (docs/DECISIONS.md §5), kept as a place.
+       Where its own moisture field runs high and the land lies no higher than
+       what is around it, the ground breaks into standing water half a metre
+       deep — wadeable — between grassy hummocks that stand just clear of it. */
+    var marsh=false, mwl=0;
+    if(!water&&!ft&&!(c&&c.body)&&marshZone(x,z,w,hm)){
+      /* One level for a marsh's water, from the lie of the land around it and
+         in quarters, so neighbouring pools never step and none stands perched
+         above the rest; a hummock stands a little clear of it. */
+      marsh=true; mwl=marshLevel(x,z);
+      if(marshWet(x,z)) { H=mwl-0.5; water=true; }
+      else H=mwl+0.5;
+    }
     var magma=false;
     /* A river quenches a seam: no magma in or within two metres of one. The
        burn is a scar now and crosses rivers the old ash biome never had, and
@@ -981,9 +1048,9 @@ export function makeGen(seedStr,force){
       if(f<0.022){ H=Math.min(H-1,riverBed(x,z,w)); magma=true; water=false; } }
     if(bs&&bs.h!==null){ H=bs.h; magma=bs.kind===2; water=false; pond=false; }
     H=clamp(H,0,CEIL);
-    if(water) wl=(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
+    if(water) wl=marsh?mwl:(!pond&&rl!==null&&rl>=H+0.5)?rl:H+(pond?1.25:0.75);
     var top=0,ti=0; for(var i=0;i<w.length;i++) if(w[i]>top){top=w[i];ti=i;}
-    return {w:w,H:H,water:water,pond:pond,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,rime:rs?rs.kind:0,spore:ps?ps.kind:0,glass:gs?gs.kind:0,glassTop:gs&&gs.top?gs.top:0,hedge:ws?ws.kind:0,hedgeTop:ws&&ws.top?ws.top:0,
+    return {w:w,H:H,water:water,pond:pond,marsh:marsh,wl:wl,magma:magma,dom:ti,canyon:c,cw:cw,mesa:ms?ms.kind:0,basalt:bs?bs.kind:0,cliff:cs?cs.kind:0,thorn:ts?ts.kind:0,thornTop:ts&&ts.top?ts.top:0,rime:rs?rs.kind:0,spore:ps?ps.kind:0,glass:gs?gs.kind:0,glassTop:gs&&gs.top?gs.top:0,hedge:ws?ws.kind:0,hedgeTop:ws&&ws.top?ws.top:0,
       /* a shelf high enough to walk under: the ground's height under it */
       sporeLo:ps&&ps.kind===2&&H-1>=lo+2?lo:0,
       /* block: a route may not cross it — the thicket and its log's lane */
@@ -1052,12 +1119,12 @@ export function makeGen(seedStr,force){
       if(CELLS.size>=CELL_CAP) CELLS.clear();
       c=cell(x,z); CELLS.set(k,c);
     }
-    return {w:c.w,H:c.H,water:c.water,pond:c.pond,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,rime:c.rime,spore:c.spore,sporeLo:c.sporeLo,glass:c.glass,glassTop:c.glassTop,hedge:c.hedge,hedgeTop:c.hedgeTop,block:c.block,hold:c.hold,bare:c.bare};
+    return {w:c.w,H:c.H,water:c.water,pond:c.pond,marsh:c.marsh,wl:c.wl,magma:c.magma,dom:c.dom,canyon:c.canyon,cw:c.cw,mesa:c.mesa,basalt:c.basalt,cliff:c.cliff,thorn:c.thorn,thornTop:c.thornTop,rime:c.rime,spore:c.spore,sporeLo:c.sporeLo,glass:c.glass,glassTop:c.glassTop,hedge:c.hedge,hedgeTop:c.hedgeTop,block:c.block,hold:c.hold,bare:c.bare};
   }
   /* A world keeps its generator (w.G) for as long as it lives, and a streamed
      field holds sixteen of them — so the cache is let go when generation ends,
      and whatever reads the field afterwards starts from empty. */
-  function forget(){ CELLS.clear(); }
+  function forget(){ CELLS.clear(); MARSH_Z.clear(); }
   /* The mesa whose top covers (x, z), for a test that wants to walk its
      stones: centre, radii, top, the stones' direction and where each stands. */
   function mesaOver(x,z){

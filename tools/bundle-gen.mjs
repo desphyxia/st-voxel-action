@@ -72,7 +72,7 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'colliderF
                  'WAKE_TIME', 'TELEGRAPH_TIME', 'STRIKE_TIME', 'RECOVER_TIME',
                  'HERO_RIG', 'SENTRY_RIG', 'poseHero', 'poseSentry', 'blendPose', 'swingYaw',
                  'restPositions', 'STRIDE', 'SENTRY_STRIDE',
-                 'DAY_SECONDS', 'DAWN_START', 'SPELL_SECONDS', 'skyWord', 'spellAt', 'weatherAt', 'skyAt',
+                 'DAY_SECONDS', 'DAWN_START', 'SPELL_SECONDS', 'skyWord', 'spellAt', 'weatherAt', 'skyAt', 'lightningAt', 'FLASH_SECONDS',
                  'makeCamera', 'snap', 'warpTo', 'follow', 'eye', 'basis', 'moveFrom',
                  'project', 'groundAt', 'heading', 'aimFromPointer', 'aimFromStick',
                  'setView', 'VIEW', 'QUARTER', 'START_YAW',
