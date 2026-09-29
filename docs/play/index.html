@@ -14580,7 +14580,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
              attack:input.took('attack'),dodge:input.took('dodge'),
              aimX:h?h.x:0,aimZ:h?h.z:0,
              rise:input.down('jump'),sink:input.down('dodge')};
-    if(session){ session.step(inp); }
+    if(session){ session.step(inp); dbgRulesSeen(); }
     else { if(!dbgTick(a,inp)) QS.step(col,a,inp,targets); if(encounter) encounter.step([a]); }
 
     /* Hits are a bitmask cleared every tick, and the loop runs several ticks a
@@ -15519,6 +15519,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     }
     if(focus){ var again=[].slice.call(dbgBody.querySelectorAll('button')).filter(function(b){ return b.textContent===focus; })[0]; if(again) again.focus(); }
   }
+  /** A guest's dialog shows the host's rules as they are now: redrawn on the
+      tick a new set arrives, not on the next refresh of the numbers. */
+  var dbgShown=-1;
+  function dbgRulesSeen(){
+    if(!dbgOpen.on||role!=='guest'||!session||!session.rules||session.rules.n===dbgShown) return;
+    dbgShown=session.rules.n; dbgSync();
+  }
   function dbgNumbers(){
     var a=player(), ri=renderer.info.render, mem=memNow(), lines=[];
     lines.push(Math.round(fps)+' fps · '+costMs.toFixed(1)+' ms this thread');
@@ -15538,7 +15545,6 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       } else lines.push('host \u00b7 '+st.queued+' inputs queued \u00b7 '+st.caught+' caught up \u00b7 '+st.starved+' starved');
       if(netCond){ var c=netCond.conditions;
         if(c.delay||c.jitter||c.loss) lines.push('this end adds '+c.delay+' ms + up to '+c.jitter+', loses '+Math.round(c.loss*100)+'%'); }
-      if(role==='guest'&&session.rules&&session.rules.n!==dbgNumbers.rules){ dbgNumbers.rules=session.rules.n; dbgSync(); }
     }
     lines.push(QS_LABEL+' · seed '+(built&&built.cfg?built.cfg.seed:'?'));
     if(a&&built){
