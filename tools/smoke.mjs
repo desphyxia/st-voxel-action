@@ -2433,7 +2433,12 @@ if (BROWSER_HALF) {
            ground round the player. */
         const cap = await bp.evaluate(() => {
           const P = window.QSPLAY, cv = document.querySelector('#cv'), gl = cv.getContext('webgl2') || cv.getContext('webgl');
-          const at = P.cutSpot(); if (!at) return null;
+          /* At the default zoom: the zoom checks leave the camera at 40 m,
+             where the 120 px region spans so much ground that the faces
+             move its mean by a level or two, and the check passed or failed
+             on a rounding. At 10 m they take it from ~105 to ~75. */
+          const view = P.cam.view; P.cam.view = 10; P.frameOnce();
+          const at = P.cutSpot(); if (!at) { P.cam.view = view; return null; }
           /* Under a calm sky: the seed's third spell is a storm (#102), and
              its fog and a flash between the two frames are not the cut. */
           P.setSky('noon', undefined, true);
@@ -2447,7 +2452,7 @@ if (BROWSER_HALF) {
             for (let i = 0; i < px.length; i += 4) { const v = (px[i] + px[i + 1] + px[i + 2]) / 3; n++; l += v; if (v > 200) pale++; }
             return { px, l: l / n, pale: pale / n };
           };
-          const on = sample(true), off = sample(false); P.setCaps(true); P.setSky('noon', undefined, false);
+          const on = sample(true), off = sample(false); P.setCaps(true); P.setSky('noon', undefined, false); P.cam.view = view;
           let c = 0; for (let i = 0; i < on.px.length; i += 4)
             if (Math.abs(on.px[i] - off.px[i]) + Math.abs(on.px[i + 1] - off.px[i + 1]) + Math.abs(on.px[i + 2] - off.px[i + 2]) > 30) c++;
           return { at, cut: P.cut, on: { l: on.l, pale: on.pale }, off: { l: off.l, pale: off.pale }, changed: c / (on.px.length / 4) };
