@@ -89,8 +89,10 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`1c04c59`** (the debug dialog in co-op, #93/PR #98) at **version 57**,
-stamped; concept did not move and stays at `9ac5816`, **version 37**. Before that, play was
+Play is published from **`03a2ac3`** (the look batch, #99/PR #100) at **version 58**, stamped;
+concept from the same commit at **version 38** — both went straight through. Before that, play was
+**`1c04c59`** (the debug dialog in co-op, #93/PR #98) at version 57, with concept at `9ac5816`,
+version 37. Before that, play was
 **`936d472`** (smoother partner online, reliable socketing, wireframe in a streamed world — PR #97)
 at version 56. Before that, play was **`72ff98c`** (online co-op over WebRTC, #95/PR #96) at
 version 55. Before that, play was **`381d382`** (the debug dialog, #92/PR #94) at version 54. Before that, play was **`9ac5816`**
