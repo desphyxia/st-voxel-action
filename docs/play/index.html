@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>Quarterstone Prototype</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -13720,9 +13721,16 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         var a=new THREE.Mesh(box,m); a.castShadow=a.receiveShadow=true; g.add(a);
       }
     }
+    /* The dust a first footstep kicks up (#99) is a material of its own. */
+    if(!FX.pts) fxInit();
+    g.add(new THREE.Points(FX.pts.geometry,FX.pts.material));
     built.scene.add(g);
     renderer.compile(built.scene,camera);
     built.scene.remove(g); g.children.forEach(function(o){ if(o.isInstancedMesh) o.dispose(); }); box.dispose();
+    /* And the glow's blur and add, which the first lamp at dusk would link. */
+    if(!GLOW.quad) glowSetup();
+    GLOW.quad.material=GLOW.add; renderer.compile(GLOW.scene,GLOW.cam);
+    GLOW.quad.material=GLOW.blur; renderer.compile(GLOW.scene,GLOW.cam);
   }
 
   /* The sun's shadow box, centred where the shadow map was last drawn from.
@@ -14912,6 +14920,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      drawing buffer when the task yields, so anything that wants to read the
      pixels has to draw and read without giving the browser a turn in between.
      That is how the smoke test checks the build draws at all. */
+  var sceneRi={calls:0,triangles:0};
   function draw(){
     if(!built) return;
     var a=player();
@@ -14981,6 +14990,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       shadowKey=sk; renderer.shadowMap.needsUpdate=true;
     }
     renderer.render(built.scene,camera);
+    /* renderer.info starts again at every render(), and the glow pass renders
+       several times after this one: what the world cost is read here. */
+    sceneRi.calls=renderer.info.render.calls; sceneRi.triangles=renderer.info.render.triangles;
     glowPass();
     dbgAfter();
   }
@@ -15926,7 +15938,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     dbgShown=session.rules.n; dbgSync();
   }
   function dbgNumbers(){
-    var a=player(), ri=renderer.info.render, mem=memNow(), lines=[];
+    var a=player(), ri=sceneRi, mem=memNow(), lines=[];
     lines.push(Math.round(fps)+' fps · '+costMs.toFixed(1)+' ms this thread');
     lines.push(ri.calls+' draws · '+(ri.triangles/1000).toFixed(0)+'k triangles');
     if(streaming&&nodes){
@@ -16813,7 +16825,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      * near is the only geometry it can help with.
      */
     get draws(){
-      var info=renderer.info.render, out={calls:info.calls,triangles:info.triangles,
+      var info=sceneRi, out={calls:info.calls,triangles:info.triangles,
         geometries:renderer.info.memory.geometries,rings:[],perChunk:[],kinds:{}};
       /* Triangles by what they are. The ring split says *where* geometry is;
          this says *what* it is, and the two answer different questions. A

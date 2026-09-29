@@ -1182,10 +1182,10 @@ if (BROWSER_HALF) {
               reads.wound ? `wound up: blade ${reads.wound.armR.ry.toFixed(2)}, body ${reads.wound.torso.ry.toFixed(2)}; `
                             + `cutting: blade ${reads.cut.armR.ry.toFixed(2)}, body ${reads.cut.torso.ry.toFixed(2)}` : 'no rig');
         /* Issue #62: characters, machines, posts and loot were 57 meshes, each its
-           own draw call. */
+           own draw call. #99 gave each batch an outline, one more draw per batch. */
         const ad = await bp.evaluate(() => window.QSPLAY.actorDraws);
         const tally = {}; for (const k of ad.list) tally[k] = (tally[k] || 0) + 1;
-        check(ad.n <= 16, 'BUILD: characters, machines, posts and loot cost a handful of draw calls',
+        check(ad.n <= 20, 'BUILD: characters, machines, posts and loot cost a handful of draw calls',
               `${ad.n} draws: ${Object.entries(tally).map(([k, n]) => k + ' ' + n).join(', ')} (were 57 meshes)`);
         check(reads.windup && reads.sweeping, 'BUILD: a swing has a wind-up and shows its arc',
               `${reads.windup ? 'wound up' : 'no wind-up'}, ${reads.sweeping ? 'arc drawn' : 'ARC MISSING'}`);
