@@ -263,6 +263,20 @@ function slide(col, a, nx, nz) {
   return true;
 }
 
+/** Flight: no collision, no gravity, no death. Faces where it goes. */
+function flyStep(a, input, dt) {
+  const sp = a.fly * dt, mx = input.mx || 0, mz = input.mz || 0;
+  a.ticks++;
+  a.dead = null;
+  a.x += mx * sp; a.z += mz * sp;
+  a.y += ((input.rise ? 1 : 0) - (input.sink ? 1 : 0)) * sp;
+  if (a.y < -4) a.y = -4;
+  if (a.y > 200) a.y = 200;
+  if (mx || mz) { const l = Math.sqrt(mx * mx + mz * mz); a.faceX = mx / l; a.faceZ = mz / l; }
+  a.vx = a.vy = a.vz = 0; a.apex = a.y; a.grounded = false; a.blocked = false;
+  return a;
+}
+
 /**
  * Advance one tick.
  *
@@ -273,6 +287,10 @@ function slide(col, a, nx, nz) {
  * `targets` is an optional list of `{ x, y, z, r }` for the swing to sweep.
  */
 export function step(col, a, input, targets, dt = TICK) {
+  /* The debug dialog's flight (#92, #93): `a.fly` metres a second, through
+     anything, held jump to rise and held dodge to sink. Here rather than in the
+     page so that a guest predicts it exactly as its host runs it. */
+  if (a.fly) return flyStep(a, input, dt);
   if (a.dead) return a;
   a.ticks++;
   a.blocked = false;

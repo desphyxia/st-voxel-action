@@ -28,7 +28,7 @@ import * as EN from '../../src/sim/enemy.mjs';
 import { findPath, navGraph, NAV_STEP } from '../../src/sim/nav.mjs';
 import * as LT from '../../src/sim/lattice.mjs';
 import * as LO from '../../src/sim/loot.mjs';
-import { makeLoopback } from '../../src/net/transport.mjs';
+import { makeLoopback, conditioned } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import * as NS from '../../src/net/session.mjs';
 import * as RTC from '../../src/net/rtc.mjs';
@@ -858,6 +858,86 @@ export function netSuite() {
           && p.guest.stats.acts === 0,
         `carried ${carried}; host slots ${g.slots.join(',')}, ${g.carried.length} still carried; `
         + `${p.guest.stats.acts} unconfirmed; ${p.wire.stat.dropped} dropped, ${p.wire.stat.duplicated} duplicated`);
+  }
+
+  /* 10. The debug dialog in a game of two (#93). The host's rules reach the
+         guest and both simulations run under them: flight here, which a guest
+         predicts exactly as its host runs it, so the two still agree. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 4, jitter: 2, loss: 0.1, seed: 'rules' }));
+    run(p, 60, scripted(0), scripted(2));
+    const y0 = p.host.peer.y;
+    p.host.setRules({ fly: 10, fall: true });
+    run(p, 40, () => ({}), () => ({ mx: 0.5, rise: true }));
+    const heard = p.guest.rules.fly === 10 && p.guest.rules.fall === true;
+    run(p, 60, () => ({}), () => ({ mx: 0.5, rise: true }));
+    const rose = p.host.peer.y - y0;
+    settle(p, 120);
+    const d = dist2(p.guest.me, p.host.peer);
+    say('a rule the host sets reaches the guest, and both simulations run under it', heard && rose > 5 && d === 0 && p.guest.me.y === p.host.peer.y,
+        `guest heard fly ${p.guest.rules.fly}, fall ${p.guest.rules.fall}; the guest flew ${rose.toFixed(1)} m up on the host; ${d.toFixed(9)} m apart after`);
+
+    /* And the guest cannot: it has no setter, and a rules message sent from
+       its end is not one the host listens to. */
+    const n = p.host.rules.n;
+    p.wire.b.send({ t: 'rules', v: NS.RULES_VERSION, n: n + 5, fly: 0, inv: true });
+    run(p, 10, () => ({}), () => ({}));
+    say('the guest cannot set one', typeof p.guest.setRules === 'undefined' && p.host.rules.n === n && p.host.rules.fly === 10 && !p.host.rules.inv,
+        `guest setter ${typeof p.guest.setRules}, host rules still #${p.host.rules.n} with fly ${p.host.rules.fly}`);
+
+    /* A rules message of a version this end does not know is ignored, not guessed at. */
+    p.wire.a.send({ t: 'rules', v: NS.RULES_VERSION + 1, n: 999, fly: 0 });
+    run(p, 10, () => ({}), () => ({}));
+    say('and a version it does not know is ignored', p.guest.rules.fly === 10 && p.guest.rules.n < 999, `guest keeps rules #${p.guest.rules.n}`);
+  }
+
+  /* 10b. Paused, nothing moves on either machine — the guest predicts nothing
+          the host will not run — and the clock stands; unpaused, it goes on,
+          and they agree. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 4, seed: 'pause' }));
+    run(p, 80, scripted(0), scripted(2));
+    p.host.setRules({ pause: true });
+    run(p, 20, scripted(0), scripted(2));
+    const at = { t: p.host.tick, h: [p.host.me.x, p.host.me.z], g: [p.guest.me.x, p.guest.me.z], s: p.guest.stats.seq };
+    run(p, 120, scripted(0), scripted(2));
+    const still = p.host.tick === at.t && p.host.me.x === at.h[0] && p.guest.me.x === at.g[0] && p.guest.stats.seq === at.s;
+    p.host.setRules({ pause: false });
+    run(p, 60, scripted(0), scripted(2));
+    settle(p, 120);
+    const d = dist2(p.guest.me, p.host.peer);
+    say('the host pauses both machines, and they go on together', still && p.guest.rules.pause === false && p.host.tick > at.t && d === 0,
+        `${still ? 'nothing moved' : 'SOMETHING MOVED'} over 120 paused ticks; ${d.toFixed(9)} m apart after`);
+  }
+
+  /* 10c. The issue's own bar: 200 ms more of latency and 5% loss, and the two
+          still agree where a character ends up. */
+  {
+    const p = twoPlayers('meadow', makeLoopback({ latency: 12, jitter: 3, loss: 0.05, seed: 'bad' }));
+    run(p, 500, scripted(0), scripted(2));
+    settle(p, 240);
+    const d = dist2(p.guest.me, p.host.peer);
+    say('200 ms more latency and 5% loss still end in agreement', d === 0,
+        `${d.toFixed(9)} m apart; round trip ${p.guest.stats.rtt} ticks as the guest measures it`);
+  }
+
+  /* 10d. The conditioner the dialog puts on a real connection: held back by
+          the delay and the jitter, overtaking, and a share of it lost. */
+  {
+    const due = [], got = [];
+    let r = 0;
+    const inner = { send: (m) => got.push(m), onMessage() {}, close() {} };
+    const c = conditioned(inner, { delay: 200, jitter: 100, loss: 0.2 },
+      { later: (fn, ms) => due.push([ms, fn]), rnd: () => { r = (r * 9301 + 49297) % 233280; return r / 233280; } });
+    for (let i = 0; i < 500; i++) c.send(i);
+    const held = due.length, early = got.length;
+    due.sort((x, y) => x[0] - y[0]).forEach((d) => d[1]());
+    let overtook = 0;
+    for (let i = 1; i < got.length; i++) if (got[i] < got[i - 1]) overtook++;
+    const lo = Math.min(...due.map((d) => d[0])), hi = Math.max(...due.map((d) => d[0]));
+    say('the network conditioner delays, reorders and drops what it is given',
+        early === 0 && held === got.length && c.stat.dropped > 60 && c.stat.dropped < 140 && overtook > 50 && lo >= 200 && hi <= 300,
+        `${c.stat.dropped} of 500 dropped, delays ${lo.toFixed(0)}–${hi.toFixed(0)} ms, ${overtook} overtook`);
   }
 
   /* 8. The point of all of it: each of them can see the other move. */

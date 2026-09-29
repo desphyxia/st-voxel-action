@@ -86,3 +86,36 @@ export function makeLoopback(opts) {
 
   return { a, b, pump, stat, get clock() { return clock; } };
 }
+
+/**
+ * A real transport made worse on purpose (#93): what this end sends is held
+ * back `delay` ms plus up to `jitter` more — so messages overtake each other —
+ * and a `loss` fraction of it never goes. Set on both ends, it is a bad
+ * network both ways; on one, a bad uplink. `set` changes it live.
+ *
+ * `env` supplies the clock and the dice — `{ later(fn, ms), rnd() }` — so a
+ * test can drive it. The page uses setTimeout and Math.random: none of this is
+ * simulation, and a debug switch has no business being deterministic.
+ */
+export function conditioned(t, opts, env) {
+  const e = env || { later: (fn, ms) => setTimeout(fn, ms), rnd: Math.random };
+  let o = { delay: 0, jitter: 0, loss: 0 };
+  const stat = { sent: 0, dropped: 0, held: 0 };
+  const set = (p) => { o = Object.assign({}, o, p || {}); return o; };
+  set(opts);
+  return {
+    stat,
+    get conditions() { return o; },
+    set,
+    send(m) {
+      stat.sent++;
+      if (o.loss > 0 && e.rnd() < o.loss) { stat.dropped++; return; }
+      const ms = o.delay + (o.jitter ? e.rnd() * o.jitter : 0);
+      if (ms <= 0) { t.send(m); return; }
+      stat.held++;
+      e.later(() => { stat.held--; t.send(m); }, ms);
+    },
+    onMessage(fn) { t.onMessage(fn); },
+    close() { t.close(); },
+  };
+}

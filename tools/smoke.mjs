@@ -2607,13 +2607,15 @@ if (BROWSER_HALF) {
                 + `mean colour within ${d.toFixed(2)} of 255`);
         }
 
-        /* ---------- DEBUG: the debug dialog (#92) ----------
-           Backtick opens it; every switch in it starts off; in a two-player
-           game — which this window is hosting — what would change what
-           happens is refused and what only draws still works; Escape closes
-           it. Fall damage, the switch in it that the movement budget cares
-           about, is asserted in the node half. */
-        const dbg = await bp.evaluate(() => {
+        /* ---------- DEBUG: the debug dialog (#92, #93) ----------
+           Backtick opens it; every switch in it starts off; Escape closes it.
+           In a game of two — which this window is hosting — the host's
+           simulation controls work and are the rules for both machines: the
+           guest's dialog shows them and refuses them, and a flight the host
+           switches on is the guest's to use, predicted as the host runs it.
+           Fall damage, the switch the movement budget cares about, is asserted
+           in the node half, and so are pausing and the rules on the wire. */
+        const dbgOpen = (pg) => pg.evaluate(() => {
           const P = window.QSPLAY, dlg = document.getElementById('dbg');
           document.querySelector('#cv').focus();
           document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code: 'Backquote', key: '`', bubbles: true }));
@@ -2625,25 +2627,70 @@ if (BROWSER_HALF) {
           const defaults = { wx: pressed('wx'), cut: pressed('cut'), hide: pressed('hide'), speed: pressed('speed') };
           const sim = ['fly', 'fall', 'inv', 'respawn', 'pause', 'speed', 'spawn', 'give', 'tele'];
           const live = sim.filter((k) => [...seg(k).querySelectorAll('button')].some((b) => !b.disabled));
+          const net = ['net-delay', 'net-jitter', 'net-loss'].filter((k) => !!seg(k)).length;
           [...seg('borders').querySelectorAll('button')].find((b) => b.textContent === 'On').click();
           P.frameOnce();
           let lines = 0;
           P.scene.traverse((o) => { if (o.isLineSegments && o.parent && o.parent.userData.kind === 'debug') lines += o.geometry.attributes.position.count / 2; });
           [...seg('borders').querySelectorAll('button')].find((b) => b.textContent === 'Off').click();
           const nums = document.getElementById('dbgnums').textContent;
-          dlg.querySelector('.gfxp').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-          return { open, toggles: toggles.length, onAtStart, defaults, live, lines, nums, closed: dlg.hidden };
+          return { open, toggles: toggles.length, onAtStart, defaults, live, sim: sim.length, net, lines, nums };
         });
+        const dbgClose = (pg) => pg.evaluate(() => {
+          const dlg = document.getElementById('dbg');
+          dlg.querySelector('.gfxp').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          return dlg.hidden;
+        });
+        const dbg = await dbgOpen(bp);
+        dbg.closed = await dbgClose(bp);
         check(dbg.open && dbg.closed && dbg.toggles >= 12 && dbg.onAtStart.length === 0
               && dbg.defaults.wx[0] === 'Seed' && dbg.defaults.cut[0] === 'Auto' && dbg.defaults.hide.length === 0
-              && dbg.defaults.speed[0] === '1\u00d7',
+              && dbg.defaults.speed[0] === '1×',
               'DEBUG: backtick opens the debug dialog with every switch off, and Escape closes it',
               `${dbg.open ? 'open' : 'NOT open'}, ${dbg.toggles} switches, on at start: ${dbg.onAtStart.join(', ') || 'none'}, `
               + `weather ${dbg.defaults.wx}, cutaway ${dbg.defaults.cut}, ${dbg.closed ? 'closed' : 'still open'} on Escape`);
-        check(dbg.live.length === 0 && dbg.lines > 20 && /fps/.test(dbg.nums),
-              'DEBUG: hosting, what would change the game is refused and what only draws still works',
-              `${dbg.live.length ? 'live: ' + dbg.live.join(', ') : 'every simulation control refused'}, `
-              + `${dbg.lines} chunk-border segments drawn, numbers ${/fps/.test(dbg.nums) ? 'shown' : 'MISSING'}`);
+        const gdbg = await dbgOpen(peerPage);
+        check(dbg.live.length === dbg.sim && gdbg.live.length === 0 && dbg.net === 3 && gdbg.net === 3
+              && dbg.lines > 20 && gdbg.lines > 20 && /host/.test(dbg.nums) && /round trip/.test(gdbg.nums),
+              'DEBUG: in a game of two the host runs the simulation controls, the guest cannot, and both draw and measure',
+              `host: ${dbg.live.length} of ${dbg.sim} live; guest: ${gdbg.live.length ? 'LIVE ' + gdbg.live.join(', ') : 'all refused'}; `
+              + `network rows ${dbg.net}/${gdbg.net}; borders drawn ${dbg.lines}/${gdbg.lines}`);
+
+        /* The host switches flight on, and the guest — holding jump — rises,
+           on its own screen and on the host's. */
+        await bp.evaluate(() => {
+          const dlg = document.getElementById('dbg');
+          document.querySelector('#cv').focus();
+          document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code: 'Backquote', key: '`', bubbles: true }));
+          [...dlg.querySelectorAll('.seg[data-k="fly"] button')].find((b) => b.textContent === 'On').click();
+        });
+        const gy0 = await bp.evaluate(() => window.QSPLAY.peer.y);
+        await peerPage.evaluate(() => window.QSPLAY.input.press('Space'));
+        for (let q = 0; q < 24; q++) {
+          await peerPage.evaluate(() => window.QSPLAY.run(4));
+          await bp.evaluate(() => window.QSPLAY.run(4));
+        }
+        await peerPage.evaluate(() => window.QSPLAY.input.release('Space'));
+        const flew = await peerPage.evaluate(() => {
+          const dlg = document.getElementById('dbg');
+          window.QSPLAY.frameOnce();
+          const fly = [...dlg.querySelectorAll('.seg[data-k="fly"] button')];
+          return { fly: window.QSPLAY.rules ? window.QSPLAY.rules.fly : null,
+                   shown: fly.filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent).join(),
+                   locked: fly.every((b) => b.disabled) };
+        });
+        const gy1 = await bp.evaluate(() => window.QSPLAY.peer.y);
+        await bp.evaluate(() => {
+          const dlg = document.getElementById('dbg');
+          [...dlg.querySelectorAll('.seg[data-k="fly"] button')].find((b) => b.textContent === 'Off').click();
+          dlg.querySelector('.gfxp').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        });
+        await dbgClose(peerPage);
+        for (let q = 0; q < 10; q++) { await peerPage.evaluate(() => window.QSPLAY.run(4)); await bp.evaluate(() => window.QSPLAY.run(4)); }
+        check(flew.fly > 0 && flew.shown === 'On' && flew.locked && gy1 - gy0 > 3,
+              'DEBUG: the host switches flight on, and the guest flies — in both windows',
+              `guest has the host's fly at ${flew.fly} m/s and its dialog shows ${flew.shown || 'NOTHING'}`
+              + `${flew.locked ? ', locked' : ', NOT locked'}; the host saw the guest rise ${(gy1 - gy0).toFixed(1)} m`);
 
         await bp.screenshot({ path: join(OUT, 'play.png') });
         await peerPage.screenshot({ path: join(OUT, 'play-guest.png') });

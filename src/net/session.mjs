@@ -64,19 +64,52 @@ export const STALE = 120;
 export const HOST = 0, GUEST = 1;
 
 const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, aimZ: 0 };
+/* `rise` and `sink` are jump and dodge *held*, which only flight reads. */
 const copyInput = (i) => ({ mx: i.mx || 0, mz: i.mz || 0, jump: !!i.jump,
                             attack: !!i.attack, dodge: !!i.dodge,
-                            aimX: i.aimX || 0, aimZ: i.aimZ || 0 });
+                            aimX: i.aimX || 0, aimZ: i.aimZ || 0,
+                            rise: !!i.rise, sink: !!i.sink });
 /* An input on the wire: five numbers. The stick is kept to 1/10000 on *both*
    ends — the guest predicts with the same rounded value the host will apply,
    so the rounding costs nothing in agreement and a third of the bytes. */
 const q4 = (v) => Math.round((v || 0) * 1e4) / 1e4;
 export function packInput(i) {
-  return [q4(i.mx), q4(i.mz), (i.jump ? 1 : 0) | (i.attack ? 2 : 0) | (i.dodge ? 4 : 0), q4(i.aimX), q4(i.aimZ)];
+  return [q4(i.mx), q4(i.mz),
+          (i.jump ? 1 : 0) | (i.attack ? 2 : 0) | (i.dodge ? 4 : 0) | (i.rise ? 8 : 0) | (i.sink ? 16 : 0),
+          q4(i.aimX), q4(i.aimZ)];
 }
 export function unpackInput(w) {
   return { mx: w[0], mz: w[1], jump: !!(w[2] & 1), attack: !!(w[2] & 2), dodge: !!(w[2] & 4),
-           aimX: w[3], aimZ: w[4] };
+           aimX: w[3], aimZ: w[4], rise: !!(w[2] & 8), sink: !!(w[2] & 16) };
+}
+
+/**
+ * What the debug dialog changes about the simulation, in a game of two (#93).
+ *
+ * Only the host sets them. A switch that one side flipped alone would make the
+ * two simulations disagree, and the guest would be snapped back for ever. So
+ * they are the host's, sent as their own message — versioned, so a peer that
+ * does not know a version ignores it rather than guessing — and numbered, so a
+ * guest keeps the newest. Sent when they change and again every RULES_EVERY
+ * ticks, which is the whole of their reliability: the next copy replaces a
+ * lost one.
+ *
+ *   fly     metres a second of flight for both players, or 0
+ *   fall    fall damage on for both, whatever the world's default
+ *   inv     neither can be hurt
+ *   pause   the simulation stands still on both machines
+ *   speed   how fast time runs, which each page applies to its own clock
+ *   spoils  things the host has put on the ground: [x, y, z, module], in order
+ */
+export const RULES_VERSION = 1;
+export const RULES_EVERY = 30;
+export const RULES = { v: RULES_VERSION, n: 0, fly: 0, fall: false, inv: false, pause: false, speed: 1, spoils: [] };
+
+/** A session's rules, on an actor it steps. */
+function ruleActor(a, r) {
+  a.fly = r.fly || 0;
+  a.fallDamage = r.fall ? true : undefined;
+  a.invincible = r.inv || undefined;
 }
 
 /**
@@ -133,6 +166,8 @@ export function makeHost(opts) {
      once and in order: a repeat is ignored, and one that overtook the change
      before it waits to be sent again. */
   let acted = 0;
+  let rules = Object.assign({}, RULES), once = false, beat = 0;
+  const sendRules = () => transport.send(Object.assign({ t: 'rules' }, rules));
 
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
@@ -182,10 +217,30 @@ export function makeHost(opts) {
       return applyAct(me, { k: kind, s: slot, c: carriedIndex });
     },
     get stats() { return { t, joined, queued: inbox.length, inputs: seen, starved, caught, stale, quiet: t - heard }; },
+    /** The rules both simulations run under (#93). Only the host has this. */
+    get rules() { return rules; },
+    setRules(patch) {
+      rules = Object.assign({}, rules, patch, { v: RULES_VERSION, n: rules.n + 1 });
+      sendRules();
+      return rules;
+    },
+    /** Run the next tick even while paused: the dialog's single step. */
+    stepOnce() { once = true; },
 
     /** One authoritative tick. `localInput` is this machine's own player. */
     step(localInput) {
+      /* Paused, nothing moves and the clock stands, but the host still speaks:
+         the rules go out, so the guest learns it is paused, and the hello
+         still goes out to a guest that has not joined. */
+      beat++;
+      if (rules.pause && !once) {
+        if (beat % RULES_EVERY === 0) { sendRules(); if (!joined) announce(); }
+        return this;
+      }
+      once = false;
       t++;
+      if (t % RULES_EVERY === 0) sendRules();
+      ruleActor(me, rules); ruleActor(peer, rules);
       const quiet = t - heard > STALE;
       /* Announced until someone answers, and again whenever the answer stops:
          a guest that reloaded is waiting for a hello to grow the world from. */
@@ -274,10 +329,21 @@ export function makeGuest(opts) {
   /* Lattice changes asked for and not yet confirmed by a snapshot. */
   const acts = [];
   let actN = 0;
+  /* The host's rules as last heard (#93), and the round trip as this end
+     measures it: from sending an input to the snapshot that says the host
+     applied it, in ticks, eased. */
+  let rules = Object.assign({}, RULES), rtt = null;
 
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
     quiet = 0;
+
+    /* The host's rules. A version this end does not know is not guessed at;
+       an older copy, arriving after a newer one, is not kept. */
+    if (m.t === 'rules') {
+      if (m.v === RULES_VERSION && m.n > rules.n) { rules = Object.assign({}, m); delete rules.t; }
+      return;
+    }
 
     if (m.t === 'hello') {
       if (ready) { transport.send({ t: 'join', g: gid }); return; }   /* a repeat beacon */
@@ -306,7 +372,13 @@ export function makeGuest(opts) {
       hostTick = m.tick;
       lastAck = m.ack;
       corrections++;
+      for (const p of pending) if (p.seq === m.ack) {
+        const sample = local - p.at;
+        rtt = rtt === null ? sample : rtt + (sample - rtt) * 0.1;
+        break;
+      }
       while (pending.length && pending[0].seq <= m.ack) pending.shift();
+      if (me) ruleActor(me, rules);
       /* Replayed without targets: movement is predicted, damage is not. A guest
          that guessed at hits would flash things the host never agreed were hit,
          which is worse than the round trip it saves. */
@@ -336,7 +408,10 @@ export function makeGuest(opts) {
     /** The host's tick as of its last snapshot: the one clock both windows
         can agree on, which is what the sky (#30) is read from. */
     get tick() { return hostTick; },
-    get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck, quiet, acts: acts.length }; },
+    get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck, quiet, acts: acts.length,
+                           rtt: rtt === null ? null : Math.round(rtt * 10) / 10 }; },
+    /** What the host has set (#93): read here, never written. */
+    get rules() { return rules; },
     /** Whatever the host said was in the world, as of the moment being drawn —
         blended between the snapshots either side of it. Drawn, never stepped. */
     get foes() { return view || foes; },
@@ -359,10 +434,14 @@ export function makeGuest(opts) {
     step(localInput) {
       quiet++;
       if (!ready) return this;
+      /* Paused by the host: this end stands still too, sending nothing, so
+         nothing is predicted that the host will not run. */
+      if (rules.pause) return this;
+      ruleActor(me, rules);
       if (acts.length && local % ACT_RESEND === 0) for (const a of acts) transport.send(a);
       seq++;
       const w = packInput(localInput || IDLE), input = unpackInput(w);
-      pending.push({ seq, input, w });
+      pending.push({ seq, input, w, at: local });
       if (pending.length > MAX_PENDING) pending.shift();
       /* This input and the few before it, so a message lost on the way costs
          nothing as long as one of the next few arrives. */
