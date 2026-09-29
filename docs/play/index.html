@@ -7895,6 +7895,20 @@ function slide(col, a, nx, nz) {
   return true;
 }
 
+/** Flight: no collision, no gravity, no death. Faces where it goes. */
+function flyStep(a, input, dt) {
+  const sp = a.fly * dt, mx = input.mx || 0, mz = input.mz || 0;
+  a.ticks++;
+  a.dead = null;
+  a.x += mx * sp; a.z += mz * sp;
+  a.y += ((input.rise ? 1 : 0) - (input.sink ? 1 : 0)) * sp;
+  if (a.y < -4) a.y = -4;
+  if (a.y > 200) a.y = 200;
+  if (mx || mz) { const l = Math.sqrt(mx * mx + mz * mz); a.faceX = mx / l; a.faceZ = mz / l; }
+  a.vx = a.vy = a.vz = 0; a.apex = a.y; a.grounded = false; a.blocked = false;
+  return a;
+}
+
 /**
  * Advance one tick.
  *
@@ -7905,6 +7919,10 @@ function slide(col, a, nx, nz) {
  * `targets` is an optional list of `{ x, y, z, r }` for the swing to sweep.
  */
 function step(col, a, input, targets, dt = TICK) {
+  /* The debug dialog's flight (#92, #93): `a.fly` metres a second, through
+     anything, held jump to rise and held dodge to sink. Here rather than in the
+     page so that a guest predicts it exactly as its host runs it. */
+  if (a.fly) return flyStep(a, input, dt);
   if (a.dead) return a;
   a.ticks++;
   a.blocked = false;
@@ -9564,6 +9582,39 @@ function makeLoopback(opts) {
 
   return { a, b, pump, stat, get clock() { return clock; } };
 }
+
+/**
+ * A real transport made worse on purpose (#93): what this end sends is held
+ * back `delay` ms plus up to `jitter` more — so messages overtake each other —
+ * and a `loss` fraction of it never goes. Set on both ends, it is a bad
+ * network both ways; on one, a bad uplink. `set` changes it live.
+ *
+ * `env` supplies the clock and the dice — `{ later(fn, ms), rnd() }` — so a
+ * test can drive it. The page uses setTimeout and Math.random: none of this is
+ * simulation, and a debug switch has no business being deterministic.
+ */
+function conditioned(t, opts, env) {
+  const e = env || { later: (fn, ms) => setTimeout(fn, ms), rnd: Math.random };
+  let o = { delay: 0, jitter: 0, loss: 0 };
+  const stat = { sent: 0, dropped: 0, held: 0 };
+  const set = (p) => { o = Object.assign({}, o, p || {}); return o; };
+  set(opts);
+  return {
+    stat,
+    get conditions() { return o; },
+    set,
+    send(m) {
+      stat.sent++;
+      if (o.loss > 0 && e.rnd() < o.loss) { stat.dropped++; return; }
+      const ms = o.delay + (o.jitter ? e.rnd() * o.jitter : 0);
+      if (ms <= 0) { t.send(m); return; }
+      stat.held++;
+      e.later(() => { stat.held--; t.send(m); }, ms);
+    },
+    onMessage(fn) { t.onMessage(fn); },
+    close() { t.close(); },
+  };
+}
 /* ---------- src/net/session.mjs ---------- */
 /**
  * Two players in one world, host-authoritative.
@@ -9630,19 +9681,52 @@ const STALE = 120;
 const HOST = 0, GUEST = 1;
 
 const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, aimZ: 0 };
+/* `rise` and `sink` are jump and dodge *held*, which only flight reads. */
 const copyInput = (i) => ({ mx: i.mx || 0, mz: i.mz || 0, jump: !!i.jump,
                             attack: !!i.attack, dodge: !!i.dodge,
-                            aimX: i.aimX || 0, aimZ: i.aimZ || 0 });
+                            aimX: i.aimX || 0, aimZ: i.aimZ || 0,
+                            rise: !!i.rise, sink: !!i.sink });
 /* An input on the wire: five numbers. The stick is kept to 1/10000 on *both*
    ends — the guest predicts with the same rounded value the host will apply,
    so the rounding costs nothing in agreement and a third of the bytes. */
 const q4 = (v) => Math.round((v || 0) * 1e4) / 1e4;
 function packInput(i) {
-  return [q4(i.mx), q4(i.mz), (i.jump ? 1 : 0) | (i.attack ? 2 : 0) | (i.dodge ? 4 : 0), q4(i.aimX), q4(i.aimZ)];
+  return [q4(i.mx), q4(i.mz),
+          (i.jump ? 1 : 0) | (i.attack ? 2 : 0) | (i.dodge ? 4 : 0) | (i.rise ? 8 : 0) | (i.sink ? 16 : 0),
+          q4(i.aimX), q4(i.aimZ)];
 }
 function unpackInput(w) {
   return { mx: w[0], mz: w[1], jump: !!(w[2] & 1), attack: !!(w[2] & 2), dodge: !!(w[2] & 4),
-           aimX: w[3], aimZ: w[4] };
+           aimX: w[3], aimZ: w[4], rise: !!(w[2] & 8), sink: !!(w[2] & 16) };
+}
+
+/**
+ * What the debug dialog changes about the simulation, in a game of two (#93).
+ *
+ * Only the host sets them. A switch that one side flipped alone would make the
+ * two simulations disagree, and the guest would be snapped back for ever. So
+ * they are the host's, sent as their own message — versioned, so a peer that
+ * does not know a version ignores it rather than guessing — and numbered, so a
+ * guest keeps the newest. Sent when they change and again every RULES_EVERY
+ * ticks, which is the whole of their reliability: the next copy replaces a
+ * lost one.
+ *
+ *   fly     metres a second of flight for both players, or 0
+ *   fall    fall damage on for both, whatever the world's default
+ *   inv     neither can be hurt
+ *   pause   the simulation stands still on both machines
+ *   speed   how fast time runs, which each page applies to its own clock
+ *   spoils  things the host has put on the ground: [x, y, z, module], in order
+ */
+const RULES_VERSION = 1;
+const RULES_EVERY = 30;
+const RULES = { v: RULES_VERSION, n: 0, fly: 0, fall: false, inv: false, pause: false, speed: 1, spoils: [] };
+
+/** A session's rules, on an actor it steps. */
+function ruleActor(a, r) {
+  a.fly = r.fly || 0;
+  a.fallDamage = r.fall ? true : undefined;
+  a.invincible = r.inv || undefined;
 }
 
 /**
@@ -9699,6 +9783,8 @@ function makeHost(opts) {
      once and in order: a repeat is ignored, and one that overtook the change
      before it waits to be sent again. */
   let acted = 0;
+  let rules = Object.assign({}, RULES), once = false, beat = 0;
+  const sendRules = () => transport.send(Object.assign({ t: 'rules' }, rules));
 
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
@@ -9748,10 +9834,30 @@ function makeHost(opts) {
       return applyAct(me, { k: kind, s: slot, c: carriedIndex });
     },
     get stats() { return { t, joined, queued: inbox.length, inputs: seen, starved, caught, stale, quiet: t - heard }; },
+    /** The rules both simulations run under (#93). Only the host has this. */
+    get rules() { return rules; },
+    setRules(patch) {
+      rules = Object.assign({}, rules, patch, { v: RULES_VERSION, n: rules.n + 1 });
+      sendRules();
+      return rules;
+    },
+    /** Run the next tick even while paused: the dialog's single step. */
+    stepOnce() { once = true; },
 
     /** One authoritative tick. `localInput` is this machine's own player. */
     step(localInput) {
+      /* Paused, nothing moves and the clock stands, but the host still speaks:
+         the rules go out, so the guest learns it is paused, and the hello
+         still goes out to a guest that has not joined. */
+      beat++;
+      if (rules.pause && !once) {
+        if (beat % RULES_EVERY === 0) { sendRules(); if (!joined) announce(); }
+        return this;
+      }
+      once = false;
       t++;
+      if (t % RULES_EVERY === 0) sendRules();
+      ruleActor(me, rules); ruleActor(peer, rules);
       const quiet = t - heard > STALE;
       /* Announced until someone answers, and again whenever the answer stops:
          a guest that reloaded is waiting for a hello to grow the world from. */
@@ -9840,10 +9946,21 @@ function makeGuest(opts) {
   /* Lattice changes asked for and not yet confirmed by a snapshot. */
   const acts = [];
   let actN = 0;
+  /* The host's rules as last heard (#93), and the round trip as this end
+     measures it: from sending an input to the snapshot that says the host
+     applied it, in ticks, eased. */
+  let rules = Object.assign({}, RULES), rtt = null;
 
   transport.onMessage((m) => {
     if (!m || typeof m !== 'object') return;
     quiet = 0;
+
+    /* The host's rules. A version this end does not know is not guessed at;
+       an older copy, arriving after a newer one, is not kept. */
+    if (m.t === 'rules') {
+      if (m.v === RULES_VERSION && m.n > rules.n) { rules = Object.assign({}, m); delete rules.t; }
+      return;
+    }
 
     if (m.t === 'hello') {
       if (ready) { transport.send({ t: 'join', g: gid }); return; }   /* a repeat beacon */
@@ -9872,7 +9989,13 @@ function makeGuest(opts) {
       hostTick = m.tick;
       lastAck = m.ack;
       corrections++;
+      for (const p of pending) if (p.seq === m.ack) {
+        const sample = local - p.at;
+        rtt = rtt === null ? sample : rtt + (sample - rtt) * 0.1;
+        break;
+      }
       while (pending.length && pending[0].seq <= m.ack) pending.shift();
+      if (me) ruleActor(me, rules);
       /* Replayed without targets: movement is predicted, damage is not. A guest
          that guessed at hits would flash things the host never agreed were hit,
          which is worse than the round trip it saves. */
@@ -9902,7 +10025,10 @@ function makeGuest(opts) {
     /** The host's tick as of its last snapshot: the one clock both windows
         can agree on, which is what the sky (#30) is read from. */
     get tick() { return hostTick; },
-    get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck, quiet, acts: acts.length }; },
+    get stats() { return { seq, pending: pending.length, corrections, replayed, lastAck, quiet, acts: acts.length,
+                           rtt: rtt === null ? null : Math.round(rtt * 10) / 10 }; },
+    /** What the host has set (#93): read here, never written. */
+    get rules() { return rules; },
     /** Whatever the host said was in the world, as of the moment being drawn —
         blended between the snapshots either side of it. Drawn, never stepped. */
     get foes() { return view || foes; },
@@ -9925,10 +10051,14 @@ function makeGuest(opts) {
     step(localInput) {
       quiet++;
       if (!ready) return this;
+      /* Paused by the host: this end stands still too, sending nothing, so
+         nothing is predicted that the host will not run. */
+      if (rules.pause) return this;
+      ruleActor(me, rules);
       if (acts.length && local % ACT_RESEND === 0) for (const a of acts) transport.send(a);
       seq++;
       const w = packInput(localInput || IDLE), input = unpackInput(w);
-      pending.push({ seq, input, w });
+      pending.push({ seq, input, w, at: local });
       if (pending.length > MAX_PENDING) pending.shift();
       /* This input and the few before it, so a message lost on the way costs
          nothing as long as one of the next few arrives. */
@@ -10235,7 +10365,7 @@ const ASSETS={
   'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
   'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP8AAAD/'
 };
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -11247,6 +11377,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   var DBG_DEF={wx:'',borders:false,skirt:false,cut:'auto',cutRing:false,cutFreeze:false,noOutline:false,
                collide:false,reach:false,feat:false,wire:false,hide:{},time:null,grassLen:null,
                fly:false,flySpeed:12,fall:false,inv:false,speed:1};
+  /* This window's own bad network (#93): what it adds to what it sends. Not
+     remembered — a reload is a fair connection again. Declared with the rest of the dialog's
+     state because a guest opened by a host starts its session at boot. */
+  var dbgNet={delay:0,jitter:0,loss:0}, netCond=null;
   var DBG_KEEP=['wx','borders','skirt','cut','cutRing','cutFreeze','noOutline','collide','reach','feat','wire','hide','time','grassLen','flySpeed'];
   var DBG=JSON.parse(JSON.stringify(DBG_DEF));
   try{
@@ -13959,19 +14093,20 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /** Host a game over any transport: a second window, or a data channel. */
   function beginHost(t){
     role='host';
-    wire=t;
+    wire=netCond=QS.conditioned(t,dbgNet);
     /* The host announces itself on a beacon until someone answers, so the
        second window can take as long as it likes to load. */
     session=QS.makeHost({col:col,spawn:built.data.spawn,transport:wire,cfg:built.cfg,
                          targets:targets,encounter:encounter});
     if(solo){ session.me.x=solo.x; session.me.y=solo.y; session.me.z=solo.z; }
+    dbgPush();
     hostBtn.disabled=true;
     says('<b>Hosting.</b> Waiting for the other player…',true);
   }
   function startGuest(){ beginGuest(windowTransport(function(){ return window.opener; })); }
   function beginGuest(t){
     role='guest';
-    wire=t;
+    wire=netCond=QS.conditioned(t,dbgNet);
     session=QS.makeGuest({transport:wire, build:function(cfg){
       /* Nothing about the terrain came over the wire — only its seed did. The
          guest still builds the encounter, but only so that it has models to
@@ -14443,7 +14578,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var wasDead=a.dead;
     var inp={mx:m.mx,mz:m.mz,jump:input.took('jump'),
              attack:input.took('attack'),dodge:input.took('dodge'),
-             aimX:h?h.x:0,aimZ:h?h.z:0};
+             aimX:h?h.x:0,aimZ:h?h.z:0,
+             rise:input.down('jump'),sink:input.down('dodge')};
     if(session){ session.step(inp); }
     else { if(!dbgTick(a,inp)) QS.step(col,a,inp,targets); if(encounter) encounter.step([a]); }
 
@@ -14481,6 +14617,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Solo and host draw from the wire format too, so a field the guest needs
        and does not get is missing from everyone's picture, not just theirs. */
     var foes=session?session.foes:(encounter?encounter.wire():null);
+    /* A host can spawn a machine (#93): the guest hears of one it has no
+       model for, and makes one. */
+    if(foes) while(foeMeshes.length<foes.length){ var nf=makeFoe(); built.scene.add(nf.g); foeMeshes.push(nf); }
     for(var fq=0;fq<foeMeshes.length;fq++){
       var fm=foes&&foes[fq];
       foeMeshes[fq].g.visible=!!fm;
@@ -14600,7 +14739,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        an arc 29 times its size over a third of the screen (found while
        building #33; the loop has done it since frameOnce existed). */
     var dt=Math.max(0,Math.min((now-last)/1000,0.25)); last=Math.max(last,now);
-    tm+=dt; acc+=dt*(session?1:DBG.speed);
+    tm+=dt; acc+=dt*(session?((session.rules&&session.rules.speed)||1):DBG.speed);
     pollPad();
     /* Fixed step, so the trajectory does not depend on the frame rate — the
        same reason the smoke test can assert it, and the same reason a guest's
@@ -14926,6 +15065,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Streamed chunks let their arrays go once uploaded, and a wireframe is
        built from them: the loaded ground is grown again, keeping them. */
     if(k==='wire'){ if(v&&streaming) restreamForGrass(); dbgWire(); }
+    dbgPush();
     dbgSave(); dbgSync();
   }
   /* The hour: a slider over the day, in minutes, which holds the sun where it
@@ -14952,8 +15092,24 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     }
     return {x:p.x,y:y,z:p.z};
   }
+  /* Who may change the simulation (#93): anyone playing alone, and the host
+     of a game of two — whose world it is. A guest reads the host's rules. */
+  function dbgMay(){ return !session||role==='host'; }
+  /** The host's switches, as the rules both simulations run under. */
+  function dbgPush(){
+    if(!session||role!=='host'||!session.setRules) return;
+    var r=session.rules;
+    var want={fly:DBG.fly?DBG.flySpeed:0,fall:!!DBG.fall,inv:!!DBG.inv,speed:DBG.speed};
+    if(r.fly!==want.fly||r.fall!==want.fall||r.inv!==want.inv||r.speed!==want.speed) session.setRules(want);
+  }
+  /** What the simulation is running under, for this window: its own switches
+      alone, or the host's in a game of two. */
+  function dbgRules(){
+    if(session&&session.rules) return session.rules;
+    return {fly:DBG.fly?DBG.flySpeed:0,fall:!!DBG.fall,inv:!!DBG.inv,pause:paused,speed:DBG.speed,spoils:[]};
+  }
   function dbgTeleport(x,z){
-    var a=player(); if(!a||session||!isFinite(x)||!isFinite(z)) return false;
+    var a=player(); if(!a||!dbgMay()||!isFinite(x)||!isFinite(z)) return false;
     settleAround(x,z);
     var g=QS.placeOnGround(col,x,z);
     a.x=g.x; a.z=g.z; a.vx=a.vy=a.vz=0; a.dead=null;
@@ -14962,7 +15118,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     return true;
   }
   function dbgSpawnFoe(){
-    var p=dbgSpot(); if(!p||session||!encounter) return null;
+    var p=dbgSpot(); if(!p||!dbgMay()||!encounter) return null;
     var e=encounter.add(p.x,p.z,p.y+3);
     var f=makeFoe(); built.scene.add(f.g); foeMeshes.push(f);
     return e;
@@ -14971,16 +15127,31 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
      and its meshes were sized for the ones the world placed, so they are made
      again one larger. */
   function dbgSpawnLoot(mod){
-    var p=dbgSpot(), L=encounter&&encounter.loot; if(!p||session||!L||L.spoils.length>=16) return false;
+    var p=dbgSpot(), L=encounter&&encounter.loot; if(!p||!dbgMay()||!L||L.spoils.length>=16) return false;
     var g=QS.placeOnGround(col,p.x,p.z,p.y+3);
-    L.spoils.push({x:g.x,y:g.y,z:g.z,mod:mod===undefined?(L.spoils.length*5)%QS.MODULES.length:mod,down:1,site:-1});
-    eachLoot(function(m){ if(m.parent) m.parent.remove(m); freeObject(m); });
-    var nc=L.caches.length;
-    loot=makeLoot(nc+L.spoils.length,nc); loot.sil=lootSil(loot.cube);
-    eachLoot(function(m){ built.scene.add(m); });
+    var m=mod===undefined?(L.spoils.length*5)%QS.MODULES.length:mod;
+    dbgAddSpoil(g.x,g.y,g.z,m);
+    /* A guest cannot derive a spoil the host made up, so it rides the rules:
+       the same list, in the same order, lands in both loot fields (#93). */
+    if(session&&role==='host') session.setRules({spoils:session.rules.spoils.concat([[g.x,g.y,g.z,m]])});
     return true;
   }
-  function dbgGive(mod){ var g=gear(); if(!g||session) return false; var ok=QS.takeModule(g,mod); drawLattice(); return ok; }
+  var dbgSpoils=0;
+  function dbgAddSpoil(x,y,z,m){
+    var L=encounter.loot;
+    L.spoils.push({x:x,y:y,z:z,mod:m,down:1,site:-1}); dbgSpoils++;
+    eachLoot(function(o){ if(o.parent) o.parent.remove(o); freeObject(o); });
+    var nc=L.caches.length;
+    loot=makeLoot(nc+L.spoils.length,nc); loot.sil=lootSil(loot.cube);
+    eachLoot(function(o){ built.scene.add(o); });
+  }
+  /** A guest takes on what the host's rules say is on the ground. */
+  function dbgGuestSpoils(){
+    if(!session||role!=='guest'||!session.rules||!encounter||!encounter.loot) return;
+    var sp=session.rules.spoils||[];
+    while(dbgSpoils<sp.length&&encounter.loot.spoils.length<16){ var q=sp[dbgSpoils]; dbgAddSpoil(q[0],q[1],q[2],q[3]); }
+  }
+  function dbgGive(mod){ var g=gear(); if(!g||!dbgMay()) return false; var ok=QS.takeModule(g,mod); drawLattice(); return ok; }
 
   /* ---------- drawn by the dialog ----------
      One group of its own, never cast into the shadow map and never read by
@@ -15175,6 +15346,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       world's. In a plate there is none of it. */
   var dbgRev=-1, dbgBuilt=null;
   function dbgFrame(){
+    if(!plateMode) dbgGuestSpoils();
     if(plateMode){
       if(dbgG) dbgG.visible=false;
       /* A plate draws solid faces whatever was left switched on here. */
@@ -15214,18 +15386,14 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /** One tick of the dialog's simulation, for the player alone. Returns true
       if it moved the player itself, and the step is not to. */
   function dbgTick(a,inp){
+    /* Alone, this window's switches go on its player; in a game of two the
+       session puts the host's rules on both (#93). Flight is the actor's own
+       step, so a guest predicts it as the host runs it. */
     if(session||!a) return false;
+    a.fly=DBG.fly?DBG.flySpeed:0;
     a.fallDamage=DBG.fall?true:undefined;
     a.invincible=DBG.inv||undefined;
-    if(!DBG.fly) return false;
-    var sp=DBG.flySpeed*TICK;
-    a.x+=inp.mx*sp; a.z+=inp.mz*sp;
-    if(input.down('jump')) a.y+=sp;
-    if(input.down('dodge')) a.y-=sp;
-    a.y=Math.max(-4,Math.min(QS.CEIL+30,a.y));
-    if(inp.mx||inp.mz){ var l=Math.sqrt(inp.mx*inp.mx+inp.mz*inp.mz); a.faceX=inp.mx/l; a.faceZ=inp.mz/l; }
-    a.vx=a.vy=a.vz=0; a.apex=a.y; a.grounded=false; a.dead=null;
-    return true;
+    return false;
   }
 
   /* ---------- the dialog's rows ---------- */
@@ -15242,10 +15410,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     return rows;
   }
   function dbgToggle(rows,label,k,sub,sim){
-    var seg=dbgRow(rows,label,sub,k);
+    var seg=dbgRow(rows,label,sub,k), ro=sim&&!dbgMay(), R=dbgRules();
+    /* A guest's simulation switches show the host's rules, and cannot be
+       pressed: the host decides what happens (#93). */
+    var now=ro?(k==='fly'?R.fly>0:!!R[k]):!!DBG[k];
     [[false,'Off'],[true,'On']].forEach(function(o){
-      var b=gfxButton(o[1],!!DBG[k]===o[0],function(){ dbgSet(k,o[0]); });
-      if(sim&&session) b.disabled=true;
+      var b=gfxButton(o[1],now===o[0],function(){ dbgSet(k,o[0]); });
+      if(ro) b.disabled=true;
       seg.appendChild(b);
     });
     return seg;
@@ -15258,7 +15429,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   function dbgSync(){
     var focus=document.activeElement&&dbgEl.contains(document.activeElement)?document.activeElement.textContent:null;
     dbgBody.textContent='';
-    var s=!!session, seg, rows;
+    var s=!dbgMay(), R=dbgRules(), seg, rows;
 
     rows=dbgHead('World');
     seg=dbgRow(rows,'Time of day',skyFix===null?'the clock runs':'held at '+dayClock(),'time');
@@ -15296,7 +15467,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     rows=dbgHead('Moving');
     dbgToggle(rows,'Fly','fly','through anything · jump up, dodge down',true);
     seg=dbgRow(rows,'Fly speed',DBG.flySpeed+' m/s','flySpeed');
-    var fr=dbgRange(seg,2,40,1,DBG.flySpeed,function(v){ DBG.flySpeed=v; dbgSave(); seg.previousSibling.querySelector('small').textContent=v+' m/s'; },'Fly speed');
+    var fr=dbgRange(seg,2,40,1,DBG.flySpeed,function(v){ DBG.flySpeed=v; dbgSave(); dbgPush(); seg.previousSibling.querySelector('small').textContent=v+' m/s'; },'Fly speed');
     if(s) fr.disabled=true;
     seg=dbgRow(rows,'Teleport','x, z in this world’s metres','tele');
     var a=player(), tx=document.createElement('input'), tz=document.createElement('input');
@@ -15310,12 +15481,15 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
 
     rows=dbgHead('Simulation');
     seg=dbgRow(rows,'Time',null,'pause');
-    var pb=gfxButton(paused?'Paused':'Running',paused,function(){ paused=!paused; dbgSync(); });
-    var sb=gfxButton('Step',false,function(){ if(built) tick(); });
-    pb.disabled=s; sb.disabled=s||!paused; seg.appendChild(pb); seg.appendChild(sb);
+    /* In a game of two, pausing is the host's rule and stops both machines. */
+    var isP=session?!!R.pause:paused;
+    var pb=gfxButton(isP?'Paused':'Running',isP,function(){
+      if(session&&session.setRules) session.setRules({pause:!session.rules.pause}); else paused=!paused; dbgSync(); });
+    var sb=gfxButton('Step',false,function(){ if(!built) return; if(session&&session.stepOnce) session.stepOnce(); tick(); });
+    pb.disabled=s; sb.disabled=s||!isP; seg.appendChild(pb); seg.appendChild(sb);
     seg=dbgRow(rows,'Speed',null,'speed');
     [[0.1,'0.1×'],[0.25,'¼×'],[0.5,'½×'],[1,'1×']].forEach(function(o){
-      var b=gfxButton(o[1],DBG.speed===o[0],function(){ dbgSet('speed',o[0]); }); b.disabled=s; seg.appendChild(b); });
+      var b=gfxButton(o[1],(s?R.speed:DBG.speed)===o[0],function(){ dbgSet('speed',o[0]); }); b.disabled=s; seg.appendChild(b); });
     seg=dbgRow(rows,'Spawn','at the cursor, or ahead of you','spawn');
     var mb=gfxButton('Machine',false,function(){ dbgSpawnFoe(); }), lb=gfxButton('Loot',false,function(){ dbgSpawnLoot(); });
     mb.disabled=s; lb.disabled=s||!!(encounter&&encounter.loot.spoils.length>=16); seg.appendChild(mb); seg.appendChild(lb);
@@ -15325,9 +15499,24 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var gb=gfxButton('Give',false,function(){ dbgGive(+sel.value); }); sel.disabled=s; gb.disabled=s;
     seg.appendChild(sel); seg.appendChild(gb);
 
-    if(s){ var note=document.createElement('p'); note.className='gfxnote';
-      note.textContent='In a two-player game the host decides what happens, so flying, pausing, spawning and the rest are off here. What only changes this window’s picture still works (#93).';
-      dbgBody.appendChild(note); }
+    if(session){
+      /* A game of two: how bad this end makes the wire, for seeing what the
+         game does over a real network (#93). */
+      rows=dbgHead('Network');
+      [['delay','Delay',0,500,10,' ms','added to what this window sends'],['jitter','Jitter',0,200,10,' ms','up to this much more, so messages overtake'],
+       ['loss','Loss',0,20,1,'%','of what this window sends, never arrives']].forEach(function(n){
+        var sg=dbgRow(rows,n[1],(n[0]==='loss'?Math.round(dbgNet.loss*100):dbgNet[n[0]])+n[5]+' \u00b7 '+n[6],'net-'+n[0]);
+        dbgRange(sg,n[2],n[3],n[4],n[0]==='loss'?Math.round(dbgNet.loss*100):dbgNet[n[0]],function(v){
+          dbgNet[n[0]]=n[0]==='loss'?v/100:v; if(netCond) netCond.set(dbgNet);
+          sg.previousSibling.querySelector('small').textContent=v+n[5]+' \u00b7 '+n[6]; },n[1]);
+      });
+      var note=document.createElement('p'); note.className='gfxnote';
+      note.textContent=role==='host'
+        ?'You are hosting: flying, fall damage, invincibility, pausing and speed apply to both of you, and what you spawn is in both worlds.'
+        :'Set by the host: fly '+(R.fly?R.fly+' m/s':'off')+', fall damage '+(R.fall?'on':'off')+', invincible '+(R.inv?'on':'off')
+          +(R.pause?', paused':'')+', speed '+R.speed+'\u00d7. They apply to both of you; what only changes this window\u2019s picture is still yours.';
+      dbgBody.appendChild(note);
+    }
     if(focus){ var again=[].slice.call(dbgBody.querySelectorAll('button')).filter(function(b){ return b.textContent===focus; })[0]; if(again) again.focus(); }
   }
   function dbgNumbers(){
@@ -15339,6 +15528,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       lines.push(nl+' chunks loaded · '+(stream?stream.pending:0)+' waiting · '+fl+' building'+(pool?' on '+pool.ws.length+' workers':' here'));
     } else lines.push('one 64 m window');
     lines.push('GPU '+mem.gpuMB+' MB in '+mem.buffers+' buffers, '+mem.textures+' textures'+(mem.heapMB!==null?' · heap '+mem.heapMB+' MB':''));
+    if(session){
+      var st=session.stats||{}, now=performance.now();
+      if(role==='guest'){
+        var cps=dbgNumbers.at?(st.corrections-dbgNumbers.fix)/((now-dbgNumbers.at)/1000):0;
+        dbgNumbers.at=now; dbgNumbers.fix=st.corrections;
+        lines.push('guest \u00b7 round trip '+(st.rtt===null||st.rtt===undefined?'?':Math.round(st.rtt*TICK*1000)+' ms')
+          +' \u00b7 '+cps.toFixed(0)+' snapshots/s \u00b7 '+st.replayed+' inputs replayed');
+      } else lines.push('host \u00b7 '+st.queued+' inputs queued \u00b7 '+st.caught+' caught up \u00b7 '+st.starved+' starved');
+      if(netCond){ var c=netCond.conditions;
+        if(c.delay||c.jitter||c.loss) lines.push('this end adds '+c.delay+' ms + up to '+c.jitter+', loses '+Math.round(c.loss*100)+'%'); }
+      if(role==='guest'&&session.rules&&session.rules.n!==dbgNumbers.rules){ dbgNumbers.rules=session.rules.n; dbgSync(); }
+    }
     lines.push(QS_LABEL+' · seed '+(built&&built.cfg?built.cfg.seed:'?'));
     if(a&&built){
       var ch=QS.chunkAt(a.x,a.z), bio='';
@@ -16276,6 +16477,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        STUN is asked (nowhere, in a sandbox with no route out), and what the
        connection and the background metronome are doing. */
     netInvite:netInvite, netAccept:netAccept, netReply:netReply, metroSync:metroSync,
+    /** The rules a game of two runs under (#93), as this window has them. */
+    get rules(){ return session&&session.rules?session.rules:null; },
     netConfig:function(o){ if(o.ice) net.ice=o.ice; if(o.gather!==undefined) net.gather=o.gather; },
     get net(){ return {state:net.state,role:net.role,relay:!!net.relay,lost:!!(session&&session.lost),
                        metro:metro?{kind:metro.kind,ticks:metro.ticks||0,secs:metro.secs||0,calls:metro.calls||0}:null}; },

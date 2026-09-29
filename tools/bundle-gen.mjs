@@ -77,7 +77,7 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'colliderF
                  'project', 'groundAt', 'heading', 'aimFromPointer', 'aimFromStick',
                  'setView', 'VIEW', 'QUARTER', 'START_YAW',
                  'ACTIONS', 'DEFAULT_BINDINGS', 'defaultBindings', 'makeInput', 'stickFromDrag',
-                 'snapshot', 'restore', 'makeLoopback', 'makeHost', 'makeGuest', 'spawnNear', 'ACT',
+                 'snapshot', 'restore', 'makeLoopback', 'conditioned', 'makeHost', 'makeGuest', 'spawnNear', 'ACT', 'RULES',
                  'ICE_SERVERS', 'CHANNEL', 'channelTransport', 'packCode', 'unpackCode', 'gathered', 'candidateKinds'];
 
 /**
