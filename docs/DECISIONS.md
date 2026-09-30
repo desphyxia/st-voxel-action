@@ -168,6 +168,56 @@ The general rule this produced, and which every later archetype inherits: **the 
 surface the camera can see.** Anything staged in a vertical plane — a raised arm, a leaned-back
 wind-up — is foreshortened to nothing from above.
 
+### The roster (#6, interview 2026-09-30)
+
+Twelve archetypes, **four per source**: four war machines (the sentry, plus one more tech, one
+magic and one biological), **one scar-born per scar**, and **one wildlife per natural biome**.
+Every place has a signature enemy, and a scar's creature carries that scar's hazard into the
+fight.
+
+| Decision | Choice |
+| --- | --- |
+| Encounters | **Mixed small groups** of two to four, whose roles combine: one pins you while another hits hard. Machines still hold posts (#42's affordances); wildlife roams its ground. Two players can split a group, which is what co-op buys in a fight |
+| Ranged attacks | **Only ground-marked.** Anything that hits at range marks the ground first: a lobbed shot shows where it lands, a beam shows its line. From above you always see where danger will be. No free-flying projectiles |
+| Factions | **The sources fight each other.** Rival traditions' machines attack each other on sight; wildlife flees machines and scar-born. Players can lure one into another. The war is still going |
+| Co-op | **Better with two, never required.** Some archetypes are easier with a partner (the rime stalker freezes while someone faces it; a warden's dome can be contested from both sides), and every one is beatable alone |
+| Party scaling | **Both, a little.** A second player adds one member to a group and gives enemies somewhat more health; damage is unchanged, so a tell reads the same alone or together. The exact numbers belong to #9 |
+| Drops | War machines drop their tradition's **modules** (a fight previews its loot). Scar-born carry **fusion recipe fragments**, which is how fusion knowledge is learned from the world. Wildlife drops **trade goods** holdouts buy, the first use for materials without crafting (tension 5) |
+
+Every archetype inherits the sentry's rule: **the tell goes on the surface the camera can see.**
+
+**War machines**
+
+| Archetype | Role | What it does | What tells you | What you do about it |
+| --- | --- | --- | --- | --- |
+| **Sentry automaton** (tech) | Bruiser | Holds a post, closes, strikes | Stops dead, rises, top plate flares, wedge on the ground | Dodge through; its recovery outlasts your whole swing (built, #24) |
+| **Mortar crawler** (tech) | Artillery | Low, spider-legged; lobs shells over the group from range | The barrel plate glows and landing rings appear on the ground | Leave the rings, then rush it: after a volley it vents, top vents open, and it is weak up close. Walks, cannot jump |
+| **Warden obelisk** (magic) | Holds ground | A hovering carved stone. Its dome protects **whoever stands inside it** — machines of any tradition, wildlife, and players | The crown runes light in sequence, then a ring pulses out along the ground | Jump or dodge the ring. The dome drops while it pulses, so strike then. It floats, so it crosses water and gaps you cannot. A fight around a warden is a fight over who stands in its dome |
+| **Grafted hounds** (biological) | Flankers, always two | Low fast beasts that circle and lunge | Back spines rise and a lunge line is drawn on the ground | Step off the line: an overshot lunge leaves it stumbling. Jumps 1 m faces like you, cannot swim |
+
+**Scar-born**, one per scar, each carrying its scar's hazard
+
+| Archetype | What it does | What tells you | What you do about it |
+| --- | --- | --- | --- |
+| **Cinder crawler** (Ashfall) | Surfaces from magma seams and leaves a burning trail | The crust on its back cracks and glows; an eruption circle on the ground | Keep off the trail. After a dive it resurfaces cooled and brittle, which is the time to hit it |
+| **Rime stalker** (Rimewaste) | A figure frozen mid-motion that moves **only while no player faces it**; its presence drains stamina | Frost creeps along the ground toward where it will strike | Face it to hold it still. With two, one watches while the other closes; alone, you advance facing it |
+| **Spore bloater** (Sporeverge) | Slow fungal mass that swells and bursts into an infection cloud | Its cap swells and its gills glow; a burst circle on the ground | Back out of the circle; after bursting it is deflated and still |
+| **Prism shard** (Glasslands) | Crystal that turns sunlight into lines of light | Facets on its top align and brighten; the lines are drawn on the ground first | Step off the lines. It is fragile and shatters into a ring of shards when broken, so don't stand close for the last hit |
+
+**Wildlife**, one per natural biome, territorial rather than hunting, each using its biome's
+traversal feature
+
+| Archetype | What it does | What tells you | What you do about it |
+| --- | --- | --- | --- |
+| **Tusk boar** (Meadowlands) | Herds; charges anyone near its young | Paws the ground; a charge lane is drawn on the ground | Step out of the lane; it skids to a stop after a miss |
+| **Cliff raptor** (Redrock Mesa) | Nests on mesa tops and dives at anyone climbing | Its shadow circles, then shrinks to where it will land (a natural top-down tell) | Move off the shrinking shadow; it lands exposed |
+| **Ridge ram** (Cloudpine) | Holds the ledge lines and butts you back and off them | Lowers its head; a short push line on the ground | The danger is the fall, not the hit: keep your back off the edge |
+| **Thorn lurker** (Thornwood) | Hides in thickets, lashes out and drags you in | The thicket shakes and parts along the lash line | Step off the line; while it drags it is exposed |
+
+**Build order:** the mortar crawler and the grafted hounds first. With the sentry they make the
+first mixed tech group (bruiser plus artillery), and tech against biological puts the faction
+rule on screen at once.
+
 ### Weapon sites
 
 The destinations of the main drive, one per tradition: a **tech furnace** half-buried in the
@@ -218,7 +268,8 @@ generator workstream in its own right — not a content pass.
   frame needed; the set is not closed.
 - Refinement, and the stash. Carried slots are limited and there is nowhere to put the overflow,
   because there is no camp.
-- Enemy archetypes, telegraphs and AI behaviour within the three sources above.
+- Each archetype's numbers (health, damage, timings, ranges) — #9. The roster, tells and
+  counters are decided (§6, #6); the numbers are not.
 - What the glasslands releases once all three weapons are down.
 - The set-piece grammar's actual vocabulary — what an approach, a gate, an arena and a core
   are made of, and how each tradition's parts differ.
