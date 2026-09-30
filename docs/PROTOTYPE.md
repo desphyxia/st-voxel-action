@@ -30,7 +30,7 @@ As of #27 it is **move, fight and fuse**: the hex lattice is in, a machine leave
 it was built from where it fell, and there are caches out in the world holding modules and the
 fusion recipes that make two of them worth more than two. That closes the loudest of the gaps —
 "no loot, no progression and no reason to go anywhere" — and leaves the rest of Phase 1: one
-frame of eight, one archetype of twelve, and a world with no set-pieces in it.
+frame of eight, three archetypes of twelve, and a world with no set-pieces in it.
 
 ### The movement budget it is measured against
 

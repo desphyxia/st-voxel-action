@@ -5,14 +5,14 @@ terrain features are sized in whole metres on a 1 m grid and built from 25 cm vo
 
 **Status: move, fight and fuse.** Phase 0 is complete and Phase 1 has started. What exists is
 the seeded terrain generator (`src/gen/`), collision, a character controller, an isometric
-camera, a remappable input layer, one committed swing, a dodge, one enemy archetype, a hex
+camera, a remappable input layer, one committed swing, a dodge, three enemy archetypes, a hex
 socket lattice with modules and fusion, and loot to fill it from (`src/sim/`),
 host-authoritative netcode with client prediction (`src/net/`), and a build you can open and
 fight in, with a second window if you want company (`docs/play/`) — plus the concept plate and
 a design decision record.
 
-What it still cannot tell you is whether the *game* is good: one frame of eight, one archetype
-of twelve, no set-pieces, and a world one window wide. Check `docs/DECISIONS.md` before starting
+What it still cannot tell you is whether the *game* is good: one frame of eight, three
+archetypes of twelve, no set-pieces, and a world one window wide. Check `docs/DECISIONS.md` before starting
 anything.
 
 ## Where things are
