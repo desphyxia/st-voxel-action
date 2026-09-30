@@ -11281,7 +11281,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
              /* Weather and light (#102): a lightning flash and its colour, the
                 aurora over the rime, and how hard it is raining on the water. */
              uFlash:{value:0},uFlashCol:{value:new THREE.Color(0.8,0.85,1.0)},
-             uAurora:{value:0},uAuroraT:{value:0},uRain:{value:0}};
+             uAurora:{value:0},uAuroraT:{value:0},uRain:{value:0},
+             /* Wet ground that shines (#102): where the sun is and its light,
+                and a clock for the rain's ripples on the puddles. */
+             uSunDir:{value:new THREE.Vector3(0,1,0)},uSunC:{value:new THREE.Color(0,0,0)},uWetT:{value:0},uGloss:{value:1},
+             /* Three sends a Lambert material no cameraPosition: the eye, for the shine. */
+             uEye:{value:new THREE.Vector3()}};
   /** The post uniforms, for a material with uniforms of its own. */
   function postUniforms(u){
     ['uGradeLift','uGradeGain','uGradeSat','uMist','uMistTop','uMistCol','uMistOff','uFlash','uFlashCol','uAurora','uAuroraT'].forEach(function(k){ u[k]=SKY_U[k]; });
@@ -11781,7 +11786,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       '#include <begin_vertex>\n  vec4 skyWP=vec4(transformed,1.0);\n'
       +'  #ifdef USE_INSTANCING\n  skyWP=instanceMatrix*skyWP;\n  #endif\n'
       +'  vSkyW=(modelMatrix*skyWP).xyz; vSkyN=normalize(mat3(modelMatrix)*objectNormal);');
-    sh.fragmentShader='varying vec3 vSkyW; varying vec3 vSkyN;\nuniform float uEdges;\n'+SKY_GLSL+'\n'+POST_GLSL+'\n'+CUT_GLSL+'\n'+sh.fragmentShader
+    sh.fragmentShader='varying vec3 vSkyW; varying vec3 vSkyN;\nuniform float uEdges;\nuniform vec3 uSunDir; uniform vec3 uSunC; uniform vec3 uSkyCol; uniform float uRain; uniform float uWetT; uniform float uGloss; uniform vec3 uEye;\n'+SKY_GLSL+'\n'+POST_GLSL+'\n'+CUT_GLSL+'\n'+sh.fragmentShader
       .replace('#include <clipping_planes_fragment>',
         (cut?'  if(qsCutAt(uCutA,vSkyW)>qsBayer(gl_FragCoord.xy)||qsCutAt(uCutB,vSkyW)>qsBayer(gl_FragCoord.xy)) discard;\n':'')
         +'#include <clipping_planes_fragment>')
@@ -11813,6 +11818,33 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         +'    diffuseColor.rgb*=1.0+0.16*edge; }')
       .replace('#include <aomap_fragment>',
         '  reflectedLight.directDiffuse*=skyCloud(vSkyW.xz);\n#include <aomap_fragment>')
+      /* Wet ground shines (#102). Flat tops only, in puddles a few metres
+         across where the ground holds more of the water than around them,
+         each with a little sky in it and the sun's glint on its ripples —
+         which quicken while it rains. The ripples are what make the glint:
+         ground this flat, seen from one angle, would otherwise take the sun
+         everywhere at once or nowhere. The Detail setting keeps it. */
+      .replace('#include <envmap_fragment>',
+        '  if(uWet>0.02&&uDetail>0.5&&uGloss>0.5){\n'
+        +'    float wu=smoothstep(0.7,0.95,normalize(vSkyN).y);\n'
+        +'    float pud=smoothstep(0.5,0.7,skyN(vSkyW.xz*0.42+vec2(3.1,7.7)));\n'
+        +'    float wk=uWet*wu*pud*'+(ground?'1.0':'0.45')+';\n'
+        +'    if(wk>0.005){\n'
+        +'      vec2 rp=vSkyW.xz*14.0; float rq=0.3+0.7*uRain;\n'
+        +'      vec3 wn=normalize(vec3((skyN(rp+vec2(uWetT*1.3,0.0))-0.5)*0.5*rq,1.0,(skyN(rp*1.13+vec2(5.0,-uWetT*1.1))-0.5)*0.5*rq));\n'
+        +'      vec3 wv=normalize(uEye-vSkyW);\n'
+        +'      float wf=0.04+0.96*pow(1.0-max(dot(wn,wv),0.0),5.0);\n'
+        +'      float wl=clamp(dot(reflectedLight.directDiffuse,vec3(0.333))/max(0.04,dot(diffuseColor.rgb,vec3(0.333))),0.0,1.2);\n'
+        +'      float wg=pow(max(dot(wn,normalize(uSunDir+wv)),0.0),600.0);\n'
+        +'      outgoingLight=mix(outgoingLight,outgoingLight*0.7+uSkyCol*(0.12+0.5*wf),wk);\n'
+        /* The glint proper lines up with this camera only when the sun is
+           behind what it looks at; the rest of the day the puddles twinkle —
+           a voxel of it here and there flaring in the sun for a moment. */
+        +'      vec2 sc=floor(vSkyW.xz*4.0); float sh=qsPH(sc*1.37+vec2(11.0,5.0)); float tw=fract(sh*9.0+uWetT*(0.4+sh));\n'
+        +'      float spark=step(0.95,sh)*smoothstep(0.0,0.15,tw)*(1.0-smoothstep(0.15,0.5,tw));\n'
+        +'      outgoingLight+=uSunC*(wg*0.9+spark*1.1)*wl*wk;\n'
+        +'    }\n'
+        +'  }\n#include <envmap_fragment>')
       .replace('#include <fog_fragment>','#include <fog_fragment>\n  gl_FragColor.rgb=qsPost(gl_FragColor.rgb,vSkyW);');
   }
   /* The hour. `skySec` is simulation seconds since the world was built,
@@ -11826,6 +11858,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /* The glow pass's layer, and the particle modes that are light (#99):
      declared here because the first world is built before the pass is. */
   var GLOW_LAYER=1, GLOW_MODES={embers:1,fireflies:1,glint:1,spores:1,diamond:1};
+  /* Heat shimmer over magma (#102): its own layer, drawn after the frame. */
+  var HAZE_LAYER=2, HAZE={tex:null,w:0,h:0,mats:null,meshes:[],rev:-1,ran:0,off:false,
+                          fr:new THREE.Frustum(),pm:new THREE.Matrix4(),sp:new THREE.Sphere(),at:new THREE.Vector2()};
   /* The debug dialog's state (#92), here rather than with the dialog because
      the sky, the cutaway and the loop all read it from the first world on. */
   var DBG_DEF={wx:'',borders:false,skirt:false,cut:'auto',cutRing:false,cutFreeze:false,noOutline:false,
@@ -12019,12 +12054,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       skyDirAt=dstep;
       var sd=fixed?s:QS.skyAt(Math.floor(t/sunTurn())*sunTurn(),seed,SKY_CLEAR);
       var moon=sd.moonI>sd.sunI*1.5, dv=moon?sd.moonDir:sd.sunDir;
-      sunDirV.set(dv[0],dv[1],dv[2]).normalize();
+      sunDirV.set(dv[0],dv[1],dv[2]).normalize(); SKY_U.uSunDir.value.copy(sunDirV);
     }
     var moonLit=s.moonI>s.sunI*1.5, sun=built.sun;
     if(sun){
       var c=moonLit?s.moonCol:s.sunCol;
       sun.color.setRGB(c[0],c[1],c[2]); sun.intensity=moonLit?s.moonI:s.sunI;
+      SKY_U.uSunC.value.setRGB(c[0],c[1],c[2]).multiplyScalar(sun.intensity);
       if(!built.streamed){
         sun.position.copy(sunDirV).multiplyScalar(80); sun.target.position.set(0,0,0);
         sun.target.updateMatrixWorld();
@@ -12783,6 +12819,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     SKY_U.uAurora.value=WX.aurora; SKY_U.uAuroraT.value=WX.t;
     /* Rain on the water: what falls as rain, not as ash or dust or snow. */
     SKY_U.uRain.value=WX.mode==='rain'||WX.mode==='storm'?s.rain:0;
+    SKY_U.uWetT.value=WX.t;
     /* A blizzard comes in gusts: the view closes and opens over a few seconds. */
     WX.gust=WX.mode==='blizzard'?0.35+0.65*(0.5+0.5*Math.sin(WX.t*0.8)*Math.sin(WX.t*0.31+1.3)):1;
     bitsFlush();
@@ -13247,7 +13284,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       for(i=0;i<data.mpos.length/3;i++)
         if(data.mmat[i]!==QS.MAT.MAGMA&&keep(data.mpos[i*3],data.mpos[i*3+2])) msrc.push(i);
       var mg=magmaSheet(data,keep);
-      if(mg){ var mgm=new THREE.Mesh(mg,mats.magma); mgm.userData.kind='magma'; mgm.layers.enable(GLOW_LAYER); fitBounds(mgm,0.06); g.add(mgm); }
+      if(mg){ var mgm=new THREE.Mesh(mg,mats.magma); mgm.userData.kind='magma'; mgm.layers.enable(GLOW_LAYER); fitBounds(mgm,0.06); g.add(mgm);
+        /* The air over it (#102): the same sheet twice more, lifted, on a
+           layer of its own that only the shimmer pass draws. */
+        hazeMats().forEach(function(hm,hi){ var hz=new THREE.Mesh(mg,hm); hz.userData.kind='haze';
+          hz.position.y=hi?1.3:0.45; hz.layers.set(HAZE_LAYER); hz.frustumCulled=true; g.add(hz); }); }
       if(msrc.length){
         var em=new THREE.InstancedMesh(boxGeo,new THREE.MeshBasicMaterial({vertexColors:true}),msrc.length);
         for(i=0;i<msrc.length;i++){ var mk=msrc[i];
@@ -14603,9 +14644,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(!BITS.mesh) bitsInit();
     var bw=new THREE.InstancedMesh(BITS.mesh.geometry,BITS.mesh.material,1); bw.setColorAt(0,BITS.c.setRGB(1,1,1)); g.add(bw);
     rainbowInit(); g.add(new THREE.Mesh(WX.rb.geometry,WX.rb.material));
+    /* And the heat shimmer's sheets (#102), which need the heat they read. */
+    var hg=new THREE.BufferGeometry(); hg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(9),3));
+    hg.setAttribute('aHeat',new THREE.BufferAttribute(new Float32Array(3),1));
+    hazeMats().forEach(function(hm){ g.add(new THREE.Mesh(hg,hm)); });
     built.scene.add(g);
     renderer.compile(built.scene,camera);
-    built.scene.remove(g); g.children.forEach(function(o){ if(o.isInstancedMesh) o.dispose(); }); box.dispose();
+    built.scene.remove(g); g.children.forEach(function(o){ if(o.isInstancedMesh) o.dispose(); }); box.dispose(); hg.dispose();
     /* And the glow's blur and add, which the first lamp at dusk would link. */
     if(!GLOW.quad) glowSetup();
     GLOW.quad.material=GLOW.add; renderer.compile(GLOW.scene,GLOW.cam);
@@ -15868,10 +15913,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       shadowWhy[why]=(shadowWhy[why]||0)+1; shadowByChunk=false;
       shadowKey=sk; renderer.shadowMap.needsUpdate=true;
     }
+    SKY_U.uEye.value.setFromMatrixPosition(camera.matrixWorld);
     renderer.render(built.scene,camera);
     /* renderer.info starts again at every render(), and the glow pass renders
        several times after this one: what the world cost is read here. */
     sceneRi.calls=renderer.info.render.calls; sceneRi.triangles=renderer.info.render.triangles;
+    hazePass();
     glowPass();
     dbgAfter();
   }
@@ -15960,6 +16007,68 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     addOn(3.2*g);
     renderer.autoClear=auto; renderer.shadowMap.needsUpdate=sm; renderer.setClearColor(0x0b0f14,1);
     GLOW.ran++;
+  }
+
+  /* ---------- heat shimmer (#102) ----------
+     The air over magma wavers. The frame is copied once it is drawn, and the
+     magma's own sheet, lifted twice into the air above it, draws that copy
+     back through itself a pixel or two askew — a wobble that climbs, strongest
+     over the middle of a seam and gone at its banks, where the sheet's heat
+     is nought, so no edge of it ever shows. It runs only while magma is in
+     view and Glow is on: a frame the size of the screen is copied for it. */
+  function hazeMats(){
+    if(HAZE.mats) return HAZE.mats;
+    var shared={tFrame:{value:null},uRes:{value:new THREE.Vector2(1,1)},uT:{value:0}};
+    HAZE.mats=[1.0,0.55].map(function(k){
+      return new THREE.ShaderMaterial({
+        uniforms:{tFrame:shared.tFrame,uRes:shared.uRes,uT:shared.uT,uK:{value:k}},
+        vertexShader:['attribute float aHeat; varying vec3 vW; varying float vH;',
+          'void main(){ vec4 w=modelMatrix*vec4(position,1.0); vW=w.xyz; vH=aHeat; gl_Position=projectionMatrix*viewMatrix*w; }'].join('\n'),
+        fragmentShader:['uniform sampler2D tFrame; uniform vec2 uRes; uniform float uT; uniform float uK;',
+          'varying vec3 vW; varying float vH;',
+          'void main(){',
+          ' float h=smoothstep(0.1,0.8,vH)*uK; if(h<0.01) discard;',
+          ' float a=sin(vW.x*3.7+vW.z*1.3+uT*5.1)+0.6*sin(vW.z*5.3-vW.x*0.7-uT*6.7);',
+          ' float b=sin(vW.z*4.1-vW.x*1.9+uT*4.3)+0.5*sin(vW.x*6.1+uT*7.9);',
+          ' vec2 uv=(gl_FragCoord.xy+vec2(a*0.9,1.0+b*1.2)*h*1.6)/uRes;',
+          ' gl_FragColor=vec4(texture2D(tFrame,clamp(uv,vec2(0.0),vec2(1.0))).rgb,1.0);',
+          '}'].join('\n'),
+        depthWrite:false,depthTest:true,side:THREE.DoubleSide,toneMapped:false,fog:false});
+    });
+    return HAZE.mats;
+  }
+  /** Is any haze sheet in view? The list is re-read when the world changes. */
+  function hazeInView(){
+    if(HAZE.rev!==worldRev){ HAZE.rev=worldRev; HAZE.meshes.length=0;
+      built.scene.traverse(function(o){ if(o.userData.kind==='haze') HAZE.meshes.push(o); }); }
+    if(!HAZE.meshes.length) return false;
+    HAZE.pm.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse); HAZE.fr.setFromProjectionMatrix(HAZE.pm);
+    for(var i=0;i<HAZE.meshes.length;i++){ var m=HAZE.meshes[i], g=m.geometry;
+      if(!g.boundingSphere) g.computeBoundingSphere();
+      HAZE.sp.copy(g.boundingSphere).applyMatrix4(m.matrixWorld);
+      if(HAZE.fr.intersectsSphere(HAZE.sp)) return true; }
+    return false;
+  }
+  function hazePass(){
+    if(!GFX.glow||HAZE.off||plateMode||!built||!hazeInView()) return;
+    renderer.getDrawingBufferSize(HAZE.at);
+    var w=HAZE.at.x|0, h=HAZE.at.y|0;
+    if(!HAZE.tex||HAZE.w!==w||HAZE.h!==h){
+      if(HAZE.tex) HAZE.tex.dispose();
+      /* Filled once, by the first copy's upload; its bytes are let go after. */
+      HAZE.tex=new THREE.DataTexture(new Uint8Array(w*h*3),w,h,THREE.RGBFormat);
+      HAZE.tex.unpackAlignment=1; HAZE.tex.minFilter=HAZE.tex.magFilter=THREE.LinearFilter; HAZE.tex.generateMipmaps=false;
+      HAZE.tex.needsUpdate=true; HAZE.w=w; HAZE.h=h; HAZE.fresh=true;
+    }
+    renderer.setRenderTarget(null);
+    renderer.copyFramebufferToTexture(HAZE.at.set(0,0),HAZE.tex);
+    if(HAZE.fresh){ HAZE.fresh=false; HAZE.tex.image={width:w,height:h,data:null}; }
+    var u=hazeMats()[0].uniforms; u.tFrame.value=HAZE.tex; u.uRes.value.set(w,h); u.uT.value=WX.t;
+    var bg=built.scene.background, fog=built.scene.fog, auto=renderer.autoClear, sm=renderer.shadowMap.needsUpdate;
+    built.scene.background=null; built.scene.fog=null; renderer.autoClear=false; renderer.shadowMap.needsUpdate=false;
+    camera.layers.set(HAZE_LAYER); renderer.render(built.scene,camera); camera.layers.set(0);
+    built.scene.background=bg; built.scene.fog=fog; renderer.autoClear=auto; renderer.shadowMap.needsUpdate=sm;
+    HAZE.ran++;
   }
 
   var acc=0, last=0, frames=0, fpsAt=0, wasConnected=false, wasLost=false, paused=false;
@@ -17821,6 +17930,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     ventNear:function(x,z){ var v=wxVents(true), b=null, bd=Infinity; v.forEach(function(p){ var d=(p[0]-x)*(p[0]-x)+(p[2]-z)*(p[2]-z); if(d<bd){ bd=d; b=p; } }); return b; },
     /** How many times the glow pass has run (#99). */
     get glowRan(){ return GLOW.ran; },
+    /** Heat shimmer (#102): how often it has run, how many sheets the world
+        has, and a switch the gate diffs a frame both ways with. */
+    get haze(){ var n=0; if(built) built.scene.traverse(function(o){ if(o.userData.kind==='haze') n++; });
+      return {ran:HAZE.ran,sheets:n,inView:!!built&&hazeInView()}; },
+    setHaze:function(on){ HAZE.off=!on; return !!on; },
+    /** Wet ground's shine (#102) on or off, for the gate's diff. */
+    setGloss:function(on){ SKY_U.uGloss.value=on?1:0; return !!on; },
     /** The glow buffer's brightest pixel and how many pixels hold any glow,
         after the last pass: for the gate, which cannot see the halo itself. */
     glowPeek:function(){
