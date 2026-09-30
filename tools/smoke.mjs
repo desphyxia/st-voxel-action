@@ -3561,6 +3561,48 @@ if (BROWSER_HALF) {
       check(ash.launched > 0 && ash.wx.landed === ash.launched && ash.wx.offMagma === 0 && ash.bits > 0,
             'WEATHER: magma throws bombs that arc and come down in magma, never on rock',
             `${ash.vents} vents; ${ash.launched} thrown, ${ash.wx.landed} came down, ${ash.wx.offMagma} of them off the magma; ${ash.bits} blocks of light at most`);
+      /* Two frames of the same moment, one with the effect and one without,
+         and — as a floor — two without: what the effect changes has to stand
+         well clear of what a frame changes on its own. */
+      const bothWays = (cfg, sky, wx, set, at) => wxp.evaluate(([cfg, sky, wx, set, at]) => {
+        const P = window.QSPLAY, dlg = document.getElementById('dbg'), cv = document.querySelector('#cv');
+        const gl = cv.getContext('webgl2') || cv.getContext('webgl');
+        P.grow(cfg); P.setGfx('glow', true); P.setGfx('detail', true);
+        const b = [...dlg.querySelectorAll('.seg[data-k="wx"] button')].find((x) => x.textContent === wx); if (b) b.click();
+        /* The shimmer is measured under a calm sky; the shine needs its weather. */
+        P.setSky(sky, 0, set === 'setHaze');
+        for (let i = 0; i < 4; i++) P.frameOnce();
+        const a = P.actor;
+        if (at && a) { const v = P.ventNear(a.x, a.z); if (v) { a.x = v[0] + 1.5; a.z = v[2] + 1.5; a.y = v[1] + 3; a.vx = a.vy = a.vz = 0; P.run(30); P.cam.tx = a.x; P.cam.tz = a.z; } }
+        for (let i = 0; i < 8; i++) P.frameOnce();
+        const W = cv.width, H = cv.height;
+        const shot = () => { P.draw(); const px = new Uint8Array(W * H * 4); gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px); return px; };
+        const diff = (p, q) => { let n = 0, up = 0; for (let i = 0; i < p.length; i += 4) {
+          const d = (p[i] + p[i + 1] + p[i + 2]) - (q[i] + q[i + 1] + q[i + 2]);
+          if (Math.abs(p[i] - q[i]) + Math.abs(p[i + 1] - q[i + 1]) + Math.abs(p[i + 2] - q[i + 2]) > 8) { n++; if (d > 0) up++; } } return { n, up }; };
+        const ran0 = P.haze.ran;
+        P[set](true); const on = shot(); const ran1 = P.haze.ran;
+        P[set](false); const off = shot(), off2 = shot();
+        P[set](true);
+        const out = { changed: diff(on, off), floor: diff(off2, off).n, pixels: W * H, ranOn: ran1 - ran0, ranOff: P.haze.ran - ran1,
+                      haze: P.haze, wet: P.sky.wet };
+        P.setSky(sky, 0, false);
+        const reset = [...dlg.querySelectorAll('.seg[data-k="wx"] button')].find((x) => x.textContent === 'Seed'); if (reset) reset.click();
+        return out;
+      }, [cfg, sky, wx, set, at]);
+      const ashCfg = { seed: s.seed, size: 64, force: s.force, ox: s.ox, oz: s.oz };
+      const heat = await bothWays(ashCfg, 'noon', 'Clear', 'setHaze', true);
+      const cool = await bothWays(cfgOf('meadow'), 'noon', 'Clear', 'setHaze', false);
+      check(heat.haze.sheets > 0 && heat.ranOn > 0 && heat.ranOff === 0 && heat.changed.n > heat.floor * 3 + 200 && cool.haze.sheets === 0 && cool.ranOn === 0,
+            'WEATHER: the air over magma shimmers, and nowhere else is it paid for',
+            `${heat.haze.sheets} sheets over the magma; ${heat.changed.n} pixels moved by it against ${heat.floor} between two frames without; `
+            + `ran ${heat.ranOn} with it on, ${heat.ranOff} off; the meadow ran it ${cool.ranOn} times with ${cool.haze.sheets} sheets`);
+      const wet = await bothWays(cfgOf('meadow'), 'noon', 'Rainbow', 'setGloss', false);
+      const dry = await bothWays(cfgOf('meadow'), 'noon', 'Clear', 'setGloss', false);
+      check(wet.wet > 0.5 && wet.changed.n > wet.floor * 3 + 200 && wet.changed.up > 20 && dry.changed.n <= dry.floor + 20,
+            'WEATHER: wet ground holds puddles — darker, with sky in them and the sun twinkling on them — and dry ground does not',
+            `wetness ${wet.wet.toFixed(2)}: ${wet.changed.n} pixels changed by the puddles, ${wet.changed.up} of them brighter (floor ${wet.floor}); `
+            + `dry, ${dry.changed.n} changed (floor ${dry.floor})`);
       const mesa = await wxIn(cfgOf('mesa'), 'noon', 'Storm', 30);
       check(mesa.wx.mode === 'duststorm' && mesa.wx.devilsMade > 0 && mesa.wx.fog < 1,
             'WEATHER: the mesa storms dust, not rain, and dust devils wander it',
