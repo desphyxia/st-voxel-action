@@ -7736,9 +7736,9 @@ function worldKey(world) {
  * What the machine with this index was built out of, and therefore drops.
  *
  * Its **own** discipline, which is the rule in §6 — a fight previews its loot.
- * The consequence is the interesting part: every machine in this world is tech,
- * so fighting alone can never give you two traditions, and fusion needs
- * something fighting cannot provide. That is what the caches are for.
+ * Sentries and mortars are tech and grafted hounds are bio (#106), so a world
+ * with both kinds of pack can give you two traditions by fighting alone — but
+ * never the third, which is still what the caches are for.
  */
 function spoilModule(world, i, trad) {
   const pool = MODS_BY_TRAD[trad === undefined ? TRAD.TECH : trad];
@@ -7845,10 +7845,11 @@ function cacheSites(col, world) {
  * already receiving instead of being sent a second list.
  */
 function makeLootField(col, world, spoilCount, trad) {
+  /* `trad` is one tradition for every spoil, or one per machine. */
   const caches = cacheSites(col, world);
   const spoils = [];
   for (let i = 0; i < (spoilCount || 0); i++) {
-    spoils.push({ x: 0, y: 0, z: 0, mod: spoilModule(world, i, trad), down: 0, site: i });
+    spoils.push({ x: 0, y: 0, z: 0, mod: spoilModule(world, i, Array.isArray(trad) ? trad[i] : trad), down: 0, site: i });
   }
   let taken = 0;
 
@@ -8626,12 +8627,15 @@ function navGraph(col, box, options) {
 }
 /* ---------- src/sim/enemy.mjs ---------- */
 /**
- * One enemy: a **sentry automaton**, a tech war machine still holding a
- * position against an enemy that left (docs/DECISIONS.md §1, §6).
+ * The war machines: tech, magic and biological weapons still holding positions
+ * against an enemy that left (docs/DECISIONS.md §1, §6). Three are built — the
+ * sentry (#24), the mortar crawler and the grafted hounds (#106) — of the four
+ * the roster in §6 names; the warden obelisk is still to come.
  *
- * Issue #24 asks for one archetype, and issue #6 asks four questions of every
- * archetype. For this one:
+ * Every archetype answers the four questions #6 asked, and inherits the rule
+ * the sentry produced: **the tell goes on the surface the camera can see.**
  *
+ * **Sentry automaton** (tech, bruiser)
  *   Silhouette   Squat and wide. From 45 degrees you mostly see the top of
  *                things, so the readable surface is its top plate — and that is
  *                where the tell goes.
@@ -8649,11 +8653,43 @@ function navGraph(col, box, options) {
  *                heavy machine goes around, which is what `canJump = false`
  *                and the side-stepping below are for.
  *
- * No AI architecture, as the issue says — a state machine and a steering
- * direction. No spawn rules and no repopulation; a machine does now leave
- * behind the discipline it was built from, which is the other half of "a fight
- * previews its loot" (§6) and lives in src/sim/loot.mjs.
+ * **Mortar crawler** (tech, artillery)
+ *   Silhouette   Low and spider-legged, with a barrel on its back.
+ *   Telegraph    The barrel plate glows and a ring appears on the ground where
+ *                each shell of the volley will land — before any leaves. Ranged
+ *                attacks are only ever ground-marked (§6): from above you always
+ *                see where danger will be.
+ *   Opening      After a volley it vents for two seconds, top open. It is weak
+ *                up close — it backs away from anyone near and cannot fire at
+ *                them — so the answer to a mortar is to rush it.
+ *   Movement     Walks the budget; cannot jump.
+ *
+ * **Grafted hounds** (biological, flankers, always two)
+ *   Silhouette   Low, long and fast, with a spined back.
+ *   Telegraph    The spines rise and the line it will lunge along is drawn on
+ *                the ground. The line is fixed when the tell starts: step off
+ *                it and the lunge goes by.
+ *   Opening      The lunge carries past where you stood, and the hound stumbles.
+ *   Movement     Faster than a player at a run, circles rather than closing
+ *                head on, jumps a 1 m face like you do, and will not go into
+ *                water too deep to wade: it cannot swim.
+ *
+ * **The sources fight each other** (§6). A machine that is awake takes the
+ * nearest target it can see — a player, or a machine of another tradition —
+ * and every strike, shell and lunge hurts whatever it reaches of another
+ * tradition, never its own. A dormant machine wakes for a player, or for a
+ * rival that is already awake: so nothing fights until a player starts it, and
+ * a player who leads hounds into a tech post has started the fight they meant
+ * to.
+ *
+ * **Party scaling** (§6): a second player brings each group's reserve member
+ * out, and a machine that wakes with two players present has a little more
+ * health. Damage is not scaled, so a tell reads the same alone or together.
+ *
+ * No AI architecture — a state machine and a steering direction per machine,
+ * stepped in a fixed order so a host and a replay agree.
  */
+
 
 
 
@@ -8684,6 +8720,50 @@ const SENTRY = {
 };
 const COS_HALF = cos(SENTRY.arc / 2);
 
+/** The mortar crawler (#106). Every number here is a placeholder for #9. */
+const MORTAR = {
+  hp: 40,
+  /** It sees further than the sentry: it is the one that shoots first. */
+  sight: 16,
+  /** It fires at anything between `near` and `range`, and backs away from
+      anything nearer than `near` — it cannot fire that close. */
+  range: 13,
+  near: 5,
+  /** A volley of three, in a line across the target, this far apart. */
+  shells: 3,
+  spread: 1.8,
+  /** The ring each shell lands in, and what landing in it costs. */
+  ringR: 1.3,
+  damage: 14,
+  speed: 0.45,
+  rad: 0.55,
+  leash: 14,
+};
+
+/** The grafted hounds (#106). Placeholders for #9 too. */
+const HOUND = {
+  hp: 30,
+  sight: 14,
+  /** It circles at about this distance before it commits. */
+  circle: 3.2,
+  /** And lunges from no further than this. */
+  range: 3.6,
+  /** The lunge: this fast (as a fraction of the player's run) for LUNGE_TIME,
+      which carries it about 4.2 m — past someone it started 3.6 m from. */
+  lunge: 3.5,
+  /** Whatever the lunge passes within this of, it hits. */
+  bite: 0.75,
+  damage: 10,
+  /** Faster than a player at a run: you cannot simply walk away from hounds. */
+  speed: 1.05,
+  rad: 0.45,
+  leash: 20,
+};
+
+/** Which archetype a machine is, on the wire as one small integer. */
+const KIND = { SENTRY: 0, MORTAR: 1, HOUND: 2 };
+const KIND_NAMES = ['sentry', 'mortar', 'hound'];
+
 const EST = {
   DORMANT: 0, WAKE: 1, CLOSE: 2, TELEGRAPH: 3, STRIKE: 4, RECOVER: 5, STAGGER: 6, DEAD: 7,
   /** Walking back to its post, having lost you or been drawn too far (#6). */
@@ -8697,6 +8777,23 @@ const STRIKE_TIME = 0.12;
 /** Longer than a whole player swing (0.77 s), so the dodge buys a free hit. */
 const RECOVER_TIME = 0.90;
 const STAGGER_TIME = 0.28;
+/** The mortar's rings are on the ground this long before a shell leaves… */
+const MORTAR_AIM_TIME = 1.1;
+/** …and the shells are in the air this long. Nearly two seconds of warning. */
+const MORTAR_FLIGHT_TIME = 0.7;
+/** The vent: the mortar's opening, longer than two whole swings. */
+const MORTAR_VENT_TIME = 2.0;
+/** A hound's tell is short — it is a fast thing — but the line is on the
+    ground for all of it. */
+const HOUND_TELL_TIME = 0.6;
+const LUNGE_TIME = 0.3;
+/** The stumble after an overshot lunge: the hound's opening. */
+const STUMBLE_TIME = 0.85;
+/** How long a hound circles before it will commit to a lunge. */
+const CIRCLE_TIME = 0.6;
+/** A second player: each group's reserve comes out, and a machine that wakes
+    then has this much more health. Damage is untouched (§6). */
+const PARTY_HP = 1.15;
 /** How long it commits to going around something before trying forward again. */
 const SIDESTEP_TIME = 0.5;
 /** How often a path is worked out again while it is being followed (#15). */
@@ -8704,31 +8801,74 @@ const REPATH_TIME = 0.5;
 /** Nodes a single search may open: bounded, because the host pays for it. */
 const PATH_NODES = 900;
 
-function makeSentry(col, x, z, fromY) {
-  const e = placeOnGround(col, x, z, fromY, SENTRY.rad);
-  e.hp = SENTRY.hp; e.maxHp = SENTRY.hp;
-  e.canJump = false;
-  e.kind = 'sentry';
+/** Each archetype's constants, timings and tradition, by kind. */
+const SPEC = [
+  { k: KIND.SENTRY, c: SENTRY, trad: TRAD.TECH, canJump: false,
+    tell: TELEGRAPH_TIME, strike: STRIKE_TIME, recover: RECOVER_TIME },
+  { k: KIND.MORTAR, c: MORTAR, trad: TRAD.TECH, canJump: false,
+    tell: MORTAR_AIM_TIME, strike: MORTAR_FLIGHT_TIME, recover: MORTAR_VENT_TIME },
+  { k: KIND.HOUND, c: HOUND, trad: TRAD.BIO, canJump: true,
+    tell: HOUND_TELL_TIME, strike: LUNGE_TIME, recover: STUMBLE_TIME },
+];
+const specOf = (e) => SPEC[e.k] || SPEC[0];
+
+/** The archetype table by kind — what a guest, which is sent only `k`, reads
+ *  an archetype's numbers from. */
+const ARCHETYPES = SPEC.map((s) => s.c);
+
+function makeMachine(col, k, x, z, fromY) {
+  const s = SPEC[k], c = s.c;
+  const e = placeOnGround(col, x, z, fromY, c.rad);
+  e.hp = c.hp; e.maxHp = c.hp;
+  e.canJump = s.canJump;
+  e.k = k; e.kind = KIND_NAMES[k]; e.trad = s.trad;
   e.ai = { state: EST.DORMANT, t: 0, side: 0, sideT: 0,
            /* Where it holds (#6), and the path it is following, if any (#15). */
-           post: { x: e.x, y: e.y, z: e.z }, path: null, wp: 0, pathT: 0 };
+           post: { x: e.x, y: e.y, z: e.z }, path: null, wp: 0, pathT: 0,
+           /* The mortar's rings, as x, z pairs; a hound's orbit and lunge. */
+           marks: null, orbit: 1, lx: 0, lz: 0, bit: 0 };
   return e;
 }
 
-/** Is it in a state where a player's hit should interrupt it? */
+function makeSentry(col, x, z, fromY) { return makeMachine(col, KIND.SENTRY, x, z, fromY); }
+function makeMortar(col, x, z, fromY) { return makeMachine(col, KIND.MORTAR, x, z, fromY); }
+function makeHound(col, x, z, fromY) { return makeMachine(col, KIND.HOUND, x, z, fromY); }
+const MAKE = [makeSentry, makeMortar, makeHound];
+
+/** Is it in a state where a hit should interrupt it? */
 function staggerable(st) {
   return st === EST.CLOSE || st === EST.WAKE || st === EST.TELEGRAPH;
+}
+
+/** Deep enough water that something which cannot swim will not go in. */
+function tooDeep(col, x, z, y) {
+  const l = col.liquidAt(x, z);
+  return l.kind === LIQUID.WATER && l.level - y > MOVE.wade;
 }
 
 /**
  * Where to walk. Straight at the target while nothing is in the way; once a
  * wall or a drop is, along a path round it (#15) — worked out for its own
- * width, without climbs or jumps, because it does neither — and only when no
- * path exists, sideways for a while. A machine that walks off a ledge to reach
+ * width, with climbs only for something that jumps — and only when no path
+ * exists, sideways for a while. A machine that walks off a ledge to reach
  * you is not menacing, and one that hovers over the gap is worse.
  */
-function steer(col, e, tx, tz, budget) {
-  const ai = e.ai;
+function steer(col, e, tx, tz, budget, speed) {
+  const m = steerAny(col, e, tx, tz, budget, speed);
+  /* Whatever the step came from — a straight line, a path's cut corner, a
+     sidestep — a hound does not take it into deep water. It waits on the bank. */
+  if (e.k === KIND.HOUND && (m.mx || m.mz)) {
+    const l = hyp(m.mx, m.mz), ax = e.x + (m.mx / l) * (e.rad + 0.3), az = e.z + (m.mz / l) * (e.rad + 0.3);
+    if (tooDeep(col, ax, az, col.supportUnder(ax, az, 0.05, e.y + MOVE.step + EPS))) {
+      e.ai.sideT = 0;
+      return { mx: 0, mz: 0 };
+    }
+  }
+  return m;
+}
+
+function steerAny(col, e, tx, tz, budget, speed) {
+  const ai = e.ai, spd = speed === undefined ? specOf(e).c.speed : speed;
   let dx = tx - e.x, dz = tz - e.z;
   const l = hyp(dx, dz);
   if (l < 1e-6) return { mx: 0, mz: 0 };
@@ -8740,11 +8880,11 @@ function steer(col, e, tx, tz, budget) {
     ai.pathT -= TICK;
     if (ai.pathT <= 0 && plan(budget)) {
       const p = findPath(col, e, { x: tx, z: tz },
-                         { rad: e.rad, canJump: false, maxNodes: PATH_NODES });
+                         { rad: e.rad, canJump: e.canJump, maxNodes: PATH_NODES });
       ai.path = p && p.length > 1 ? p : null; ai.wp = 1; ai.pathT = REPATH_TIME;
     }
   }
-  const along = followPath(e);
+  const along = followPath(e, spd);
   if (along) return along;
 
   if (ai.sideT > 0) {
@@ -8753,25 +8893,30 @@ function steer(col, e, tx, tz, budget) {
        because both machines in a co-op session have to agree on where this
        thing walked. */
     const px = -dz * ai.side, pz = dx * ai.side;
-    return { mx: (dx * 0.35 + px) * SENTRY.speed, mz: (dz * 0.35 + pz) * SENTRY.speed };
+    return { mx: (dx * 0.35 + px) * spd, mz: (dz * 0.35 + pz) * spd };
   }
 
-  /* Look one step ahead: a drop it would not survive, or nothing at all. */
+  /* Look one step ahead: a drop it would not survive, nothing at all, or —
+     for something that cannot swim — water. */
   const ax = e.x + dx * 0.9, az = e.z + dz * 0.9;
   const g = col.supportUnder(ax, az, e.rad, e.y + MOVE.step + EPS);
-  const cliff = g === -Infinity || e.y - g > MOVE.fall - 1;
+  const cliff = g === -Infinity || e.y - g > MOVE.fall - 1
+    || (e.k === KIND.HOUND && tooDeep(col, ax, az, g));
+  /* Something that jumps meets a 1 m face with a jump, not a path. */
+  if (e.blocked && !cliff && e.canJump) return { mx: dx * spd, mz: dz * spd, jump: true };
   if ((cliff || e.blocked) && plan(budget)) {
     const p = findPath(col, e, { x: tx, z: tz },
-                       { rad: e.rad, canJump: false, maxNodes: PATH_NODES });
+                       { rad: e.rad, canJump: e.canJump, maxNodes: PATH_NODES });
     if (p && p.length > 1) {
       ai.path = p; ai.wp = 1; ai.pathT = REPATH_TIME;
-      const first = followPath(e);
+      const first = followPath(e, spd);
       if (first) return first;
     }
     ai.side = ai.side === 0 ? 1 : -ai.side;      /* alternate, never random */
     ai.sideT = SIDESTEP_TIME;
   }
-  return { mx: dx * SENTRY.speed, mz: dz * SENTRY.speed };
+  if (cliff) return { mx: 0, mz: 0 };
+  return { mx: dx * spd, mz: dz * spd };
 }
 
 /**
@@ -8789,29 +8934,46 @@ function plan(budget) {
 }
 
 /** The next step along the path it is following, or null if it has none left. */
-function followPath(e) {
+function followPath(e, spd) {
   const ai = e.ai;
   if (!ai.path) return null;
   while (ai.wp < ai.path.length - 1 && hyp(ai.path[ai.wp].x - e.x, ai.path[ai.wp].z - e.z) < 0.35) ai.wp++;
   const w = ai.path[ai.wp], wx = w.x - e.x, wz = w.z - e.z, wl = hyp(wx, wz);
   if (wl < 0.35) { ai.path = null; return null; }
-  return { mx: (wx / wl) * SENTRY.speed, mz: (wz / wl) * SENTRY.speed };
+  return { mx: (wx / wl) * spd, mz: (wz / wl) * spd };
+}
+
+/** Is this machine one a rival should count as a target? */
+function upright(m) {
+  return !!m && !m.dead && !m.reserve;
+}
+function awake(m) {
+  return m.ai.state !== EST.DORMANT && m.ai.state !== EST.RETURN;
 }
 
 /**
- * The nearest living player within sight, or null — and only one it would be
- * allowed to chase: someone standing further from its post than the leash is
- * someone it has already given up on, and turning back for them would have it
- * pace the edge of its leash for ever.
+ * The nearest target within sight, or null: a living player, or a machine of
+ * another tradition. Only one it would be allowed to chase — someone standing
+ * further from its post than the leash is someone it has already given up on,
+ * and turning back for them would have it pace the edge of its leash for ever.
+ * A dormant machine is woken by a player or by a rival already awake, never
+ * by a rival asleep at its own post: nothing fights until a player starts it.
  */
-function pick(e, players) {
-  let best = null, bd = SENTRY.sight;
-  const post = e.ai.post;
-  for (const p of players) {
-    if (!p || p.dead) continue;
-    if (post && hyp(p.x - post.x, p.z - post.z) > SENTRY.leash + SENTRY.range) continue;
+function pick(e, players, foes) {
+  const c = specOf(e).c, post = e.ai.post, asleep = e.ai.state === EST.DORMANT;
+  let best = null, bd = c.sight;
+  const consider = (p) => {
+    if (post && hyp(p.x - post.x, p.z - post.z) > c.leash + c.range) return;
     const d = hyp(p.x - e.x, p.z - e.z);
     if (d < bd) { bd = d; best = p; }
+  };
+  for (const p of players) if (p && !p.dead) consider(p);
+  if (foes) {
+    for (const m of foes) {
+      if (m === e || !upright(m) || m.trad === e.trad) continue;
+      if (asleep && !awake(m)) continue;
+      consider(m);
+    }
   }
   return best;
 }
@@ -8819,29 +8981,65 @@ function pick(e, players) {
 /** Is it further from its post than the leash lets it go? */
 function strayed(e) {
   const post = e.ai.post;
-  return !!post && hyp(e.x - post.x, e.z - post.z) > SENTRY.leash;
+  return !!post && hyp(e.x - post.x, e.z - post.z) > specOf(e).c.leash;
+}
+
+/** Everything this machine's blow may land on: players, and rival machines. */
+function victims(e, players, foes) {
+  const out = [];
+  for (const p of players) if (p && !p.dead) out.push(p);
+  if (foes) for (const m of foes) if (m !== e && upright(m) && m.trad !== e.trad) out.push(m);
+  return out;
+}
+
+/** A blow landing: the damage, and on a machine the stagger a hit brings. */
+function land(v, dmg, cause) {
+  if (hurt(v, dmg, cause) && v.ai) jolt(v);
+}
+
+/** Where the volley will come down: a line across the target, fixed now. */
+function aimVolley(e, target) {
+  let dx = target.x - e.x, dz = target.z - e.z;
+  const l = hyp(dx, dz) || 1;
+  dx /= l; dz /= l;
+  const px = -dz, pz = dx, marks = [];
+  for (let i = 0; i < MORTAR.shells; i++) {
+    const o = (i - (MORTAR.shells - 1) / 2) * MORTAR.spread;
+    marks.push(target.x + px * o, target.z + pz * o);
+  }
+  return marks;
 }
 
 /**
- * One tick of one sentry. It produces an input and hands it to the same `step`
+ * One tick of one machine. It produces an input and hands it to the same `step`
  * the player uses, which is what keeps it honest about the movement budget.
+ * `foes` is every machine in the encounter, so it can see rivals; `budget`
+ * carries how many paths may be searched this tick and how many players there
+ * are (the party, for scaling).
  */
-function stepSentry(col, e, players, dt = TICK, budget) {
-  const ai = e.ai;
+function stepEnemy(col, e, players, dt = TICK, budget, foes) {
+  const ai = e.ai, s = specOf(e), c = s.c;
 
   if (e.dead) {
-    if (ai.state !== EST.DEAD) { ai.state = EST.DEAD; ai.t = 0; }
+    if (ai.state !== EST.DEAD) { ai.state = EST.DEAD; ai.t = 0; ai.marks = null; }
     ai.t += dt;
     return e;
   }
+  if (e.reserve) return e;
 
   ai.t += dt;
-  const target = pick(e, players);
-  let mx = 0, mz = 0, face = null;
+  const target = pick(e, players, foes);
+  let mx = 0, mz = 0, face = null, jump = false;
 
   switch (ai.state) {
     case EST.DORMANT:
-      if (target) { ai.state = EST.WAKE; ai.t = 0; }
+      if (target) {
+        ai.state = EST.WAKE; ai.t = 0;
+        /* A machine woken with two players about is a little tougher (§6). */
+        if (budget && budget.party > 1 && !e.scaled && e.hp === e.maxHp) {
+          e.scaled = true; e.maxHp = Math.round(c.hp * PARTY_HP); e.hp = e.maxHp;
+        }
+      }
       break;
 
     case EST.WAKE:
@@ -8853,30 +9051,80 @@ function stepSentry(col, e, players, dt = TICK, budget) {
       if (!target || strayed(e)) { ai.state = EST.RETURN; ai.t = 0; ai.path = null; break; }
       face = target;
       const d = hyp(target.x - e.x, target.z - e.z);
-      if (d <= SENTRY.range) { ai.state = EST.TELEGRAPH; ai.t = 0; break; }
-      const s = steer(col, e, target.x, target.z, budget);
-      mx = s.mx; mz = s.mz;
+      if (e.k === KIND.MORTAR) {
+        if (d < c.near) {
+          /* Too close to fire: back off, away from it. */
+          const sm = steer(col, e, e.x + (e.x - target.x), e.z + (e.z - target.z), budget);
+          mx = sm.mx; mz = sm.mz;
+        } else if (d <= c.range) {
+          ai.state = EST.TELEGRAPH; ai.t = 0; ai.marks = aimVolley(e, target);
+        } else {
+          const sm = steer(col, e, target.x, target.z, budget);
+          mx = sm.mx; mz = sm.mz;
+        }
+        break;
+      }
+      if (e.k === KIND.HOUND) {
+        if (d <= c.range && ai.t >= CIRCLE_TIME) {
+          /* The line is fixed now, and drawn: the tell is where it will go. */
+          ai.state = EST.TELEGRAPH; ai.t = 0;
+          ai.lx = (target.x - e.x) / (d || 1); ai.lz = (target.z - e.z) / (d || 1);
+          break;
+        }
+        /* Circling: a point on the ring round the target, a little further
+           round each tick, each hound of a pair going its own way. */
+        const ang = ai.orbit * 0.7;
+        const rx = (e.x - target.x) / (d || 1), rz = (e.z - target.z) / (d || 1);
+        const ca = cos(ang), sa = cos(ang - 1.5707963267948966);
+        const ox = rx * ca - rz * sa, oz = rx * sa + rz * ca;
+        const sm = steer(col, e, target.x + ox * c.circle, target.z + oz * c.circle, budget);
+        mx = sm.mx; mz = sm.mz; jump = !!sm.jump;
+        break;
+      }
+      if (d <= c.range) { ai.state = EST.TELEGRAPH; ai.t = 0; break; }
+      const sm = steer(col, e, target.x, target.z, budget);
+      mx = sm.mx; mz = sm.mz; jump = !!sm.jump;
       break;
     }
 
     case EST.TELEGRAPH:
-      /* Stopped dead, and still turning to face you — the turn is what makes
-         running around it during the wind-up not free. */
-      if (target) face = target;
-      if (ai.t >= TELEGRAPH_TIME) { ai.state = EST.STRIKE; ai.t = 0; e.swungAt = 0; }
+      if (e.k === KIND.HOUND) {
+        /* Facing its line, and not turning: the line is what you read. */
+        face = { x: e.x + ai.lx, z: e.z + ai.lz };
+      } else if (target && e.k === KIND.SENTRY) {
+        /* Stopped dead, and still turning to face you — the turn is what makes
+           running around it during the wind-up not free. */
+        face = target;
+      }
+      if (ai.t >= s.tell) { ai.state = EST.STRIKE; ai.t = 0; e.swungAt = 0; ai.bit = 0; }
       break;
 
     case EST.STRIKE:
-      /* Facing is locked: what it telegraphed is what it swings at. */
-      if (ai.t >= STRIKE_TIME) { ai.state = EST.RECOVER; ai.t = 0; }
+      if (e.k === KIND.HOUND) {
+        face = { x: e.x + ai.lx, z: e.z + ai.lz };
+        mx = ai.lx * c.lunge; mz = ai.lz * c.lunge;
+      }
+      if (ai.t >= s.strike) {
+        if (e.k === KIND.MORTAR) {
+          /* The shells come down where the rings were, and only there. */
+          const vs = victims(e, players, foes), m = ai.marks || [];
+          for (const v of vs) {
+            for (let i = 0; i < m.length; i += 2) {
+              if (hyp(v.x - m[i], v.z - m[i + 1]) <= MORTAR.ringR) { land(v, MORTAR.damage, 'shelled'); break; }
+            }
+          }
+          ai.marks = null;
+        }
+        ai.state = EST.RECOVER; ai.t = 0;
+      }
       break;
 
     case EST.RECOVER:
-      if (ai.t >= RECOVER_TIME) { ai.state = target ? EST.CLOSE : EST.RETURN; ai.t = 0; }
+      if (ai.t >= s.recover) { ai.state = target ? EST.CLOSE : EST.RETURN; ai.t = 0; ai.orbit = -ai.orbit; }
       break;
 
     case EST.STAGGER:
-      if (ai.t >= STAGGER_TIME) { ai.state = target ? EST.CLOSE : EST.RETURN; ai.t = 0; }
+      if (ai.t >= STAGGER_TIME) { ai.state = target ? EST.CLOSE : EST.RETURN; ai.t = 0; ai.marks = null; }
       break;
 
     case EST.RETURN: {
@@ -8885,8 +9133,8 @@ function stepSentry(col, e, players, dt = TICK, budget) {
       if (target && !strayed(e)) { ai.state = EST.CLOSE; ai.t = 0; ai.path = null; break; }
       const post = ai.post, d = hyp(post.x - e.x, post.z - e.z);
       if (d < 0.6) { ai.state = EST.DORMANT; ai.t = 0; ai.path = null; break; }
-      const s = steer(col, e, post.x, post.z, budget);
-      mx = s.mx; mz = s.mz;
+      const sm = steer(col, e, post.x, post.z, budget);
+      mx = sm.mx; mz = sm.mz; jump = !!sm.jump;
       break;
     }
 
@@ -8894,35 +9142,71 @@ function stepSentry(col, e, players, dt = TICK, budget) {
       break;
   }
 
-  const input = { mx, mz, jump: false, attack: false, dodge: false, aimX: 0, aimZ: 0 };
+  const input = { mx, mz, jump, attack: false, dodge: false, aimX: 0, aimZ: 0 };
   if (face) {
     const dx = face.x - e.x, dz = face.z - e.z, l = hyp(dx, dz);
     if (l > 1e-6) { input.aimX = dx / l; input.aimZ = dz / l; }
   }
+  /* One jump per time off the ground: a hound jumps a 1 m face, never 2 m. */
+  e.airJumps = 0;
   step(col, e, input, null, dt);
+  e.airJumps = 0;
 
-  /* The strike itself: one arc, once, on the tick the window opens. */
-  if (ai.state === EST.STRIKE && !e.swungAt) {
+  if (ai.state === EST.STRIKE && e.k === KIND.SENTRY && !e.swungAt) {
+    /* The strike itself: one arc, once, on the tick the window opens. */
     e.swungAt = 1;
-    for (const p of players) {
-      if (p && !p.dead && inArc(e, p, SENTRY.reach, SENTRY.arc, SENTRY.span, COS_HALF)) {
-        hurt(p, SENTRY.damage, 'struck');
+    for (const v of victims(e, players, foes)) {
+      if (inArc(e, v, SENTRY.reach, SENTRY.arc, SENTRY.span, COS_HALF)) land(v, SENTRY.damage, 'struck');
+    }
+  }
+  if (ai.state === EST.STRIKE && e.k === KIND.HOUND) {
+    /* Whatever the lunge passes close to, once each. */
+    const vs = victims(e, players, foes);
+    for (let i = 0; i < vs.length && i < 30; i++) {
+      const v = vs[i], id = 1 << i;
+      if (ai.bit & id) continue;
+      if (hyp(v.x - e.x, v.z - e.z) <= HOUND.bite + (v.rad || 0) && Math.abs(v.y - e.y) < 1.4) {
+        ai.bit |= id; land(v, HOUND.damage, 'bitten');
       }
     }
   }
   return e;
 }
 
+/** The sentry's own step, kept by name for whatever steps one alone. */
+function stepSentry(col, e, players, dt = TICK, budget, foes) {
+  return stepEnemy(col, e, players, dt, budget, foes);
+}
+
 /** Tell it that it has been hit — staggering it if it was not already committed. */
 function jolt(e) {
   if (e.dead) return;
-  if (staggerable(e.ai.state)) { e.ai.state = EST.STAGGER; e.ai.t = 0; }
+  if (staggerable(e.ai.state)) { e.ai.state = EST.STAGGER; e.ai.t = 0; e.ai.marks = null; }
 }
 
 /* Posts: where the machines hold (#6, #42). Beyond sight from the spawn, so
    they are found rather than met, and not so far that the window has none. */
 const POST_MIN = SENTRY.sight + 2, POST_MAX = 34, POST_APART = 10, POSTS = 3;
 const POST_RANK = { cover: 0, vantage: 1, arena: 2 };
+
+/**
+ * Who holds each post (#106, §6): mixed small groups whose roles combine. A
+ * tech post is a sentry to pin you and a mortar behind it to shell you; a
+ * biological post is a pair of hounds. The last of each list is the group's
+ * reserve, out only when a second player is (§6).
+ */
+const PACKS = [
+  { members: [KIND.SENTRY, KIND.MORTAR], reserve: KIND.SENTRY },
+  { members: [KIND.HOUND, KIND.HOUND], reserve: KIND.HOUND },
+  { members: [KIND.SENTRY, KIND.MORTAR], reserve: KIND.SENTRY },
+];
+
+/** Where a machine this wide can stand at (x, z), near ground height h, or null. */
+function roomAt(col, x, z, h, rad) {
+  const y = col.supportUnder(x, z, rad, h + MOVE.step);
+  if (y === -Infinity || y < h - MOVE.step) return null;
+  return col.overlaps(x, z, rad, y + EPS, y + 1.8 - EPS) ? null : y;
+}
 
 /**
  * Where to put the machines, from the ground the region pass annotated (#42):
@@ -8941,16 +9225,11 @@ function postsFor(col, world) {
      one there). So support is sought from a step above the ground the post
      was chosen on, and must be that ground. The answer is the height a
      machine is placed from, returned as the post's third element. */
-  const stand = (x, z, h) => {
-    const y = col.supportUnder(x, z, SENTRY.rad, h + MOVE.step);
-    if (y === -Infinity || y < h - MOVE.step) return null;
-    return col.overlaps(x, z, SENTRY.rad, y + EPS, y + 1.8 - EPS) ? null : y;
-  };
   const ok = (x, z, h) => {
     const d = hyp(x - spawn[0], z - spawn[2]);
     if (d < POST_MIN || d > POST_MAX) return null;
     for (const p of out) if (hyp(p[0] - x, p[1] - z) < POST_APART) return null;
-    return stand(x, z, h);
+    return roomAt(col, x, z, h, SENTRY.rad);
   };
   const cands = (world.affordances || []).filter((a) => a.k in POST_RANK).slice()
     .sort((a, b) => POST_RANK[a.k] - POST_RANK[b.k] || b.s - a.s || a.x - b.x || a.z - b.z);
@@ -8969,6 +9248,43 @@ function postsFor(col, world) {
   return out;
 }
 
+/* Where the rest of a group stands, round its post: behind it (away from the
+   spawn) first, which is where a mortar belongs, then either side. */
+const ROUND = [[0, 3.5], [2.2, 1.2], [-2.2, 1.2], [2.6, -1.4], [-2.6, -1.4], [0, -2.6]];
+
+/**
+ * A group at one post, in a fixed order: the members, then the reserve. The
+ * first member stands on the post; each of the others takes the first free
+ * place round it where a machine its width can stand, and falls back to the
+ * post itself only if none is free.
+ */
+function placeGroup(col, spawn, post, g) {
+  const [px, pz, py] = post;
+  let bx = px - spawn[0], bz = pz - spawn[2];
+  const bl = hyp(bx, bz) || 1;
+  bx /= bl; bz /= bl;                                  /* away from the spawn */
+  const sx = -bz, sz = bx;
+  const kinds = g.members.concat([g.reserve]);
+  const out = [], used = [];
+  for (let i = 0; i < kinds.length; i++) {
+    const k = kinds[i], rad = SPEC[k].c.rad;
+    let at = null;
+    if (i === 0) at = [px, pz, py];
+    for (let q = 0; !at && q < ROUND.length; q++) {
+      if (used.indexOf(q) >= 0) continue;
+      const [a, b] = ROUND[q];
+      const x = px + sx * a + bx * b, z = pz + sz * a + bz * b;
+      const y = roomAt(col, x, z, py, rad);
+      if (y !== null) { at = [x, z, y]; used.push(q); }
+    }
+    if (!at) at = [px, pz, py];
+    const e = MAKE[k](col, at[0], at[1], at[2] + EPS);
+    if (i === kinds.length - 1) e.reserve = true;
+    out.push(e);
+  }
+  return out;
+}
+
 /**
  * Everything in the world that can be swung at, and the thing that steps it.
  *
@@ -8977,14 +9293,17 @@ function postsFor(col, world) {
  * simulates none of it.
  */
 function makeEncounter(col, world, posts) {
-  const spawn = world.spawn;
   const enemies = [];
-  for (const p of postsFor(col, world)) enemies.push(makeSentry(col, p[0], p[1], p[2] + EPS));
+  const ps = postsFor(col, world);
+  for (let i = 0; i < ps.length; i++) {
+    for (const e of placeGroup(col, world.spawn, ps[i], PACKS[i % PACKS.length])) enemies.push(e);
+  }
   const targets = (posts || []).concat(enemies);
   const postCount = (posts || []).length;
   /* Derived from the same world the machines were placed in, and index-aligned
-     with them — see src/sim/loot.mjs for why that means nothing has to be sent. */
-  const loot = makeLootField(col, world, enemies.length);
+     with them — see src/sim/loot.mjs for why that means nothing has to be sent.
+     Each machine drops its own tradition (§6), so a hound drops biological. */
+  const loot = makeLootField(col, world, enemies.length, enemies.map((e) => e.trad));
 
   return {
     enemies, targets, postCount, loot,
@@ -8992,16 +9311,20 @@ function makeEncounter(col, world, posts) {
     /** One more machine, standing where it is put — the debug dialog's
         (#92). It is a target like the rest; it drops no spoil, because the
         loot field was sized for the machines the world placed. */
-    add(x, z, fromY) {
-      const e = makeSentry(col, x, z, fromY);
+    add(x, z, fromY, kind) {
+      const e = (MAKE[kind] || makeSentry)(col, x, z, fromY);
       enemies.push(e); targets.push(e);
       return e;
     },
 
     /** One tick: the machines act, then whatever the players cut takes it. */
     step(players, dt = TICK) {
-      const budget = { left: 1 };
-      for (const e of enemies) stepSentry(col, e, players, dt, budget);
+      let party = 0;
+      for (const p of players) if (p) party++;
+      /* A second player brings each group's reserve out (§6). It stays out. */
+      if (party > 1) for (const e of enemies) if (e.reserve) e.reserve = false;
+      const budget = { left: 1, party };
+      for (const e of enemies) stepEnemy(col, e, players, dt, budget, enemies);
       for (const p of players) {
         if (!p || !p.hits) continue;
         const mask = p.hits;
@@ -9031,18 +9354,62 @@ function makeEncounter(col, world, posts) {
     /**
      * What a guest needs to draw them, and nothing else — it does not simulate
      * enemies, so it does not need the state that simulating them requires.
-     * Rounded, because these are pixels and not a trajectory anyone replays.
+     * Rounded, because these are pixels and not a trajectory anyone replays:
+     * a centimetre is below what the view can show, and nine machines at
+     * millimetres were what pushed two players past the wire budget.
+     * `k` is the archetype, `mh` its most health when party scaling moved it
+     * off the archetype's, `u` its hurt flash while it lasts, `r` set while it
+     * is a reserve nobody has brought out, and `g` the mortar's rings while
+     * they are down.
      */
     wire() {
-      const r3 = (v) => Math.round(v * 1000) / 1000;
-      return enemies.map((e) => ({
-        x: r3(e.x), y: r3(e.y), z: r3(e.z),
-        fx: r3(e.faceX), fz: r3(e.faceZ),
-        s: e.ai.state, t: Math.round(e.ai.t * 100) / 100,
-        h: e.hp, u: Math.round(e.hurtT * 100) / 100,
-      }));
+      const r2 = (v) => Math.round(v * 100) / 100;
+      return enemies.map((e) => {
+        const o = {
+          x: r2(e.x), y: r2(e.y), z: r2(e.z),
+          fx: r2(e.faceX), fz: r2(e.faceZ),
+          s: e.ai.state, t: r2(e.ai.t),
+          h: r2(e.hp), k: e.k,
+        };
+        if (e.hurtT > 0) o.u = r2(e.hurtT);
+        if (e.maxHp !== specOf(e).c.hp) o.mh = r2(e.maxHp);
+        if (e.reserve) o.r = 1;
+        if (e.ai.marks) o.g = e.ai.marks.map(r2);
+        return o;
+      });
     },
   };
+}
+
+/* On the wire the machines go as arrays, not keyed objects: nine machines
+   spelled out key by key were the difference between two players fitting the
+   budget and not (#106). The rarely-set fields ride in a trailing object only
+   when one of them is present. */
+const PACKED = ['x', 'y', 'z', 'fx', 'fz', 's', 't', 'h', 'k'];
+
+/** `encounter.wire()` as it crosses the network. */
+function packFoes(foes) {
+  if (!foes) return null;
+  return foes.map((o) => {
+    const a = PACKED.map((key) => o[key]);
+    let rest = null;
+    for (const key in o) {
+      if (PACKED.indexOf(key) < 0) (rest || (rest = {}))[key] = o[key];
+    }
+    if (rest) a.push(rest);
+    return a;
+  });
+}
+
+/** And back into what `wire()` returned, on the far side. */
+function unpackFoes(packed) {
+  if (!packed) return null;
+  return packed.map((a) => {
+    const o = {};
+    for (let i = 0; i < PACKED.length; i++) o[PACKED[i]] = a[i];
+    if (a.length > PACKED.length) Object.assign(o, a[PACKED.length]);
+    return o;
+  });
 }
 /* ---------- src/sim/anim.mjs ---------- */
 /**
@@ -9133,6 +9500,62 @@ const SENTRY_RIG = {
     { name: 'plate', bone: 'plate', size: [0.92, 0.16, 0.92], at: [0, 0.09, 0], color: 0x3a3532 },
     { name: 'armL', bone: 'armL', size: [0.24, 0.24, 0.62], at: [0, 0, 0.22], color: 0x3b3631 },
     { name: 'armR', bone: 'armR', size: [0.24, 0.24, 0.62], at: [0, 0, 0.22], color: 0x3b3631 },
+  ],
+};
+
+/* The mortar crawler (#106): a low tech carapace on six short legs with a
+   tube on its back. What reads from above is the tube — it tips up while it
+   aims, kicks when it fires, and the vents on the carapace open while it cools.
+   The rings on the ground are the page's, not the rig's. */
+const MORTAR_RIG = {
+  bones: [
+    { name: 'root', parent: null, at: [0, 0, 0] },
+    { name: 'body', parent: 'root', at: [0, 0.32, 0] },
+    { name: 'tube', parent: 'body', at: [0, 0.42, -0.1] },
+    { name: 'vent', parent: 'body', at: [0, 0.36, -0.42] },
+    { name: 'legsL', parent: 'body', at: [-0.5, 0, 0] },
+    { name: 'legsR', parent: 'body', at: [0.5, 0, 0] },
+  ],
+  parts: [
+    { name: 'shell', bone: 'body', size: [0.95, 0.36, 1.15], at: [0, 0.18, 0], color: 0x4b4640 },
+    { name: 'cap', bone: 'body', size: [0.7, 0.1, 0.8], at: [0, 0.4, 0.05], color: 0x3a3632 },
+    { name: 'tube', bone: 'tube', size: [0.26, 0.26, 0.8], at: [0, 0, 0.32], color: 0x6d6255 },
+    { name: 'muzzle', bone: 'tube', size: [0.32, 0.32, 0.1], at: [0, 0, 0.72], color: 0x8a7a5e },
+    { name: 'vent', bone: 'vent', size: [0.6, 0.08, 0.22], at: [0, 0, 0], color: 0x7a3f2a },
+    { name: 'legL0', bone: 'legsL', size: [0.3, 0.3, 0.14], at: [-0.08, -0.16, 0.38], color: 0x2f2b27 },
+    { name: 'legL1', bone: 'legsL', size: [0.3, 0.3, 0.14], at: [-0.1, -0.16, 0], color: 0x2f2b27 },
+    { name: 'legL2', bone: 'legsL', size: [0.3, 0.3, 0.14], at: [-0.08, -0.16, -0.38], color: 0x2f2b27 },
+    { name: 'legR0', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.08, -0.16, 0.38], color: 0x2f2b27 },
+    { name: 'legR1', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.1, -0.16, 0], color: 0x2f2b27 },
+    { name: 'legR2', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.08, -0.16, -0.38], color: 0x2f2b27 },
+  ],
+};
+
+/* A grafted hound (#106): long and low, so its line of travel is what its
+   body already says. Bio — hide and the growths grafted onto it — against the
+   tech machines it fights. The crouch before a lunge drops the hips and pushes
+   the head forward along the line it has chosen. */
+const HOUND_RIG = {
+  bones: [
+    { name: 'root', parent: null, at: [0, 0, 0] },
+    { name: 'body', parent: 'root', at: [0, 0.48, 0] },
+    { name: 'head', parent: 'body', at: [0, 0.1, 0.5] },
+    { name: 'tail', parent: 'body', at: [0, 0.08, -0.5] },
+    { name: 'foreL', parent: 'body', at: [-0.2, -0.05, 0.34] },
+    { name: 'foreR', parent: 'body', at: [0.2, -0.05, 0.34] },
+    { name: 'hindL', parent: 'body', at: [-0.2, -0.05, -0.34] },
+    { name: 'hindR', parent: 'body', at: [0.2, -0.05, -0.34] },
+  ],
+  parts: [
+    { name: 'body', bone: 'body', size: [0.46, 0.34, 0.98], at: [0, 0.02, 0], color: 0x5a4636 },
+    { name: 'graft', bone: 'body', size: [0.3, 0.14, 0.5], at: [0, 0.24, -0.08], color: 0x7f9a4c },
+    { name: 'head', bone: 'head', size: [0.32, 0.28, 0.38], at: [0, 0.02, 0.14], color: 0x6a5240 },
+    { name: 'jaw', bone: 'head', size: [0.22, 0.1, 0.22], at: [0, -0.1, 0.32], color: 0xb08f6a },
+    { name: 'tail', bone: 'tail', size: [0.1, 0.1, 0.4], at: [0, 0, -0.2], color: 0x7f9a4c },
+    { name: 'foreL', bone: 'foreL', size: [0.12, 0.42, 0.12], at: [0, -0.2, 0], color: 0x3e3026 },
+    { name: 'foreR', bone: 'foreR', size: [0.12, 0.42, 0.12], at: [0, -0.2, 0], color: 0x3e3026 },
+    { name: 'hindL', bone: 'hindL', size: [0.14, 0.42, 0.14], at: [0, -0.2, 0], color: 0x3e3026 },
+    { name: 'hindR', bone: 'hindR', size: [0.14, 0.42, 0.14], at: [0, -0.2, 0], color: 0x3e3026 },
   ],
 };
 
@@ -9307,10 +9730,134 @@ function poseSentry(m, look) {
   return p;
 }
 
+/**
+ * The mortar crawler's pose, from its wire record like the sentry's. Aiming
+ * tips the tube up and braces the legs; firing kicks it; venting opens the
+ * vent plate and lets the whole shell sag, which is the opening.
+ */
+function poseMortar(m, look) {
+  const p = blank(MORTAR_RIG), walk = look.walk || 0, t = look.t || 0;
+  if (m.s === EST.DEAD) {
+    p.root.rz = 0.7; p.body.sy = 0.7; p.tube.rx = 0.5;
+    return p;
+  }
+  if (m.s === EST.DORMANT) {
+    p.body.py = -0.12; p.tube.rx = 0.12;
+    return p;
+  }
+  if (m.s === EST.WAKE || m.s === EST.CLOSE || m.s === EST.RETURN) {
+    const s = sin(walk);
+    p.legsL.rx = s * 0.35; p.legsR.rx = -s * 0.35;
+    p.body.rz = s * 0.04;
+  }
+  if (m.s === EST.TELEGRAPH) {
+    const k = easeInOut((m.t || 0) / MORTAR_AIM_TIME);
+    p.tube.rx = -0.9 * k;                       /* up, and up, and up */
+    p.body.py = -0.08 * k;                      /* squatting to take the kick */
+    p.legsL.rz = 0.25 * k; p.legsR.rz = -0.25 * k;
+  }
+  if (m.s === EST.STRIKE) {
+    const k = 1 - easeInOut(((m.t || 0) / MORTAR_FLIGHT_TIME) * 3);
+    p.tube.rx = -0.9 + 0.2 * (1 - k);
+    p.tube.pz = -0.18 * k;                      /* the kick */
+    p.body.py = -0.08 - 0.06 * k;
+    p.legsL.rz = 0.25; p.legsR.rz = -0.25;
+  }
+  if (m.s === EST.RECOVER) {
+    const k = 1 - easeInOut((m.t || 0) / MORTAR_VENT_TIME);
+    p.tube.rx = -0.7 * k + 0.1 * (1 - k);
+    p.vent.py = 0.14 * k; p.vent.rx = -0.8 * k;  /* open, and glowing on the page */
+    p.body.py = -0.1 * k; p.body.sy = 1 - 0.08 * k;
+  }
+  if (m.s === EST.STAGGER) {
+    p.root.px = 0.05 * sin(t * 61);
+    p.body.rz = 0.12 * sin(t * 43);
+  }
+  if (m.u > 0) p.body.rx -= 0.2 * (m.u / HURT_TIME);
+  return p;
+}
+
+/**
+ * A hound's pose. The crouch is the tell: hips down, head along the line. The
+ * lunge stretches it out; the stumble after rolls it off its feet.
+ */
+function poseHound(m, look) {
+  const p = blank(HOUND_RIG), walk = look.walk || 0, t = look.t || 0;
+  if (m.s === EST.DEAD) {
+    p.root.rz = 1.45; p.body.py = -0.24; p.head.rx = 0.3; p.tail.ry = 0.6;
+    return p;
+  }
+  if (m.s === EST.DORMANT) {
+    /* Lying down, head on its paws. */
+    p.body.py = -0.24; p.head.rx = 0.35; p.head.py = -0.06;
+    p.foreL.rx = -1.2; p.foreR.rx = -1.2; p.hindL.rx = 1.2; p.hindR.rx = 1.2;
+    p.tail.ry = 0.5;
+    return p;
+  }
+  if (m.s === EST.WAKE || m.s === EST.CLOSE || m.s === EST.RETURN) {
+    /* A lope: fore and hind pairs out of phase, the back rocking with them. */
+    const s = sin(walk), c = sin(walk + PI / 2);
+    p.foreL.rx = s * 0.7; p.foreR.rx = s * 0.55;
+    p.hindL.rx = -s * 0.7; p.hindR.rx = -s * 0.55;
+    p.body.rx = c * 0.08; p.body.py = (c < 0 ? -c : c) * 0.05;
+    p.tail.ry = c * 0.4; p.head.rx = -c * 0.08;
+  }
+  if (m.s === EST.TELEGRAPH) {
+    const k = easeInOut((m.t || 0) / HOUND_TELL_TIME);
+    p.body.py = -0.14 * k; p.body.rx = 0.12 * k;
+    p.root.pz = -0.12 * k;                      /* drawn back along the line */
+    p.head.pz = 0.08 * k; p.head.rx = 0.18 * k;
+    p.hindL.rx = 0.6 * k; p.hindR.rx = 0.6 * k;
+    p.foreL.rx = -0.3 * k; p.foreR.rx = -0.3 * k;
+    p.tail.rx = -0.6 * k + 0.1 * sin(t * 40) * k;
+  }
+  if (m.s === EST.STRIKE) {
+    const k = easeInOut(((m.t || 0) / LUNGE_TIME) * 2);
+    p.body.sz = 1 + 0.12 * k; p.body.rx = -0.12 * k;
+    p.foreL.rx = -1.1 * k; p.foreR.rx = -1.1 * k;
+    p.hindL.rx = 1.0 * k; p.hindR.rx = 1.0 * k;
+    p.head.pz = 0.12 * k; p.head.rx = -0.2 * k;
+    p.tail.rx = 0.3 * k;
+  }
+  if (m.s === EST.RECOVER) {
+    /* The stumble: over on its side and scrabbling up. This is the opening. */
+    const k = 1 - easeInOut((m.t || 0) / STUMBLE_TIME);
+    p.root.rz = 0.75 * k; p.body.py = -0.16 * k;
+    p.head.rx = 0.4 * k;
+    p.foreL.rx = 0.5 * k * sin(t * 30); p.hindL.rx = -0.5 * k * sin(t * 30);
+  }
+  if (m.s === EST.STAGGER) {
+    p.root.px = 0.04 * sin(t * 61);
+    p.body.rz = 0.16 * sin(t * 43);
+  }
+  if (m.u > 0) p.body.rx -= 0.25 * (m.u / HURT_TIME);
+  return p;
+}
+
 /** How far a stride carries a character, in metres: one full cycle of `walk`. */
 const STRIDE = 1.35;
 /** The same for a machine, which shuffles. */
 const SENTRY_STRIDE = 0.9;
+/** The crawler's legs are short; the hound lopes. */
+const MORTAR_STRIDE = 0.7;
+const HOUND_STRIDE = 1.7;
+
+/** Every machine's rig, pose and stride by its wire kind `k`. */
+const MACHINE_RIGS = [];
+MACHINE_RIGS[KIND.SENTRY] = SENTRY_RIG;
+MACHINE_RIGS[KIND.MORTAR] = MORTAR_RIG;
+MACHINE_RIGS[KIND.HOUND] = HOUND_RIG;
+const MACHINE_STRIDES = [];
+MACHINE_STRIDES[KIND.SENTRY] = SENTRY_STRIDE;
+MACHINE_STRIDES[KIND.MORTAR] = MORTAR_STRIDE;
+MACHINE_STRIDES[KIND.HOUND] = HOUND_STRIDE;
+
+/** A machine's pose, whichever kind it is. */
+function poseMachine(m, look) {
+  if (m.k === KIND.MORTAR) return poseMortar(m, look);
+  if (m.k === KIND.HOUND) return poseHound(m, look);
+  return poseSentry(m, look);
+}
 
 /** Every bone's rest position in the rig's own frame: what a part's box is laid against. */
 function restPositions(rig) {
@@ -9987,6 +10534,7 @@ function conditioned(t, opts, env) {
 
 
 
+
 /** Snapshots per second is this divided into the tick rate: 60 / 3 = 20 Hz. */
 const SEND_EVERY = 3;
 /** How often the host re-announces itself until a guest answers. */
@@ -10226,7 +10774,7 @@ function makeHost(opts) {
              it. Display state for everything it only draws. */
           you: snapshot(peer),
           them: display(me),
-          foes: encounter ? encounter.wire() : null,
+          foes: encounter ? packFoes(encounter.wire()) : null,
           /* Every drop in the world, as one integer — see src/sim/loot.mjs. */
           lt: encounter && encounter.loot ? encounter.loot.wire() : 0,
           /* The last lattice change applied, so the guest stops sending it. */
@@ -10336,8 +10884,8 @@ function makeGuest(opts) {
          which is worse than the round trip it saves. */
       for (const p of pending) { step(col, me, p.input, null); replayed++; }
       target = m.them;
-      foes = m.foes;
-      past.push({ tick: m.tick, them: m.them, foes: m.foes });
+      foes = unpackFoes(m.foes);
+      past.push({ tick: m.tick, them: m.them, foes });
       if (past.length > PAST) past.shift();
       const sample = m.tick - local;
       if (offset === null || Math.abs(sample - offset) > 60) offset = sample;
@@ -10700,7 +11248,7 @@ const ASSETS={
   'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
   'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP8AAAD/'
 };
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,lightningAt:lightningAt,FLASH_SECONDS:FLASH_SECONDS,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,MORTAR:MORTAR,HOUND:HOUND,KIND:KIND,KIND_NAMES:KIND_NAMES,ARCHETYPES:ARCHETYPES,makeMortar:makeMortar,makeHound:makeHound,MORTAR_AIM_TIME:MORTAR_AIM_TIME,MORTAR_FLIGHT_TIME:MORTAR_FLIGHT_TIME,MORTAR_VENT_TIME:MORTAR_VENT_TIME,HOUND_TELL_TIME:HOUND_TELL_TIME,LUNGE_TIME:LUNGE_TIME,STUMBLE_TIME:STUMBLE_TIME,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,MORTAR_RIG:MORTAR_RIG,HOUND_RIG:HOUND_RIG,MACHINE_RIGS:MACHINE_RIGS,MACHINE_STRIDES:MACHINE_STRIDES,poseMachine:poseMachine,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,lightningAt:lightningAt,FLASH_SECONDS:FLASH_SECONDS,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -13687,27 +14235,69 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     return {g:g,rig:rig,sweep:sweep,fade:0,reach:QS.REACH,arc:-1,blob:blob,walk:0,lastX:null,lastZ:null};
   }
   /**
-   * A sentry automaton. Squat and wide, because from 45 degrees you mostly see
-   * the top of things — so the readable surface is its top plate, and that is
-   * where the tell goes: it stops dead, rises, draws back, and the plate flares.
+   * A machine, of whichever kind the wire says (#106). Each kind's tell is its
+   * own shape on the ground, because from 45 degrees the ground is what you
+   * read:
+   *   a sentry — squat and wide, its top plate flares and a wedge of danger
+   *     spreads in front of it;
+   *   a mortar crawler — rings on the ground where the shells will land, filling
+   *     in as they fall, and a vent that glows while it cools;
+   *   a grafted hound — a line from its nose along the lunge it has committed
+   *     to, which does not follow you.
    */
-  function makeFoe(){
-    var g=new THREE.Group();
-    var rig=buildRig(QS.SENTRY_RIG,{}); g.add(rig.mesh);
-    /* The danger zone, on the ground in front of it, at the height the player's
-       own arc sits at — anything lower is lost in the voxels. */
-    var wedge=new THREE.Mesh(
-      new THREE.RingGeometry(0.6,QS.SENTRY.reach,22,1,Math.PI/2-QS.SENTRY.arc/2,QS.SENTRY.arc),
-      new THREE.MeshBasicMaterial({color:0xff8a3c,transparent:true,opacity:0,
-                                   side:THREE.DoubleSide,depthWrite:false}));
-    wedge.rotation.x=Math.PI/2; wedge.position.y=0.85; wedge.visible=false; g.add(wedge);
+  var FOE_LOOK=[
+    {bar:1.7,blob:0.95,tint:'plate',step:'sentry',spark:0xffc466},
+    {bar:1.35,blob:0.85,tint:'muzzle',step:'sentry',spark:0xffc466},
+    {bar:1.1,blob:0.6,tint:'graft',step:'hound',spark:0xb8d06a},
+  ];
+  function makeFoe(k){
+    k=k|0;
+    var g=new THREE.Group(), look=FOE_LOOK[k]||FOE_LOOK[0];
+    var rig=buildRig(QS.MACHINE_RIGS[k]||QS.SENTRY_RIG,{}); g.add(rig.mesh);
+    var wedge=null, line=null, rings=null;
+    if(k===QS.KIND.MORTAR){
+      /* In the world, not on the crawler: where the shells land does not turn
+         when it does. At the height the player's arc sits at — anything lower
+         is lost in the voxels. */
+      rings=new THREE.Group(); rings.visible=false;
+      var rgeo=new THREE.CircleGeometry(QS.MORTAR.ringR,28), egeo=new THREE.RingGeometry(QS.MORTAR.ringR-0.12,QS.MORTAR.ringR,28);
+      for(var q=0;q<QS.MORTAR.shells;q++){
+        var disc=new THREE.Mesh(rgeo,new THREE.MeshBasicMaterial({color:0xff6a2c,transparent:true,opacity:0,
+                                       side:THREE.DoubleSide,depthWrite:false,toneMapped:false}));
+        var edge=new THREE.Mesh(egeo,new THREE.MeshBasicMaterial({color:0xffc07a,transparent:true,opacity:0.9,
+                                       side:THREE.DoubleSide,depthWrite:false,toneMapped:false}));
+        disc.rotation.x=edge.rotation.x=-Math.PI/2; edge.position.y=0.01;
+        var one=new THREE.Group(); one.add(disc); one.add(edge); one.userData.disc=disc; one.userData.edge=edge;
+        rings.add(one);
+      }
+      rings.traverse(function(o){ if(o.isMesh){ o.userData.keep=true; o.userData.kind='tell'; o.renderOrder=3; } });
+    }else if(k===QS.KIND.HOUND){
+      /* The lunge line: as long as the lunge carries it, as wide as its bite. */
+      var len=QS.HOUND.lunge*QS.RUN*QS.HOUND.speed*QS.LUNGE_TIME;
+      var lgeo=new THREE.PlaneGeometry(QS.HOUND.bite*2,len); lgeo.translate(0,len/2+0.3,0);
+      line=new THREE.Mesh(lgeo,new THREE.MeshBasicMaterial({color:0xff7a3a,transparent:true,opacity:0,
+                                   side:THREE.DoubleSide,depthWrite:false,toneMapped:false}));
+      line.rotation.x=Math.PI/2; line.position.y=0.5; line.visible=false; g.add(line);
+    }else{
+      /* The danger zone, on the ground in front of it, at the height the player's
+         own arc sits at — anything lower is lost in the voxels. */
+      wedge=new THREE.Mesh(
+        new THREE.RingGeometry(0.6,QS.SENTRY.reach,22,1,Math.PI/2-QS.SENTRY.arc/2,QS.SENTRY.arc),
+        new THREE.MeshBasicMaterial({color:0xff8a3c,transparent:true,opacity:0,
+                                     side:THREE.DoubleSide,depthWrite:false}));
+      wedge.rotation.x=Math.PI/2; wedge.position.y=0.85; wedge.visible=false; g.add(wedge);
+    }
     var bar=new THREE.Mesh(new THREE.PlaneGeometry(1.2,0.12),
       new THREE.MeshBasicMaterial({color:0xc9563a,side:THREE.DoubleSide,depthWrite:false}));
-    bar.position.y=1.7; g.add(bar);
-    var blob=makeBlob(0.95); g.add(blob);
+    bar.position.y=look.bar; g.add(bar);
+    var blob=makeBlob(look.blob); g.add(blob);
     g.traverse(function(o){ if(o.isMesh){ o.userData.keep=true; } });
-    return {g:g,rig:rig,wedge:wedge,bar:bar,blob:blob,walk:0,lastX:null,lastZ:null};
+    if(rings) g.userData.rings=rings;
+    return {g:g,k:k,look:look,rig:rig,wedge:wedge,line:line,rings:rings,bar:bar,blob:blob,walk:0,lastX:null,lastZ:null};
   }
+  /** Into the scene, with its rings beside it, and out again. */
+  function addFoe(f){ built.scene.add(f.g); if(f.rings) built.scene.add(f.rings); return f; }
+  function dropFoe(f){ built.scene.remove(f.g); if(f.rings) built.scene.remove(f.rings); }
   var foeMeshes=[];
 
   /* ---------- what is on the ground ----------
@@ -13803,39 +14393,81 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   }
   /** Everything the machine is about to do, said in a pose and a colour. */
   function poseFoe(f,m){
-    var EST=QS.EST, dead=m.s===EST.DEAD;
+    var EST=QS.EST, dead=m.s===EST.DEAD, K=QS.KIND;
+    /* A reserve (#106) is not there until a second player brings it out. */
+    f.g.visible=!m.r;
+    if(m.r){ if(f.rings) f.rings.visible=false; return; }
     f.g.position.set(m.x,m.y,m.z);
     f.g.rotation.y=Math.atan2(m.fx,m.fz);
     if(dead) f.blob.visible=false; else seatBlob(f.blob,m.x,m.y,m.z);
-    stride(f,m.x,m.z,QS.SENTRY_STRIDE);
-    if(!dead) footfall(f,{x:m.x,y:m.y,z:m.z,grounded:true,inWater:false},'sentry');
-    /* Struck: its hurt timer jumps. Sparks off the metal where it stands. */
-    if(f.fxU!==undefined&&m.u>f.fxU+0.05) fxEmit(m.x,m.y+1.0,m.z,14,0xffc466,3.2,2.6,0.07,0.35,9);
-    f.fxU=m.u;
+    stride(f,m.x,m.z,QS.MACHINE_STRIDES[f.k]||QS.SENTRY_STRIDE);
+    if(!dead) footfall(f,{x:m.x,y:m.y,z:m.z,grounded:true,inWater:false},f.look.step);
+    /* Struck: its hurt timer jumps. Sparks off the metal where it stands — or,
+       off a hound, something wetter. */
+    var mu=m.u||0;
+    if(f.fxU!==undefined&&mu>f.fxU+0.05) fxEmit(m.x,m.y+f.look.bar*0.6,m.z,14,f.look.spark,3.2,2.6,0.07,0.35,9);
+    f.fxU=mu;
     if(f.lastH!==undefined&&m.h<f.lastH) sndPlay(dead?'down':'hit',m.x,m.z,1);
     f.lastH=m.h;
     /* The strike is committed the way the player's swing is: its pose is its
        clock. Everything else eases, so a machine coming to a stop reads as one. */
-    showPose(f.rig,QS.poseSentry(m,{walk:f.walk,t:tm}),m.s===EST.STRIKE||m.s===EST.TELEGRAPH);
+    showPose(f.rig,QS.poseMachine(m,{walk:f.walk,t:tm}),m.s===EST.STRIKE||m.s===EST.TELEGRAPH);
+    var tellTime=f.k===K.MORTAR?QS.MORTAR_AIM_TIME:(f.k===K.HOUND?QS.HOUND_TELL_TIME:QS.TELEGRAPH_TIME);
     var tell=0;
-    if(m.s===EST.TELEGRAPH) tell=Math.min(1,m.t/QS.TELEGRAPH_TIME);
+    if(m.s===EST.TELEGRAPH) tell=Math.min(1,m.t/tellTime);
     else if(m.s===EST.STRIKE) tell=1;
     var col=dead?0x14110f
       :(m.s===EST.DORMANT?0x3a3532
         :(m.s===EST.RECOVER?0x4a2a18
           :(m.s===EST.STAGGER?0xffffff
             :(tell?mixHex(0xff9a3c,0xffffff,tell):0xc9722a))));
-    tintRig(f.rig,'plate',m.u>0?0xffd7cf:col);
-    f.wedge.visible=!dead&&(m.s===EST.TELEGRAPH||m.s===EST.STRIKE);
-    /* The ramp is the clock: it starts as a stain and finishes nearly solid,
-       so how long you have left is readable without counting frames. Measured
-       on the meadow, the finished wedge composites to about (228, 130, 55)
-       over grass — a hue nothing else on that ground wears. */
-    f.wedge.material.opacity=m.s===EST.STRIKE?0.95:0.22+0.66*tell;
-    f.bar.visible=!dead&&m.h<QS.SENTRY.hp;
-    f.bar.scale.x=Math.max(0.02,m.h/QS.SENTRY.hp);
+    tintRig(f.rig,f.look.tint,mu>0?0xffd7cf:col);
+    var telling=!dead&&(m.s===EST.TELEGRAPH||m.s===EST.STRIKE);
+    if(f.wedge){
+      f.wedge.visible=telling;
+      /* The ramp is the clock: it starts as a stain and finishes nearly solid,
+         so how long you have left is readable without counting frames. Measured
+         on the meadow, the finished wedge composites to about (228, 130, 55)
+         over grass — a hue nothing else on that ground wears. */
+      f.wedge.material.opacity=m.s===EST.STRIKE?0.95:0.22+0.66*tell;
+    }
+    if(f.line){
+      /* Only while it is committed: a line that followed you would be a lie. */
+      f.line.visible=telling;
+      f.line.material.opacity=m.s===EST.STRIKE?0.9:0.2+0.6*tell;
+    }
+    if(f.k===K.MORTAR){
+      /* The vent glows while it cools — that is the opening. */
+      tintRig(f.rig,'vent',m.s===EST.RECOVER?mixHex(0x7a3f2a,0xff8a3c,1-Math.min(1,m.t/QS.MORTAR_VENT_TIME)):0x7a3f2a);
+      poseRings(f,m,dead);
+    }
+    var mh=m.mh||(QS.ARCHETYPES[f.k]||QS.SENTRY).hp;
+    f.bar.visible=!dead&&m.h<mh;
+    f.bar.scale.x=Math.max(0.02,m.h/mh);
     f.bar.position.x=-0.6*(1-f.bar.scale.x);
     f.bar.rotation.y=cam.yaw; f.bar.rotation.x=-Math.PI/4;
+  }
+  /**
+   * The mortar's rings: down from the moment it aims until the shells land,
+   * each a stain that fills in over the aim and flashes as they come down, so
+   * the time left reads from the ground. Sat on the ground under each mark.
+   */
+  function poseRings(f,m,dead){
+    var EST=QS.EST, g=m.g, on=!dead&&!!g&&(m.s===EST.TELEGRAPH||m.s===EST.STRIKE);
+    f.rings.visible=on;
+    if(!on) return;
+    var k=m.s===EST.TELEGRAPH?Math.min(1,m.t/(QS.MORTAR_AIM_TIME+QS.MORTAR_FLIGHT_TIME))
+                              :Math.min(1,(QS.MORTAR_AIM_TIME+m.t)/(QS.MORTAR_AIM_TIME+QS.MORTAR_FLIGHT_TIME));
+    for(var q=0;q<f.rings.children.length;q++){
+      var one=f.rings.children[q], x=g[q*2], z=g[q*2+1];
+      one.visible=x!==undefined;
+      if(!one.visible) continue;
+      var gy=col?col.supportUnder(x,z,0.3,m.y+4):-Infinity;
+      one.position.set(x,(gy>-Infinity?gy:m.y)+0.35,z);
+      one.userData.disc.material.opacity=0.12+0.6*k*k;
+      /* The edge closes in as they fall: at the rim when it aims, gone as they land. */
+      var e=Math.max(0.05,1-k); one.userData.edge.scale.set(e,e,1);
+    }
   }
   function mixHex(a,b,t){
     var ar=(a>>16)&255,ag=(a>>8)&255,ab=a&255,br=(b>>16)&255,bg=(b>>8)&255,bb=b&255;
@@ -14203,8 +14835,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     postFlash=posts.map(function(){return 0;});
     encounter=QS.makeEncounter(col,data,posts);
     targets=encounter.targets;
-    foeMeshes.forEach(function(f){ built.scene.remove(f.g); });
-    foeMeshes=encounter.enemies.map(function(){ var f=makeFoe(); built.scene.add(f.g); return f; });
+    foeMeshes.forEach(dropFoe);
+    foeMeshes=encounter.enemies.map(function(e){ return addFoe(makeFoe(e.k)); });
     eachLoot(function(m){ if(m.parent) m.parent.remove(m); freeObject(m); });
     var nc=encounter.loot.caches.length;
     loot=makeLoot(nc+encounter.loot.spoils.length,nc); loot.sil=lootSil(loot.cube);
@@ -15858,10 +16490,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var foes=session?session.foes:(encounter?encounter.wire():null);
     /* A host can spawn a machine (#93): the guest hears of one it has no
        model for, and makes one. */
-    if(foes) while(foeMeshes.length<foes.length){ var nf=makeFoe(); built.scene.add(nf.g); foeMeshes.push(nf); }
+    if(foes) while(foeMeshes.length<foes.length) foeMeshes.push(addFoe(makeFoe(foes[foeMeshes.length].k)));
     for(var fq=0;fq<foeMeshes.length;fq++){
       var fm=foes&&foes[fq];
+      /* A guest builds its models before the first snapshot says what they are. */
+      if(fm&&(fm.k|0)!==foeMeshes[fq].k){ dropFoe(foeMeshes[fq]); foeMeshes[fq]=addFoe(makeFoe(fm.k)); }
       foeMeshes[fq].g.visible=!!fm;
+      if(foeMeshes[fq].rings&&!fm) foeMeshes[fq].rings.visible=false;
       if(fm) poseFoe(foeMeshes[fq],fm);
     }
     poseLoot();
@@ -15872,7 +16507,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        do with how the terrain is drawn. */
     if(plateMode){
       avatar.g.visible=false; peerAvatar.g.visible=false;
-      for(var hq=0;hq<foeMeshes.length;hq++) foeMeshes[hq].g.visible=false;
+      for(var hq=0;hq<foeMeshes.length;hq++){ foeMeshes[hq].g.visible=false; if(foeMeshes[hq].rings) foeMeshes[hq].rings.visible=false; }
       eachLoot(function(m){ m.visible=false; });
       if(postMesh) postMesh.visible=false;
     }
@@ -16516,10 +17151,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     QS.warpTo(cam,a.x,a.y,a.z); deadEl.style.display='none';
     return true;
   }
-  function dbgSpawnFoe(){
+  function dbgSpawnFoe(kind){
     var p=dbgSpot(); if(!p||!dbgMay()||!encounter) return null;
-    var e=encounter.add(p.x,p.z,p.y+3);
-    var f=makeFoe(); built.scene.add(f.g); foeMeshes.push(f);
+    var e=encounter.add(p.x,p.z,p.y+3,kind|0);
+    foeMeshes.push(addFoe(makeFoe(e.k)));
     return e;
   }
   /* A spoil lying on the ground: the loot field has sixteen bits for them,
@@ -16719,7 +17354,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       if(e&&on&&!dbgFoeBoxes[f]){ dbgFoeBoxes[f]=dbgBoxMesh(0xff5050); grp.add(dbgFoeBoxes[f]); }
       var fb=dbgFoeBoxes[f]; if(!fb) continue;
       fb.visible=!!(on&&e&&!e.dead);
-      if(fb.visible){ fb.scale.set(2*QS.SENTRY.rad,1.8,2*QS.SENTRY.rad); fb.position.set(e.x,e.y,e.z); }
+      if(fb.visible){ fb.scale.set(2*e.rad,1.8,2*e.rad); fb.position.set(e.x,e.y,e.z); }
     }
     if(DBG.cutRing&&a&&(!dbgRing||dbgRing.parent!==grp)){
       var rg=new THREE.BufferGeometry(), rp=[];
@@ -16890,8 +17525,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     [[0.1,'0.1×'],[0.25,'¼×'],[0.5,'½×'],[1,'1×']].forEach(function(o){
       var b=gfxButton(o[1],(s?R.speed:DBG.speed)===o[0],function(){ dbgSet('speed',o[0]); }); b.disabled=s; seg.appendChild(b); });
     seg=dbgRow(rows,'Spawn','at the cursor, or ahead of you','spawn');
-    var mb=gfxButton('Machine',false,function(){ dbgSpawnFoe(); }), lb=gfxButton('Loot',false,function(){ dbgSpawnLoot(); });
-    mb.disabled=s; lb.disabled=s||!!(encounter&&encounter.loot.spoils.length>=16); seg.appendChild(mb); seg.appendChild(lb);
+    QS.KIND_NAMES.forEach(function(nm,kq){
+      var mb=gfxButton(nm.charAt(0).toUpperCase()+nm.slice(1),false,function(){ dbgSpawnFoe(kq); });
+      mb.disabled=s; seg.appendChild(mb);
+    });
+    var lb=gfxButton('Loot',false,function(){ dbgSpawnLoot(); });
+    lb.disabled=s||!!(encounter&&encounter.loot.spoils.length>=16); seg.appendChild(lb);
     seg=dbgRow(rows,'Give module',null,'give');
     var sel=document.createElement('select'); sel.className='dbgsel'; sel.setAttribute('aria-label','Module');
     QS.MODULES.forEach(function(m,q){ var o=document.createElement('option'); o.value=q; o.textContent=m.name||m.nm||('module '+q); sel.appendChild(o); });
@@ -17539,6 +18178,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get foes(){return session?session.foes:(encounter?encounter.wire():null);},
     /** The actual machines, for a test that needs to put one back how it was. */
     get machines(){return encounter?encounter.enemies:null;},
+    /* #106: which tell each machine's model is showing, as drawn. */
+    get foeTells(){ return foeMeshes.map(function(f){
+      return {k:f.k,shown:f.g.visible,wedge:!!(f.wedge&&f.wedge.visible),line:!!(f.line&&f.line.visible),
+              rings:f.rings&&f.rings.visible?f.rings.children.filter(function(o){ return o.visible; }).length:0};
+    }); },
     /** The lattice, what is still on the ground, and the two verbs over them. */
     get gear(){return gear();},
     get loose(){return encounter&&encounter.loot?encounter.loot.open():[];},

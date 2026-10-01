@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, marshSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -274,6 +274,7 @@ if (NODE_HALF) for (const r of combatSuite()) check(r.ok, `COMBAT: ${r.label}`, 
    of things, and a wind-up you cannot read is a fight you cannot learn — so the
    assertions are about windows and openings, not about damage. */
 if (NODE_HALF) for (const r of enemySuite()) check(r.ok, `ENEMY: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of rosterSuite()) check(r.ok, `ROSTER: ${r.label}`, r.detail);
 
 /* ---------- GEAR: modules, sockets, fusion and what is on the ground ----------
    The spine of progression (§4), and the first reason this world has anywhere
@@ -1185,10 +1186,19 @@ if (BROWSER_HALF) {
                             + `cutting: blade ${reads.cut.armR.ry.toFixed(2)}, body ${reads.cut.torso.ry.toFixed(2)}` : 'no rig');
         /* Issue #62: characters, machines, posts and loot were 57 meshes, each its
            own draw call. #99 gave each batch an outline, one more draw per batch. */
-        const ad = await bp.evaluate(() => window.QSPLAY.actorDraws);
+        /* #106 brought nine machines where there were three, so the bound is
+           per figure now: a body, its rim and its blob, three draws each, over
+           a fixed eight for posts, loot and bars. A tell is not counted — it is
+           drawn only while a machine is winding up, and a box per part, the
+           regression this exists for, would still blow it at once. */
+        const ad = await bp.evaluate(() => {
+          const P = window.QSPLAY, d = P.actorDraws;
+          return { n: d.n, list: d.list, figures: 2 + P.foeTells.filter((t) => t.shown).length };
+        });
         const tally = {}; for (const k of ad.list) tally[k] = (tally[k] || 0) + 1;
-        check(ad.n <= 20, 'BUILD: characters, machines, posts and loot cost a handful of draw calls',
-              `${ad.n} draws: ${Object.entries(tally).map(([k, n]) => k + ' ' + n).join(', ')} (were 57 meshes)`);
+        const lasting = ad.n - (tally.tell || 0), bound = 8 + 3 * ad.figures;
+        check(lasting <= bound, 'BUILD: characters, machines, posts and loot cost a handful of draw calls',
+              `${lasting} draws for ${ad.figures} figures, bound ${bound}: ${Object.entries(tally).map(([k, n]) => k + ' ' + n).join(', ')} (were 57 meshes for five)`);
         check(reads.windup && reads.sweeping, 'BUILD: a swing has a wind-up and shows its arc',
               `${reads.windup ? 'wound up' : 'no wind-up'}, ${reads.sweeping ? 'arc drawn' : 'ARC MISSING'}`);
         check(reads.during > reads.before + 40, 'BUILD: and the arc is visible on screen',
@@ -1370,6 +1380,11 @@ if (BROWSER_HALF) {
           /* Put the machine back the way it was found: the checks above walked
              the character around, and one of these may already have noticed. */
           const live = P.machines[0];
+          /* The sentry alone: its group's mortar shelling the stage would put
+             rings in both frames' orange count (#106). A reserve is neither
+             stepped nor drawn, so that is how the others stand aside. */
+          const aside = P.machines.filter((e) => e !== live && !e.reserve);
+          for (const e of aside) e.reserve = true;
           live.ai.state = QS.EST.DORMANT; live.ai.t = 0; live.ai.sideT = 0;
           live.hp = QS.SENTRY.hp; live.dead = null;
           /* Staged on open ground. This checks that a telegraph can be seen and
@@ -1446,6 +1461,7 @@ if (BROWSER_HALF) {
             a.faceX = dx / l; a.faceZ = dz / l;
             P.run(1);
           }
+          for (const e of aside) e.reserve = false;
           P.pause(false);
           return { foes: foes.length, orange, off, tele, sawWake, sawClose, rigLit, rigDark,
                    dead: P.foes[0] && P.foes[0].s === QS.EST.DEAD, hp: P.foes[0] && P.foes[0].h };
@@ -1470,6 +1486,107 @@ if (BROWSER_HALF) {
                    + `without the tell: lean ${rd.body.rx.toFixed(2)}, arms ${rd.armL.ry.toFixed(2)}` : 'no rig');
         check(tells.dead && tells.hp === 0, 'BUILD: and it can be killed',
               tells.dead ? 'down' : `still up on ${tells.hp} hp`);
+
+        /* ---------- BUILD: the mortar's rings and the hound's line (#106) ----------
+           The same instrument as the sentry's: stage one machine on open ground
+           with the rest stood aside, hold it late in its tell, and count what
+           turns orange against the same frame with the tell switched off. The
+           mortar's tell is on the ground where the shells will land, not on the
+           mortar, so the rings are asked to be near the character, who is
+           standing in them. */
+        const roster = await bp.evaluate(() => {
+          const P = window.QSPLAY, QS = window.QS;
+          P.input.clearPointer();
+          const grab = () => {
+            P.draw();
+            const c = document.querySelector('#cv');
+            const g = document.createElement('canvas');
+            g.width = c.width; g.height = c.height;
+            const x = g.getContext('2d');
+            x.drawImage(c, 0, 0);
+            return { d: x.getImageData(0, 0, g.width, g.height).data, w: g.width };
+          };
+          const orangeOf = (lit, dark) => {
+            let n = 0, cx = 0, cy = 0;
+            for (let i = 0; i < lit.d.length; i += 4) {
+              const dr = lit.d[i] - dark.d[i], db = lit.d[i + 2] - dark.d[i + 2];
+              if (dr > 20 && dr - db > 30) { n++; const q = i / 4; cx += q % lit.w; cy += (q / lit.w) | 0; }
+            }
+            const s = P.screen();
+            return { n, off: n ? Math.hypot(cx / n - s.x, cy / n - s.y) : Infinity };
+          };
+          /* Level and clear for 4 m round the machine, like the sentry's stage,
+             and the character's own spot `gap` metres west standing on ground
+             within a metre of it. Nine metres of level ground all round was
+             asked first, and the golden seed has none near a mortar. */
+          const level = (x, z, y, tol) => {
+            const q = QS.placeOnGround(P.collider, x, z, 40);
+            return q.grounded && Math.abs(q.y - y) <= tol && !QS.embedded(P.collider, q);
+          };
+          const clear = (cx, cz, gap) => {
+            const c = QS.placeOnGround(P.collider, cx, cz, 40);
+            if (!c.grounded || QS.embedded(P.collider, c)) return null;
+            for (const d of [1, 2, 3, 4]) for (let k = 0; k < 8; k++) {
+              if (!level(cx + Math.cos(k * Math.PI / 4) * d, cz + Math.sin(k * Math.PI / 4) * d, c.y, 0.3)) return null;
+            }
+            for (let d = 1; d <= gap; d++) if (!level(cx - d, cz, c.y, 1.0)) return null;
+            return c;
+          };
+          const a = P.actor, ms = P.machines, was = ms.map((e) => e.reserve);
+          const stage = (kind, gap) => {
+            const i = ms.findIndex((e) => e.k === kind && !e.dead);
+            if (i < 0) return { kind, none: 'no machine of the kind' };
+            const live = ms[i];
+            ms.forEach((e) => { e.reserve = e !== live; });
+            let spot = null;
+            for (let r = 0; r <= 40 && !spot; r += 2) {
+              for (let k = 0; k < (r ? 16 : 1) && !spot; k++) {
+                const sx = live.x + Math.cos(k * Math.PI / 8) * r, sz = live.z + Math.sin(k * Math.PI / 8) * r, c = clear(sx, sz, gap);
+                if (c) spot = { x: sx, y: c.y, z: sz };
+              }
+            }
+            if (!spot) return { kind, none: 'no open ground within 40 m' };
+            live.x = spot.x; live.y = spot.y; live.z = spot.z; live.hp = live.maxHp; live.dead = null;
+            live.ai.post = { x: spot.x, y: spot.y, z: spot.z }; live.ai.path = null;
+            live.ai.state = QS.EST.DORMANT; live.ai.t = 0; live.ai.sideT = 0; live.ai.marks = null;
+            a.x = spot.x - gap; a.z = spot.z; a.y = QS.placeOnGround(P.collider, a.x, a.z, spot.y + 1.2).y;
+            a.faceX = 1; a.faceZ = 0; a.vx = 0; a.vz = 0; a.hp = QS.PLAYER_HP; a.dead = null;
+            QS.warpTo(P.cam, a.x, a.y, a.z);
+            P.run(1);
+            const late = kind === QS.KIND.MORTAR ? QS.MORTAR_AIM_TIME * 0.85 : QS.HOUND_TELL_TIME * 0.8;
+            let n = 0;
+            while (n < 1500 && !(live.ai.state === QS.EST.TELEGRAPH && live.ai.t >= late)) {
+              /* Held where it stands: the character is the target, not a runner. */
+              a.x = spot.x - gap; a.z = spot.z; a.vx = 0; a.vz = 0; a.hp = QS.PLAYER_HP;
+              P.run(1); n++;
+            }
+            QS.warpTo(P.cam, a.x, a.y, a.z);
+            const lit = grab(), tl = P.foeTells[i];
+            const held = [live.ai.state, live.ai.t];
+            live.ai.state = QS.EST.CLOSE; live.ai.t = 0;
+            const dark = grab(), td = P.foeTells[i];
+            live.ai.state = held[0]; live.ai.t = held[1];
+            const o = orangeOf(lit, dark);
+            return { kind, n, telling: held[0] === QS.EST.TELEGRAPH, lit: tl, dark: td,
+                     marks: live.ai.marks ? live.ai.marks.length / 2 : 0, orange: o.n, off: o.off };
+          };
+          P.pause(true);
+          const mortar = stage(QS.KIND.MORTAR, 9), hound = stage(QS.KIND.HOUND, 3.4);
+          ms.forEach((e, i) => { e.reserve = was[i]; });
+          P.pause(false);
+          return { mortar, hound, kinds: ms.map((e) => e.k) };
+        });
+        const rm = roster.mortar, rh = roster.hound;
+        check(!rm.none && rm.telling && rm.marks === 3 && rm.lit.rings === 3 && rm.dark.rings === 0
+              && rm.orange > 300 && rm.off < 200,
+              'BUILD: a mortar crawler marks the ground where its shells will land',
+              rm.none ? `${rm.none} (kinds ${roster.kinds.join(',')})` :
+              `${rm.lit ? rm.lit.rings : 0} rings drawn for ${rm.marks} marks after ${rm.n} ticks; ${rm.orange} px turn orange, `
+              + `${Number.isFinite(rm.off) ? rm.off.toFixed(0) : '-'} px from the character standing in them`);
+        check(!rh.none && rh.telling && rh.lit.line && !rh.dark.line && rh.orange > 150,
+              'BUILD: a grafted hound draws the line it will lunge along',
+              rh.none ? `${rh.none} (kinds ${roster.kinds.join(',')})` :
+              `line ${rh.lit && rh.lit.line ? 'drawn' : 'MISSING'} after ${rh.n} ticks; ${rh.orange} px turn orange`);
 
         /* ---------- BUILD: the two terrain renderers (#12) ----------
            Both are in the page at once so the side-by-side the issue asks for is
@@ -3141,6 +3258,13 @@ if (BROWSER_HALF) {
            times — every one of them for new ground coming into view. */
         const walk = await wp.evaluate(async () => {
           const P = window.QSPLAY, per = Math.round(1 / window.QS.TICK);
+          /* A walk through streaming, not a fight: since #106 the route passes
+             two packs, and a mortar and a sentry ended it 25 s in, dead, short
+             of the distance and somewhere else than the ground it measures.
+             A reserve is neither stepped nor drawn, so that is how they stand
+             aside — and put back after. */
+          const ms = P.machines || [], was = ms.map((e) => e.reserve);
+          for (const e of ms) e.reserve = true;
           P.frameOnce(); P.frameOnce();
           const a0 = { x: P.actor.x, z: P.actor.z }, prog0 = P.programs, why0 = P.shadowWhy, lights = new Set();
           const keys = ['KeyW', 'KeyD', 'KeyW', 'KeyA'];
@@ -3149,6 +3273,7 @@ if (BROWSER_HALF) {
             P.run(per); await new Promise((r) => setTimeout(r, 40)); P.frameOnce(); lights.add(P.pointLights);
           }
           const why1 = P.shadowWhy, d = {};
+          ms.forEach((e, i) => { e.reserve = was[i]; });
           for (const k of new Set([...Object.keys(why0), ...Object.keys(why1)])) d[k] = (why1[k] || 0) - (why0[k] || 0);
           return { turn: P.sunTurn, walked: Math.hypot(P.actor.x - a0.x, P.actor.z - a0.z), linked: P.programs - prog0,
                    lights: [...lights], why: d, redraws: Object.values(d).reduce((s, v) => s + v, 0) };

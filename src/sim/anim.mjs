@@ -29,7 +29,9 @@
 import { sin, hyp } from '../gen/exact.mjs';
 import { ACTOR, RUN } from './actor.mjs';
 import { WINDUP, ACTIVE, SWING_TIME, DODGE_TIME, HURT_TIME, REACH } from './combat.mjs';
-import { EST, TELEGRAPH_TIME, STRIKE_TIME, RECOVER_TIME } from './enemy.mjs';
+import { EST, TELEGRAPH_TIME, STRIKE_TIME, RECOVER_TIME, KIND,
+         MORTAR_AIM_TIME, MORTAR_FLIGHT_TIME, MORTAR_VENT_TIME,
+         HOUND_TELL_TIME, LUNGE_TIME, STUMBLE_TIME } from './enemy.mjs';
 
 const PI = 3.141592653589793;
 
@@ -86,6 +88,62 @@ export const SENTRY_RIG = {
     { name: 'plate', bone: 'plate', size: [0.92, 0.16, 0.92], at: [0, 0.09, 0], color: 0x3a3532 },
     { name: 'armL', bone: 'armL', size: [0.24, 0.24, 0.62], at: [0, 0, 0.22], color: 0x3b3631 },
     { name: 'armR', bone: 'armR', size: [0.24, 0.24, 0.62], at: [0, 0, 0.22], color: 0x3b3631 },
+  ],
+};
+
+/* The mortar crawler (#106): a low tech carapace on six short legs with a
+   tube on its back. What reads from above is the tube — it tips up while it
+   aims, kicks when it fires, and the vents on the carapace open while it cools.
+   The rings on the ground are the page's, not the rig's. */
+export const MORTAR_RIG = {
+  bones: [
+    { name: 'root', parent: null, at: [0, 0, 0] },
+    { name: 'body', parent: 'root', at: [0, 0.32, 0] },
+    { name: 'tube', parent: 'body', at: [0, 0.42, -0.1] },
+    { name: 'vent', parent: 'body', at: [0, 0.36, -0.42] },
+    { name: 'legsL', parent: 'body', at: [-0.5, 0, 0] },
+    { name: 'legsR', parent: 'body', at: [0.5, 0, 0] },
+  ],
+  parts: [
+    { name: 'shell', bone: 'body', size: [0.95, 0.36, 1.15], at: [0, 0.18, 0], color: 0x4b4640 },
+    { name: 'cap', bone: 'body', size: [0.7, 0.1, 0.8], at: [0, 0.4, 0.05], color: 0x3a3632 },
+    { name: 'tube', bone: 'tube', size: [0.26, 0.26, 0.8], at: [0, 0, 0.32], color: 0x6d6255 },
+    { name: 'muzzle', bone: 'tube', size: [0.32, 0.32, 0.1], at: [0, 0, 0.72], color: 0x8a7a5e },
+    { name: 'vent', bone: 'vent', size: [0.6, 0.08, 0.22], at: [0, 0, 0], color: 0x7a3f2a },
+    { name: 'legL0', bone: 'legsL', size: [0.3, 0.3, 0.14], at: [-0.08, -0.16, 0.38], color: 0x2f2b27 },
+    { name: 'legL1', bone: 'legsL', size: [0.3, 0.3, 0.14], at: [-0.1, -0.16, 0], color: 0x2f2b27 },
+    { name: 'legL2', bone: 'legsL', size: [0.3, 0.3, 0.14], at: [-0.08, -0.16, -0.38], color: 0x2f2b27 },
+    { name: 'legR0', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.08, -0.16, 0.38], color: 0x2f2b27 },
+    { name: 'legR1', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.1, -0.16, 0], color: 0x2f2b27 },
+    { name: 'legR2', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.08, -0.16, -0.38], color: 0x2f2b27 },
+  ],
+};
+
+/* A grafted hound (#106): long and low, so its line of travel is what its
+   body already says. Bio — hide and the growths grafted onto it — against the
+   tech machines it fights. The crouch before a lunge drops the hips and pushes
+   the head forward along the line it has chosen. */
+export const HOUND_RIG = {
+  bones: [
+    { name: 'root', parent: null, at: [0, 0, 0] },
+    { name: 'body', parent: 'root', at: [0, 0.48, 0] },
+    { name: 'head', parent: 'body', at: [0, 0.1, 0.5] },
+    { name: 'tail', parent: 'body', at: [0, 0.08, -0.5] },
+    { name: 'foreL', parent: 'body', at: [-0.2, -0.05, 0.34] },
+    { name: 'foreR', parent: 'body', at: [0.2, -0.05, 0.34] },
+    { name: 'hindL', parent: 'body', at: [-0.2, -0.05, -0.34] },
+    { name: 'hindR', parent: 'body', at: [0.2, -0.05, -0.34] },
+  ],
+  parts: [
+    { name: 'body', bone: 'body', size: [0.46, 0.34, 0.98], at: [0, 0.02, 0], color: 0x5a4636 },
+    { name: 'graft', bone: 'body', size: [0.3, 0.14, 0.5], at: [0, 0.24, -0.08], color: 0x7f9a4c },
+    { name: 'head', bone: 'head', size: [0.32, 0.28, 0.38], at: [0, 0.02, 0.14], color: 0x6a5240 },
+    { name: 'jaw', bone: 'head', size: [0.22, 0.1, 0.22], at: [0, -0.1, 0.32], color: 0xb08f6a },
+    { name: 'tail', bone: 'tail', size: [0.1, 0.1, 0.4], at: [0, 0, -0.2], color: 0x7f9a4c },
+    { name: 'foreL', bone: 'foreL', size: [0.12, 0.42, 0.12], at: [0, -0.2, 0], color: 0x3e3026 },
+    { name: 'foreR', bone: 'foreR', size: [0.12, 0.42, 0.12], at: [0, -0.2, 0], color: 0x3e3026 },
+    { name: 'hindL', bone: 'hindL', size: [0.14, 0.42, 0.14], at: [0, -0.2, 0], color: 0x3e3026 },
+    { name: 'hindR', bone: 'hindR', size: [0.14, 0.42, 0.14], at: [0, -0.2, 0], color: 0x3e3026 },
   ],
 };
 
@@ -260,10 +318,134 @@ export function poseSentry(m, look) {
   return p;
 }
 
+/**
+ * The mortar crawler's pose, from its wire record like the sentry's. Aiming
+ * tips the tube up and braces the legs; firing kicks it; venting opens the
+ * vent plate and lets the whole shell sag, which is the opening.
+ */
+export function poseMortar(m, look) {
+  const p = blank(MORTAR_RIG), walk = look.walk || 0, t = look.t || 0;
+  if (m.s === EST.DEAD) {
+    p.root.rz = 0.7; p.body.sy = 0.7; p.tube.rx = 0.5;
+    return p;
+  }
+  if (m.s === EST.DORMANT) {
+    p.body.py = -0.12; p.tube.rx = 0.12;
+    return p;
+  }
+  if (m.s === EST.WAKE || m.s === EST.CLOSE || m.s === EST.RETURN) {
+    const s = sin(walk);
+    p.legsL.rx = s * 0.35; p.legsR.rx = -s * 0.35;
+    p.body.rz = s * 0.04;
+  }
+  if (m.s === EST.TELEGRAPH) {
+    const k = easeInOut((m.t || 0) / MORTAR_AIM_TIME);
+    p.tube.rx = -0.9 * k;                       /* up, and up, and up */
+    p.body.py = -0.08 * k;                      /* squatting to take the kick */
+    p.legsL.rz = 0.25 * k; p.legsR.rz = -0.25 * k;
+  }
+  if (m.s === EST.STRIKE) {
+    const k = 1 - easeInOut(((m.t || 0) / MORTAR_FLIGHT_TIME) * 3);
+    p.tube.rx = -0.9 + 0.2 * (1 - k);
+    p.tube.pz = -0.18 * k;                      /* the kick */
+    p.body.py = -0.08 - 0.06 * k;
+    p.legsL.rz = 0.25; p.legsR.rz = -0.25;
+  }
+  if (m.s === EST.RECOVER) {
+    const k = 1 - easeInOut((m.t || 0) / MORTAR_VENT_TIME);
+    p.tube.rx = -0.7 * k + 0.1 * (1 - k);
+    p.vent.py = 0.14 * k; p.vent.rx = -0.8 * k;  /* open, and glowing on the page */
+    p.body.py = -0.1 * k; p.body.sy = 1 - 0.08 * k;
+  }
+  if (m.s === EST.STAGGER) {
+    p.root.px = 0.05 * sin(t * 61);
+    p.body.rz = 0.12 * sin(t * 43);
+  }
+  if (m.u > 0) p.body.rx -= 0.2 * (m.u / HURT_TIME);
+  return p;
+}
+
+/**
+ * A hound's pose. The crouch is the tell: hips down, head along the line. The
+ * lunge stretches it out; the stumble after rolls it off its feet.
+ */
+export function poseHound(m, look) {
+  const p = blank(HOUND_RIG), walk = look.walk || 0, t = look.t || 0;
+  if (m.s === EST.DEAD) {
+    p.root.rz = 1.45; p.body.py = -0.24; p.head.rx = 0.3; p.tail.ry = 0.6;
+    return p;
+  }
+  if (m.s === EST.DORMANT) {
+    /* Lying down, head on its paws. */
+    p.body.py = -0.24; p.head.rx = 0.35; p.head.py = -0.06;
+    p.foreL.rx = -1.2; p.foreR.rx = -1.2; p.hindL.rx = 1.2; p.hindR.rx = 1.2;
+    p.tail.ry = 0.5;
+    return p;
+  }
+  if (m.s === EST.WAKE || m.s === EST.CLOSE || m.s === EST.RETURN) {
+    /* A lope: fore and hind pairs out of phase, the back rocking with them. */
+    const s = sin(walk), c = sin(walk + PI / 2);
+    p.foreL.rx = s * 0.7; p.foreR.rx = s * 0.55;
+    p.hindL.rx = -s * 0.7; p.hindR.rx = -s * 0.55;
+    p.body.rx = c * 0.08; p.body.py = (c < 0 ? -c : c) * 0.05;
+    p.tail.ry = c * 0.4; p.head.rx = -c * 0.08;
+  }
+  if (m.s === EST.TELEGRAPH) {
+    const k = easeInOut((m.t || 0) / HOUND_TELL_TIME);
+    p.body.py = -0.14 * k; p.body.rx = 0.12 * k;
+    p.root.pz = -0.12 * k;                      /* drawn back along the line */
+    p.head.pz = 0.08 * k; p.head.rx = 0.18 * k;
+    p.hindL.rx = 0.6 * k; p.hindR.rx = 0.6 * k;
+    p.foreL.rx = -0.3 * k; p.foreR.rx = -0.3 * k;
+    p.tail.rx = -0.6 * k + 0.1 * sin(t * 40) * k;
+  }
+  if (m.s === EST.STRIKE) {
+    const k = easeInOut(((m.t || 0) / LUNGE_TIME) * 2);
+    p.body.sz = 1 + 0.12 * k; p.body.rx = -0.12 * k;
+    p.foreL.rx = -1.1 * k; p.foreR.rx = -1.1 * k;
+    p.hindL.rx = 1.0 * k; p.hindR.rx = 1.0 * k;
+    p.head.pz = 0.12 * k; p.head.rx = -0.2 * k;
+    p.tail.rx = 0.3 * k;
+  }
+  if (m.s === EST.RECOVER) {
+    /* The stumble: over on its side and scrabbling up. This is the opening. */
+    const k = 1 - easeInOut((m.t || 0) / STUMBLE_TIME);
+    p.root.rz = 0.75 * k; p.body.py = -0.16 * k;
+    p.head.rx = 0.4 * k;
+    p.foreL.rx = 0.5 * k * sin(t * 30); p.hindL.rx = -0.5 * k * sin(t * 30);
+  }
+  if (m.s === EST.STAGGER) {
+    p.root.px = 0.04 * sin(t * 61);
+    p.body.rz = 0.16 * sin(t * 43);
+  }
+  if (m.u > 0) p.body.rx -= 0.25 * (m.u / HURT_TIME);
+  return p;
+}
+
 /** How far a stride carries a character, in metres: one full cycle of `walk`. */
 export const STRIDE = 1.35;
 /** The same for a machine, which shuffles. */
 export const SENTRY_STRIDE = 0.9;
+/** The crawler's legs are short; the hound lopes. */
+export const MORTAR_STRIDE = 0.7;
+export const HOUND_STRIDE = 1.7;
+
+/** Every machine's rig, pose and stride by its wire kind `k`. */
+export const MACHINE_RIGS = [];
+MACHINE_RIGS[KIND.SENTRY] = SENTRY_RIG;
+MACHINE_RIGS[KIND.MORTAR] = MORTAR_RIG;
+MACHINE_RIGS[KIND.HOUND] = HOUND_RIG;
+export const MACHINE_STRIDES = [];
+MACHINE_STRIDES[KIND.SENTRY] = SENTRY_STRIDE;
+MACHINE_STRIDES[KIND.MORTAR] = MORTAR_STRIDE;
+MACHINE_STRIDES[KIND.HOUND] = HOUND_STRIDE;
+
+/** A machine's pose, whichever kind it is. */
+export function poseMachine(m, look) {
+  if (m.k === KIND.MORTAR) return poseMortar(m, look);
+  if (m.k === KIND.HOUND) return poseHound(m, look);
+  return poseSentry(m, look);
+}
 
 /** Every bone's rest position in the rig's own frame: what a part's box is laid against. */
 export function restPositions(rig) {

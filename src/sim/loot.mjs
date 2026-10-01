@@ -68,9 +68,9 @@ export function worldKey(world) {
  * What the machine with this index was built out of, and therefore drops.
  *
  * Its **own** discipline, which is the rule in §6 — a fight previews its loot.
- * The consequence is the interesting part: every machine in this world is tech,
- * so fighting alone can never give you two traditions, and fusion needs
- * something fighting cannot provide. That is what the caches are for.
+ * Sentries and mortars are tech and grafted hounds are bio (#106), so a world
+ * with both kinds of pack can give you two traditions by fighting alone — but
+ * never the third, which is still what the caches are for.
  */
 export function spoilModule(world, i, trad) {
   const pool = MODS_BY_TRAD[trad === undefined ? TRAD.TECH : trad];
@@ -177,10 +177,11 @@ export function cacheSites(col, world) {
  * already receiving instead of being sent a second list.
  */
 export function makeLootField(col, world, spoilCount, trad) {
+  /* `trad` is one tradition for every spoil, or one per machine. */
   const caches = cacheSites(col, world);
   const spoils = [];
   for (let i = 0; i < (spoilCount || 0); i++) {
-    spoils.push({ x: 0, y: 0, z: 0, mod: spoilModule(world, i, trad), down: 0, site: i });
+    spoils.push({ x: 0, y: 0, z: 0, mod: spoilModule(world, i, Array.isArray(trad) ? trad[i] : trad), down: 0, site: i });
   }
   let taken = 0;
 

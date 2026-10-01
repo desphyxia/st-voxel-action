@@ -242,8 +242,10 @@ a hit is worth. They are sized to be *legible*, because the question underneath
 pixels tall. `sweep` reports that the arc covered a target this tick and stops
 there — as a bitmask, which is also how it goes over the wire.
 
-`enemy.mjs` is one archetype — a sentry automaton — and the encounter that
-holds them. It produces an input and hands it to the same `step` the player
+`enemy.mjs` is three archetypes — a sentry automaton, a mortar crawler and
+grafted hounds (#106) — and the encounter that holds them, in mixed groups
+with a reserve that only a second player brings out. Machines of different
+traditions fight each other: the hounds are biological, the rest tech. It produces an input and hands it to the same `step` the player
 uses, which is what keeps it honest about the movement budget: it steps a metre,
 falls, drowns and burns exactly as a player would, and `canVault = false` is why
 a heavy machine goes around instead of pulling itself over a ledge.
@@ -252,11 +254,16 @@ The interesting part is the telegraph, and the rule it produced: **the tell goes
 on the surface the camera can see.** At 45° you look at the top of things, so a
 raised arm is foreshortened to nothing. This one stops dead, rises, and lights
 its top plate — and the stopping is the tell that works at any zoom, because
-everything else in a fight is moving.
+everything else in a fight is moving. The two that followed put their tell on
+the ground instead: the mortar marks rings where its shells will land and
+hurts nowhere else, and a hound draws the line it will lunge along and does
+not turn to follow you.
 
 `makeEncounter` also defines the wire format for enemies, and the host draws
 from that same format rather than from its own actors. If a field the guest
-needs were missing, the host's picture would break too.
+needs were missing, the host's picture would break too. On the network it
+travels packed as arrays (`packFoes`), which is what kept nine machines inside
+the wire budget.
 
 `lattice.mjs` is the spine of progression: a frame is a list of axial hex cells,
 and everything else falls out of the adjacency that implies. One frame of eight —

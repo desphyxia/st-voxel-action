@@ -34,6 +34,7 @@
 import { TICK, placeOnGround, step, snapshot, restore, display, applyDisplay,
          embedded, ACTOR } from '../sim/actor.mjs';
 import { seatOn, pullFrom } from '../sim/lattice.mjs';
+import { packFoes, unpackFoes } from '../sim/enemy.mjs';
 
 /** Snapshots per second is this divided into the tick rate: 60 / 3 = 20 Hz. */
 export const SEND_EVERY = 3;
@@ -274,7 +275,7 @@ export function makeHost(opts) {
              it. Display state for everything it only draws. */
           you: snapshot(peer),
           them: display(me),
-          foes: encounter ? encounter.wire() : null,
+          foes: encounter ? packFoes(encounter.wire()) : null,
           /* Every drop in the world, as one integer — see src/sim/loot.mjs. */
           lt: encounter && encounter.loot ? encounter.loot.wire() : 0,
           /* The last lattice change applied, so the guest stops sending it. */
@@ -384,8 +385,8 @@ export function makeGuest(opts) {
          which is worse than the round trip it saves. */
       for (const p of pending) { step(col, me, p.input, null); replayed++; }
       target = m.them;
-      foes = m.foes;
-      past.push({ tick: m.tick, them: m.them, foes: m.foes });
+      foes = unpackFoes(m.foes);
+      past.push({ tick: m.tick, them: m.them, foes });
       if (past.length > PAST) past.shift();
       const sample = m.tick - local;
       if (offset === null || Math.abs(sample - offset) > 60) offset = sample;

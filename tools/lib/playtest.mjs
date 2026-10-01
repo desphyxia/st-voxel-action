@@ -35,7 +35,8 @@ import * as RTC from '../../src/net/rtc.mjs';
 import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache, portsOf, regionOf, REGION, cellKey, keyX, keyZ } from '../../src/gen/region.mjs';
 import { erodeAt } from '../../src/gen/erosion.mjs';
-import { HERO_RIG, SENTRY_RIG, poseHero, poseSentry, swingYaw, restPositions } from '../../src/sim/anim.mjs';
+import { HERO_RIG, SENTRY_RIG, MORTAR_RIG, HOUND_RIG, MACHINE_RIGS, poseHero, poseSentry, poseMortar, poseHound, poseMachine,
+         swingYaw, restPositions } from '../../src/sim/anim.mjs';
 import * as SKY from '../../src/sim/sky.mjs';
 import { meshChunk, surfaceAt, isCut, innerChunk } from '../../src/mesh/greedy.mjs';
 import { meshProps } from '../../src/mesh/propmesh.mjs';
@@ -706,7 +707,7 @@ export function netSuite() {
     const p = twoPlayers('meadow', wire, true);
     run(p, 600, scripted(0), scripted(2));
     const kbs = wire.stat.bytes / (600 / 60) / 1024;
-    say('three machines on the wire still fit the budget', kbs < 30,
+    say('every machine on the wire still fits the budget', kbs < 30,
         `${kbs.toFixed(1)} kB/s with two players and ${p.encounter.enemies.length} machines`);
   }
 
@@ -1441,6 +1442,236 @@ export function enemySuite() {
     const heldThrough = d.e.ai.state === EN.EST.STRIKE;
     say('a hit staggers it, unless it has already committed', staggered && heldThrough,
         `${staggered ? 'staggered' : 'shrugged'}, ${heldThrough ? 'held the strike' : 'STRIKE CANCELLED'}`);
+  }
+
+  return out;
+}
+
+/* ---------------------------------------------------------------- roster ---- */
+
+/** A flat 40 m arena, and anything else `build` adds before it is finished. */
+function pen(build) {
+  const c = makeCollider(20, V);
+  c.addBox(-19.9, 19.9, -19.9, 19.9, -2, 0);
+  if (build) build(c);
+  c.finish();
+  return c;
+}
+
+/** Step machines against players for `n` ticks, players holding still unless
+    `move` says otherwise. Stops early when `stop` says so. */
+function brawl(c, foes, players, n, stop, move) {
+  for (let t = 0; t < n; t++) {
+    for (const p of players) step(c, p, Object.assign({ mx: 0, mz: 0 }, move ? move(t, p) : null), null);
+    const budget = { left: 1, party: players.length };
+    for (const e of foes) EN.stepEnemy(c, e, players, TICK, budget, foes);
+    if (stop && stop(t)) return t;
+  }
+  return n;
+}
+
+/**
+ * The mortar crawler and the grafted hounds (#106), and what they do to each
+ * other. The rule each of them was designed round is the thing asserted: the
+ * mortar only hurts where it marked the ground first, and a hound's lunge
+ * goes where its line said and nowhere else.
+ */
+export function rosterSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const ticks = (sec) => Math.round(sec / TICK);
+  const S = EN.EST;
+
+  /* 1. The mortar marks the ground, then hurts only inside the marks. */
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeMortar(c, 10, 0);
+    const hp0 = p.hp;
+    brawl(c, [e], [p], 600, () => e.ai.state === S.TELEGRAPH);
+    const marks = e.ai.marks ? e.ai.marks.slice() : [];
+    let tell = 0;
+    brawl(c, [e], [p], 600, () => { tell++; return e.ai.state !== S.TELEGRAPH; });
+    const lostWhileMarked = hp0 - p.hp;
+    brawl(c, [e], [p], 600, () => e.ai.state !== S.STRIKE);
+    say('a mortar marks where its shells will land before any land',
+        marks.length === EN.MORTAR.shells * 2 && lostWhileMarked === 0 && tell >= ticks(EN.MORTAR_AIM_TIME) - 1,
+        `${marks.length / 2} rings, ${tell} ticks of aim, ${lostWhileMarked} hp lost while they were down`);
+    say('standing in a ring when the shells come down costs you',
+        p.hp === hp0 - EN.MORTAR.damage,
+        `${hp0 - p.hp} of ${EN.MORTAR.damage}`);
+    let vent = 0;
+    brawl(c, [e], [p], 600, () => { vent++; return e.ai.state !== S.RECOVER; });
+    say('then it vents, long enough to be the opening', vent >= ticks(EN.MORTAR_VENT_TIME) - 1,
+        `${vent} ticks of ${ticks(EN.MORTAR_VENT_TIME)}`);
+  }
+  {
+    /* The same volley, and the player steps out of the rings while they are
+       down — two metres towards the mortar puts them clear of every one. */
+    const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeMortar(c, 10, 0);
+    brawl(c, [e], [p], 600, () => e.ai.state === S.TELEGRAPH);
+    const hp0 = p.hp;
+    brawl(c, [e], [p], 600, () => e.ai.state === S.RECOVER, () => ({ mx: 1, mz: 0 }));
+    say('and stepping out of them costs you nothing', p.hp === hp0,
+        `${(hp0 - p.hp)} hp lost, standing at ${p.x.toFixed(1)}, ${p.z.toFixed(1)}`);
+  }
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeMortar(c, 3, 0);
+    brawl(c, [e], [p], 30);
+    const d0 = hyp(e.x - p.x, e.z - p.z);
+    brawl(c, [e], [p], 240, () => e.ai.state === S.TELEGRAPH);
+    const d1 = hyp(e.x - p.x, e.z - p.z);
+    say('a mortar too close to fire backs away first', d1 > d0 + 1 && d1 >= EN.MORTAR.near - 0.3,
+        `${d0.toFixed(1)} m to ${d1.toFixed(1)} m`);
+  }
+  {
+    /* Neither the mortar nor the sentry climbs: a 1 m face stops them. */
+    const c = pen((k) => k.addBox(4, 19.9, -19.9, 19.9, 0, 1));
+    const p = placeOnGround(c, 6, 0), m = EN.makeMortar(c, -2, 0), h = EN.makeHound(c, -2, 3);
+    let hTop = -1;
+    brawl(c, [m, h], [p], 900, (t) => { if (hTop < 0 && h.y > 0.99 && h.x > 4) hTop = t; return false; });
+    say('a hound jumps a 1 m face the crawler cannot climb',
+        !m.canJump && m.y < 0.5 && h.canJump && hTop >= 0,
+        `crawler at ${m.y.toFixed(2)} m, hound up at tick ${hTop}`);
+  }
+
+  /* 2. The hound circles, fixes a line, and lunges along it. */
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeHound(c, 9, 0);
+    brawl(c, [e], [p], 900, () => e.ai.state === S.TELEGRAPH);
+    const lx = e.ai.lx, lz = e.ai.lz, hp0 = p.hp;
+    /* Sidestep during the tell: the line must not follow. */
+    brawl(c, [e], [p], 600, () => e.ai.state === S.STRIKE, () => ({ mx: 0, mz: 1 }));
+    const held = e.ai.lx === lx && e.ai.lz === lz;
+    const sx = e.x, sz = e.z;
+    brawl(c, [e], [p], 600, () => e.ai.state !== S.STRIKE);
+    const dx = e.x - sx, dz = e.z - sz, run = hyp(dx, dz), along = run ? (dx * lx + dz * lz) / run : 0;
+    say('a hound fixes its line when the tell starts and the lunge follows it',
+        held && run > 1 && along > 0.95,
+        `line ${lx.toFixed(2)}, ${lz.toFixed(2)}; lunged ${run.toFixed(1)} m, ${(along * 100).toFixed(0)}% along it`);
+    say('and a sidestep during the tell makes it miss', p.hp === hp0,
+        `${hp0 - p.hp} hp lost, player moved ${hyp(p.x, p.z).toFixed(1)} m`);
+    let stumble = 0;
+    brawl(c, [e], [p], 600, () => { stumble++; return e.ai.state !== S.RECOVER; });
+    say('it stumbles after, which is the opening', stumble >= ticks(EN.STUMBLE_TIME) - 1,
+        `${stumble} ticks of ${ticks(EN.STUMBLE_TIME)}`);
+  }
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeHound(c, 9, 0);
+    const hp0 = p.hp;
+    brawl(c, [e], [p], 900, () => e.ai.state === S.RECOVER);
+    say('standing on its line gets you bitten, once', p.hp === hp0 - EN.HOUND.damage,
+        `${hp0 - p.hp} of ${EN.HOUND.damage}`);
+  }
+  {
+    /* A strip of deep water between it and you: it will not go in. */
+    const c = pen((k) => {
+      k.setLiquid(2, 4, -19.9, 19.9, LIQUID.WATER, 1.2);
+    });
+    const p = placeOnGround(c, 7, 0), e = EN.makeHound(c, -3, 0);
+    let wet = 0;
+    brawl(c, [e], [p], 900, () => {
+      const l = c.liquidAt(e.x, e.z);
+      if (l.kind === LIQUID.WATER && l.level - e.y > MOVE.wade) wet++;
+      return false;
+    });
+    say('a hound will not go into deep water after you', wet === 0 && e.x < 2.5,
+        `${wet} ticks in deep water, ended at x ${e.x.toFixed(1)}`);
+  }
+
+  /* 3. They fight each other: a hound is biological, a sentry is tech. */
+  {
+    const c = pen(), p = placeOnGround(c, 0, -12);
+    const s = EN.makeSentry(c, -2, 0), h = EN.makeHound(c, 2, 0);
+    const foes = [s, h];
+    /* A player walks past to wake them, and leaves. */
+    brawl(c, foes, [p], 40);
+    p.x = 19; p.z = 19;
+    const f0 = [s.hp, h.hp];
+    brawl(c, foes, [], 900, () => s.hp < f0[0] && h.hp < f0[1]);
+    say('machines of different traditions fight each other',
+        s.hp < f0[0] || h.hp < f0[1], `sentry ${f0[0]} → ${s.hp}, hound ${f0[1]} → ${h.hp}`);
+  }
+  {
+    const c = pen(), a = EN.makeSentry(c, -2, 0), b = EN.makeMortar(c, 2, 0);
+    a.ai.state = S.CLOSE; b.ai.state = S.CLOSE;
+    const h0 = [a.hp, b.hp];
+    brawl(c, [a, b], [], 600);
+    say('and leave their own tradition alone', a.hp === h0[0] && b.hp === h0[1],
+        `sentry ${a.hp}/${h0[0]}, mortar ${b.hp}/${h0[1]}`);
+  }
+
+  /* 4. Better with two: a reserve each, and a little more health. */
+  {
+    const cfg = GOLDEN_SEEDS[0], world = buildWorld(cfg), col = colliderForWorld(world);
+    const enc = EN.makeEncounter(col, world, []);
+    const kinds = enc.enemies.map((e) => EN.KIND_NAMES[e.k]);
+    const reserves = enc.enemies.filter((e) => e.reserve).length;
+    const one = placeOnGround(col, world.spawn[0], world.spawn[2], world.spawn[1] + 2);
+    enc.step([one]);
+    const stillIn = enc.enemies.filter((e) => e.reserve).length;
+    const two = placeOnGround(col, world.spawn[0] + 1, world.spawn[2], world.spawn[1] + 2);
+    enc.step([one, two]);
+    const out = enc.enemies.filter((e) => e.reserve).length;
+    say('every group holds a reserve back until a second player joins',
+        reserves > 0 && stillIn === reserves && out === 0
+          && kinds.indexOf('mortar') >= 0 && kinds.indexOf('hound') >= 0,
+        `${enc.enemies.length} machines (${kinds.join(', ')}); ${reserves} in reserve alone, ${out} with two`);
+    const wire = enc.wire();
+    say('a reserve travels on the wire as one, and its kind with it',
+        wire.every((w, i) => w.k === enc.enemies[i].k), `${wire.length} records`);
+    const trads = enc.loot.spoils.map((sp) => LT.MODULES[sp.mod].trad);
+    say('each machine drops its own tradition: hounds biological, the rest tech',
+        enc.enemies.every((e, i) => trads[i] === (e.k === EN.KIND.HOUND ? LT.TRAD.BIO : LT.TRAD.TECH)),
+        enc.enemies.map((e, i) => `${EN.KIND_NAMES[e.k]}:${LT.TRADITIONS[trads[i]]}`).join(' '));
+  }
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0), q = placeOnGround(c, 1, 0);
+    const alone = EN.makeSentry(c, 6, 0), paired = EN.makeSentry(c, 6, 0);
+    brawl(c, [alone], [p], 5);
+    brawl(c, [paired], [p, q], 5);
+    say('a machine woken with two players about has a little more health',
+        alone.maxHp === EN.SENTRY.hp && paired.maxHp === Math.round(EN.SENTRY.hp * EN.PARTY_HP)
+          && paired.hp === paired.maxHp,
+        `${alone.maxHp} alone, ${paired.maxHp} with two`);
+  }
+
+  /* 5. The packed wire comes back as it went. */
+  {
+    const cfg = GOLDEN_SEEDS[0], world = buildWorld(cfg), col = colliderForWorld(world);
+    const enc = EN.makeEncounter(col, world, []);
+    enc.enemies[1].ai.marks = [1.25, 2.5, 3, 4, 5, 6];
+    enc.enemies[0].hurtT = 0.2;
+    const w = enc.wire(), back = EN.unpackFoes(EN.packFoes(w));
+    const packed = JSON.stringify(EN.packFoes(w)).length, plain = JSON.stringify(w).length;
+    say('machines are packed for the wire and come back unchanged',
+        JSON.stringify(back) === JSON.stringify(w) && packed < plain * 0.75,
+        `${packed} bytes packed, ${plain} spelled out`);
+  }
+
+  /* 6. The rigs are whole and the tells move the way they read. */
+  {
+    const bad = [];
+    for (const [nm, rig] of [['mortar', MORTAR_RIG], ['hound', HOUND_RIG]]) {
+      const seen = new Set();
+      for (const b of rig.bones) {
+        if (b.parent && !seen.has(b.parent)) bad.push(`${nm}.${b.name} before its parent`);
+        seen.add(b.name);
+      }
+      for (const q of rig.parts) if (!seen.has(q.bone)) bad.push(`${nm} part ${q.name} on no bone`);
+    }
+    if (MACHINE_RIGS[EN.KIND.MORTAR] !== MORTAR_RIG || MACHINE_RIGS[EN.KIND.HOUND] !== HOUND_RIG) bad.push('MACHINE_RIGS');
+    let tube = 0, mono = true, crouch = 0;
+    for (let k = 0; k <= 10; k++) {
+      const m = poseMortar({ s: S.TELEGRAPH, t: EN.MORTAR_AIM_TIME * k / 10, k: 1 }, {});
+      if (m.tube.rx > tube + 1e-12) mono = false;
+      tube = m.tube.rx;
+    }
+    crouch = poseHound({ s: S.TELEGRAPH, t: EN.HOUND_TELL_TIME, k: 2 }, {}).body.py;
+    const lunge = poseHound({ s: S.STRIKE, t: EN.LUNGE_TIME * 0.5, k: 2 }, {});
+    const vent = poseMortar({ s: S.RECOVER, t: 0.1, k: 1 }, {});
+    const same = JSON.stringify(poseMachine({ s: S.STRIKE, t: 0.1, k: 2 }, {})) === JSON.stringify(poseHound({ s: S.STRIKE, t: 0.1, k: 2 }, {}));
+    say('the new rigs are whole, and their tells read: the tube rises, the vent opens, the hound crouches and stretches',
+        bad.length === 0 && mono && tube < -0.8 && vent.vent.py > 0.1 && crouch < -0.1 && lunge.body.sz > 1.05 && same,
+        bad.length ? bad.join('; ') : `tube ${tube.toFixed(2)}, vent ${vent.vent.py.toFixed(2)} m, crouch ${crouch.toFixed(2)} m, stretch ×${lunge.body.sz.toFixed(2)}`);
   }
 
   return out;
