@@ -89,9 +89,11 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`4015f68`** (heat shimmer over magma and puddles on wet ground, #102/PR
-#105) at **version 62**, stamped; it went straight through. Concept did not change and stays at
-**`b010ebc`**, **version 40**. Before that, play was **`77c0074`** (the air follows the ground
+Play is published from **`07a4913`** (the mortar crawler and the grafted hounds, #106/PR #107)
+at **version 63**, stamped; it went straight through as the session's first publish after a
+context reset. Concept did not change and stays at **`b010ebc`**, **version 40**. Before that,
+play was **`4015f68`** (heat shimmer over magma and puddles on wet ground, #102/PR #105) at
+version 62, stamped. Before that, play was **`77c0074`** (the air follows the ground
 every frame, so snow and haze come and go in a couple of seconds — PR #104) at version 61,
 stamped: it was refused as the session's first after a context reset, diffed identical to
 `b010ebc`, and was forced on the user's word on 2026-09-29. Before that, play was **`b010ebc`** (weather, travelling light, magma bombs and marshes,
