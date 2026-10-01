@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, marshSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -275,6 +275,7 @@ if (NODE_HALF) for (const r of combatSuite()) check(r.ok, `COMBAT: ${r.label}`, 
    assertions are about windows and openings, not about damage. */
 if (NODE_HALF) for (const r of enemySuite()) check(r.ok, `ENEMY: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of rosterSuite()) check(r.ok, `ROSTER: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of packSuite()) check(r.ok, `PACKS: ${r.label}`, r.detail);
 
 /* ---------- GEAR: modules, sockets, fusion and what is on the ground ----------
    The spine of progression (§4), and the first reason this world has anywhere
@@ -2940,6 +2941,10 @@ if (BROWSER_HALF) {
         await sp.evaluate(() => window.QSPLAY.setSky('noon', 0, true));
         const streamed = await sp.evaluate(() => {
           const P = window.QSPLAY, QS = window.QS;
+          /* Streaming is what this walk measures. Since #108 there are packs
+             all along its way, so they are held — not stepped, not woken — and
+             let go at the end, where the next check looks for them. */
+          P.holdMachines(true);
           const a0 = P.actor;
           const boot = { on: P.streaming, chunks: P.chunks, grounded: a0.grounded,
                          y: a0.y, quads: P.meshQuads };
@@ -2992,7 +2997,18 @@ if (BROWSER_HALF) {
           P.input.release(held);
           for (let i = 0; i < 90; i++) P.run(1);
           const a1 = P.actor;
-          return { boot, seen: seen.size, lowest, inside, peak, deaths, turns,
+          /* Out here, far from where the world began, the machines are let go:
+             the ground the walk ended on has its own packs (#108). */
+          P.holdMachines(false); a1.invincible = true;
+          P.run(60); P.frameOnce();
+          const foes = P.foes || [], tells = P.foeTells;
+          const packs = { made: P.packs ? P.packs.made : 0, near: 0, far: 0, models: tells.length, n: foes.length };
+          for (const f of foes) {
+            if (Math.hypot(f.x - a0.x, f.z - a0.z) > 40) packs.far++;
+            if (Math.hypot(f.x - a1.x, f.z - a1.z) < 50) packs.near++;
+          }
+          a1.invincible = undefined;
+          return { boot, seen: seen.size, lowest, inside, peak, deaths, turns, packs,
                    end: { x: a1.x, z: a1.z, y: a1.y, grounded: a1.grounded },
                    chunks: P.chunks, quads: P.meshQuads,
                    nodesMatch: P.chunks.nodes === P.chunks.loaded };
@@ -3014,6 +3030,11 @@ if (BROWSER_HALF) {
               `${streamed.chunks.built} built, ${streamed.chunks.dropped} let go, `
               + `${streamed.chunks.loaded} held (peak ${streamed.peak}), and the scene holds `
               + `${streamed.chunks.nodes} of them`);
+        const pk = streamed.packs;
+        check(pk.made > 0 && pk.far > 0 && pk.near > 0 && pk.models === pk.n,
+              'STREAM: out where the walk ends there are machines too, not only round the spawn (#108)',
+              `${pk.n} machines in play, ${pk.far} of them more than 40 m from where the world began and `
+              + `${pk.near} within 50 m of the walker; ${pk.made} groups brought in; ${pk.models} models drawn`);
         check(sErrors.length === 0, 'STREAM: and no errors while it streams',
               sErrors.slice(0, 3).join(' | '));
 
@@ -3260,11 +3281,10 @@ if (BROWSER_HALF) {
           const P = window.QSPLAY, per = Math.round(1 / window.QS.TICK);
           /* A walk through streaming, not a fight: since #106 the route passes
              two packs, and a mortar and a sentry ended it 25 s in, dead, short
-             of the distance and somewhere else than the ground it measures.
-             A reserve is neither stepped nor drawn, so that is how they stand
-             aside — and put back after. */
-          const ms = P.machines || [], was = ms.map((e) => e.reserve);
-          for (const e of ms) e.reserve = true;
+             of the distance and somewhere else than the ground it measures —
+             and since #108 there are packs wherever it goes. Held machines
+             neither come nor act; they are let go after. */
+          P.holdMachines(true);
           P.frameOnce(); P.frameOnce();
           const a0 = { x: P.actor.x, z: P.actor.z }, prog0 = P.programs, why0 = P.shadowWhy, lights = new Set();
           const keys = ['KeyW', 'KeyD', 'KeyW', 'KeyA'];
@@ -3273,7 +3293,7 @@ if (BROWSER_HALF) {
             P.run(per); await new Promise((r) => setTimeout(r, 40)); P.frameOnce(); lights.add(P.pointLights);
           }
           const why1 = P.shadowWhy, d = {};
-          ms.forEach((e, i) => { e.reserve = was[i]; });
+          P.holdMachines(false);
           for (const k of new Set([...Object.keys(why0), ...Object.keys(why1)])) d[k] = (why1[k] || 0) - (why0[k] || 0);
           return { turn: P.sunTurn, walked: Math.hypot(P.actor.x - a0.x, P.actor.z - a0.z), linked: P.programs - prog0,
                    lights: [...lights], why: d, redraws: Object.values(d).reduce((s, v) => s + v, 0) };
@@ -3298,6 +3318,7 @@ if (BROWSER_HALF) {
            and buffers are being freed at all. */
         const mem = await wp.evaluate(async () => {
           const P = window.QSPLAY, a = P.actor, per = Math.round(1 / window.QS.TICK), rows = [];
+          P.holdMachines(true);                 /* streaming is measured here, not fights (#108) */
           const x0 = a.x, z0 = a.z;
           /* Let the stream catch up before reading anything: a jump the
              workers have not caught up with reads as memory saved. */
@@ -3327,6 +3348,7 @@ if (BROWSER_HALF) {
           const tiles = () => { let n = 0; P.scene.traverse((o) => { if (o.userData.kind === 'grass') n++; }); return n; };
           const tilesOff = tiles();
           P.setGfx('grass', 1); await settle(xe, z0); const tilesOn = tiles();
+          P.holdMachines(false);
           return { rows, dropped: P.field.dropped, back: P.chunks.nodes, withGrass, noGrass, tilesOff, tilesOn,
                    report: P.reportText().indexOf('"heldMB"') > 0 };
         });

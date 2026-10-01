@@ -61,7 +61,7 @@
  * No AI architecture — a state machine and a steering direction per machine,
  * stepped in a fixed order so a host and a replay agree.
  */
-import { MOVE } from '../gen/constants.mjs';
+import { MOVE, CHUNK } from '../gen/constants.mjs';
 import { hyp, cos } from '../gen/exact.mjs';
 import { EPS, LIQUID } from './collider.mjs';
 import { TICK, placeOnGround, step } from './actor.mjs';
@@ -630,7 +630,7 @@ const ROUND = [[0, 3.5], [2.2, 1.2], [-2.2, 1.2], [2.6, -1.4], [-2.6, -1.4], [0,
  * place round it where a machine its width can stand, and falls back to the
  * post itself only if none is free.
  */
-function placeGroup(col, spawn, post, g) {
+function placeGroup(col, spawn, post, g, idBase) {
   const [px, pz, py] = post;
   let bx = px - spawn[0], bz = pz - spawn[2];
   const bl = hyp(bx, bz) || 1;
@@ -651,10 +651,54 @@ function placeGroup(col, spawn, post, g) {
     }
     if (!at) at = [px, pz, py];
     const e = MAKE[k](col, at[0], at[1], at[2] + EPS);
+    if (idBase !== undefined) e.id = idBase + i;
     if (i === kinds.length - 1) e.reserve = true;
     out.push(e);
   }
   return out;
+}
+
+/* ---------- a streamed world's machines (#108) ----------
+   A window has its nine machines, placed once. A streamed world has no edge,
+   so it cannot be placed once: each loaded chunk nominates at most one post
+   from its own encounter ground, and the group there is brought into the
+   simulation when a player comes near and put away again when everyone has
+   gone and it has settled. What it was — which of it is dead — is
+   remembered, so a group you cleared stays cleared for the session.
+
+   `active` and `drop` are distances from the post. `max` bounds the machines
+   simulated at once: it is what keeps two players inside the wire budget, and
+   with the practice posts it keeps every target inside a swing's 32-bit hit
+   mask. `edge` keeps a post this far inside its chunk, so two chunks' posts
+   are never nearer each other than twice it. */
+export const STREAM_ENC = { active: 40, drop: 56, max: 15, edge: 5, every: 15 };
+
+/** Which pack holds a chunk's post: a hash of where it is, the same every time. */
+function packAt(cx, cz) {
+  const h = (Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663)) >>> 0;
+  return PACKS[h % PACKS.length];
+}
+
+/** A group's id, from its chunk; its machines are this times four plus their
+    place. Small, because it is on the wire for every machine every snapshot:
+    a thousand chunks either way of the origin is 32 km. */
+const groupId = (cx, cz) => ((cx + 512) * 1024 + (cz + 512));
+
+/**
+ * The post one loaded chunk offers, or null: the best of its own encounter
+ * ground by the same order the window uses — cover, the high ground, then
+ * open ground — inside the chunk and off its edges, and not where a player
+ * starting out would walk straight into it.
+ */
+function chunkPost(c, spawn) {
+  const x0 = c.cx * CHUNK - CHUNK / 2, z0 = c.cz * CHUNK - CHUNK / 2, m = STREAM_ENC.edge;
+  const cands = ((c.w && c.w.affordances) || []).filter((a) => a.k in POST_RANK
+    && a.wx >= x0 + m && a.wx < x0 + CHUNK - m && a.wz >= z0 + m && a.wz < z0 + CHUNK - m
+    && hyp(a.wx - spawn[0], a.wz - spawn[2]) >= POST_MIN);
+  if (!cands.length) return null;
+  cands.sort((a, b) => POST_RANK[a.k] - POST_RANK[b.k] || b.s - a.s || a.wx - b.wx || a.wz - b.wz);
+  const a = cands[0];
+  return { x: a.wx, z: a.wz, h: a.h };
 }
 
 /**
@@ -663,40 +707,133 @@ function placeGroup(col, spawn, post, g) {
  * One unit so the host and a solo build drive identical code, and so that the
  * bit the guest does *not* run is obvious: it draws what the host sends and
  * simulates none of it.
+ *
+ * Given a chunk field for `col` — anything with `live()` — it is a streamed
+ * world's encounter, and its machines come and go with the ground (#108).
  */
 export function makeEncounter(col, world, posts) {
   const enemies = [];
-  const ps = postsFor(col, world);
-  for (let i = 0; i < ps.length; i++) {
-    for (const e of placeGroup(col, world.spawn, ps[i], PACKS[i % PACKS.length])) enemies.push(e);
+  const streamed = !!(col && typeof col.live === 'function');
+  if (!streamed) {
+    const ps = postsFor(col, world);
+    for (let i = 0; i < ps.length; i++) {
+      for (const e of placeGroup(col, world.spawn, ps[i], PACKS[i % PACKS.length])) enemies.push(e);
+    }
+    enemies.forEach((e, i) => { e.id = i; });
   }
   const targets = (posts || []).concat(enemies);
   const postCount = (posts || []).length;
-  /* Derived from the same world the machines were placed in, and index-aligned
-     with them — see src/sim/loot.mjs for why that means nothing has to be sent.
-     Each machine drops its own tradition (§6), so a hound drops biological. */
-  const loot = makeLootField(col, world, enemies.length, enemies.map((e) => e.trad));
+  /* Each machine drops its own tradition (§6), so a hound drops biological. */
+  const loot = makeLootField(col, world, 0);
+  let nextId = -1, ticks = 0;   /* the debug dialog's machines count down */
+
+  /* ---- streamed: which groups exist, and what is left of each ---- */
+  const groups = new Map(), posted = new Map();
+  let made = 0, putAway = 0;
+
+  function remove(e) {
+    const i = enemies.indexOf(e);
+    if (i < 0) return;
+    enemies.splice(i, 1); targets.splice(postCount + i, 1);
+  }
+
+  function sync(players) {
+    const who = players.filter((p) => p);
+    if (!who.length) return;
+    const near = (x, z) => {
+      let d = Infinity;
+      for (const p of who) d = Math.min(d, hyp(p.x - x, p.z - z));
+      return d;
+    };
+    const live = new Set(), want = [];
+    for (const c of col.live()) {
+      const ck = c.cx + ',' + c.cz;
+      live.add(ck);
+      if (!posted.has(ck)) posted.set(ck, chunkPost(c, world.spawn));
+      const post = posted.get(ck);
+      if (!post) continue;
+      const gid = groupId(c.cx, c.cz);
+      let g = groups.get(gid);
+      if (!g) { g = { gid, ck, post, pack: packAt(c.cx, c.cz), members: [], dead: 0, cleared: false }; groups.set(gid, g); }
+      const d = near(post.x, post.z);
+      if (g.members.length) {
+        const settled = g.members.every((e) => e.dead || e.reserve || e.ai.state === EST.DORMANT);
+        if ((d > STREAM_ENC.drop && settled) || d > STREAM_ENC.drop + 40) putAwayGroup(g);
+      } else if (!g.cleared && d < STREAM_ENC.active) want.push([d, g]);
+    }
+    /* Ground that went is ground nothing can stand on. */
+    for (const g of groups.values()) if (g.members.length && !live.has(g.ck)) putAwayGroup(g);
+    want.sort((a, b) => a[0] - b[0] || a[1].gid - b[1].gid);
+    for (const [, g] of want) {
+      const kinds = g.pack.members.length + 1;
+      let left = 0;
+      for (let i = 0; i < kinds; i++) if (!(g.dead & (1 << i))) left++;
+      if (enemies.length + left > STREAM_ENC.max) continue;
+      const y = roomAt(col, g.post.x, g.post.z, g.post.h, SENTRY.rad);
+      if (y === null) continue;
+      const all = placeGroup(col, world.spawn, [g.post.x, g.post.z, y], g.pack, g.gid * 4);
+      g.members = all.filter((e, i) => !(g.dead & (1 << i)));
+      for (const e of g.members) { e.group = g; enemies.push(e); targets.push(e); }
+      made++;
+    }
+  }
+
+  function putAwayGroup(g) {
+    for (const e of g.members) remove(e);
+    g.members = [];
+    putAway++;
+  }
+
+  /** A machine has fallen: its spoil, and what its group remembers. */
+  function fell(e) {
+    loot.drop(e.id, e);
+    const g = e.group;
+    if (!g) return;
+    g.dead |= 1 << (e.id - g.gid * 4);
+    const kinds = g.pack.members.length + 1;
+    let up = 0;
+    for (let i = 0; i < kinds; i++) if (!(g.dead & (1 << i))) up++;
+    /* Cleared when nothing that was out is still standing: a reserve nobody
+       brought out does not hold a cleared post open. */
+    g.cleared = g.members.every((m) => m.dead || m.reserve) && up < kinds;
+  }
+
+  /** Is the ground under a machine still loaded? A streamed machine on ground
+      that has gone would fall forever, so it waits instead. */
+  const grounded = (e) => !streamed || col.has(Math.floor(e.x / CHUNK + 0.5), Math.floor(e.z / CHUNK + 0.5));
 
   return {
-    enemies, targets, postCount, loot,
+    enemies, targets, postCount, loot, streamed,
+    /** While set, no group comes or goes and no machine acts: for a gate
+        that walks a streamed world to measure the streaming, not a fight. */
+    held: false,
 
-    /** One more machine, standing where it is put — the debug dialog's
-        (#92). It is a target like the rest; it drops no spoil, because the
-        loot field was sized for the machines the world placed. */
+    /** How a streamed world's groups stand, for tests and the readout. */
+    get groups() {
+      let active = 0, cleared = 0;
+      for (const g of groups.values()) { if (g.members.length) active++; if (g.cleared) cleared++; }
+      return { known: groups.size, active, cleared, made, putAway };
+    },
+
+    /** One more machine, standing where it is put — the debug dialog's (#92).
+        It is a target like the rest, and drops what it is made of like them. */
     add(x, z, fromY, kind) {
       const e = (MAKE[kind] || makeSentry)(col, x, z, fromY);
+      e.id = nextId--;
       enemies.push(e); targets.push(e);
       return e;
     },
 
     /** One tick: the machines act, then whatever the players cut takes it. */
     step(players, dt = TICK) {
+      if (this.held) return loot.collect(players);
+      if (streamed && ticks++ % STREAM_ENC.every === 0) sync(players);
       let party = 0;
       for (const p of players) if (p) party++;
       /* A second player brings each group's reserve out (§6). It stays out. */
       if (party > 1) for (const e of enemies) if (e.reserve) e.reserve = false;
       const budget = { left: 1, party };
-      for (const e of enemies) stepEnemy(col, e, players, dt, budget, enemies);
+      for (const e of enemies) if (grounded(e)) stepEnemy(col, e, players, dt, budget, enemies);
       for (const p of players) {
         if (!p || !p.hits) continue;
         const mask = p.hits;
@@ -708,19 +845,19 @@ export function makeEncounter(col, world, posts) {
         for (let i = postCount; i < targets.length; i++) if (mask & (1 << i)) jolt(targets[i]);
       }
       /* What is left of a machine, and then whoever walks over it. */
-      for (let i = 0; i < enemies.length; i++) if (enemies[i].dead) loot.drop(i, enemies[i]);
+      for (const e of enemies) if (e.dead && !e.fell) { e.fell = 1; fell(e); }
       return loot.collect(players);
     },
 
     /**
      * Guest: fold an authoritative snapshot back into the copy this end derived
-     * for itself. The machines are drawn from `foes`; a fallen one is standing
-     * over its own spoil, so where the loot is needs no message of its own, and
-     * `takenBits` — one integer — is the whole of what has been picked up.
+     * for itself. The machines are drawn from `foes`; `takenBits` — one
+     * integer — is which caches are gone, and `spoils` is what fallen machines
+     * left on the ground that nobody has picked up yet.
      */
-    observeWire(foes, takenBits) {
-      loot.observe(foes, EST.DEAD);
+    observeWire(foes, takenBits, spoils) {
       if (takenBits !== undefined && takenBits !== null) loot.applyWire(takenBits);
+      loot.applySpoils(spoils);
     },
 
     /**
@@ -728,20 +865,25 @@ export function makeEncounter(col, world, posts) {
      * enemies, so it does not need the state that simulating them requires.
      * Rounded, because these are pixels and not a trajectory anyone replays:
      * a centimetre is below what the view can show, and nine machines at
-     * millimetres were what pushed two players past the wire budget.
-     * `k` is the archetype, `mh` its most health when party scaling moved it
+     * millimetres were what pushed two players past the wire budget — and a
+     * streamed world's fifteen at centimetres nearly did again (#108).
+     * `k` is the archetype, `i` which machine it is for good — a streamed
+     * world's list changes as groups come and go (#108) — `mh` its most health when party scaling moved it
      * off the archetype's, `u` its hurt flash while it lasts, `r` set while it
      * is a reserve nobody has brought out, and `g` the mortar's rings while
      * they are down.
      */
     wire() {
-      const r2 = (v) => Math.round(v * 100) / 100;
+      const r2 = (v) => Math.round(v * 100) / 100, r1 = (v) => Math.round(v * 10) / 10;
       return enemies.map((e) => {
+        const still = e.ai.state === EST.DORMANT || e.ai.state === EST.DEAD;
         const o = {
           x: r2(e.x), y: r2(e.y), z: r2(e.z),
-          fx: r2(e.faceX), fz: r2(e.faceZ),
-          s: e.ai.state, t: r2(e.ai.t),
-          h: r2(e.hp), k: e.k,
+          /* A tenth is a few degrees, which a machine forty pixels tall does
+             not show; and a sleeping or fallen machine's clock is not posed. */
+          fx: r1(e.faceX), fz: r1(e.faceZ),
+          s: e.ai.state, t: still ? 0 : r2(e.ai.t),
+          h: r2(e.hp), k: e.k, i: e.id,
         };
         if (e.hurtT > 0) o.u = r2(e.hurtT);
         if (e.maxHp !== specOf(e).c.hp) o.mh = r2(e.maxHp);
@@ -757,7 +899,7 @@ export function makeEncounter(col, world, posts) {
    spelled out key by key were the difference between two players fitting the
    budget and not (#106). The rarely-set fields ride in a trailing object only
    when one of them is present. */
-const PACKED = ['x', 'y', 'z', 'fx', 'fz', 's', 't', 'h', 'k'];
+const PACKED = ['x', 'y', 'z', 'fx', 'fz', 's', 't', 'h', 'k', 'i'];
 
 /** `encounter.wire()` as it crosses the network. */
 export function packFoes(foes) {

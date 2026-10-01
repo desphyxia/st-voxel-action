@@ -168,37 +168,41 @@ export function cacheSites(col, world) {
   return out;
 }
 
+/** At most this many spoils lie on the ground at once; the oldest goes first. */
+export const SPOILS_MAX = 16;
+
 /**
  * Everything on the ground, and who has taken what.
  *
- * `spoilCount` is how many machines are in the world: one spoil each, which
- * exists from the moment that machine falls. Index-aligned with the encounter's
- * enemies, which is what lets a guest place them from the machine wire it is
- * already receiving instead of being sent a second list.
+ * A **cache** is derived from the world on both machines and taken is one bit
+ * each, so its whole state crosses the wire as an integer.
+ *
+ * A **spoil** exists from the moment a machine falls and until somebody picks
+ * it up. It used to be index-aligned with the encounter's machines, which
+ * capped a world at fifteen of them and assumed the list of machines never
+ * changed; in a streamed world (#108) machines come and go with the ground, so
+ * spoils are a list of their own now, sent while they lie there (`spoilWire`)
+ * and taken off it when taken. `trad` is the tradition a spoil is made of
+ * when its machine does not say, for a test that drops one by hand.
  */
 export function makeLootField(col, world, spoilCount, trad) {
-  /* `trad` is one tradition for every spoil, or one per machine. */
   const caches = cacheSites(col, world);
   const spoils = [];
-  for (let i = 0; i < (spoilCount || 0); i++) {
-    spoils.push({ x: 0, y: 0, z: 0, mod: spoilModule(world, i, Array.isArray(trad) ? trad[i] : trad), down: 0, site: i });
-  }
   let taken = 0;
-
-  /* One bit each, caches from the bottom and spoils from bit 16 — which is the
-     whole of what crosses the wire, and also a ceiling: sixteen caches and
-     fifteen machines in one window. Both are far above what a window holds. */
-  const bitOf = (kind, i) => 1 << (kind === 'cache' ? i : 16 + i);
+  const fallen = new Set();
 
   function open() {
     const out = [];
     for (let i = 0; i < caches.length; i++) {
-      if (!(taken & bitOf('cache', i))) out.push({ kind: 'cache', i, item: caches[i] });
+      if (!(taken & (1 << i))) out.push({ kind: 'cache', i, item: caches[i] });
     }
-    for (let i = 0; i < spoils.length; i++) {
-      if (spoils[i].down && !(taken & bitOf('spoil', i))) out.push({ kind: 'spoil', i, item: spoils[i] });
-    }
+    for (let i = 0; i < spoils.length; i++) out.push({ kind: 'spoil', i, item: spoils[i] });
     return out;
+  }
+
+  function lay(x, y, z, mod, of) {
+    if (spoils.length >= SPOILS_MAX) spoils.shift();
+    spoils.push({ x, y, z, mod, down: 1, of });
   }
 
   return {
@@ -206,24 +210,20 @@ export function makeLootField(col, world, spoilCount, trad) {
     get taken() { return taken; },
     open,
 
-    /** Host: that machine has fallen, so what it was made of is on the ground. */
-    drop(i, e) {
-      if (!spoils[i] || spoils[i].down) return;
-      spoils[i].x = e.x; spoils[i].y = e.y; spoils[i].z = e.z; spoils[i].down = 1;
+    /**
+     * Host: that machine has fallen, so what it was made of is on the ground —
+     * once. `key` names the machine for good: its id in a streamed world, its
+     * index in a window, and it is also what decides which module it was.
+     */
+    drop(key, e) {
+      if (fallen.has(key)) return;
+      fallen.add(key);
+      const t = e.trad === undefined ? (Array.isArray(trad) ? trad[key] : trad) : e.trad;
+      lay(e.x, e.y, e.z, spoilModule(world, key, t), key);
     },
 
-    /**
-     * Guest: the machines arrived in the snapshot, and a fallen one is standing
-     * over its own spoil. Nothing extra had to be sent for this.
-     */
-    observe(foes, deadState) {
-      if (!foes) return;
-      for (let i = 0; i < foes.length && i < spoils.length; i++) {
-        if (foes[i].s !== deadState || spoils[i].down) continue;
-        spoils[i].x = foes[i].x; spoils[i].y = foes[i].y; spoils[i].z = foes[i].z;
-        spoils[i].down = 1;
-      }
-    },
+    /** Host: something put on the ground by hand — the debug dialog's (#92). */
+    lay(x, y, z, mod) { lay(x, y, z, mod, -1); },
 
     /**
      * Host: hand anything a living player is standing on to that player.
@@ -234,7 +234,7 @@ export function makeLootField(col, world, spoilCount, trad) {
      */
     collect(players) {
       const got = [];
-      const items = open();
+      const items = open(), gone = [];
       for (let q = 0; q < items.length; q++) {
         const o = items[q], it = o.item;
         for (let p = 0; p < players.length; p++) {
@@ -244,17 +244,29 @@ export function makeLootField(col, world, spoilCount, trad) {
           if (Math.abs(a.y - it.y) > PICKUP_Y) continue;
           if (!takeModule(a.gear, it.mod)) break;         /* full: leave it there */
           const learned = o.kind === 'cache' ? learnFusion(a.gear, it.fus) : false;
-          taken |= bitOf(o.kind, o.i);
+          if (o.kind === 'cache') taken |= 1 << o.i; else gone.push(it);
           a.picked = (a.picked || 0) + 1;
           got.push({ who: p, kind: o.kind, mod: it.mod, fus: learned ? it.fus : -1 });
           break;
         }
       }
+      for (const it of gone) spoils.splice(spoils.indexOf(it), 1);
       return got;
     },
 
-    /** The whole state of the loot in the world, as one integer. */
+    /** What of the caches has been taken, as one integer. */
     wire() { return taken; },
     applyWire(m) { taken = m | 0; },
+
+    /** Every spoil on the ground, as [x, y, z, module] — usually none. */
+    spoilWire() {
+      const r2 = (v) => Math.round(v * 100) / 100;
+      return spoils.map((s) => [r2(s.x), r2(s.y), r2(s.z), s.mod]);
+    },
+    /** Guest: what is on the ground is what the host says. */
+    applySpoils(list) {
+      spoils.length = 0;
+      for (const q of list || []) spoils.push({ x: q[0], y: q[1], z: q[2], mod: q[3], down: 1, of: -1 });
+    },
   };
 }
