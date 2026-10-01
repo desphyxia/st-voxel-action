@@ -15475,9 +15475,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var hg=new THREE.BufferGeometry(); hg.setAttribute('position',new THREE.BufferAttribute(new Float32Array(9),3));
     hg.setAttribute('aHeat',new THREE.BufferAttribute(new Float32Array(3),1));
     hazeMats().forEach(function(hm){ g.add(new THREE.Mesh(hg,hm)); });
+    /* And one machine of every kind, tells and bar and all (#108). A window
+       made its machines before this ran; a streamed world makes them as its
+       groups come into reach, so the first one used to link its bar's and its
+       tell's programs in the middle of a walk. */
+    var warmFoes=[0,1,2].map(function(k){ var f=makeFoe(k); g.add(f.g); if(f.rings) g.add(f.rings); return f; });
     built.scene.add(g);
     renderer.compile(built.scene,camera);
     built.scene.remove(g); g.children.forEach(function(o){ if(o.isInstancedMesh) o.dispose(); }); box.dispose(); hg.dispose();
+    /* Their geometry goes; their materials stay, because disposing one lets go
+       of its program when nothing else holds it, and the next machine would
+       link it again — the very thing this is here to stop. */
+    warmFoes.forEach(function(f){ [f.g,f.rings].forEach(function(r){ if(r) r.traverse(function(o){ if(o.isMesh&&o.geometry) o.geometry.dispose(); }); }); });
     /* And the glow's blur and add, which the first lamp at dusk would link. */
     if(!GLOW.quad) glowSetup();
     GLOW.quad.material=GLOW.add; renderer.compile(GLOW.scene,GLOW.cam);
