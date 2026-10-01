@@ -9444,6 +9444,9 @@ function makeEncounter(col, world, posts) {
 
   return {
     enemies, targets, postCount, loot, streamed,
+    /** While set, no group comes or goes and no machine acts: for a gate
+        that walks a streamed world to measure the streaming, not a fight. */
+    held: false,
 
     /** How a streamed world's groups stand, for tests and the readout. */
     get groups() {
@@ -9463,6 +9466,7 @@ function makeEncounter(col, world, posts) {
 
     /** One tick: the machines act, then whatever the players cut takes it. */
     step(players, dt = TICK) {
+      if (this.held) return loot.collect(players);
       if (streamed && ticks++ % STREAM_ENC.every === 0) sync(players);
       let party = 0;
       for (const p of players) if (p) party++;
@@ -14475,7 +14479,20 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   /** Into the scene, with its rings beside it, and out again. */
   function addFoe(f){ built.scene.add(f.g); if(f.rings) built.scene.add(f.rings); return f; }
   function dropFoe(f){ built.scene.remove(f.g); if(f.rings) built.scene.remove(f.rings); }
-  var foeMeshes=[];
+  var foeMeshes=[], foeById={};
+  /** The models for this frame's machines, in the wire's order: one per id,
+      made when an id first appears and let go when it is gone. */
+  function syncFoes(foes){
+    var seen={}, out=[];
+    for(var q=0;q<(foes?foes.length:0);q++){
+      var fm=foes[q], id=fm.i===undefined?q:fm.i, f=foeById[id];
+      if(f&&f.k!==(fm.k|0)){ dropFoe(f); f=null; }
+      if(!f){ f=foeById[id]=addFoe(makeFoe(fm.k)); }
+      seen[id]=1; out.push(f);
+    }
+    for(var k in foeById) if(!seen[k]){ dropFoe(foeById[k]); delete foeById[k]; }
+    foeMeshes=out;
+  }
 
   /* ---------- what is on the ground ----------
      A cache and a machine's spoil are the same object with different framing:
@@ -15012,11 +15029,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     postFlash=posts.map(function(){return 0;});
     encounter=QS.makeEncounter(col,data,posts);
     targets=encounter.targets;
-    foeMeshes.forEach(dropFoe);
-    foeMeshes=encounter.enemies.map(function(e){ return addFoe(makeFoe(e.k)); });
+    /* Models follow the machines on the wire, by id (#108): a streamed world's
+       list changes as groups come and go. */
+    foeMeshes.forEach(dropFoe); foeMeshes=[]; foeById={};
     eachLoot(function(m){ if(m.parent) m.parent.remove(m); freeObject(m); });
     var nc=encounter.loot.caches.length;
-    loot=makeLoot(nc+encounter.loot.spoils.length,nc); loot.sil=lootSil(loot.cube);
+    loot=makeLoot(nc+QS.SPOILS_MAX,nc); loot.sil=lootSil(loot.cube);
     eachLoot(function(m){ built.scene.add(m); });
     drawLattice();
     return {col:col,spawn:data.spawn,targets:targets,encounter:encounter};
@@ -16665,17 +16683,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Solo and host draw from the wire format too, so a field the guest needs
        and does not get is missing from everyone's picture, not just theirs. */
     var foes=session?session.foes:(encounter?encounter.wire():null);
-    /* A host can spawn a machine (#93): the guest hears of one it has no
-       model for, and makes one. */
-    if(foes) while(foeMeshes.length<foes.length) foeMeshes.push(addFoe(makeFoe(foes[foeMeshes.length].k)));
-    for(var fq=0;fq<foeMeshes.length;fq++){
-      var fm=foes&&foes[fq];
-      /* A guest builds its models before the first snapshot says what they are. */
-      if(fm&&(fm.k|0)!==foeMeshes[fq].k){ dropFoe(foeMeshes[fq]); foeMeshes[fq]=addFoe(makeFoe(fm.k)); }
-      foeMeshes[fq].g.visible=!!fm;
-      if(foeMeshes[fq].rings&&!fm) foeMeshes[fq].rings.visible=false;
-      if(fm) poseFoe(foeMeshes[fq],fm);
-    }
+    /* A machine the debug dialog made (#93), or a streamed world's group
+       coming into reach (#108): whatever the wire says is there gets a model. */
+    syncFoes(foes);
+    for(var fq=0;fq<foeMeshes.length;fq++) poseFoe(foeMeshes[fq],foes[fq]);
     poseLoot();
     for(var q=0;q<postLit.length;q++) setPost(q,postFlash[q]>0);
     /* Issue #29: a look baseline is of the *world*. A character mid-stride, a
@@ -17330,9 +17341,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   }
   function dbgSpawnFoe(kind){
     var p=dbgSpot(); if(!p||!dbgMay()||!encounter) return null;
-    var e=encounter.add(p.x,p.z,p.y+3,kind|0);
-    foeMeshes.push(addFoe(makeFoe(e.k)));
-    return e;
+    return encounter.add(p.x,p.z,p.y+3,kind|0);
   }
   /* A spoil lying on the ground: the loot field has sixteen bits for them,
      and its meshes were sized for the ones the world placed, so they are made
@@ -17341,27 +17350,13 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var p=dbgSpot(), L=encounter&&encounter.loot; if(!p||!dbgMay()||!L||L.spoils.length>=16) return false;
     var g=QS.placeOnGround(col,p.x,p.z,p.y+3);
     var m=mod===undefined?(L.spoils.length*5)%QS.MODULES.length:mod;
-    dbgAddSpoil(g.x,g.y,g.z,m);
-    /* A guest cannot derive a spoil the host made up, so it rides the rules:
-       the same list, in the same order, lands in both loot fields (#93). */
-    if(session&&role==='host') session.setRules({spoils:session.rules.spoils.concat([[g.x,g.y,g.z,m]])});
+    /* On the ground like anything a machine dropped, and so on the wire to a
+       guest with the rest of what is lying there (#108). */
+    L.lay(g.x,g.y,g.z,m);
     return true;
   }
-  var dbgSpoils=0;
-  function dbgAddSpoil(x,y,z,m){
-    var L=encounter.loot;
-    L.spoils.push({x:x,y:y,z:z,mod:m,down:1,site:-1}); dbgSpoils++;
-    eachLoot(function(o){ if(o.parent) o.parent.remove(o); freeObject(o); });
-    var nc=L.caches.length;
-    loot=makeLoot(nc+L.spoils.length,nc); loot.sil=lootSil(loot.cube);
-    eachLoot(function(o){ built.scene.add(o); });
-  }
-  /** A guest takes on what the host's rules say is on the ground. */
-  function dbgGuestSpoils(){
-    if(!session||role!=='guest'||!session.rules||!encounter||!encounter.loot) return;
-    var sp=session.rules.spoils||[];
-    while(dbgSpoils<sp.length&&encounter.loot.spoils.length<16){ var q=sp[dbgSpoils]; dbgAddSpoil(q[0],q[1],q[2],q[3]); }
-  }
+  /** Nothing to do: a guest's spoils, the dialog's included, come with every snapshot. */
+  function dbgGuestSpoils(){}
   function dbgGive(mod){ var g=gear(); if(!g||!dbgMay()) return false; var ok=QS.takeModule(g,mod); drawLattice(); return ok; }
 
   /* ---------- drawn by the dialog ----------
@@ -18355,6 +18350,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get foes(){return session?session.foes:(encounter?encounter.wire():null);},
     /** The actual machines, for a test that needs to put one back how it was. */
     get machines(){return encounter?encounter.enemies:null;},
+    /* #108: machines that neither come nor act, for a walk that measures streaming. */
+    holdMachines:function(on){ if(encounter) encounter.held=!!on; },
+    get packs(){ return encounter&&encounter.groups?encounter.groups:null; },
     /* #106: which tell each machine's model is showing, as drawn. */
     get foeTells(){ return foeMeshes.map(function(f){
       return {k:f.k,shown:f.g.visible,wedge:!!(f.wedge&&f.wedge.visible),line:!!(f.line&&f.line.visible),

@@ -804,6 +804,9 @@ export function makeEncounter(col, world, posts) {
 
   return {
     enemies, targets, postCount, loot, streamed,
+    /** While set, no group comes or goes and no machine acts: for a gate
+        that walks a streamed world to measure the streaming, not a fight. */
+    held: false,
 
     /** How a streamed world's groups stand, for tests and the readout. */
     get groups() {
@@ -823,6 +826,7 @@ export function makeEncounter(col, world, posts) {
 
     /** One tick: the machines act, then whatever the players cut takes it. */
     step(players, dt = TICK) {
+      if (this.held) return loot.collect(players);
       if (streamed && ticks++ % STREAM_ENC.every === 0) sync(players);
       let party = 0;
       for (const p of players) if (p) party++;
