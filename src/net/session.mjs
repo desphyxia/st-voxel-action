@@ -132,6 +132,31 @@ function applyAct(a, m) {
   return m.k === ACT.SOCKET ? seatOn(a, m.s, m.c) : pullFrom(a, m.s);
 }
 
+/* The guest's own state goes over the wire every snapshot at full precision,
+   because prediction replays from it and must land on the host's bits. Its
+   thirty key names were most of what it weighed, so it goes as values in a
+   fixed order, with anything not in the list riding behind in an object —
+   which is what made room for a streamed world's machines (#108). */
+const STATE_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'apex', 'airJumps', 'jumps',
+  'airJumped', 'inWater', 'swimming', 'kick', 'faceX', 'faceZ', 'dead', 'hp', 'maxHp', 'hurtT',
+  'stamina', 'staminaHold', 'gear', 'picked', 'swing', 'dodge', 'hits', 'ticks', 'travelled', 'blocked'];
+
+export function packState(s) {
+  const a = STATE_KEYS.map((k) => (s[k] === undefined ? null : s[k]));
+  let rest = null;
+  for (const k in s) if (STATE_KEYS.indexOf(k) < 0) (rest || (rest = {}))[k] = s[k];
+  if (rest) a.push(rest);
+  return a;
+}
+
+export function unpackState(a) {
+  if (!Array.isArray(a)) return a;
+  const s = {};
+  for (let i = 0; i < STATE_KEYS.length; i++) s[STATE_KEYS[i]] = a[i];
+  if (a.length > STATE_KEYS.length) Object.assign(s, a[STATE_KEYS.length]);
+  return s;
+}
+
 /**
  * Somewhere to put the second player: near the first, but not inside a tree.
  * A ring of offsets, then the spawn itself if none of them is clear.
@@ -273,11 +298,13 @@ export function makeHost(opts) {
           t: 'snap', tick: t, ack: last.seq,
           /* Full state for the guest's own character, because it replays from
              it. Display state for everything it only draws. */
-          you: snapshot(peer),
+          you: packState(snapshot(peer)),
           them: display(me),
           foes: encounter ? packFoes(encounter.wire()) : null,
           /* Every drop in the world, as one integer — see src/sim/loot.mjs. */
           lt: encounter && encounter.loot ? encounter.loot.wire() : 0,
+          /* What machines have left on the ground, while it lies there (#108). */
+          sp: encounter && encounter.loot && encounter.loot.spoils.length ? encounter.loot.spoilWire() : undefined,
           /* The last lattice change applied, so the guest stops sending it. */
           ak: acted,
         });
@@ -368,8 +395,8 @@ export function makeGuest(opts) {
       /* Wholesale, not a nudge: the host's word replaces ours, and then every
          input it had not seen yet is put back on top. Skipping the replay is
          what makes a corrected client feel like it is being dragged backwards. */
-      restore(me, m.you);
-      lastYou = m.you;
+      lastYou = unpackState(m.you);
+      restore(me, lastYou);
       hostTick = m.tick;
       lastAck = m.ack;
       corrections++;
@@ -393,7 +420,7 @@ export function makeGuest(opts) {
       else offset += (sample - offset) * (sample < offset ? 0.3 : 0.01);
       lootBits = m.lt || 0;
       while (acts.length && acts[0].a <= (m.ak || 0)) acts.shift();
-      if (encounter && encounter.observeWire) encounter.observeWire(foes, lootBits);
+      if (encounter && encounter.observeWire) encounter.observeWire(foes, lootBits, m.sp || []);
     }
   });
 

@@ -580,6 +580,9 @@ export function netSuite() {
     const bad = [];
     for (const m of msgs) {
       for (const [k, v] of Object.entries(m)) {
+        /* The guest's own state is one fixed record of values, not a list of
+           anything (#108) — what it must not be is longer than that record. */
+        if (k === 'you') { if (!Array.isArray(v) || v.length > 31) bad.push(`${m.t}.you`); continue; }
         if (Array.isArray(v) && v.length > 3) bad.push(`${m.t}.${k}[${v.length}]`);
         if (v && typeof v === 'object' && !Array.isArray(v)) {
           for (const [k2, v2] of Object.entries(v)) {
@@ -701,10 +704,14 @@ export function netSuite() {
         guestFoe ? `hp ${guestFoe.h}, state ${guestFoe.s}` : 'no machine arrived');
   }
 
-  /* 8d. And the wire still fits, with three machines in it. */
+  /* 8d. And the wire still fits — with as many machines as a streamed world
+         ever simulates at once (#108), not only the nine a window places. */
   {
     const wire = makeLoopback({});
     const p = twoPlayers('meadow', wire, true);
+    for (let i = 0; p.encounter.enemies.length < EN.STREAM_ENC.max; i++) {
+      p.encounter.add(p.w.spawn[0] + 12 + (i % 3) * 3, p.w.spawn[2] + 10 + ((i / 3) | 0) * 3, p.w.spawn[1] + 3, i % 3);
+    }
     run(p, 600, scripted(0), scripted(2));
     const kbs = wire.stat.bytes / (600 / 60) / 1024;
     say('every machine on the wire still fits the budget', kbs < 30,
@@ -1618,10 +1625,14 @@ export function rosterSuite() {
     const wire = enc.wire();
     say('a reserve travels on the wire as one, and its kind with it',
         wire.every((w, i) => w.k === enc.enemies[i].k), `${wire.length} records`);
-    const trads = enc.loot.spoils.map((sp) => LT.MODULES[sp.mod].trad);
+    /* Every one of them falls, and each leaves its own tradition behind. */
+    for (const e of enc.enemies) { e.hp = 0; e.dead = 'struck'; }
+    enc.step([]);
+    const by = new Map(enc.loot.spoils.map((sp) => [sp.of, LT.MODULES[sp.mod].trad]));
     say('each machine drops its own tradition: hounds biological, the rest tech',
-        enc.enemies.every((e, i) => trads[i] === (e.k === EN.KIND.HOUND ? LT.TRAD.BIO : LT.TRAD.TECH)),
-        enc.enemies.map((e, i) => `${EN.KIND_NAMES[e.k]}:${LT.TRADITIONS[trads[i]]}`).join(' '));
+        by.size === enc.enemies.length
+          && enc.enemies.every((e) => by.get(e.id) === (e.k === EN.KIND.HOUND ? LT.TRAD.BIO : LT.TRAD.TECH)),
+        enc.enemies.map((e) => `${EN.KIND_NAMES[e.k]}:${LT.TRADITIONS[by.get(e.id)]}`).join(' '));
   }
   {
     const c = pen(), p = placeOnGround(c, 0, 0), q = placeOnGround(c, 1, 0);
@@ -1674,6 +1685,98 @@ export function rosterSuite() {
         bad.length ? bad.join('; ') : `tube ${tube.toFixed(2)}, vent ${vent.vent.py.toFixed(2)} m, crouch ${crouch.toFixed(2)} m, stretch ×${lunge.body.sz.toFixed(2)}`);
   }
 
+  return out;
+}
+
+/* ------------------------------------------------------ streamed packs ---- */
+
+/**
+ * A streamed world's machines (#108): nine machines placed once round the
+ * spawn was all an endless world had. Each loaded chunk nominates a post, its
+ * group comes into the simulation as players come near and goes when they
+ * leave, a cleared group stays cleared, and what falls is a list on the wire.
+ */
+export function packSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const cfg = GOLDEN_SEEDS[0], made = new Map();
+  /* Chunks are the expensive part, and the walk comes back to ground it has
+     seen: a world per chunk, generated once for the whole suite. */
+  const fieldAt = () => {
+    const f = makeChunkField(cfg.seed, null, 1);
+    f.around = (x, z) => {
+      const c = chunkAt(x, z), want = new Set();
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) want.add((c.cx + dx) + ',' + (c.cz + dz));
+      for (const e of f.live()) if (!want.has(e.cx + ',' + e.cz)) f.drop(e.cx, e.cz);
+      for (const k of want) {
+        const [cx, cz] = k.split(',').map(Number);
+        if (f.has(cx, cz)) continue;
+        if (!made.has(k)) made.set(k, chunkWorld(cfg.seed, cx, cz, null, 1));
+        f.adopt(cx, cz, made.get(k));
+      }
+    };
+    return f;
+  };
+  const visit = (f, enc, p, x, z) => {
+    f.around(x, z);
+    const g = placeOnGround(f, x, z, 60);
+    p.x = g.x; p.y = g.y; p.z = g.z; p.vx = p.vy = p.vz = 0;
+    for (let t = 0; t < EN.STREAM_ENC.every; t++) enc.step([p]);
+  };
+
+  const f = fieldAt();
+  f.around(0, 0);
+  const enc = EN.makeEncounter(f, f.chunk(0, 0).w, []);
+  const p = placeOnGround(f, 0, 0, 60);
+  p.gear = LT.makeGear();
+  visit(f, enc, p, 0, 0);
+  const home = enc.enemies.map((e) => e.id);
+  const far = 6 * 32;
+  visit(f, enc, p, far, 0);
+  const there = enc.enemies.slice(), g1 = enc.groups;
+  const maxD = Math.max(0, ...there.map((e) => hyp(e.x - p.x, e.z - p.z)));
+  say('a streamed world has machines wherever you go, not only round the spawn',
+      home.length > 0 && there.length > 0 && there.every((e) => home.indexOf(e.id) < 0)
+        && maxD < EN.STREAM_ENC.active + 6 && enc.enemies.length <= EN.STREAM_ENC.max,
+      `${home.length} at the spawn, ${there.length} at ${far} m out, the farthest ${maxD.toFixed(0)} m away; `
+      + `${g1.known} groups known, ${g1.active} active, ${g1.putAway} put away`);
+
+  const ids = there.map((e) => e.id);
+  say('and every machine has its own id, on the wire too',
+      new Set(ids).size === ids.length && enc.wire().every((w, i) => w.i === there[i].id),
+      `${ids.length} ids, ${new Set(ids).size} distinct`);
+
+  /* Again from nothing: the same groups in the same places. */
+  const f2 = fieldAt(), p2 = placeOnGround(f2, 0, 0, 60);
+  f2.around(far, 0);
+  const enc2 = EN.makeEncounter(f2, f.chunk(0, 0) ? f.chunk(0, 0).w : made.get('0,0'), []);
+  visit(f2, enc2, p2, far, 0);
+  const sig = (es) => JSON.stringify(es.map((e) => [e.id, e.k, Math.round(e.x * 4), Math.round(e.z * 4)]).sort());
+  say('the same ground places the same groups, every time',
+      sig(enc2.enemies) === sig(there), `${enc2.enemies.length} against ${there.length}`);
+
+  /* Clear what is here, walk away, come back: it stays cleared. */
+  for (const e of enc.enemies) if (!e.reserve) { e.hp = 0; e.dead = 'struck'; }
+  enc.step([p]);
+  const dropped = enc.loot.spoils.length, cleared = enc.groups.cleared;
+  visit(f, enc, p, 0, 0);
+  const awayCount = enc.enemies.filter((e) => ids.indexOf(e.id) >= 0).length;
+  visit(f, enc, p, far, 0);
+  const back = enc.enemies.filter((e) => ids.indexOf(e.id) >= 0 && !e.reserve).length;
+  say('a group you cleared stays cleared after you leave and come back',
+      cleared > 0 && awayCount === 0 && back === 0,
+      `${cleared} groups cleared; ${awayCount} of their machines while away, ${back} standing on return`);
+
+  /* What fell is on the ground, goes over the wire as a list, and is taken once. */
+  const wire = enc.loot.spoilWire(), other = LO.makeLootField(f, f.chunk(0, 0) ? f.chunk(0, 0).w : made.get('0,0'), 0);
+  other.applySpoils(wire);
+  const sp = enc.loot.spoils[0];
+  if (sp) { p.x = sp.x; p.y = sp.y; p.z = sp.z; }
+  const got = enc.loot.collect([p]).length;
+  say('what they drop lies on the ground as a list on the wire, and is picked up once',
+      dropped > 0 && wire.length === dropped && other.spoils.length === dropped
+        && got === 1 && enc.loot.spoils.length === dropped - 1,
+      `${dropped} dropped, ${wire.length} on the wire, ${got} picked up, ${enc.loot.spoils.length} left`);
   return out;
 }
 
