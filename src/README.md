@@ -259,6 +259,17 @@ the ground instead: the mortar marks rings where its shells will land and
 hurts nowhere else, and a hound draws the line it will lunge along and does
 not turn to follow you.
 
+They were turrets on legs, and #110 gave them weight and a repertoire. Every
+machine eases into and out of its walk and turns no faster than its body could
+(`MOTION`), so a sentry winding up has to swing round to follow you. On dice of
+its own, seeded from its id: a sentry stalks round you before it steps in,
+backs off a swing it sees wound up, and sometimes swings twice; a mortar keeps
+a firing band, scuttles to a new spot between volleys, leads you, and picks a
+line across your path, one along it, or a triangle round you with a safe
+centre; hounds take turns, circle to the far side of you from each other and
+feint. A group wakes as one. The page leans and banks each body into the
+motion it measures, so a guest's machines lean exactly as the host's do.
+
 `makeEncounter` also defines the wire format for enemies, and the host draws
 from that same format rather than from its own actors. If a field the guest
 needs were missing, the host's picture would break too. On the network it

@@ -1495,6 +1495,9 @@ export function rosterSuite() {
     const hp0 = p.hp;
     brawl(c, [e], [p], 600, () => e.ai.state === S.TELEGRAPH);
     const marks = e.ai.marks ? e.ai.marks.slice() : [];
+    /* Into a ring: where the shells land depends on which of its three
+       patterns it chose (#110), and the triangle's centre is safe. */
+    if (marks.length) { p.x = marks[0]; p.z = marks[1]; }
     let tell = 0;
     brawl(c, [e], [p], 600, () => { tell++; return e.ai.state !== S.TELEGRAPH; });
     const lostWhileMarked = hp0 - p.hp;
@@ -1512,11 +1515,16 @@ export function rosterSuite() {
   }
   {
     /* The same volley, and the player steps out of the rings while they are
-       down — two metres towards the mortar puts them clear of every one. */
+       down: to the nearest ground a metre clear of every one of them. */
     const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeMortar(c, 10, 0);
     brawl(c, [e], [p], 600, () => e.ai.state === S.TELEGRAPH);
-    const hp0 = p.hp;
-    brawl(c, [e], [p], 600, () => e.ai.state === S.RECOVER, () => ({ mx: 1, mz: 0 }));
+    const hp0 = p.hp, m = e.ai.marks || [];
+    const clear = (x, z) => { for (let i = 0; i < m.length; i += 2) if (hyp(x - m[i], z - m[i + 1]) < EN.MORTAR.ringR + 1) return false; return true; };
+    out: for (let r = 0; r <= 6; r += 0.5) for (let k = 0; k < 16; k++) {
+      const x = p.x + cos(k * 0.3927) * r, z = p.z + sin(k * 0.3927) * r;
+      if (clear(x, z)) { p.x = x; p.z = z; break out; }
+    }
+    brawl(c, [e], [p], 600, () => e.ai.state === S.RECOVER);
     say('and stepping out of them costs you nothing', p.hp === hp0,
         `${(hp0 - p.hp)} hp lost, standing at ${p.x.toFixed(1)}, ${p.z.toFixed(1)}`);
   }
@@ -1545,8 +1553,9 @@ export function rosterSuite() {
     const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeHound(c, 9, 0);
     brawl(c, [e], [p], 900, () => e.ai.state === S.TELEGRAPH);
     const lx = e.ai.lx, lz = e.ai.lz, hp0 = p.hp;
-    /* Sidestep during the tell: the line must not follow. */
-    brawl(c, [e], [p], 600, () => e.ai.state === S.STRIKE, () => ({ mx: 0, mz: 1 }));
+    /* Sidestep during the tell — off the line, square to it, which is the
+       counter §6 names: the line must not follow. */
+    brawl(c, [e], [p], 600, () => e.ai.state === S.STRIKE, () => ({ mx: -lz, mz: lx }));
     const held = e.ai.lx === lx && e.ai.lz === lz;
     const sx = e.x, sz = e.z;
     brawl(c, [e], [p], 600, () => e.ai.state !== S.STRIKE);
@@ -1685,6 +1694,187 @@ export function rosterSuite() {
         bad.length ? bad.join('; ') : `tube ${tube.toFixed(2)}, vent ${vent.vent.py.toFixed(2)} m, crouch ${crouch.toFixed(2)} m, stretch ×${lunge.body.sz.toFixed(2)}`);
   }
 
+  return out;
+}
+
+/* ------------------------------------------------------------ dynamics ---- */
+
+/**
+ * The machines move like things with weight and decide like things that are
+ * paying attention (#110). Each behaviour has dice of its own, seeded from the
+ * machine's id, so these run a number of machines and ask for "sometimes":
+ * never would be the old turret, always would be a new one.
+ */
+export function dynamicsSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const S = EN.EST;
+  const ang = (x, z) => Math.atan2(z, x);
+  const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+
+  /* 1. Weight: a walk eases in, and nothing turns faster than its body can. */
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeSentry(c, 9, 0);
+    let first = -1, full = -1;
+    brawl(c, [e], [p], 300, (t) => {
+      const v = hyp(e.ai.mx, e.ai.mz);
+      if (first < 0 && v > 0) first = t;
+      if (full < 0 && v >= EN.SENTRY.speed * 0.95) full = t;
+      return full >= 0;
+    });
+    let worst = [0, 0, 0];
+    for (const k of [0, 1, 2]) {
+      const c2 = pen(), q = placeOnGround(c2, 0, 0);
+      const m = [EN.makeSentry, EN.makeMortar, EN.makeHound][k](c2, 6, 0);
+      let fx = m.faceX, fz = m.faceZ;
+      brawl(c2, [m], [q], 600, () => {
+        const da = Math.abs(wrap(ang(m.faceX, m.faceZ) - ang(fx, fz)));
+        if (da > worst[k]) worst[k] = da;
+        fx = m.faceX; fz = m.faceZ;
+        return false;
+      }, (t) => ({ mx: cos(t * 0.05), mz: sin(t * 0.05) }));
+    }
+    const limit = EN.MOTION.map((mo) => mo.turn * TICK + 1e-6);
+    say('a machine eases into its walk and turns no faster than its body can',
+        full - first >= 3 && worst.every((w, k) => w <= limit[k]),
+        `sentry at full speed ${full - first} ticks after it started; fastest turn a tick `
+        + worst.map((w, k) => `${EN.KIND_NAMES[k]} ${w.toFixed(3)}/${limit[k].toFixed(3)}`).join(', '));
+  }
+
+  /* 2. A sentry stalks round you before it steps in. */
+  {
+    let stalked = 0;
+    const n = 8;
+    for (let i = 0; i < n; i++) {
+      const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeSentry(c, 7, 0);
+      e.id = i;
+      let swept = 0, last = null;
+      brawl(c, [e], [p], 900, () => {
+        const a = ang(e.x - p.x, e.z - p.z);
+        if (last !== null && hyp(e.x - p.x, e.z - p.z) < 4.6) swept += Math.abs(wrap(a - last));
+        last = a;
+        return e.ai.state === S.TELEGRAPH;
+      });
+      if (swept > 0.35) stalked++;
+    }
+    say('a sentry circles you before it steps in, not straight at you',
+        stalked >= n / 2, `${stalked} of ${n} swept more than 20° round you before their first wind-up`);
+  }
+
+  /* 3. It backs off a swing it sees coming — sometimes — and sometimes swings twice. */
+  {
+    let backed = 0, combos = 0, singles = 0;
+    const n = 16;
+    for (let i = 0; i < n; i++) {
+      const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeSentry(c, 2.9, 0);
+      e.id = 100 + i;
+      e.ai.state = S.CLOSE; e.ai.mode = 'stalk'; e.ai.wait = 5;
+      let saw = false;
+      brawl(c, [e], [p], 40, (t) => { if (e.ai.backT > 0) saw = true; return false; },
+            (t) => ({ attack: t === 2, aimX: 1, aimZ: 0 }));
+      if (saw) backed++;
+      /* And a strike at someone standing in it: one, or two. */
+      const c2 = pen(), q = placeOnGround(c2, 0, 0), m = EN.makeSentry(c2, 2, 0);
+      m.id = 200 + i;
+      q.invincible = true;
+      let strikes = 0, was = null;
+      brawl(c2, [m], [q], 600, () => {
+        if (m.ai.state === S.STRIKE && was !== S.STRIKE) strikes++;
+        was = m.ai.state;
+        return m.ai.state === S.RECOVER;
+      });
+      if (strikes >= 2) combos++; else if (strikes === 1) singles++;
+    }
+    say('a sentry sometimes steps back from a swing it sees wound up',
+        backed > 0 && backed < n, `${backed} of ${n} backed off`);
+    say('and sometimes follows its strike with a second before it recovers',
+        combos > 0 && singles > 0, `${combos} of ${n} swung twice, ${singles} once`);
+  }
+
+  /* 4. A mortar shifts between volleys, varies its pattern, and leads you. */
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeMortar(c, 9, 0);
+    e.id = 7;
+    p.invincible = true;
+    const at = [], pats = new Set();
+    let was = null;
+    brawl(c, [e], [p], 60 * 40, () => {
+      if (e.ai.state === S.TELEGRAPH && was !== S.TELEGRAPH) { at.push([e.x, e.z]); pats.add(e.ai.pattern); }
+      was = e.ai.state;
+      return at.length >= 6;
+    });
+    let moved = 0;
+    for (let i = 1; i < at.length; i++) if (hyp(at[i][0] - at[i - 1][0], at[i][1] - at[i - 1][1]) > 1.5) moved++;
+    say('a mortar moves between volleys and changes its pattern',
+        at.length >= 4 && moved >= at.length - 2 && pats.size >= 2,
+        `${at.length} volleys, ${moved} of ${at.length - 1} from a new spot, patterns ${[...pats].join(',')}`);
+
+    const c2 = pen(), q = placeOnGround(c2, -6, -8), m = EN.makeMortar(c2, 4, 0);
+    q.invincible = true;
+    let lead = null;
+    brawl(c2, [m], [q], 600, () => {
+      if (m.ai.state === S.TELEGRAPH && m.ai.marks && lead === null) {
+        let cz = 0; for (let i = 1; i < m.ai.marks.length; i += 2) cz += m.ai.marks[i];
+        lead = cz / (m.ai.marks.length / 2) - q.z;
+      }
+      return lead !== null;
+    }, () => ({ mx: 0, mz: 1 }));
+    say('and it aims where you are going, not where you stand',
+        lead !== null && lead > 1, `rings centred ${lead === null ? '-' : lead.toFixed(1)} m ahead of a player walking across its front`);
+  }
+
+  /* 5. Hounds take turns, from opposite sides, and feint. */
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0);
+    p.invincible = true;
+    const a = EN.makeHound(c, 8, 1), b = EN.makeHound(c, 8, -1);
+    a.id = 41; b.id = 42; a.pack = b.pack = [a, b];
+    let both = 0, apart = 0, lunges = 0, darts = 0, wasA = 0, wasB = 0;
+    const busy = (h) => h.ai.state === S.TELEGRAPH || h.ai.state === S.STRIKE;
+    brawl(c, [a, b], [p], 60 * 30, () => {
+      if (busy(a) && busy(b)) both++;
+      const one = busy(a) ? a : (busy(b) ? b : null);
+      /* Where the other one is when the lunge is let go — the moment it matters. */
+      if (one && one.ai.state === S.STRIKE && one.ai.t === TICK) {
+        lunges++;
+        const o = one === a ? b : a;
+        const t = Math.abs(wrap(ang(one.x - p.x, one.z - p.z) - ang(o.x - p.x, o.z - p.z)));
+        if (t > Math.PI / 2) apart++;
+      }
+      if (a.ai.dartT > 0 && !wasA) darts++;
+      if (b.ai.dartT > 0 && !wasB) darts++;
+      wasA = a.ai.dartT > 0; wasB = b.ai.dartT > 0;
+      return false;
+    });
+    say('a pair of hounds never lunges at you together',
+        lunges >= 4 && both === 0, `${lunges} lunges in 30 s, ${both} ticks with both committed`);
+    say('and the one waiting holds the far side of you', apart >= lunges * 0.6,
+        `${apart} of ${lunges} lunges came with the other hound more than 90° round you`);
+    say('and they feint: darts in that are neither told nor bitten', darts >= 2,
+        `${darts} feints in 30 s`);
+  }
+
+  /* 5b. And it leans into its own motion: forward speed tips it, sideways banks it. */
+  {
+    const still = poseMachine({ s: S.CLOSE, t: 0.2, k: 2 }, { walk: 0 });
+    const run = poseMachine({ s: S.CLOSE, t: 0.2, k: 2 }, { walk: 0, fwd: 4, side: -3 });
+    const dead = poseMachine({ s: S.DEAD, t: 0.2, k: 2 }, { walk: 0, fwd: 4 });
+    say('a body leans into its motion, and only a living one',
+        run.body.rx > still.body.rx + 0.1 && run.body.rz > still.body.rz + 0.1
+          && JSON.stringify(dead) === JSON.stringify(poseMachine({ s: S.DEAD, t: 0.2, k: 2 }, { walk: 0 })),
+        `forward lean ${(run.body.rx - still.body.rx).toFixed(2)}, bank ${(run.body.rz - still.body.rz).toFixed(2)} rad`);
+  }
+
+  /* 6. A group wakes as one. */
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0);
+    const s1 = EN.makeSentry(c, 8, 0), m1 = EN.makeMortar(c, 19, 0);
+    s1.pack = m1.pack = [s1, m1];
+    brawl(c, [s1, m1], [p], 3);
+    say('a group wakes as one: the member you were seen by brings the rest',
+        s1.ai.state !== S.DORMANT && m1.ai.state !== S.DORMANT,
+        `sentry ${s1.ai.state}, mortar ${m1.ai.state} at ${hyp(m1.x - p.x, m1.z - p.z).toFixed(0)} m — out of its own sight`);
+  }
   return out;
 }
 

@@ -440,11 +440,28 @@ MACHINE_STRIDES[KIND.SENTRY] = SENTRY_STRIDE;
 MACHINE_STRIDES[KIND.MORTAR] = MORTAR_STRIDE;
 MACHINE_STRIDES[KIND.HOUND] = HOUND_STRIDE;
 
-/** A machine's pose, whichever kind it is. */
+/* How far a body leans into its own motion (#110): radians per metre a second,
+   and never more than `most`. Forward speed tips it forward, sideways speed
+   banks it — which is most of what makes a thing with weight read as one. */
+const LEAN = [
+  { fwd: 0.05, side: 0.06, most: 0.22 },
+  { fwd: 0.04, side: 0.05, most: 0.16 },
+  { fwd: 0.035, side: 0.07, most: 0.3 },
+];
+const clampLean = (v, m) => (v > m ? m : (v < -m ? -m : v));
+
+/** A machine's pose, whichever kind it is. `look.fwd` and `look.side` are how
+    fast it is moving along and across its facing, in metres a second — the
+    page measures them from where it draws the machine, so a guest leans its
+    machines exactly as the host does. */
 export function poseMachine(m, look) {
-  if (m.k === KIND.MORTAR) return poseMortar(m, look);
-  if (m.k === KIND.HOUND) return poseHound(m, look);
-  return poseSentry(m, look);
+  const p = m.k === KIND.MORTAR ? poseMortar(m, look) : (m.k === KIND.HOUND ? poseHound(m, look) : poseSentry(m, look));
+  if (m.s !== EST.DEAD && m.s !== EST.DORMANT && (look.fwd || look.side)) {
+    const L = LEAN[m.k] || LEAN[0];
+    p.body.rx += clampLean((look.fwd || 0) * L.fwd, L.most);
+    p.body.rz -= clampLean((look.side || 0) * L.side, L.most);
+  }
+  return p;
 }
 
 /** Every bone's rest position in the rig's own frame: what a part's box is laid against. */
