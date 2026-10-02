@@ -62,10 +62,10 @@
  * stepped in a fixed order so a host and a replay agree.
  */
 import { MOVE, CHUNK } from '../gen/constants.mjs';
-import { hyp, cos } from '../gen/exact.mjs';
+import { hyp, cos, sin } from '../gen/exact.mjs';
 import { EPS, LIQUID } from './collider.mjs';
 import { TICK, placeOnGround, step } from './actor.mjs';
-import { inArc, hurt, applyHits } from './combat.mjs';
+import { inArc, hurt, applyHits, WINDUP } from './combat.mjs';
 import { TRAD } from './lattice.mjs';
 import { makeLootField } from './loot.mjs';
 import { findPath } from './nav.mjs';
@@ -198,7 +198,12 @@ function makeMachine(col, k, x, z, fromY) {
            /* Where it holds (#6), and the path it is following, if any (#15). */
            post: { x: e.x, y: e.y, z: e.z }, path: null, wp: 0, pathT: 0,
            /* The mortar's rings, as x, z pairs; a hound's orbit and lunge. */
-           marks: null, orbit: 1, lx: 0, lz: 0, bit: 0 };
+           marks: null, orbit: 1, lx: 0, lz: 0, bit: 0,
+           /* How it moves and thinks (#110): its eased input, what it is in
+              the middle of, and the clocks that pace it. */
+           mx: 0, mz: 0, mode: null, wait: 0, backT: 0, backCD: 0, combo: 0,
+           reloc: 0, dartT: 0, peelT: 0, retreatT: 0, feintT: -1,
+           ring: HOUND.circle, ringT: 0, tgt: null, pattern: 0 };
   return e;
 }
 
@@ -369,25 +374,155 @@ function land(v, dmg, cause) {
   if (hurt(v, dmg, cause) && v.ai) jolt(v);
 }
 
-/** Where the volley will come down: a line across the target, fixed now. */
+/* ---------- how they move and think (#110) ----------
+   They were turrets on legs: straight at you, stop, one attack, wait, again,
+   starting, stopping and turning in a single tick. Now each has weight —
+   it eases into and out of a walk, and turns no faster than its body could —
+   and a small repertoire chosen on dice of its own: a sentry stalks before it
+   steps in, backs off a swing it sees coming and sometimes swings twice; a
+   mortar shifts between volleys, leads you and varies its pattern; hounds take
+   turns, flank from opposite sides and feint. None of it touches the tells:
+   whatever hurts is still marked first, on the surface the camera sees. */
+
+/** Per kind: how fast its walk can change (in run-speeds a second) and how
+    fast it can turn (radians a second). The sentry is heavy, the hound is not. */
+export const MOTION = [
+  { accel: 2.6, turn: 4.0 },
+  { accel: 2.0, turn: 2.6 },
+  { accel: 8.0, turn: 11 },
+];
+
+export const SENTRY_AI = {
+  /** Inside this it stops closing and stalks you round this ring… */
+  stalk: 3.8, ring: 2.8,
+  /** …for a while drawn from this, then steps in. */
+  wait: [0.5, 1.6],
+  /** Seeing a swing wound up within 3.2 m, it steps back this long, this fast,
+      this often — and not again for `backCool` seconds. */
+  back: 0.28, backSpeed: 1.7, backChance: 0.45, backCool: 2.4,
+  /** How often a strike that leaves you in reach is followed by a second one,
+      and how short that second wind-up is. */
+  combo: 0.5, comboTell: 0.42,
+};
+
+export const MORTAR_AI = {
+  /** It would rather be this far from you; outside it, it closes. */
+  band: [7, 11],
+  /** After venting it scuttles sideways this long before aiming again. */
+  relocate: [1.4, 2.4],
+  /** It aims where you will be: your velocity over this share of the shells'
+      time aloft, never more than `leadMax` metres ahead. */
+  lead: 0.6, leadMax: 4,
+  /** The triangle volley's radius: centre safe, each ring 1.7 m out. */
+  triR: 1.7,
+};
+
+export const HOUND_AI = {
+  /** Between feints, and how long a dart in and a peel away last. */
+  feint: [0.9, 2.0], dart: 0.35, peel: 0.45,
+  /** The ring it circles on wanders between these. */
+  ring: [2.6, 4.2],
+  /** Below this share of its health, a hound breaks off after a stumble. */
+  retreat: 1.3, hurt: 0.5,
+};
+
+/** A machine's own dice, seeded from what it is: a host and a replay roll the same. */
+function roll(e) {
+  const ai = e.ai;
+  if (!ai.seed) {
+    const h = Math.imul((e.id === undefined ? 0 : e.id) | 0, 2654435761 | 0)
+      ^ Math.imul(Math.round(ai.post.x * 97), 73856093) ^ Math.imul(Math.round(ai.post.z * 131), 19349663) ^ (e.k << 24);
+    ai.seed = (h >>> 0) || 0x9e3779b9;
+  }
+  let x = ai.seed;
+  x ^= x << 13; x >>>= 0;
+  x ^= x >>> 17;
+  x ^= x << 5; x >>>= 0;
+  ai.seed = x || 0x9e3779b9;
+  return ai.seed / 4294967296;
+}
+const between = (e, r) => r[0] + (r[1] - r[0]) * roll(e);
+
+/** Ease its walk toward what it wants, at its kind's rate. A committed burst
+    — a lunge, a backstep, stopping dead for a tell — snaps instead. */
+function ease(e, mx, mz, dt, snap) {
+  const ai = e.ai;
+  if (snap) { ai.mx = mx; ai.mz = mz; return; }
+  const a = MOTION[e.k].accel * dt, dx = mx - ai.mx, dz = mz - ai.mz, l = hyp(dx, dz);
+  if (l <= a) { ai.mx = mx; ai.mz = mz; } else { ai.mx += (dx / l) * a; ai.mz += (dz / l) * a; }
+}
+
+/** Turn toward (dx, dz) no faster than its kind can. */
+function turnToward(e, dx, dz, dt) {
+  const l = hyp(dx, dz);
+  if (l < 1e-6) return;
+  dx /= l; dz /= l;
+  const fx = e.faceX, fz = e.faceZ, most = MOTION[e.k].turn * dt;
+  if (fx * dx + fz * dz >= cos(most)) { e.faceX = dx; e.faceZ = dz; return; }
+  const s = fx * dz - fz * dx >= 0 ? most : -most, c = cos(s), n = sin(s);
+  const nx = fx * c - fz * n, nz = fx * n + fz * c, nl = hyp(nx, nz) || 1;
+  e.faceX = nx / nl; e.faceZ = nz / nl;
+}
+
+/** Wake it — and, with two players about, make it a little tougher (§6). */
+function rouse(m, budget) {
+  m.ai.state = EST.WAKE; m.ai.t = 0;
+  const c = specOf(m).c;
+  if (budget && budget.party > 1 && !m.scaled && m.hp === m.maxHp) {
+    m.scaled = true; m.maxHp = Math.round(c.hp * PARTY_HP); m.hp = m.maxHp;
+  }
+}
+
+/** A point on a ring of radius r round (tx, tz), `lead` radians round from
+    where e stands now, in direction `dir`. */
+function ringPoint(e, tx, tz, r, lead, dir) {
+  const d = hyp(e.x - tx, e.z - tz) || 1;
+  const rx = (e.x - tx) / d, rz = (e.z - tz) / d, a = lead * dir;
+  const ca = cos(a), sa = sin(a);
+  return { x: tx + (rx * ca - rz * sa) * r, z: tz + (rx * sa + rz * ca) * r };
+}
+
+/** Where the volley will come down, fixed now: where you will be, in one of
+    three patterns — a line across your path, a line along it, or a triangle
+    round you that leaves its centre safe. */
+const COS120 = cos(2.0943951023931953), SIN120 = sin(2.0943951023931953);
 function aimVolley(e, target) {
   let dx = target.x - e.x, dz = target.z - e.z;
   const l = hyp(dx, dz) || 1;
   dx /= l; dz /= l;
-  const px = -dz, pz = dx, marks = [];
+  const T = (MORTAR_AIM_TIME + MORTAR_FLIGHT_TIME) * MORTAR_AI.lead;
+  let lx = (target.vx || 0) * T, lz = (target.vz || 0) * T;
+  const ll = hyp(lx, lz);
+  if (ll > MORTAR_AI.leadMax) { lx *= MORTAR_AI.leadMax / ll; lz *= MORTAR_AI.leadMax / ll; }
+  const cx = target.x + lx, cz = target.z + lz;
+  const pattern = Math.floor(roll(e) * 3);
+  e.ai.pattern = pattern;
+  const marks = [];
+  if (pattern === 2) {
+    let ux = dx, uz = dz;
+    for (let i = 0; i < 3; i++) {
+      marks.push(cx + ux * MORTAR_AI.triR, cz + uz * MORTAR_AI.triR);
+      const nx = ux * COS120 - uz * SIN120, nz = ux * SIN120 + uz * COS120;
+      ux = nx; uz = nz;
+    }
+    return marks;
+  }
+  const ax = pattern === 0 ? -dz : dx, az = pattern === 0 ? dx : dz;
   for (let i = 0; i < MORTAR.shells; i++) {
     const o = (i - (MORTAR.shells - 1) / 2) * MORTAR.spread;
-    marks.push(target.x + px * o, target.z + pz * o);
+    marks.push(cx + ax * o, cz + az * o);
   }
   return marks;
 }
 
+const HOUND_BUSY = (m) => m.ai.state === EST.TELEGRAPH || m.ai.state === EST.STRIKE;
+
 /**
  * One tick of one machine. It produces an input and hands it to the same `step`
  * the player uses, which is what keeps it honest about the movement budget.
- * `foes` is every machine in the encounter, so it can see rivals; `budget`
- * carries how many paths may be searched this tick and how many players there
- * are (the party, for scaling).
+ * `foes` is every machine in the encounter, so it can see rivals and its own
+ * pack; `budget` carries how many paths may be searched this tick and how many
+ * players there are (the party, for scaling).
  */
 export function stepEnemy(col, e, players, dt = TICK, budget, foes) {
   const ai = e.ai, s = specOf(e), c = s.c;
@@ -401,15 +536,22 @@ export function stepEnemy(col, e, players, dt = TICK, budget, foes) {
 
   ai.t += dt;
   const target = pick(e, players, foes);
-  let mx = 0, mz = 0, face = null, jump = false;
+  ai.tgt = target;
+  let mx = 0, mz = 0, face = null, jump = false, snap = false;
+  const d = target ? hyp(target.x - e.x, target.z - e.z) : Infinity;
+  const ux = target ? (target.x - e.x) / (d || 1) : 0, uz = target ? (target.z - e.z) / (d || 1) : 0;
+  const go = (tx, tz, sp) => {
+    const sm = steer(col, e, tx, tz, budget, sp);
+    mx = sm.mx; mz = sm.mz; jump = !!sm.jump;
+  };
 
   switch (ai.state) {
     case EST.DORMANT:
       if (target) {
-        ai.state = EST.WAKE; ai.t = 0;
-        /* A machine woken with two players about is a little tougher (§6). */
-        if (budget && budget.party > 1 && !e.scaled && e.hp === e.maxHp) {
-          e.scaled = true; e.maxHp = Math.round(c.hp * PARTY_HP); e.hp = e.maxHp;
+        rouse(e, budget);
+        /* A group wakes as one: the pack it was placed with comes too. */
+        for (const m of e.pack || []) {
+          if (m !== e && !m.dead && !m.reserve && m.ai.state === EST.DORMANT) rouse(m, budget);
         }
       }
       break;
@@ -420,52 +562,148 @@ export function stepEnemy(col, e, players, dt = TICK, budget, foes) {
       break;
 
     case EST.CLOSE: {
-      if (!target || strayed(e)) { ai.state = EST.RETURN; ai.t = 0; ai.path = null; break; }
+      if (!target || strayed(e)) { ai.state = EST.RETURN; ai.t = 0; ai.path = null; ai.mode = null; break; }
       face = target;
-      const d = hyp(target.x - e.x, target.z - e.z);
+
       if (e.k === KIND.MORTAR) {
-        if (d < c.near) {
-          /* Too close to fire: back off, away from it. */
-          const sm = steer(col, e, e.x + (e.x - target.x), e.z + (e.z - target.z), budget);
-          mx = sm.mx; mz = sm.mz;
-        } else if (d <= c.range) {
-          ai.state = EST.TELEGRAPH; ai.t = 0; ai.marks = aimVolley(e, target);
-        } else {
-          const sm = steer(col, e, target.x, target.z, budget);
-          mx = sm.mx; mz = sm.mz;
-        }
-        break;
-      }
-      if (e.k === KIND.HOUND) {
-        if (d <= c.range && ai.t >= CIRCLE_TIME) {
-          /* The line is fixed now, and drawn: the tell is where it will go. */
-          ai.state = EST.TELEGRAPH; ai.t = 0;
-          ai.lx = (target.x - e.x) / (d || 1); ai.lz = (target.z - e.z) / (d || 1);
+        const M = MORTAR_AI;
+        if (ai.reloc > 0) {
+          /* Shifting position after a volley: sideways round you, still facing you. */
+          ai.reloc -= dt;
+          const p = ringPoint(e, target.x, target.z, Math.max(M.band[0], Math.min(M.band[1], d)), 0.8, ai.orbit);
+          go(p.x, p.z, c.speed * 1.25);
           break;
         }
-        /* Circling: a point on the ring round the target, a little further
-           round each tick, each hound of a pair going its own way. */
-        const ang = ai.orbit * 0.7;
-        const rx = (e.x - target.x) / (d || 1), rz = (e.z - target.z) / (d || 1);
-        const ca = cos(ang), sa = cos(ang - 1.5707963267948966);
-        const ox = rx * ca - rz * sa, oz = rx * sa + rz * ca;
-        const sm = steer(col, e, target.x + ox * c.circle, target.z + oz * c.circle, budget);
-        mx = sm.mx; mz = sm.mz; jump = !!sm.jump;
+        if (d < c.near) {
+          /* Too close to fire: back off, away from it. */
+          go(e.x - ux * 4, e.z - uz * 4, c.speed * 1.15);
+        } else if (d <= c.range && ai.t >= 0.4) {
+          ai.state = EST.TELEGRAPH; ai.t = 0; ai.marks = aimVolley(e, target);
+        } else if (d > M.band[1]) {
+          go(target.x, target.z);
+        } else if (d < M.band[0]) {
+          go(e.x - ux * 3, e.z - uz * 3, c.speed * 0.8);
+        }
         break;
       }
-      if (d <= c.range) { ai.state = EST.TELEGRAPH; ai.t = 0; break; }
-      const sm = steer(col, e, target.x, target.z, budget);
-      mx = sm.mx; mz = sm.mz; jump = !!sm.jump;
+
+      if (e.k === KIND.HOUND) {
+        const H = HOUND_AI;
+        if (ai.retreatT > 0) {
+          ai.retreatT -= dt;
+          go(e.x - ux * 4, e.z - uz * 4, c.speed * 1.1);
+          break;
+        }
+        if (ai.dartT > 0) {
+          /* A feint: in fast, no tell and no bite — and out again. */
+          ai.dartT -= dt;
+          go(target.x, target.z, c.speed * 1.6);
+          if (d < 2.1) { ai.dartT = 0; ai.peelT = H.peel; }
+          break;
+        }
+        if (ai.peelT > 0) {
+          ai.peelT -= dt;
+          const p = ringPoint(e, target.x, target.z, 4.5, 0.9, ai.orbit);
+          go(p.x, p.z, c.speed * 1.3);
+          break;
+        }
+        /* The pack takes turns: while one is committed to a lunge at this
+           target, the other holds the far side of it. */
+        let lunger = null, partner = null;
+        if (foes) {
+          for (const m of foes) {
+            if (m === e || m.k !== KIND.HOUND || m.dead || m.ai.tgt !== target) continue;
+            if (HOUND_BUSY(m)) lunger = m;
+            if (!partner || hyp(m.x - e.x, m.z - e.z) < hyp(partner.x - e.x, partner.z - e.z)) partner = m;
+          }
+        }
+        /* A pincer: from the far side of you from its partner, or — if the
+           partner never gets round — after a while from wherever it is. */
+        let across = true;
+        if (partner) {
+          const ax = e.x - target.x, az = e.z - target.z, bx = partner.x - target.x, bz = partner.z - target.z;
+          across = (ax * bx + az * bz) / ((hyp(ax, az) * hyp(bx, bz)) || 1) < -0.2 || ai.t > 2.5;
+        }
+        /* A feint that is due comes before a lunge: in, out, and only then
+           the real thing — so a hound that darts at you is not a hound that
+           is about to bite, and you learn to wait for the line. */
+        if (ai.feintT < 0) ai.feintT = between(e, H.feint);
+        ai.feintT -= dt;
+        if (!lunger && ai.feintT <= 0 && d < 5.5 && d > 2.4) {
+          ai.feintT = between(e, H.feint); ai.dartT = H.dart;
+          break;
+        }
+        if (!lunger && across && d <= c.range && ai.t >= CIRCLE_TIME) {
+          /* The line is fixed now, and drawn: the tell is where it will go. */
+          ai.state = EST.TELEGRAPH; ai.t = 0;
+          ai.lx = ux; ai.lz = uz;
+          snap = true;
+          break;
+        }
+        ai.ringT -= dt;
+        if (ai.ringT <= 0) {
+          ai.ringT = 0.9 + roll(e);
+          ai.ring = between(e, H.ring);
+          if (roll(e) < 0.3) ai.orbit = -ai.orbit;
+        }
+        const other = lunger || partner;
+        if (other) {
+          /* Round to the far side of you from the other one. */
+          const ox = target.x - other.x, oz = target.z - other.z, ol = hyp(ox, oz) || 1;
+          const p = { x: target.x + (ox / ol) * ai.ring, z: target.z + (oz / ol) * ai.ring };
+          /* Not through you: round, on the ring, toward that point. */
+          const way = (e.x - target.x) * (p.z - target.z) - (e.z - target.z) * (p.x - target.x) >= 0 ? 1 : -1;
+          const q = hyp(p.x - e.x, p.z - e.z) > 2 ? ringPoint(e, target.x, target.z, ai.ring, 0.8, way) : p;
+          go(q.x, q.z, c.speed * (lunger ? 1.35 : 1));
+        } else {
+          const p = ringPoint(e, target.x, target.z, ai.ring, 0.7, ai.orbit);
+          go(p.x, p.z);
+        }
+        break;
+      }
+
+      /* The sentry. */
+      const S = SENTRY_AI;
+      if (ai.backT > 0) {
+        ai.backT -= dt;
+        mx = -ux * S.backSpeed; mz = -uz * S.backSpeed; snap = true;
+        break;
+      }
+      if (ai.backCD > 0) ai.backCD -= dt;
+      if (target.swing && target.swing.t < WINDUP && d < 3.2 && ai.backCD <= 0) {
+        /* It saw that coming. Sometimes. */
+        ai.backCD = S.backCool;
+        if (roll(e) < S.backChance) {
+          ai.backT = S.back;
+          mx = -ux * S.backSpeed; mz = -uz * S.backSpeed; snap = true;
+          break;
+        }
+      }
+      if (d <= c.range) { ai.state = EST.TELEGRAPH; ai.t = 0; ai.mode = null; snap = true; break; }
+      if (ai.mode === 'stalk') {
+        ai.wait -= dt;
+        if (d > S.stalk + 1.2) ai.mode = null;
+        else if (ai.wait <= 0) ai.mode = 'in';
+        else {
+          const p = ringPoint(e, target.x, target.z, S.ring, 0.55, ai.orbit);
+          go(p.x, p.z, c.speed * 0.8);
+          break;
+        }
+      } else if (ai.mode !== 'in' && d < S.stalk) {
+        ai.mode = 'stalk'; ai.wait = between(e, S.wait); ai.orbit = roll(e) < 0.5 ? 1 : -1;
+      }
+      go(target.x, target.z);
       break;
     }
 
     case EST.TELEGRAPH:
+      snap = true;
       if (e.k === KIND.HOUND) {
         /* Facing its line, and not turning: the line is what you read. */
         face = { x: e.x + ai.lx, z: e.z + ai.lz };
       } else if (target && e.k === KIND.SENTRY) {
-        /* Stopped dead, and still turning to face you — the turn is what makes
-           running around it during the wind-up not free. */
+        /* Stopped dead, and still turning to face you — at its own rate, which
+           is what makes running round it during the wind-up worth doing. */
         face = target;
       }
       if (ai.t >= s.tell) { ai.state = EST.STRIKE; ai.t = 0; e.swungAt = 0; ai.bit = 0; }
@@ -474,8 +712,8 @@ export function stepEnemy(col, e, players, dt = TICK, budget, foes) {
     case EST.STRIKE:
       if (e.k === KIND.HOUND) {
         face = { x: e.x + ai.lx, z: e.z + ai.lz };
-        mx = ai.lx * c.lunge; mz = ai.lz * c.lunge;
-      }
+        mx = ai.lx * c.lunge; mz = ai.lz * c.lunge; snap = true;
+      } else snap = true;
       if (ai.t >= s.strike) {
         if (e.k === KIND.MORTAR) {
           /* The shells come down where the rings were, and only there. */
@@ -487,26 +725,36 @@ export function stepEnemy(col, e, players, dt = TICK, budget, foes) {
           }
           ai.marks = null;
         }
+        if (e.k === KIND.SENTRY && !ai.combo && target && d <= SENTRY.reach + 0.6 && roll(e) < SENTRY_AI.combo) {
+          /* A second swing, re-aimed and quicker to come — then the long recovery. */
+          ai.combo = 1; ai.state = EST.TELEGRAPH; ai.t = TELEGRAPH_TIME - SENTRY_AI.comboTell; e.swungAt = 0;
+          break;
+        }
+        ai.combo = 0;
         ai.state = EST.RECOVER; ai.t = 0;
       }
       break;
 
     case EST.RECOVER:
-      if (ai.t >= s.recover) { ai.state = target ? EST.CLOSE : EST.RETURN; ai.t = 0; ai.orbit = -ai.orbit; }
+      snap = e.k === KIND.HOUND && ai.t < 0.1;
+      if (ai.t >= s.recover) {
+        ai.state = target ? EST.CLOSE : EST.RETURN; ai.t = 0; ai.orbit = -ai.orbit; ai.mode = null;
+        if (e.k === KIND.MORTAR) { ai.reloc = between(e, MORTAR_AI.relocate); ai.orbit = roll(e) < 0.5 ? 1 : -1; }
+        if (e.k === KIND.HOUND && e.hp < e.maxHp * HOUND_AI.hurt) ai.retreatT = HOUND_AI.retreat;
+      }
       break;
 
     case EST.STAGGER:
-      if (ai.t >= STAGGER_TIME) { ai.state = target ? EST.CLOSE : EST.RETURN; ai.t = 0; ai.marks = null; }
+      if (ai.t >= STAGGER_TIME) { ai.state = target ? EST.CLOSE : EST.RETURN; ai.t = 0; ai.marks = null; ai.mode = null; ai.combo = 0; }
       break;
 
     case EST.RETURN: {
       /* Back to where it holds, the way round if it must. Someone walking
          into sight on the way turns it round again — inside the leash. */
       if (target && !strayed(e)) { ai.state = EST.CLOSE; ai.t = 0; ai.path = null; break; }
-      const post = ai.post, d = hyp(post.x - e.x, post.z - e.z);
-      if (d < 0.6) { ai.state = EST.DORMANT; ai.t = 0; ai.path = null; break; }
-      const sm = steer(col, e, post.x, post.z, budget);
-      mx = sm.mx; mz = sm.mz; jump = !!sm.jump;
+      const post = ai.post, dp = hyp(post.x - e.x, post.z - e.z);
+      if (dp < 0.6) { ai.state = EST.DORMANT; ai.t = 0; ai.path = null; break; }
+      go(post.x, post.z);
       break;
     }
 
@@ -514,11 +762,12 @@ export function stepEnemy(col, e, players, dt = TICK, budget, foes) {
       break;
   }
 
-  const input = { mx, mz, jump, attack: false, dodge: false, aimX: 0, aimZ: 0 };
-  if (face) {
-    const dx = face.x - e.x, dz = face.z - e.z, l = hyp(dx, dz);
-    if (l > 1e-6) { input.aimX = dx / l; input.aimZ = dz / l; }
-  }
+  /* Weight: the walk eases toward what it wants, and the body turns toward
+     what it faces — or where it is going — no faster than it can. */
+  ease(e, mx, mz, dt, snap);
+  if (face) turnToward(e, face.x - e.x, face.z - e.z, dt);
+  else if (hyp(ai.mx, ai.mz) > 0.05) turnToward(e, ai.mx, ai.mz, dt);
+  const input = { mx: ai.mx, mz: ai.mz, jump, attack: false, dodge: false, aimX: e.faceX, aimZ: e.faceZ };
   /* One jump per time off the ground: a hound jumps a 1 m face, never 2 m. */
   e.airJumps = 0;
   step(col, e, input, null, dt);
@@ -653,6 +902,7 @@ function placeGroup(col, spawn, post, g, idBase) {
     const e = MAKE[k](col, at[0], at[1], at[2] + EPS);
     if (idBase !== undefined) e.id = idBase + i;
     if (i === kinds.length - 1) e.reserve = true;
+    e.pack = out;
     out.push(e);
   }
   return out;
