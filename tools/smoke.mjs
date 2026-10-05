@@ -1601,6 +1601,7 @@ if (BROWSER_HALF) {
           P.input.clearPointer(); P.holdMachines(true); P.pause(false);
           const wait = async () => { await new Promise((r) => setTimeout(r, 380)); P.frameOnce(); P.frameOnce(); };
           const out = { start: P.frameKind };
+          const home = { x: a.x, y: a.y, z: a.z, fx: a.faceX, fz: a.faceZ };
           /* The wheel, the key and the button, one swap each. */
           cv.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true }));
           P.run(2); out.wheel = P.frameKind;
@@ -1665,9 +1666,14 @@ if (BROWSER_HALF) {
             out.hauled = Math.hypot(a.x - x0, a.z - z0); out.spent = st0 - a.stamina;
             out.grounded = a.grounded;
           }
-          /* Put it back as found: the blade in hand and the machines let go. */
+          /* Put it back as found: the blade in hand, the machines let go, and
+             standing where it was — the checks after this one measure the
+             ground round the spawn. */
           if (P.frameKind !== 'longblade') { await wait(); P.input.press('KeyX'); P.run(1); P.input.release('KeyX'); P.run(2); }
           out.end = P.frameKind; P.holdMachines(false);
+          a.x = home.x; a.y = home.y; a.z = home.z; a.vx = a.vz = 0; a.faceX = home.fx; a.faceZ = home.fz;
+          a.stamina = QS.STAMINA_MAX; a.tether = null; a.aim = null; a.haul = null;
+          QS.warpTo(P.cam, a.x, a.y, a.z); P.run(2);
           return out;
         });
         check(reel.start === 'longblade' && reel.wheel === 'tether' && reel.key === 'longblade' && reel.button === 'tether'
@@ -2566,7 +2572,8 @@ if (BROWSER_HALF) {
           await peerPage.evaluate(() => window.QSPLAY.run(3));
           await bp.evaluate(() => window.QSPLAY.run(3));
         }
-        const seen1 = await bp.evaluate(() => { const P = window.QSPLAY; P.frameOnce(); return { aim: P.reelDraw.peerAim, kind: P.peer && P.peer.reelOut }; });
+        const seen1 = await bp.evaluate(() => { const P = window.QSPLAY, o = P.peer; P.frameOnce();
+          return { aim: P.reelDraw.peerAim, kind: o && (o.reelOut !== undefined ? o.reelOut : window.QS.isReel(o)) }; });
         hostSawAim = seen1.aim; hostSawReel = !!seen1.kind;
         await peerPage.evaluate(() => window.QSPLAY.input.release('KeyF'));
         for (let q = 0; q < 14 && !hostSawTether; q++) {

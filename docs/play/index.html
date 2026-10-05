@@ -15324,7 +15324,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     av.lastPh=ph;
     if(av.lastHp!==undefined&&a.hp<av.lastHp-0.5) sndPlay('hurt',a.x,a.z,av===avatar?1:0.6);
     av.lastHp=a.hp;
-    var reel=av===peerAvatar?!!a.reelOut:QS.isReel(a);
+    /* A partner this window only draws says so (`reelOut`, from the display
+       wire); one it simulates — the host's copy of the guest — has the gear. */
+    var reel=a.reelOut!==undefined?!!a.reelOut:QS.isReel(a);
     showPose(av.rig,QS.poseHero(a,{walk:av.walk,reach:av.reach,reel:reel}),!!a.swing||!!a.aim||!!a.tether);
     poseReel(av,a,reel);
     /* The trail outlives the hitbox on purpose. The active window is seven
@@ -16678,7 +16680,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   stage.addEventListener('wheel',function(e){
     if(!e.target||e.target.id!=='cv') return;
     e.preventDefault();
-    if(wheelAt<0||tm-wheelAt>0.3){ wheelSwapQ=true; wheelAt=tm; }
+    /* The wall clock, not presentation time: that one crawls on a slow frame,
+       and a notch must not be swallowed because the frames were. */
+    var now=performance.now()/1000;
+    if(wheelAt<0||now-wheelAt>0.3){ wheelSwapQ=true; wheelAt=now; }
   },{passive:false});
   function takeWheelSwap(){ var q=wheelSwapQ; wheelSwapQ=false; return q; }
 
