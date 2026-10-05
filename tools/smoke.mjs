@@ -1591,6 +1591,99 @@ if (BROWSER_HALF) {
               rh.none ? `${rh.none} (kinds ${roster.kinds.join(',')})` :
               `line ${rh.lit && rh.lit.line ? 'drawn' : 'MISSING'} after ${rh.n} ticks; ${rh.orange} px turn orange`);
 
+        /* ---------- BUILD: the Reel, the second frame (#112) ----------
+           Two frames carried and swapped — by the scroll wheel, by a key and by
+           the on-screen button — and the second one hauls. Staged on a clear
+           line of open ground with the machines held, so what is measured is
+           the tether and not whatever happens to be standing in its way. */
+        const reel = await bp.evaluate(async () => {
+          const P = window.QSPLAY, QS = window.QS, a = P.actor, col = P.collider, cv = document.querySelector('#cv');
+          P.input.clearPointer(); P.holdMachines(true); P.pause(false);
+          const wait = async () => { await new Promise((r) => setTimeout(r, 380)); P.frameOnce(); P.frameOnce(); };
+          const out = { start: P.frameKind };
+          /* The wheel, the key and the button, one swap each. */
+          cv.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true }));
+          P.run(2); out.wheel = P.frameKind;
+          await wait();
+          P.input.press('KeyX'); P.run(1); P.input.release('KeyX'); P.run(2); out.key = P.frameKind;
+          const btn = document.querySelector('#tSwap');
+          btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerType: 'touch' }));
+          btn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerType: 'touch' }));
+          P.run(2); out.button = P.frameKind; P.frameOnce();
+          out.chip = P.reelDraw.chip; out.atk = P.reelDraw.atk; out.swapLabel = P.reelDraw.swap;
+          /* A wheel notch is one swap however many events it makes. */
+          await wait();
+          const burst = P.frameKind;
+          for (let q = 0; q < 5; q++) cv.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true, cancelable: true }));
+          P.run(2); out.burst = [burst, P.frameKind];
+          if (P.frameKind !== 'tether') { await wait(); cv.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true, cancelable: true })); P.run(2); }
+          /* A clear line of ground, seven metres each way, near where it stands. */
+          const openLine = (c, dx, dz) => {
+            for (let s = 1; s <= 7; s += 0.5) {
+              const x = c.x + dx * s, z = c.z + dz * s, q = QS.placeOnGround(col, x, z, c.y + 1);
+              if (!q.grounded || Math.abs(q.y - c.y) > 0.3 || col.overlaps(x, z, 0.12, c.y + 0.7, c.y + 1.3)) return false;
+            }
+            return true;
+          };
+          let spot = null;
+          for (let r = 0; r <= 24 && !spot; r += 2) for (let k = 0; k < 12 && !spot; k++) {
+            const x = a.x + Math.cos(k * Math.PI / 6) * r, z = a.z + Math.sin(k * Math.PI / 6) * r;
+            const c = QS.placeOnGround(col, x, z, 40);
+            if (!c.grounded || QS.embedded(col, c)) continue;
+            for (let d = 0; d < 8 && !spot; d++) {
+              const dx = Math.cos(d * Math.PI / 4), dz = Math.sin(d * Math.PI / 4);
+              if (openLine(c, dx, dz)) spot = { x, y: c.y, z, dx, dz };
+            }
+          }
+          out.spot = !!spot;
+          if (spot) {
+            a.x = spot.x; a.z = spot.z; a.y = spot.y; a.vx = a.vz = 0; a.faceX = spot.dx; a.faceZ = spot.dz;
+            a.hp = QS.PLAYER_HP; a.dead = null; a.stamina = QS.STAMINA_MAX; a.swing = null; a.dodge = null;
+            QS.warpTo(P.cam, a.x, a.y, a.z); P.run(2);
+            const grab = () => { P.draw(); const g = document.createElement('canvas'); g.width = cv.width; g.height = cv.height;
+              const x = g.getContext('2d'); x.drawImage(cv, 0, 0); return x.getImageData(0, 0, g.width, g.height).data; };
+            const x0 = a.x, z0 = a.z, st0 = a.stamina;
+            /* Aiming: the line is on the ground, and costs nothing yet. */
+            const before = grab();
+            P.input.press('KeyF'); P.run(4); P.frameOnce();
+            out.aimLine = P.reelDraw.aim; out.aimCost = st0 - a.stamina;
+            const during = grab();
+            let px = 0;
+            for (let i = 0; i < during.length; i += 4) {
+              if (Math.abs(during[i] - before[i]) + Math.abs(during[i + 1] - before[i + 1]) + Math.abs(during[i + 2] - before[i + 2]) > 60) px++;
+            }
+            out.aimPixels = px;
+            /* Letting go fires: the tether is drawn, and the body is hauled. */
+            P.input.release('KeyF');
+            let sawTether = false, sawHaul = false;
+            for (let i = 0; i < 60; i++) {
+              P.run(1); if (i % 2 === 0) P.frameOnce();
+              if (P.reelDraw.tether) sawTether = true;
+              if (a.haul) sawHaul = true;
+            }
+            out.sawTether = sawTether; out.sawHaul = sawHaul;
+            out.hauled = Math.hypot(a.x - x0, a.z - z0); out.spent = st0 - a.stamina;
+            out.grounded = a.grounded;
+          }
+          /* Put it back as found: the blade in hand and the machines let go. */
+          if (P.frameKind !== 'longblade') { await wait(); P.input.press('KeyX'); P.run(1); P.input.release('KeyX'); P.run(2); }
+          out.end = P.frameKind; P.holdMachines(false);
+          return out;
+        });
+        check(reel.start === 'longblade' && reel.wheel === 'tether' && reel.key === 'longblade' && reel.button === 'tether'
+              && reel.burst[0] !== reel.burst[1] && reel.chip.indexOf('Reel') >= 0 && reel.atk === 'Reel',
+              'BUILD: two frames are carried, and the wheel, a key and an on-screen button each swap them',
+              `${reel.start} → wheel ${reel.wheel} → key ${reel.key} → button ${reel.button}; a burst of five notches `
+              + `${reel.burst[0]} → ${reel.burst[1]}; chip "${reel.chip}", attack button "${reel.atk}", swap "${reel.swapLabel}"`);
+        check(reel.spot && reel.aimLine && reel.aimCost === 0 && reel.aimPixels > 150,
+              'BUILD: aiming the Reel draws a line on the ground and costs nothing',
+              reel.spot ? `${reel.aimLine ? 'line drawn' : 'NO LINE'}, ${reel.aimPixels} px differ from the frame without it, ${reel.aimCost} stamina`
+                        : 'no clear line of ground within 24 m of the spawn');
+        check(reel.spot && reel.sawTether && reel.sawHaul && reel.hauled > 3 && reel.hauled < 6.5 && reel.grounded && reel.spent >= 20 && reel.end === 'longblade',
+              'BUILD: and releasing hauls you along the ground on the tether',
+              reel.spot ? `tether ${reel.sawTether ? 'drawn' : 'NEVER DRAWN'}, haul ${reel.sawHaul ? 'seen' : 'NEVER'}, `
+                          + `hauled ${reel.hauled.toFixed(1)} m, ${reel.spent.toFixed(0)} stamina, back to ${reel.end}` : 'not staged');
+
         /* ---------- BUILD: the two terrain renderers (#12) ----------
            Both are in the page at once so the side-by-side the issue asks for is
            two shots of one camera rather than two runs that might differ. What
@@ -2463,6 +2556,29 @@ if (BROWSER_HALF) {
         check(hudH.shown && hudG.shown && Math.abs(hudH.w - hudH.want) < 1 && Math.abs(hudG.w - hudG.want) < 1,
               'NET: each window shows its partner\'s health without opening anything',
               `host sees ${hudH.who} at ${hudH.w}% (${hudH.want.toFixed(0)}), guest sees ${hudG.who} at ${hudG.w}% (${hudG.want.toFixed(0)})`);
+
+        /* #112: a partner's aim is on the ground for you to read, the way an
+           enemy's tell is, and their tether is drawn. The guest swaps to the
+           Reel, aims, and lets go; the host should see all three. */
+        await peerPage.evaluate(() => { const P = window.QSPLAY; P.input.clearPointer(); P.input.press('KeyX'); P.run(2); P.input.release('KeyX'); P.run(2); P.input.press('KeyF'); P.run(2); });
+        let hostSawAim = false, hostSawTether = false, hostSawReel = false;
+        for (let q = 0; q < 8; q++) {
+          await peerPage.evaluate(() => window.QSPLAY.run(3));
+          await bp.evaluate(() => window.QSPLAY.run(3));
+        }
+        const seen1 = await bp.evaluate(() => { const P = window.QSPLAY; P.frameOnce(); return { aim: P.reelDraw.peerAim, kind: P.peer && P.peer.reelOut }; });
+        hostSawAim = seen1.aim; hostSawReel = !!seen1.kind;
+        await peerPage.evaluate(() => window.QSPLAY.input.release('KeyF'));
+        for (let q = 0; q < 14 && !hostSawTether; q++) {
+          await peerPage.evaluate(() => window.QSPLAY.run(2));
+          await bp.evaluate(() => window.QSPLAY.run(2));
+          hostSawTether = await bp.evaluate(() => { window.QSPLAY.frameOnce(); return window.QSPLAY.reelDraw.peerTether; });
+        }
+        /* Back to the blade on the guest, and let it settle. */
+        await peerPage.evaluate(() => { const P = window.QSPLAY; P.run(60); P.input.press('KeyX'); P.run(1); P.input.release('KeyX'); P.run(2); });
+        check(hostSawReel && hostSawAim && hostSawTether,
+              'NET: a partner\'s aim line and tether are drawn in the other window',
+              `host saw the Reel in the guest's hand ${hostSawReel ? 'yes' : 'NO'}, the aim line ${hostSawAim ? 'yes' : 'NO'}, the tether ${hostSawTether ? 'yes' : 'NO'}`);
 
         /* ---------- VISIBILITY: a player behind the world is still seen (#72) ----------
            A wall of the world's own prop material stood between the camera

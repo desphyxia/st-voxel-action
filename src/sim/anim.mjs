@@ -193,6 +193,9 @@ export function poseHero(a, look) {
   const p = blank(HERO_RIG);
   const walk = look.walk || 0, reach = look.reach || REACH;
   p.blade.sz = reach / REACH;
+  /* With the Reel in hand there is no blade: it is made too small to see, and
+     the free hand is what points the tether (#112). */
+  if (look.reel) { p.blade.sz = 0.02; p.blade.sy = 0.02; }
   if (a.dead) {
     /* Down on its back, and staying there. */
     p.root.rx = -1.45; p.root.py = R * 0.4;
@@ -214,6 +217,12 @@ export function poseHero(a, look) {
     p.legL.rx = 1.1; p.legR.rx = 0.9; p.torso.rx = 0.35; p.armL.rx = 0.6; p.armL.rz = -0.5;
   } else if (!a.grounded) {
     p.legL.rx = 0.55; p.legR.rx = -0.25; p.armL.rx = -0.9; p.armL.rz = -0.3;
+  }
+
+  if (a.aim || a.tether) {
+    /* Aiming the Reel: the arm comes up along the line, and the body squares to it. */
+    p.armR.rx = -1.3; p.armR.ry = 0; p.torso.ry = 0.12; p.torso.rx = 0.05;
+    if (a.tether) { p.armR.rx = -1.5; p.torso.rx = a.tether.ph === 2 ? 0.3 : 0.12; }
   }
 
   if (a.swing) {

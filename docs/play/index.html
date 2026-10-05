@@ -206,6 +206,11 @@
         touch-action:none;cursor:pointer}
   .tbtn.on{background:rgba(217,162,94,.42);border-color:var(--sand)}
   #tAtk{right:24px;bottom:24px;width:88px;height:88px;font-size:12px}
+  #tSwap{right:196px;bottom:32px;width:54px;height:54px;font-size:9.5px}
+  .framechip{position:absolute;left:0;bottom:calc(100% + 5px);font-family:var(--mono);font-size:10.5px;
+             letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap;pointer-events:none}
+  .framechip b{color:var(--sand);font-weight:600}
+  .framechip i{font-style:normal;opacity:.55}
   #tDod{right:122px;bottom:32px;width:62px;height:62px}
   #tJmp{right:44px;bottom:122px;width:62px;height:62px}
   #tRl{left:14px;top:12px;width:42px;height:42px;font-size:15px}
@@ -331,6 +336,7 @@
       </div>
       <div class="peerpin" id="peerpin"></div>
       <div class="vitals" id="vitals">
+        <div class="framechip" id="framechip" title="Scroll wheel or X swaps frame"></div>
         <div class="bar hp"><i id="hpfill"></i></div>
         <div class="bar st"><i id="staminafill"></i></div>
       </div>
@@ -410,6 +416,7 @@
         <button class="tbtn" id="tRr" type="button" aria-label="turn view right">&#8250;</button>
         <button class="tbtn" id="tJmp" type="button">Jump</button>
         <button class="tbtn" id="tDod" type="button">Dodge</button>
+        <button class="tbtn" id="tSwap" type="button" aria-label="swap frame">Reel</button>
         <button class="tbtn" id="tAtk" type="button">Cut</button>
       </div>
       <div class="rotate" id="rotate"><span>Turn your phone sideways.<br>Quarterstone is played in landscape.</span></div>
@@ -10296,6 +10303,9 @@ function poseHero(a, look) {
   const p = blank(HERO_RIG);
   const walk = look.walk || 0, reach = look.reach || REACH;
   p.blade.sz = reach / REACH;
+  /* With the Reel in hand there is no blade: it is made too small to see, and
+     the free hand is what points the tether (#112). */
+  if (look.reel) { p.blade.sz = 0.02; p.blade.sy = 0.02; }
   if (a.dead) {
     /* Down on its back, and staying there. */
     p.root.rx = -1.45; p.root.py = R * 0.4;
@@ -10317,6 +10327,12 @@ function poseHero(a, look) {
     p.legL.rx = 1.1; p.legR.rx = 0.9; p.torso.rx = 0.35; p.armL.rx = 0.6; p.armL.rz = -0.5;
   } else if (!a.grounded) {
     p.legL.rx = 0.55; p.legR.rx = -0.25; p.armL.rx = -0.9; p.armL.rz = -0.3;
+  }
+
+  if (a.aim || a.tether) {
+    /* Aiming the Reel: the arm comes up along the line, and the body squares to it. */
+    p.armR.rx = -1.3; p.armR.ry = 0; p.torso.ry = 0.12; p.torso.rx = 0.05;
+    if (a.tether) { p.armR.rx = -1.5; p.torso.rx = a.tether.ph === 2 ? 0.3 : 0.12; }
   }
 
   if (a.swing) {
@@ -10950,7 +10966,7 @@ function setView(cam, v) { cam.view = clamp(v, 6, 40); return cam; }
 /** Every action the prototype has. Adding a verb adds a row here. */
 const ACTIONS = [
   'moveUp', 'moveDown', 'moveLeft', 'moveRight',
-  'jump', 'attack', 'dodge', 'rotateLeft', 'rotateRight', 'respawn',
+  'jump', 'attack', 'dodge', 'rotateLeft', 'rotateRight', 'respawn', 'swapFrame',
 ];
 
 const DEFAULT_BINDINGS = {
@@ -10964,6 +10980,9 @@ const DEFAULT_BINDINGS = {
   rotateLeft: ['KeyQ', 'Pad4', 'Touch3'],
   rotateRight: ['KeyE', 'Pad5', 'Touch4'],
   respawn: ['KeyR', 'Pad9'],
+  /* The other frame (#112). The scroll wheel does this too, and is the page's
+     own: a wheel is not a key, so it is not in a table of key codes. */
+  swapFrame: ['KeyX', 'Pad3', 'Touch5'],
 };
 
 /**
@@ -14972,7 +14991,19 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     sweep.rotation.x=Math.PI/2; sweep.position.y=h*0.5; sweep.visible=false; g.add(sweep);
     sweep.userData.keep=true; sweep.castShadow=false;
     var blob=makeBlob(r*1.35); g.add(blob);
-    return {g:g,rig:rig,sweep:sweep,fade:0,reach:QS.REACH,arc:-1,blob:blob,walk:0,lastX:null,lastZ:null};
+    /* The Reel (#112): the line you aim along, drawn on the ground where a
+       partner reads it as they read an enemy's, and the tether itself. Both
+       are children of the avatar, so they follow it and are let go with it. */
+    var aimGeo=new THREE.PlaneGeometry(0.16,1); aimGeo.translate(0,0.5,0);
+    var aimLine=new THREE.Mesh(aimGeo,new THREE.MeshBasicMaterial({color:0x4fc3cd,transparent:true,opacity:0.6,
+      side:THREE.DoubleSide,depthWrite:false,toneMapped:false}));
+    aimLine.rotation.x=Math.PI/2; aimLine.position.y=0.55; aimLine.visible=false; g.add(aimLine);
+    var tgeo=new THREE.BoxGeometry(0.07,0.07,1); tgeo.translate(0,0,0.5);
+    var tether=new THREE.Mesh(tgeo,new THREE.MeshBasicMaterial({color:0xfff0c8,toneMapped:false}));
+    tether.position.y=1.0; tether.visible=false; g.add(tether);
+    [aimLine,tether].forEach(function(o){ o.userData.keep=true; o.userData.kind='tell'; o.castShadow=false; o.renderOrder=3; });
+    return {g:g,rig:rig,sweep:sweep,fade:0,reach:QS.REACH,arc:-1,blob:blob,walk:0,lastX:null,lastZ:null,
+            aimLine:aimLine,tether:tether};
   }
   /**
    * A machine, of whichever kind the wire says (#106). Each kind's tell is its
@@ -15258,6 +15289,26 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(av.sweep.geometry) av.sweep.geometry.dispose();
     av.sweep.geometry=new THREE.RingGeometry(0.5,st.reach,22,1,Math.PI/2-st.arc/2,st.arc);
   }
+  /** The aim line while aiming, and the tether from the hand to where it is. */
+  function poseReel(av,a,reel){
+    var on=reel&&!!a.aim&&!a.dead;
+    av.aimLine.visible=on;
+    if(on){
+      var len=QS.reelRange(a);
+      av.aimLine.scale.set(1,len,1);
+      /* A breath in it, so a held aim reads as held. */
+      av.aimLine.material.opacity=0.45+0.15*Math.sin(tm*9);
+    }
+    var T=a.tether, shown=reel&&!!T&&!a.dead;
+    av.tether.visible=shown;
+    if(shown){
+      var L=T.len;
+      /* Coming back in, the line shortens: what a miss costs reads as a motion. */
+      if(T.ph===QS.TETHER.BACK&&T.t>0) L*=Math.max(0,1-T.t/Math.max(0.05,QS.REEL.retract));
+      av.tether.scale.set(1,1,Math.max(0.05,L));
+      av.tether.rotation.y=Math.atan2(T.dx,T.dz)-av.g.rotation.y;
+    }
+  }
   function poseAvatar(av,a){
     tuneSweep(av,a);
     av.g.position.set(a.x,a.y,a.z);
@@ -15271,7 +15322,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     av.lastPh=ph;
     if(av.lastHp!==undefined&&a.hp<av.lastHp-0.5) sndPlay('hurt',a.x,a.z,av===avatar?1:0.6);
     av.lastHp=a.hp;
-    showPose(av.rig,QS.poseHero(a,{walk:av.walk,reach:av.reach}),!!a.swing);
+    var reel=av===peerAvatar?!!a.reelOut:QS.isReel(a);
+    showPose(av.rig,QS.poseHero(a,{walk:av.walk,reach:av.reach,reel:reel}),!!a.swing||!!a.aim||!!a.tether);
+    poseReel(av,a,reel);
     /* The trail outlives the hitbox on purpose. The active window is seven
        ticks — an eighth of a second — and at this zoom that is one frame of
        something you were not looking at. What is drawn and what is dangerous
@@ -16616,9 +16669,20 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   });
   stage.addEventListener('pointercancel',function(e){ if(e.pointerId===stickId) stickEnd(); });
 
+  /* The scroll wheel swaps frame (#112) — one notch, one swap, however many
+     events a notch makes. It is not a key, so it is not in the binding table.
+     Only over the view itself: a dialog's own list must still scroll. */
+  var wheelSwapQ=false, wheelAt=-1;
+  stage.addEventListener('wheel',function(e){
+    if(!e.target||e.target.id!=='cv') return;
+    e.preventDefault();
+    if(wheelAt<0||tm-wheelAt>0.3){ wheelSwapQ=true; wheelAt=tm; }
+  },{passive:false});
+  function takeWheelSwap(){ var q=wheelSwapQ; wheelSwapQ=false; return q; }
+
   /* Buttons press an action code, exactly as a pad button does. */
   [['tAtk','Touch0'],['tDod','Touch1'],['tJmp','Touch2'],
-   ['tRl','Touch3'],['tRr','Touch4']].forEach(function(pair){
+   ['tRl','Touch3'],['tRr','Touch4'],['tSwap','Touch5']].forEach(function(pair){
     var el=document.getElementById(pair[0]), code=pair[1];
     function down(e){ e.preventDefault(); e.stopPropagation(); el.classList.add('on');
                       if(e.pointerType!=='mouse') input.clearPointer();
@@ -16657,6 +16721,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
   var netstat=document.getElementById('netstat'), hostBtn=document.getElementById('hostbtn');
   var staminaEl=document.getElementById('vitals'), staminaFill=document.getElementById('staminafill'),
       hpFill=document.getElementById('hpfill');
+  /** Which frame is in hand and which is waiting (#112), and the touch buttons
+      that name them. */
+  var frameChip=document.getElementById('framechip'), tAtkEl=document.getElementById('tAtk'),
+      tSwapEl=document.getElementById('tSwap'), chipShown='';
+  var FRAME_NAMES={longblade:'Blade',tether:'Reel'};
+  function drawFrameChip(a){
+    var g=a&&a.gear; if(!g) return;
+    var now=FRAME_NAMES[QS.FRAMES[g.frame].blade], other=g.bench?FRAME_NAMES[QS.FRAMES[g.bench.frame].blade]:'';
+    var sig=now+'|'+other; if(sig===chipShown) return; chipShown=sig;
+    frameChip.innerHTML='<b>'+now+'</b> &#8644; <i>'+other+'</i>';
+    tAtkEl.textContent=now==='Reel'?'Reel':'Cut'; tSwapEl.textContent=other;
+  }
   var peerEl=document.getElementById('peervitals'), peerHp=document.getElementById('peerhp'),
       peerSt=document.getElementById('peerst'), peerWho=document.getElementById('peerwho'),
       peerPin=document.getElementById('peerpin');
@@ -17227,7 +17303,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var inp={mx:m.mx,mz:m.mz,jump:input.took('jump'),
              attack:input.took('attack'),dodge:input.took('dodge'),
              aimX:h?h.x:0,aimZ:h?h.z:0,
-             rise:input.down('jump'),sink:input.down('dodge')};
+             rise:input.down('jump'),sink:input.down('dodge'),
+             /* The button still down — the Reel fires on release — and the
+                frame swap, from a key, the wheel or the on-screen button. */
+             hold:input.down('attack'),swap:input.took('swapFrame')||takeWheelSwap()};
     if(session){ session.step(inp); dbgRulesSeen(); }
     else { if(!dbgTick(a,inp)) QS.step(col,a,inp,targets); if(encounter) encounter.step([a]); }
 
@@ -17600,6 +17679,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     staminaEl.style.display='block';
     staminaFill.style.width=(100*a.stamina/a.st.maxStamina).toFixed(1)+'%';
     staminaFill.style.background=a.stamina<a.st.swingCost?'#a5553a':'#d9a25e';
+    drawFrameChip(a);
     hpFill.style.width=(100*a.hp/a.maxHp).toFixed(1)+'%';
     drawPeer();
     drawWhere(a);
@@ -18934,6 +19014,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get foes(){return session?session.foes:(encounter?encounter.wire():null);},
     /** The actual machines, for a test that needs to put one back how it was. */
     get machines(){return encounter?encounter.enemies:null;},
+    /* #112: the Reel as drawn, and which frame is in hand. */
+    get reelDraw(){ return {aim:avatar.aimLine.visible,tether:avatar.tether.visible,
+                            peerAim:peerAvatar.aimLine.visible,peerTether:peerAvatar.tether.visible,
+                            chip:frameChip.textContent,atk:tAtkEl.textContent,swap:tSwapEl.textContent}; },
+    get frameKind(){ var a=player(); return a&&a.gear?QS.frameKind(a.gear):null; },
     /* #108: machines that neither come nor act, for a walk that measures streaming. */
     holdMachines:function(on){ if(encounter) encounter.held=!!on; },
     get packs(){ return encounter&&encounter.groups?encounter.groups:null; },
