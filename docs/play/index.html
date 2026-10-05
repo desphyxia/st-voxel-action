@@ -7149,6 +7149,31 @@ const HURT_TIME = 0.25;
 
 const PHASE = { NONE: 0, WINDUP: 1, ACTIVE: 2, RECOVER: 3 };
 
+/* ---- the Reel, the second frame (#112) ----
+   Placeholders on the same terms as everything above: #9 decides what a haul
+   is worth. What is built here is the shape — a tether that pulls — and the
+   one rule that keeps it honest: a haul is a dash along the ground through the
+   same controller, so it stops at a ledge and never crosses a gap. */
+const REEL = {
+  /** How far the tether flies, and how fast. */
+  range: 9, speed: 40,
+  /** What firing costs, and how long a tether takes to come back in. */
+  cost: 30, retract: 0.45,
+  /** How fast you are hauled, and how far an open-ground haul goes. */
+  haul: 20, ground: 5,
+  /** How close a haul stops to a target, and to a wall. */
+  stopTarget: 1.5, stopWall: 0.8,
+  /** A light target is hauled this fast and stops this far from you. */
+  yank: 16, yankStop: 1.4,
+  /** Share of your damage a yank does, and the strike at the end of a haul. */
+  yankScale: 0.3, strikeScale: 0.6,
+  /** How much of running speed you keep aiming, with the tether out, and
+      while it is coming back. */
+  aimSpeed: 0.6, outSpeed: 0.3, backSpeed: 0.5,
+};
+/** The tether's phases: flying out, hauling, and coming back in. */
+const TETHER = { OUT: 1, HAUL: 2, BACK: 3 };
+
 /* ---- the numbers, as a value rather than as constants ----
    An empty frame plays exactly the game the constants above describe. A
    socketed one plays a different one, and everything that reads a rule reads
@@ -7194,7 +7219,9 @@ function invulnerable(a) { return !!a.dodge && a.dodge.t < statsOf(a).iframes; }
 
 /** What fraction of running speed this actor is allowed right now. */
 function speedScale(a) {
-  if (a.dodge) return 0;                       /* the dash sets velocity itself */
+  if (a.dodge || a.haul) return 0;             /* the dash sets velocity itself */
+  if (a.tether) return a.tether.ph === TETHER.BACK ? REEL.backSpeed : REEL.outSpeed;
+  if (a.aim) return REEL.aimSpeed;
   switch (phase(a)) {
     case PHASE.WINDUP: return WINDUP_SPEED;
     case PHASE.ACTIVE: return ACTIVE_SPEED;
@@ -7204,7 +7231,8 @@ function speedScale(a) {
 }
 
 function canSwing(a) {
-  return !a.swing && !a.dodge && !a.swimming && a.stamina >= statsOf(a).swingCost;
+  return !a.swing && !a.dodge && !a.swimming && !a.aim && !a.tether && !a.haul
+    && a.stamina >= statsOf(a).swingCost;
 }
 
 /**
@@ -7213,7 +7241,10 @@ function canSwing(a) {
  * "committed": once the blade is moving you are going to finish the motion.
  */
 function canDodge(a) {
-  if (a.dodge || a.swimming || a.stamina < statsOf(a).dodgeCost) return false;
+  if (a.dodge || a.haul || a.swimming || a.stamina < statsOf(a).dodgeCost) return false;
+  /* Out of aiming, or a tether coming back in, the way a swing's recovery is
+     left; never while it is flying or hauling. */
+  if (a.tether && a.tether.ph !== TETHER.BACK) return false;
   return !a.swing || phase(a) === PHASE.RECOVER;
 }
 
@@ -7235,6 +7266,7 @@ function beginDodge(a, dx, dz) {
   else { ux /= l; uz /= l; }
   const st = statsOf(a);
   a.swing = null;                              /* cancels recovery, never active */
+  a.aim = null; a.tether = null;
   a.dodge = { t: 0, dx: ux, dz: uz };
   a.stamina -= st.dodgeCost;
   a.staminaHold = st.staminaHold;
@@ -7250,7 +7282,7 @@ function beginDodge(a, dx, dz) {
  */
 function advanceCombat(a, dt) {
   const st = statsOf(a);
-  a.hits = 0;
+  a.hits = 0; a.hitScale = 1;
   if (a.hurtT > 0) a.hurtT = Math.max(0, a.hurtT - dt);
   if (a.swing) { a.swing.t += dt; if (a.swing.t >= WINDUP + ACTIVE + st.recover) a.swing = null; }
   if (a.dodge) { a.dodge.t += dt; if (a.dodge.t >= DODGE_TIME) a.dodge = null; }
@@ -7310,7 +7342,7 @@ function hurt(a, amount, cause) {
 function applyHits(a, targets, damage) {
   if (!a.hits || !targets) return 0;
   const st = statsOf(a);
-  const dmg = damage === undefined ? st.damage : damage;
+  const dmg = damage === undefined ? st.damage * (a.hitScale || 1) : damage;
   let n = 0;
   for (let i = 0; i < targets.length && i < 32; i++) {
     if ((a.hits & (1 << i)) && hurt(targets[i], dmg, 'struck')) n++;
@@ -7507,7 +7539,7 @@ function hexXY(cell) {
 
 /* ----------------------------------------------------------------- frame ---- */
 
-const FRAME = { WARDEN: 0 };
+const FRAME = { WARDEN: 0, REEL: 1 };
 
 /**
  * One of eight. A rhombus of four sockets — two triangles sharing an edge —
@@ -7518,6 +7550,11 @@ const FRAME = { WARDEN: 0 };
 const FRAMES = [
   { key: 'WARDEN', name: 'warden frame', blade: 'longblade',
     cells: [[0, 0], [1, 0], [0, 1], [1, 1]] },
+  /* The second (#112): five cells in a line, four edges. The two ends touch
+     one neighbour each and the three inside touch two, so next to the rhombus
+     it is thin and ordered where the rhombus is cramped and cross-wired. */
+  { key: 'REEL', name: 'reel frame', blade: 'tether',
+    cells: [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]] },
 ];
 
 for (let fi = 0; fi < FRAMES.length; fi++) {
@@ -7535,10 +7572,33 @@ const CARRY = 4;
 
 function makeGear(frameId) {
   const g = { frame: frameId === undefined ? FRAME.WARDEN : frameId,
-              slots: [], carried: [], known: 0, fused: [], st: null };
+              slots: [], carried: [], known: 0, fused: [], st: null, bench: null };
   for (let i = 0; i < FRAMES[g.frame].cells.length; i++) g.slots.push(-1);
+  /* Two frames are carried (#112). `frame` and `slots` are the one in hand;
+     `bench` is the other, with its own sockets seated as they were left. The
+     carried modules and what is known are shared by both, because there is
+     one pack and one body of knowledge: only where things are seated differs. */
+  const other = g.frame === FRAME.WARDEN ? FRAME.REEL : FRAME.WARDEN;
+  g.bench = { frame: other, slots: FRAMES[other].cells.map(() => -1) };
   recomputeGear(g);
   return g;
+}
+
+/** Which kind of attack the frame in hand makes: 'longblade' or 'tether'. */
+function frameKind(g) { return FRAMES[g.frame].blade; }
+
+/**
+ * Put the frame in hand on the bench and take the other one up. The gear is
+ * changed in place — `frame`, `slots`, and the stats that follow — so every
+ * reference to it stays good and there is no second object to keep in step.
+ */
+function swapFrame(g) {
+  if (!g || !g.bench) return false;
+  const was = { frame: g.frame, slots: g.slots };
+  g.frame = g.bench.frame; g.slots = g.bench.slots;
+  g.bench = was;
+  recomputeGear(g);
+  return true;
 }
 
 /**
@@ -7647,13 +7707,18 @@ function pullFrom(a, slot) {
 }
 
 /**
- * The lattice on the wire: a frame, four small ints, at most four more, and a
- * bitmask of what you know. Nine numbers, not a stats block — the stats are
+ * The lattice on the wire: the frame in hand with its sockets, the modules
+ * carried, a bitmask of what you know, and the frame on the bench with its
+ * sockets. A dozen small numbers, not a stats block — the stats are
  * recomputed from it on arrival, so the two ends can never disagree about what
  * a lattice means without disagreeing about the lattice.
  */
 function gearWire(g) {
-  return g ? { f: g.frame, s: g.slots.slice(), c: g.carried.slice(), k: g.known } : null;
+  if (!g) return null;
+  const w = { f: g.frame, s: g.slots.slice(), c: g.carried.slice(), k: g.known };
+  /* The frame on the bench: its own sockets, and nothing else of it. */
+  if (g.bench) w.b = [g.bench.frame, g.bench.slots.slice()];
+  return w;
 }
 
 function applyGearWire(g, m) {
@@ -7662,8 +7727,200 @@ function applyGearWire(g, m) {
   g.slots = m.s.slice();
   g.carried = m.c.slice();
   g.known = m.k;
+  if (m.b) g.bench = { frame: m.b[0], slots: m.b[1].slice() };
   recomputeGear(g);
   return g;
+}
+/* ---------- src/sim/reel.mjs ---------- */
+/**
+ * The Reel (#112, docs/DECISIONS.md §4): the second frame, a tether that pulls.
+ *
+ * Hold to aim — a line is drawn on the ground, §6's rule applied to the
+ * players — and release to fire. The tether flies out along it, and what it
+ * meets decides what happens:
+ *
+ *   a light target    is hauled to you and staggered: a hound at your feet
+ *   a heavy target    anchors you, and you are hauled to it, ending in a strike
+ *   a wall or a prop  anchors you there: a dash
+ *   open ground       the same, a few metres short of full range
+ *
+ * Weight is a property of the archetype (`weight` on a machine: 1 is light, 2
+ * is heavy), never a number the tether compares. A practice post has none and
+ * counts as heavy: it does not move, so it is something to be hauled to.
+ *
+ * **A haul is a dash through the same controller, so it stops at a ledge and
+ * never crosses a gap.** It only runs while the body is on the ground, it
+ * looks ahead for a drop or magma and ends in front of one, and a body that
+ * leaves the ground loses it. The movement budget (§3) is untouched, and no
+ * module can make the Reel a way over a canyon.
+ *
+ * Everything here is a function of an actor and `col`, with no randomness, so a
+ * guest replaying inputs reproduces a haul exactly. What the tether *hits* is
+ * the host's: the guest replays without targets, predicts the flight, and the
+ * next snapshot says what it met — the same split as a swing's damage.
+ */
+
+
+
+
+
+
+/** Is the frame in hand the Reel? */
+function isReel(a) { return !!a.gear && frameKind(a.gear) === 'tether'; }
+
+/** How far, how dear and how slow to come back — all moved by the same modules
+    that move a blade, so a socketed sigil, thewed cord or servo still means
+    something with the Reel in hand. */
+function reelRange(a) { return REEL.range + (statsOf(a).reach - REACH); }
+function reelCost(a) { const c = REEL.cost + (statsOf(a).swingCost - SWING_COST); return c < 10 ? 10 : c; }
+function reelRetract(a) { return REEL.retract * (statsOf(a).recover / RECOVER); }
+
+/** Aiming needs the ground under you and the stamina to fire. */
+function canAim(a) {
+  return isReel(a) && a.grounded && !a.swing && !a.dodge && !a.swimming
+    && !a.aim && !a.tether && !a.haul && a.stamina >= reelCost(a);
+}
+
+/**
+ * Swapping frames: instant, but not in the middle of a committed motion, and
+ * not while the tether is out. Returns whether it happened.
+ */
+function trySwap(a) {
+  if (!a.gear || a.swing || a.dodge || a.tether || a.haul) return false;
+  if (!swapFrame(a.gear)) return false;
+  refitGear(a);
+  a.aim = null;
+  return true;
+}
+
+/**
+ * The Reel's half of intent, in place of a swing's. `input.attack` is the
+ * press and `input.hold` is the button still down: press to start aiming, and
+ * let go to fire. A click that is over before the tick sees it is both at once.
+ */
+function reelIntent(a, input) {
+  if (input.attack && canAim(a)) a.aim = { t: 0 };
+  if (!a.aim) return;
+  if (input.hold) return;
+  a.aim = null;
+  fireTether(a);
+}
+
+function fireTether(a) {
+  if (!a.grounded || a.stamina < reelCost(a)) return false;
+  const st = statsOf(a);
+  a.stamina -= reelCost(a);
+  a.staminaHold = st.staminaHold;
+  a.tether = { ph: TETHER.OUT, t: 0, len: 0, dx: a.faceX, dz: a.faceZ, tgt: -1, ax: 0, az: 0 };
+  return true;
+}
+
+/** A haul toward (ax, az), at `sp`, ending `stop` short of it. */
+function setHaul(o, ax, az, sp, stop) {
+  o.haul = { sp, ax, az, stop, t: 0, dx: 0, dz: 0, arrived: false };
+}
+
+/**
+ * One tick of a haul, from `step`'s intent: sets the body's horizontal
+ * velocity and returns true while it goes on. It ends — and the body is left
+ * where it stands — on arrival, on a ledge or magma ahead, on leaving the
+ * ground, or when a wall stops it, and says which in `arrived`.
+ */
+function haulStep(col, a, dt) {
+  const h = a.haul;
+  h.t += dt;
+  const rx = h.ax - a.x, rz = h.az - a.z, rem = hyp(rx, rz) - h.stop;
+  const end = (arrived) => { h.arrived = arrived; a.haul = null; a.vx = a.vz = 0; a.lastHaul = h; return false; };
+  if (rem <= 0.05) return end(true);
+  /* `a.blocked` is cleared at the top of every tick, so a wall is noticed by
+     the body not having gone where it was sent. */
+  if (h.lx !== undefined && h.t > 3 * dt && hyp(a.x - h.lx, a.z - h.lz) < h.sp * dt * 0.2) return end(false);
+  h.lx = a.x; h.lz = a.z;
+  if (!a.grounded || h.t > 1.2) return end(false);
+  const sp = Math.min(h.sp, rem / dt), l = hyp(rx, rz) || 1;
+  h.dx = rx / l; h.dz = rz / l;
+  /* Look where the next tick would put it: no ground, a drop past a step, or
+     magma, and the haul is over. This is what keeps it off every canyon. */
+  const nx = a.x + h.dx * (sp * dt + a.rad), nz = a.z + h.dz * (sp * dt + a.rad);
+  const g = col.supportUnder(nx, nz, a.rad, a.y + MOVE.step + EPS);
+  if (g === -Infinity || a.y - g > MOVE.step + EPS) return end(false);
+  if (col.liquidAt(nx, nz).kind === LIQUID.MAGMA) return end(false);
+  a.vx = h.dx * sp; a.vz = h.dz * sp;
+  return true;
+}
+
+const HIT_R = 0.25;
+
+/** The first of `targets` the tether passes through between lengths, or -1. */
+function targetAt(a, targets, px, pz) {
+  for (let i = 0; i < targets.length && i < 32; i++) {
+    const t = targets[i];
+    if (!t || t.dead || t.reserve) continue;
+    if (Math.abs((t.y || 0) - a.y) > 1.6) continue;
+    if (hyp(t.x - px, t.z - pz) <= (t.r || t.rad || 0.45) + HIT_R) return i;
+  }
+  return -1;
+}
+
+/**
+ * Advance the tether: fly it out, find what it meets, and carry it through the
+ * haul and back in. `targets` is the host's, `null` on a guest replaying.
+ */
+function tetherStep(col, a, targets, dt) {
+  const T = a.tether;
+  if (!T) return;
+  T.t += dt;
+  if (T.ph === TETHER.OUT) {
+    const from = T.len, range = reelRange(a);
+    T.len = Math.min(range, T.len + REEL.speed * dt);
+    let met = null;
+    for (let s = Math.max(0.5, from + 0.25); s <= T.len + 1e-9 && !met; s += 0.25) {
+      const px = a.x + T.dx * s, pz = a.z + T.dz * s;
+      if (targets) {
+        const i = targetAt(a, targets, px, pz);
+        if (i >= 0) { met = { kind: 'target', i, s }; break; }
+      }
+      if (col.overlaps(px, pz, 0.12, a.y + 0.7, a.y + 1.3)) met = { kind: 'wall', s: s - 0.25 };
+    }
+    if (!met && T.len < range) return;
+    if (!met) met = { kind: 'ground', s: Math.min(range, REEL.ground) };
+    T.len = Math.min(T.len, met.s);
+    if (met.kind === 'target') {
+      const t = targets[met.i];
+      if ((t.weight || 2) >= 2) {
+        /* Heavy, or a post: anchored, and you go to it. */
+        T.tgt = met.i; T.ax = t.x; T.az = t.z;
+        setHaul(a, t.x, t.z, REEL.haul, REEL.stopTarget);
+        T.ph = TETHER.HAUL;
+      } else {
+        /* Light: it comes to you, and is hurt and staggered for it. */
+        setHaul(t, a.x, a.z, REEL.yank, REEL.yankStop);
+        a.hits |= 1 << met.i; a.hitScale = REEL.yankScale;
+        T.ph = TETHER.BACK; T.t = 0;
+      }
+    } else {
+      const s = met.s;
+      T.ax = a.x + T.dx * s; T.az = a.z + T.dz * s;
+      setHaul(a, T.ax, T.az, REEL.haul, met.kind === 'wall' ? REEL.stopWall : 0);
+      T.ph = TETHER.HAUL;
+    }
+    return;
+  }
+  if (T.ph === TETHER.HAUL) {
+    /* The line is as long as what is left of the haul, drawn from the body. */
+    T.len = Math.max(0, hyp(T.ax - a.x, T.az - a.z));
+    if (a.haul) return;
+    const h = a.lastHaul;
+    if (T.tgt >= 0 && h && h.arrived && targets) {
+      const t = targets[T.tgt];
+      if (t && !t.dead && hyp(t.x - a.x, t.z - a.z) <= REEL.stopTarget + (t.r || t.rad || 0.45) + 0.6) {
+        a.hits |= 1 << T.tgt; a.hitScale = REEL.strikeScale;
+      }
+    }
+    T.ph = TETHER.BACK; T.t = 0; T.len = 0;
+    return;
+  }
+  if (T.t >= reelRetract(a)) a.tether = null;
 }
 /* ---------- src/sim/loot.mjs ---------- */
 /**
@@ -7967,6 +8224,7 @@ function makeLootField(col, world, spoilCount, trad) {
 
 
 
+
 /** One simulation tick. Every constant below assumes it. */
 const TICK = 1 / 60;
 
@@ -8077,6 +8335,10 @@ function makeActor(x, y, z, rad) {
     dodge: null,
     /** Targets the arc covered this tick, as a bitmask. Cleared every tick. */
     hits: 0,
+    /** The Reel (#112, src/sim/reel.mjs): aiming, the tether in flight, and a
+        haul — being pulled along the ground, by your own tether or somebody
+        else's. All null unless it is happening. */
+    aim: null, tether: null, haul: null,
     /** null while alive, else 'fall' | 'magma' | 'void' | 'struck'. */
     dead: null,
     /** Path length, summed per axis. Not displacement — see the soak. */
@@ -8121,6 +8383,12 @@ function snapshot(a) {
     dodge: a.dodge ? { t: a.dodge.t, dx: a.dodge.dx, dz: a.dodge.dz } : null,
     hits: a.hits,
     ticks: a.ticks, travelled: a.travelled, blocked: a.blocked,
+    /* Only while it is happening: a snapshot that carried three nulls every
+       time would be most of what a resting player weighs on the wire. */
+    ...(a.aim ? { aim: { t: a.aim.t } } : null),
+    ...(a.tether ? { tether: { ...a.tether } } : null),
+    ...(a.haul ? { haul: { sp: a.haul.sp, ax: a.haul.ax, az: a.haul.az, stop: a.haul.stop,
+                           t: a.haul.t, dx: a.haul.dx, dz: a.haul.dz } } : null),
   };
 }
 
@@ -8140,6 +8408,9 @@ function restore(a, s) {
   a.dodge = s.dodge ? { t: s.dodge.t, dx: s.dodge.dx, dz: s.dodge.dz } : null;
   a.hits = s.hits;
   a.ticks = s.ticks; a.travelled = s.travelled; a.blocked = s.blocked;
+  a.aim = s.aim ? { t: s.aim.t } : null;
+  a.tether = s.tether ? { ...s.tether } : null;
+  a.haul = s.haul ? { ...s.haul, arrived: false } : null;
   return a;
 }
 
@@ -8161,6 +8432,11 @@ function display(a) {
     /* The arc is drawn at the reach it cuts at, so a partner who has socketed
        a sigil looks like they can reach what they can reach. */
     rc: r3(statsOf(a).reach),
+    /* The Reel in hand, and what it is doing (#112): aiming, which draws the
+       line a partner reads, and the tether's phase, length and direction. */
+    ...(isReel(a) ? { fk: 1 } : null),
+    ...(a.aim ? { am: 1 } : null),
+    ...(a.tether ? { th: [a.tether.ph, r3(a.tether.len), r3(a.tether.dx), r3(a.tether.dz)] } : null),
   };
 }
 
@@ -8174,6 +8450,9 @@ function applyDisplay(a, m) {
   if (m.rc !== undefined) a.st.reach = m.rc;
   a.swing = m.sw >= 0 ? { t: m.sw, hit: 0 } : null;
   a.dodge = m.dv ? { t: 0, dx: m.fx, dz: m.fz } : null;
+  a.reelOut = m.fk === 1;
+  a.aim = m.am ? { t: 0 } : null;
+  a.tether = m.th ? { ph: m.th[0], t: 0, len: m.th[1], dx: m.th[2], dz: m.th[3], tgt: -1, ax: 0, az: 0 } : null;
   return a;
 }
 
@@ -8249,7 +8528,9 @@ function step(col, a, input, targets, dt = TICK) {
   /* Combat timers run before intent, so a swing that finishes this tick hands
      control back on this tick rather than the next one. */
   advanceCombat(a, dt);
-  if (input.attack) beginSwing(a);
+  if (input.swap && trySwap(a)) { /* a swap is the whole of this tick's verb */ }
+  else if (isReel(a)) reelIntent(a, input);
+  else if (input.attack) beginSwing(a);
   if (input.dodge) beginDodge(a, input.mx || 0, input.mz || 0);
 
   const liquid = col.liquidAt(a.x, a.z);
@@ -8269,6 +8550,8 @@ function step(col, a, input, targets, dt = TICK) {
     const ds = dodgeSpeed(a);
     a.vx = a.dodge.dx * ds;
     a.vz = a.dodge.dz * ds;
+  } else if (a.haul && haulStep(col, a, dt)) {
+    /* Hauled along the ground (#112): the haul set the velocity. */
   } else {
     const base = a.swimming ? SWIM_SPEED : (a.inWater ? WADE_SPEED : RUN);
     /* The lattice scales how fast you go, not how far you jump: the budget in
@@ -8284,7 +8567,7 @@ function step(col, a, input, targets, dt = TICK) {
   /* `input.jump` is a press, not a hold: one tick per press, which is what
      lets the second press be a second jump rather than the first one held. */
   if (a.grounded || a.swimming) a.airJumps = 1;
-  if (input.jump && !a.swing && !a.dodge && a.canJump !== false) {
+  if (input.jump && !a.swing && !a.dodge && !a.haul && a.canJump !== false) {
     if (a.grounded || a.swimming) {
       const jv = a.rad === ACTOR.radius ? JUMP_V : jumpVFor(a.rad);
       /* From deep water the jump is a jump from the surface: a kick that
@@ -8381,6 +8664,7 @@ function step(col, a, input, targets, dt = TICK) {
 
   /* The blade lands where the tick ended, not where it started. */
   if (targets) sweep(a, targets);
+  if (a.tether) tetherStep(col, a, targets, dt);
   return a;
 }
 /* ---------- src/sim/nav.mjs ---------- */
@@ -8815,11 +9099,14 @@ const PATH_NODES = 900;
 
 /** Each archetype's constants, timings and tradition, by kind. */
 const SPEC = [
-  { k: KIND.SENTRY, c: SENTRY, trad: TRAD.TECH, canJump: false,
+  /* `weight` is what the Reel reads (#112): 1 is light — hauled to you — and 2
+     is heavy — you are hauled to it. A property of the archetype, not a number
+     compared at the moment. */
+  { k: KIND.SENTRY, c: SENTRY, trad: TRAD.TECH, canJump: false, weight: 2,
     tell: TELEGRAPH_TIME, strike: STRIKE_TIME, recover: RECOVER_TIME },
-  { k: KIND.MORTAR, c: MORTAR, trad: TRAD.TECH, canJump: false,
+  { k: KIND.MORTAR, c: MORTAR, trad: TRAD.TECH, canJump: false, weight: 2,
     tell: MORTAR_AIM_TIME, strike: MORTAR_FLIGHT_TIME, recover: MORTAR_VENT_TIME },
-  { k: KIND.HOUND, c: HOUND, trad: TRAD.BIO, canJump: true,
+  { k: KIND.HOUND, c: HOUND, trad: TRAD.BIO, canJump: true, weight: 1,
     tell: HOUND_TELL_TIME, strike: LUNGE_TIME, recover: STUMBLE_TIME },
 ];
 const specOf = (e) => SPEC[e.k] || SPEC[0];
@@ -8833,7 +9120,7 @@ function makeMachine(col, k, x, z, fromY) {
   const e = placeOnGround(col, x, z, fromY, c.rad);
   e.hp = c.hp; e.maxHp = c.hp;
   e.canJump = s.canJump;
-  e.k = k; e.kind = KIND_NAMES[k]; e.trad = s.trad;
+  e.k = k; e.kind = KIND_NAMES[k]; e.trad = s.trad; e.weight = s.weight;
   e.ai = { state: EST.DORMANT, t: 0, side: 0, sideT: 0,
            /* Where it holds (#6), and the path it is following, if any (#15). */
            post: { x: e.x, y: e.y, z: e.z }, path: null, wp: 0, pathT: 0,
@@ -10984,24 +11271,29 @@ const STALE = 120;
 
 const HOST = 0, GUEST = 1;
 
-const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, aimZ: 0 };
+const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, aimZ: 0, hold: false, swap: false };
 /* `rise` and `sink` are jump and dodge *held*, which only flight reads. */
 const copyInput = (i) => ({ mx: i.mx || 0, mz: i.mz || 0, jump: !!i.jump,
                             attack: !!i.attack, dodge: !!i.dodge,
                             aimX: i.aimX || 0, aimZ: i.aimZ || 0,
-                            rise: !!i.rise, sink: !!i.sink });
+                            rise: !!i.rise, sink: !!i.sink,
+                            /* The attack button still down, and a frame swap
+                               (#112): the Reel fires on release. */
+                            hold: !!i.hold, swap: !!i.swap });
 /* An input on the wire: five numbers. The stick is kept to 1/10000 on *both*
    ends — the guest predicts with the same rounded value the host will apply,
    so the rounding costs nothing in agreement and a third of the bytes. */
 const q4 = (v) => Math.round((v || 0) * 1e4) / 1e4;
 function packInput(i) {
   return [q4(i.mx), q4(i.mz),
-          (i.jump ? 1 : 0) | (i.attack ? 2 : 0) | (i.dodge ? 4 : 0) | (i.rise ? 8 : 0) | (i.sink ? 16 : 0),
+          (i.jump ? 1 : 0) | (i.attack ? 2 : 0) | (i.dodge ? 4 : 0) | (i.rise ? 8 : 0) | (i.sink ? 16 : 0)
+            | (i.hold ? 32 : 0) | (i.swap ? 64 : 0),
           q4(i.aimX), q4(i.aimZ)];
 }
 function unpackInput(w) {
   return { mx: w[0], mz: w[1], jump: !!(w[2] & 1), attack: !!(w[2] & 2), dodge: !!(w[2] & 4),
-           aimX: w[3], aimZ: w[4], rise: !!(w[2] & 8), sink: !!(w[2] & 16) };
+           aimX: w[3], aimZ: w[4], rise: !!(w[2] & 8), sink: !!(w[2] & 16),
+           hold: !!(w[2] & 32), swap: !!(w[2] & 64) };
 }
 
 /**
@@ -11696,7 +11988,7 @@ const ASSETS={
   'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
   'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP8AAAD/'
 };
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SPOILS_MAX:SPOILS_MAX,STREAM_ENC:STREAM_ENC,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,MORTAR:MORTAR,HOUND:HOUND,KIND:KIND,KIND_NAMES:KIND_NAMES,ARCHETYPES:ARCHETYPES,makeMortar:makeMortar,makeHound:makeHound,MORTAR_AIM_TIME:MORTAR_AIM_TIME,MORTAR_FLIGHT_TIME:MORTAR_FLIGHT_TIME,MORTAR_VENT_TIME:MORTAR_VENT_TIME,HOUND_TELL_TIME:HOUND_TELL_TIME,LUNGE_TIME:LUNGE_TIME,STUMBLE_TIME:STUMBLE_TIME,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,MORTAR_RIG:MORTAR_RIG,HOUND_RIG:HOUND_RIG,MACHINE_RIGS:MACHINE_RIGS,MACHINE_STRIDES:MACHINE_STRIDES,poseMachine:poseMachine,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,lightningAt:lightningAt,FLASH_SECONDS:FLASH_SECONDS,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,REEL:REEL,TETHER:TETHER,isReel:isReel,reelRange:reelRange,reelCost:reelCost,trySwap:trySwap,swapFrame:swapFrame,frameKind:frameKind,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SPOILS_MAX:SPOILS_MAX,STREAM_ENC:STREAM_ENC,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,MORTAR:MORTAR,HOUND:HOUND,KIND:KIND,KIND_NAMES:KIND_NAMES,ARCHETYPES:ARCHETYPES,makeMortar:makeMortar,makeHound:makeHound,MORTAR_AIM_TIME:MORTAR_AIM_TIME,MORTAR_FLIGHT_TIME:MORTAR_FLIGHT_TIME,MORTAR_VENT_TIME:MORTAR_VENT_TIME,HOUND_TELL_TIME:HOUND_TELL_TIME,LUNGE_TIME:LUNGE_TIME,STUMBLE_TIME:STUMBLE_TIME,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,MORTAR_RIG:MORTAR_RIG,HOUND_RIG:HOUND_RIG,MACHINE_RIGS:MACHINE_RIGS,MACHINE_STRIDES:MACHINE_STRIDES,poseMachine:poseMachine,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,lightningAt:lightningAt,FLASH_SECONDS:FLASH_SECONDS,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
 })();
 /* QS-BUNDLE-END */
 </script>

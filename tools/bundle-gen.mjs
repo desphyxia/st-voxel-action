@@ -29,7 +29,7 @@ const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'palette', 'rng', 'biomes', 'field', 'erosion', 'region', 'ground', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index', 'chunk'],
   'src/mesh': ['greedy', 'carve', 'propmesh', 'vox'],
-  'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'loot', 'actor', 'nav', 'enemy', 'anim', 'sky', 'camera', 'input'],
+  'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'reel', 'loot', 'actor', 'nav', 'enemy', 'anim', 'sky', 'camera', 'input'],
   'src/net': ['transport', 'session', 'rtc'],
 };
 
@@ -58,6 +58,7 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'colliderF
                  'ACTOR', 'TICK', 'RUN', 'GRAVITY', 'JUMP_V', 'JUMP_APEX', 'AIR_JUMP_V', 'AIR_JUMP_COST',
                  'makeActor', 'placeOnGround', 'embedded', 'step', 'display', 'applyDisplay',
                  'PHASE', 'phase', 'swingProgress', 'dodging', 'invulnerable',
+                 'REEL', 'TETHER', 'isReel', 'reelRange', 'reelCost', 'trySwap', 'swapFrame', 'frameKind',
                  'STAMINA_MAX', 'SWING_COST', 'DODGE_COST', 'SWING_TIME', 'WINDUP', 'ACTIVE',
                  'REACH', 'ARC', 'DODGE_TIME', 'DODGE_DIST', 'practicePosts',
                  'PLAYER_HP', 'SWING_DAMAGE', 'HURT_TIME', 'hurt', 'heal', 'applyHits',

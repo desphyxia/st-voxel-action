@@ -26,6 +26,7 @@ import { EPS, LIQUID } from './collider.mjs';
 import { advanceCombat, beginSwing, beginDodge, speedScale, sweep,
          statsOf, dodgeSpeed } from './combat.mjs';
 import { makeGear, gearWire, applyGearWire } from './lattice.mjs';
+import { isReel, reelIntent, trySwap, haulStep, tetherStep } from './reel.mjs';
 
 /** One simulation tick. Every constant below assumes it. */
 export const TICK = 1 / 60;
@@ -137,6 +138,10 @@ export function makeActor(x, y, z, rad) {
     dodge: null,
     /** Targets the arc covered this tick, as a bitmask. Cleared every tick. */
     hits: 0,
+    /** The Reel (#112, src/sim/reel.mjs): aiming, the tether in flight, and a
+        haul — being pulled along the ground, by your own tether or somebody
+        else's. All null unless it is happening. */
+    aim: null, tether: null, haul: null,
     /** null while alive, else 'fall' | 'magma' | 'void' | 'struck'. */
     dead: null,
     /** Path length, summed per axis. Not displacement — see the soak. */
@@ -181,6 +186,12 @@ export function snapshot(a) {
     dodge: a.dodge ? { t: a.dodge.t, dx: a.dodge.dx, dz: a.dodge.dz } : null,
     hits: a.hits,
     ticks: a.ticks, travelled: a.travelled, blocked: a.blocked,
+    /* Only while it is happening: a snapshot that carried three nulls every
+       time would be most of what a resting player weighs on the wire. */
+    ...(a.aim ? { aim: { t: a.aim.t } } : null),
+    ...(a.tether ? { tether: { ...a.tether } } : null),
+    ...(a.haul ? { haul: { sp: a.haul.sp, ax: a.haul.ax, az: a.haul.az, stop: a.haul.stop,
+                           t: a.haul.t, dx: a.haul.dx, dz: a.haul.dz } } : null),
   };
 }
 
@@ -200,6 +211,9 @@ export function restore(a, s) {
   a.dodge = s.dodge ? { t: s.dodge.t, dx: s.dodge.dx, dz: s.dodge.dz } : null;
   a.hits = s.hits;
   a.ticks = s.ticks; a.travelled = s.travelled; a.blocked = s.blocked;
+  a.aim = s.aim ? { t: s.aim.t } : null;
+  a.tether = s.tether ? { ...s.tether } : null;
+  a.haul = s.haul ? { ...s.haul, arrived: false } : null;
   return a;
 }
 
@@ -221,6 +235,11 @@ export function display(a) {
     /* The arc is drawn at the reach it cuts at, so a partner who has socketed
        a sigil looks like they can reach what they can reach. */
     rc: r3(statsOf(a).reach),
+    /* The Reel in hand, and what it is doing (#112): aiming, which draws the
+       line a partner reads, and the tether's phase, length and direction. */
+    ...(isReel(a) ? { fk: 1 } : null),
+    ...(a.aim ? { am: 1 } : null),
+    ...(a.tether ? { th: [a.tether.ph, r3(a.tether.len), r3(a.tether.dx), r3(a.tether.dz)] } : null),
   };
 }
 
@@ -234,6 +253,9 @@ export function applyDisplay(a, m) {
   if (m.rc !== undefined) a.st.reach = m.rc;
   a.swing = m.sw >= 0 ? { t: m.sw, hit: 0 } : null;
   a.dodge = m.dv ? { t: 0, dx: m.fx, dz: m.fz } : null;
+  a.reelOut = m.fk === 1;
+  a.aim = m.am ? { t: 0 } : null;
+  a.tether = m.th ? { ph: m.th[0], t: 0, len: m.th[1], dx: m.th[2], dz: m.th[3], tgt: -1, ax: 0, az: 0 } : null;
   return a;
 }
 
@@ -309,7 +331,9 @@ export function step(col, a, input, targets, dt = TICK) {
   /* Combat timers run before intent, so a swing that finishes this tick hands
      control back on this tick rather than the next one. */
   advanceCombat(a, dt);
-  if (input.attack) beginSwing(a);
+  if (input.swap && trySwap(a)) { /* a swap is the whole of this tick's verb */ }
+  else if (isReel(a)) reelIntent(a, input);
+  else if (input.attack) beginSwing(a);
   if (input.dodge) beginDodge(a, input.mx || 0, input.mz || 0);
 
   const liquid = col.liquidAt(a.x, a.z);
@@ -329,6 +353,8 @@ export function step(col, a, input, targets, dt = TICK) {
     const ds = dodgeSpeed(a);
     a.vx = a.dodge.dx * ds;
     a.vz = a.dodge.dz * ds;
+  } else if (a.haul && haulStep(col, a, dt)) {
+    /* Hauled along the ground (#112): the haul set the velocity. */
   } else {
     const base = a.swimming ? SWIM_SPEED : (a.inWater ? WADE_SPEED : RUN);
     /* The lattice scales how fast you go, not how far you jump: the budget in
@@ -344,7 +370,7 @@ export function step(col, a, input, targets, dt = TICK) {
   /* `input.jump` is a press, not a hold: one tick per press, which is what
      lets the second press be a second jump rather than the first one held. */
   if (a.grounded || a.swimming) a.airJumps = 1;
-  if (input.jump && !a.swing && !a.dodge && a.canJump !== false) {
+  if (input.jump && !a.swing && !a.dodge && !a.haul && a.canJump !== false) {
     if (a.grounded || a.swimming) {
       const jv = a.rad === ACTOR.radius ? JUMP_V : jumpVFor(a.rad);
       /* From deep water the jump is a jump from the surface: a kick that
@@ -441,5 +467,6 @@ export function step(col, a, input, targets, dt = TICK) {
 
   /* The blade lands where the tick ended, not where it started. */
   if (targets) sweep(a, targets);
+  if (a.tether) tetherStep(col, a, targets, dt);
   return a;
 }

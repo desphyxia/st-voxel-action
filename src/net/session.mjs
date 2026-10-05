@@ -64,24 +64,29 @@ export const STALE = 120;
 
 export const HOST = 0, GUEST = 1;
 
-const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, aimZ: 0 };
+const IDLE = { mx: 0, mz: 0, jump: false, attack: false, dodge: false, aimX: 0, aimZ: 0, hold: false, swap: false };
 /* `rise` and `sink` are jump and dodge *held*, which only flight reads. */
 const copyInput = (i) => ({ mx: i.mx || 0, mz: i.mz || 0, jump: !!i.jump,
                             attack: !!i.attack, dodge: !!i.dodge,
                             aimX: i.aimX || 0, aimZ: i.aimZ || 0,
-                            rise: !!i.rise, sink: !!i.sink });
+                            rise: !!i.rise, sink: !!i.sink,
+                            /* The attack button still down, and a frame swap
+                               (#112): the Reel fires on release. */
+                            hold: !!i.hold, swap: !!i.swap });
 /* An input on the wire: five numbers. The stick is kept to 1/10000 on *both*
    ends — the guest predicts with the same rounded value the host will apply,
    so the rounding costs nothing in agreement and a third of the bytes. */
 const q4 = (v) => Math.round((v || 0) * 1e4) / 1e4;
 export function packInput(i) {
   return [q4(i.mx), q4(i.mz),
-          (i.jump ? 1 : 0) | (i.attack ? 2 : 0) | (i.dodge ? 4 : 0) | (i.rise ? 8 : 0) | (i.sink ? 16 : 0),
+          (i.jump ? 1 : 0) | (i.attack ? 2 : 0) | (i.dodge ? 4 : 0) | (i.rise ? 8 : 0) | (i.sink ? 16 : 0)
+            | (i.hold ? 32 : 0) | (i.swap ? 64 : 0),
           q4(i.aimX), q4(i.aimZ)];
 }
 export function unpackInput(w) {
   return { mx: w[0], mz: w[1], jump: !!(w[2] & 1), attack: !!(w[2] & 2), dodge: !!(w[2] & 4),
-           aimX: w[3], aimZ: w[4], rise: !!(w[2] & 8), sink: !!(w[2] & 16) };
+           aimX: w[3], aimZ: w[4], rise: !!(w[2] & 8), sink: !!(w[2] & 16),
+           hold: !!(w[2] & 32), swap: !!(w[2] & 64) };
 }
 
 /**

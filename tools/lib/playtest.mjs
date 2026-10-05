@@ -19,7 +19,7 @@ import { makeStream } from '../../src/sim/stream.mjs';
 import { sin, cos, hyp } from '../../src/gen/exact.mjs';
 import { mulberry32, xmur3 } from '../../src/gen/rng.mjs';
 import { makeCollider, colliderForWorld, colliderFromPacked, LIQUID, EPS } from '../../src/sim/collider.mjs';
-import { placeOnGround, step, embedded, snapshot, restore, ACTOR, TICK, RUN, JUMP_V, jumpVFor } from '../../src/sim/actor.mjs';
+import { placeOnGround, step, embedded, snapshot, restore, display, applyDisplay, ACTOR, TICK, RUN, JUMP_V, jumpVFor } from '../../src/sim/actor.mjs';
 import { makeCamera, moveFrom, project, aimFromStick, aimFromPointer,
          START_YAW, QUARTER, snap } from '../../src/sim/camera.mjs';
 import { makeInput, defaultBindings, ACTIONS } from '../../src/sim/input.mjs';
@@ -28,6 +28,7 @@ import * as EN from '../../src/sim/enemy.mjs';
 import { findPath, navGraph, NAV_STEP } from '../../src/sim/nav.mjs';
 import * as LT from '../../src/sim/lattice.mjs';
 import * as LO from '../../src/sim/loot.mjs';
+import * as RL from '../../src/sim/reel.mjs';
 import { makeLoopback, conditioned } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import * as NS from '../../src/net/session.mjs';
@@ -1874,6 +1875,250 @@ export function dynamicsSuite() {
     say('a group wakes as one: the member you were seen by brings the rest',
         s1.ai.state !== S.DORMANT && m1.ai.state !== S.DORMANT,
         `sentry ${s1.ai.state}, mortar ${m1.ai.state} at ${hyp(m1.x - p.x, m1.z - p.z).toFixed(0)} m — out of its own sight`);
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------- reel ---- */
+
+/**
+ * The Reel, the second frame (#112): a tether that hauls light targets to you
+ * and hauls you to heavy ones, along the ground and never over a gap, with two
+ * frames carried and swapped.
+ */
+export function reelSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const T = CB.TETHER;
+
+  /* A player with the Reel in hand, on a flat pen, facing +x. */
+  const reeler = (c, x = 0, z = 0) => {
+    const p = placeOnGround(c, x, z);
+    LT.swapFrame(p.gear); LT.refitGear(p);
+    p.faceX = 1; p.faceZ = 0;
+    return p;
+  };
+  /* Press and release, then let it run, stepping what is in `foes` as the
+     encounter would: its hits hurt and stagger, then the machines move. */
+  const settleHits = (p, targets) => {
+    if (!p.hits) return;
+    CB.applyHits(p, targets);
+    for (let i = 0; i < targets.length; i++) if ((p.hits & (1 << i)) && targets[i].ai) EN.jolt(targets[i]);
+  };
+  const fire = (c, p, targets, foes, ticks, input) => {
+    const inp = (o) => Object.assign({ aimX: p.faceX, aimZ: p.faceZ }, o, input);
+    step(c, p, inp({ attack: true, hold: true }), targets); settleHits(p, targets);
+    step(c, p, inp({ hold: false }), targets); settleHits(p, targets);
+    for (let t = 0; t < ticks; t++) {
+      for (const e of foes) EN.stepEnemy(c, e, [p], TICK, null, foes);
+      step(c, p, inp({}), targets); settleHits(p, targets);
+    }
+  };
+
+  /* 1. The frame, and carrying two. */
+  {
+    const f = LT.FRAMES[LT.FRAME.REEL];
+    const deg = f.cells.map((_, i) => f.edges.filter((e) => e[0] === i || e[1] === i).length);
+    say('the reel frame is five cells in a line: four edges, the ends touching one neighbour',
+        f.cells.length === 5 && f.edges.length === 4 && deg.join('') === '12221', `degrees ${deg.join(',')}`);
+    const g = LT.makeGear();
+    LT.takeModule(g, LT.MOD.KEEN); LT.takeModule(g, LT.MOD.SIGIL);
+    LT.socketModule(g, 0, 0);
+    const before = g.carried.slice(), known = g.known;
+    LT.swapFrame(g);
+    const there = g.frame === LT.FRAME.REEL && g.slots.every((v) => v < 0) && g.slots.length === 5;
+    LT.socketModule(g, 2, 0);
+    LT.swapFrame(g);
+    say('each frame keeps its own sockets while the pack and what is known are shared',
+        there && g.frame === LT.FRAME.WARDEN && g.slots[0] === LT.MOD.KEEN
+          && g.bench.slots[2] === LT.MOD.SIGIL && g.carried.length === before.length - 1 && g.known === known,
+        `warden slot 0 ${g.slots[0]}, reel slot 2 ${g.bench.slots[2]}, ${g.carried.length} carried`);
+    const h = LT.makeGear(); LT.applyGearWire(h, LT.gearWire(g));
+    say('both frames cross the wire, and the same lattice is the same numbers',
+        JSON.stringify(LT.gearWire(h)) === JSON.stringify(LT.gearWire(g)) && JSON.stringify(h.st) === JSON.stringify(g.st),
+        `${JSON.stringify(LT.gearWire(g)).length} bytes`);
+  }
+
+  /* 2. A swap is refused in the middle of a committed motion. */
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0);
+    const base = LT.frameKind(p.gear);
+    step(c, p, { attack: true });
+    const midSwing = p.swing && !CB.canSwing(p);
+    const refusedSwing = !RL.trySwap(p) && LT.frameKind(p.gear) === base;
+    const q = placeOnGround(c, 0, 0);
+    step(c, q, { dodge: true, mx: 1 });
+    const refusedDodge = !RL.trySwap(q);
+    const r = placeOnGround(c, 0, 0);
+    step(c, r, { swap: true });
+    const swapped = LT.frameKind(r.gear) === 'tether' && r.st === r.gear.st;
+    say('a frame swap is refused mid-swing and mid-dodge, and instant otherwise',
+        midSwing && refusedSwing && refusedDodge && swapped,
+        `swing ${refusedSwing ? 'refused' : 'ALLOWED'}, dodge ${refusedDodge ? 'refused' : 'ALLOWED'}, idle ${swapped ? 'swapped' : 'REFUSED'}`);
+  }
+
+  /* 3. Aim, release, and the cost. */
+  {
+    const c = pen(), p = reeler(c);
+    const s0 = p.stamina;
+    step(c, p, { attack: true, hold: true, aimX: 1, aimZ: 0 });
+    const aiming = !!p.aim && p.stamina === s0 && !p.tether;
+    for (let t = 0; t < 20; t++) step(c, p, { hold: true, aimX: 1, aimZ: 0 });
+    const stillAiming = !!p.aim && !p.tether;
+    step(c, p, { hold: false, aimX: 1, aimZ: 0 });
+    const fired = !p.aim && !!p.tether && p.tether.ph === T.OUT;
+    say('holding aims, with nothing spent; letting go fires the tether and costs stamina',
+        aiming && stillAiming && fired && Math.abs(s0 - p.stamina - RL.reelCost(p)) < 1e-9,
+        `${(s0 - p.stamina).toFixed(0)} stamina`);
+    const q = placeOnGround(c, 0, 0);
+    q.stamina = 5;
+    LT.swapFrame(q.gear); LT.refitGear(q);
+    step(c, q, { attack: true, hold: true });
+    say('and with too little stamina to fire it will not even aim', !q.aim, `${q.stamina} stamina`);
+  }
+
+  /* 4. Heavy: you are hauled to it, and strike. A sentry and a mortar. */
+  for (const [nm, mk] of [['sentry', EN.makeSentry], ['mortar', EN.makeMortar]]) {
+    const c = pen(), p = reeler(c), e = mk(c, 8, 0);
+    const hp0 = e.hp;
+    fire(c, p, [e], [], 80);
+    const near = hyp(e.x - p.x, e.z - p.z);
+    say(`a ${nm} anchors the tether: you are hauled to it and strike it`,
+        near < 2.3 && p.x > 5.5 && e.x === 8 && e.hp === hp0 - Math.round(p.st.damage * CB.REEL.strikeScale),
+        `${near.toFixed(1)} m from it, it did not move, ${hp0 - e.hp} hp lost`);
+  }
+
+  /* 5. Light: it is hauled to you, staggered and hurt. */
+  {
+    const c = pen(), p = reeler(c), h = EN.makeHound(c, 7, 0);
+    h.ai.state = EN.EST.CLOSE; h.ai.post = { x: 7, y: h.y, z: 0 };
+    const hp0 = h.hp;
+    step(c, p, { attack: true, hold: true, aimX: 1, aimZ: 0 }, [h]);
+    step(c, p, { hold: false, aimX: 1, aimZ: 0 }, [h]);
+    let staggered = false, minD = 99;
+    for (let t = 0; t < 60; t++) {
+      step(c, p, { aimX: 1, aimZ: 0 }, [h]); settleHits(p, [h]);
+      EN.stepEnemy(c, h, [p], TICK, null, [h]);
+      if (h.ai.state === EN.EST.STAGGER) staggered = true;
+      minD = Math.min(minD, hyp(h.x - p.x, h.z - p.z));
+    }
+    say('a hound is hauled to you, staggered and hurt, and you stay where you stood',
+        staggered && minD < 2 && Math.abs(p.x) < 0.5 && h.hp < hp0,
+        `${minD.toFixed(1)} m apart at the nearest, you moved ${p.x.toFixed(2)} m, ${hp0 - h.hp} hp lost`);
+  }
+
+  /* 6. A wall is an anchor, and so is open ground — a dash either way. */
+  {
+    const c = pen((k) => k.addBox(5, 6, -19.9, 19.9, 0, 3));
+    const p = reeler(c);
+    fire(c, p, [], [], 60);
+    say('a wall anchors the tether and the haul stops short of it',
+        p.x > 3.8 && p.x < 4.5 && !p.tether && !p.haul, `stopped at x ${p.x.toFixed(2)} of a wall at 5`);
+    const d = pen(), q = reeler(d);
+    fire(d, q, [], [], 60);
+    say('open ground hauls you the length the tether took hold of',
+        Math.abs(q.x - CB.REEL.ground) < 0.4 && q.grounded, `${q.x.toFixed(2)} m of ${CB.REEL.ground}`);
+  }
+
+  /* 7. Never over a gap, off a ledge or into magma. */
+  {
+    /* A pit 4.2 m wide, 4 m deep, with ground either side: boxes, because a
+       collider adds ground and cannot carve it out. */
+    const pit = makeCollider(20, V);
+    pit.addBox(-19.9, 2.4, -19.9, 19.9, -30, 0);
+    pit.addBox(6.6, 19.9, -19.9, 19.9, -30, 0);
+    pit.addBox(2.4, 6.6, -19.9, 19.9, -30, -4);
+    pit.finish();
+    const a = reeler(pit, 0, 0);
+    fire(pit, a, [], [], 90);
+    say('a haul toward a gap ends in front of it, on the ground, and never crosses it',
+        a.grounded && a.x < 2.5 && a.y > -0.01 && !a.dead,
+        `stopped at x ${a.x.toFixed(2)} of a lip at 2.4, y ${a.y.toFixed(2)}`);
+    const lava = makeCollider(20, V);
+    lava.addBox(-19.9, 19.9, -19.9, 19.9, -30, 0);
+    lava.setLiquid(2.5, 7, -19.9, 19.9, LIQUID.MAGMA, 0.5);
+    lava.finish();
+    const b = reeler(lava, 0, 0);
+    fire(lava, b, [], [], 90);
+    say('and a haul toward magma stops before it', !b.dead && b.x < 2.6, `stopped at x ${b.x.toFixed(2)} of magma from 2.5`);
+    /* A jump pressed while being hauled does nothing: the haul is no way to
+       cross anything the budget does not already cross. */
+    const flat = pen(), c2 = reeler(flat, 0, 0);
+    step(flat, c2, { attack: true, hold: true, aimX: 1, aimZ: 0 });
+    step(flat, c2, { hold: false, aimX: 1, aimZ: 0 });
+    let hauled = 0, lifted = 0;
+    for (let t = 0; t < 40; t++) {
+      step(flat, c2, { aimX: 1, aimZ: 0 });
+      if (c2.haul) { hauled++; step(flat, c2, { jump: true, aimX: 1, aimZ: 0 }); if (!c2.grounded) lifted++; }
+    }
+    say('a jump pressed while being hauled does nothing',
+        hauled > 3 && lifted === 0, `${hauled} ticks of haul, ${lifted} of them left the ground`);
+  }
+
+  /* 8. A partner is never hauled, hurt or anchored to. */
+  {
+    const c = pen(), p = reeler(c), mate = placeOnGround(c, 3, 0);
+    mate.gear = LT.makeGear();
+    const hp0 = mate.hp;
+    /* The players are not in `targets` — the encounter's own list — so the
+       tether flies through them, as it must. */
+    fire(c, p, [], [], 60);
+    say('a tether flies through a partner standing in its line: no haul, no hit',
+        mate.hp === hp0 && mate.x === 3 && p.x > 4, `partner ${mate.hp}/${hp0} hp at x ${mate.x}, you ended at ${p.x.toFixed(2)}`);
+  }
+
+  /* 9. Dodge and jump while the tether is out. */
+  {
+    const c = pen(), p = reeler(c);
+    step(c, p, { attack: true, hold: true, aimX: 1, aimZ: 0 });
+    const fromAim = CB.canDodge(p);
+    step(c, p, { hold: false, aimX: 1, aimZ: 0 });
+    const outBlocked = !CB.canDodge(p);
+    p.stamina = 100;
+    for (let t = 0; t < 40 && !(p.tether && p.tether.ph === T.BACK); t++) step(c, p, { aimX: 1, aimZ: 0 });
+    const q = reeler(c, -10, 5);
+    step(c, q, { attack: true, hold: true });
+    step(c, q, { dodge: true, hold: true, mx: 0, mz: 1 });
+    say('a dodge cancels aiming, but not a tether flying out',
+        fromAim && outBlocked && !q.aim && !!q.dodge, `aim ${fromAim ? 'dodgeable' : 'LOCKED'}, tether out ${outBlocked ? 'locked' : 'DODGEABLE'}`);
+  }
+
+  /* 10. Everything crosses the wire: the state, the display, and the input. */
+  {
+    const c = pen(), p = reeler(c);
+    step(c, p, { attack: true, hold: true, aimX: 1, aimZ: 0 });
+    const aimed = ND(p);
+    step(c, p, { hold: false, aimX: 1, aimZ: 0 });
+    for (let t = 0; t < 4; t++) step(c, p, { aimX: 1, aimZ: 0 });
+    const snap = snapshot(p), q = placeOnGround(c, 0, 0);
+    restore(q, JSON.parse(JSON.stringify(snap)));
+    const same = JSON.stringify(snapshot(q)) === JSON.stringify(snap);
+    const disp = display(p), d2 = placeOnGround(c, 0, 0);
+    applyDisplay(d2, disp);
+    const inp = NS.unpackInput(NS.packInput({ mx: 0.5, mz: -1, attack: true, hold: true, swap: true, aimX: 1, aimZ: 0 }));
+    say('aiming, the tether, a haul and the held button all cross the wire',
+        same && !!snap.tether && aimed.am === 1 && !!disp.th && disp.fk === 1 && !!d2.tether && inp.hold && inp.swap && inp.attack,
+        `snapshot ${JSON.stringify(snap.tether)}, display ${JSON.stringify(disp.th)}`);
+    function ND(a) { return display(a); }
+  }
+
+  /* 11. A guest predicts a haul exactly: it knows nothing of what the tether met
+         on the host, and a snapshot puts it right — so after a rest they agree. */
+  {
+    const p2 = twoPlayers('meadow', makeLoopback({ latency: 4 }), true);
+    const guestIn = (t) => {
+      const o = { mx: 0, mz: 0, aimX: 1, aimZ: 0 };
+      if (t === 5) o.swap = true;
+      if (t >= 20 && t < 24) { o.attack = t === 20; o.hold = true; }
+      if (t >= 100 && t < 103) { o.attack = t === 100; o.hold = true; }
+      return o;
+    };
+    run(p2, 300, scripted(0), guestIn);
+    settle(p2, 200);
+    const d = hyp(p2.guest.me.x - p2.host.peer.x, p2.guest.me.z - p2.host.peer.z);
+    say('a haul is predicted by the guest and ends where the host says',
+        d < 1e-9 && LT.frameKind(p2.guest.me.gear) === LT.frameKind(p2.host.peer.gear) && LT.frameKind(p2.host.peer.gear) === 'tether',
+        `${d.toFixed(9)} m apart, frame ${LT.frameKind(p2.host.peer.gear)} on both`);
   }
   return out;
 }

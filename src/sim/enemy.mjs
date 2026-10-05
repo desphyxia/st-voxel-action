@@ -175,11 +175,14 @@ const PATH_NODES = 900;
 
 /** Each archetype's constants, timings and tradition, by kind. */
 const SPEC = [
-  { k: KIND.SENTRY, c: SENTRY, trad: TRAD.TECH, canJump: false,
+  /* `weight` is what the Reel reads (#112): 1 is light — hauled to you — and 2
+     is heavy — you are hauled to it. A property of the archetype, not a number
+     compared at the moment. */
+  { k: KIND.SENTRY, c: SENTRY, trad: TRAD.TECH, canJump: false, weight: 2,
     tell: TELEGRAPH_TIME, strike: STRIKE_TIME, recover: RECOVER_TIME },
-  { k: KIND.MORTAR, c: MORTAR, trad: TRAD.TECH, canJump: false,
+  { k: KIND.MORTAR, c: MORTAR, trad: TRAD.TECH, canJump: false, weight: 2,
     tell: MORTAR_AIM_TIME, strike: MORTAR_FLIGHT_TIME, recover: MORTAR_VENT_TIME },
-  { k: KIND.HOUND, c: HOUND, trad: TRAD.BIO, canJump: true,
+  { k: KIND.HOUND, c: HOUND, trad: TRAD.BIO, canJump: true, weight: 1,
     tell: HOUND_TELL_TIME, strike: LUNGE_TIME, recover: STUMBLE_TIME },
 ];
 const specOf = (e) => SPEC[e.k] || SPEC[0];
@@ -193,7 +196,7 @@ function makeMachine(col, k, x, z, fromY) {
   const e = placeOnGround(col, x, z, fromY, c.rad);
   e.hp = c.hp; e.maxHp = c.hp;
   e.canJump = s.canJump;
-  e.k = k; e.kind = KIND_NAMES[k]; e.trad = s.trad;
+  e.k = k; e.kind = KIND_NAMES[k]; e.trad = s.trad; e.weight = s.weight;
   e.ai = { state: EST.DORMANT, t: 0, side: 0, sideT: 0,
            /* Where it holds (#6), and the path it is following, if any (#15). */
            post: { x: e.x, y: e.y, z: e.z }, path: null, wp: 0, pathT: 0,
