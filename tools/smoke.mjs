@@ -1656,6 +1656,9 @@ if (BROWSER_HALF) {
             out.aimPixels = px;
             /* Letting go fires: the tether is drawn, and the body is hauled. */
             P.input.release('KeyF');
+            /* What it cost is read as it is fired: stamina starts coming back
+               half a second later, and a second of haul and retract is 15 of it. */
+            P.run(1); out.spent = st0 - a.stamina;
             let sawTether = false, sawHaul = false;
             for (let i = 0; i < 60; i++) {
               P.run(1); if (i % 2 === 0) P.frameOnce();
@@ -1663,7 +1666,7 @@ if (BROWSER_HALF) {
               if (a.haul) sawHaul = true;
             }
             out.sawTether = sawTether; out.sawHaul = sawHaul;
-            out.hauled = Math.hypot(a.x - x0, a.z - z0); out.spent = st0 - a.stamina;
+            out.hauled = Math.hypot(a.x - x0, a.z - z0);
             out.grounded = a.grounded;
           }
           /* Put it back as found: the blade in hand, the machines let go, and
@@ -2566,6 +2569,11 @@ if (BROWSER_HALF) {
         /* #112: a partner's aim is on the ground for you to read, the way an
            enemy's tell is, and their tether is drawn. The guest swaps to the
            Reel, aims, and lets go; the host should see all three. */
+        /* The host's machines are held for it: the guest's tether is simulated
+           on the host with the encounter's targets, so it would hit and wake
+           whatever stands near the spawn — and the cutaway check after this
+           samples that very ground. */
+        await bp.evaluate(() => window.QSPLAY.holdMachines(true));
         await peerPage.evaluate(() => { const P = window.QSPLAY; P.input.clearPointer(); P.input.press('KeyX'); P.run(2); P.input.release('KeyX'); P.run(2); P.input.press('KeyF'); P.run(2); });
         let hostSawAim = false, hostSawTether = false, hostSawReel = false;
         for (let q = 0; q < 8; q++) {
@@ -2583,6 +2591,7 @@ if (BROWSER_HALF) {
         }
         /* Back to the blade on the guest, and let it settle. */
         await peerPage.evaluate(() => { const P = window.QSPLAY; P.run(60); P.input.press('KeyX'); P.run(1); P.input.release('KeyX'); P.run(2); });
+        await bp.evaluate(() => window.QSPLAY.holdMachines(false));
         check(hostSawReel && hostSawAim && hostSawTether,
               'NET: a partner\'s aim line and tether are drawn in the other window',
               `host saw the Reel in the guest's hand ${hostSawReel ? 'yes' : 'NO'}, the aim line ${hostSawAim ? 'yes' : 'NO'}, the tether ${hostSawTether ? 'yes' : 'NO'}`);
