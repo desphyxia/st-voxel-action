@@ -102,6 +102,45 @@ Three rules came out of building it, and every later frame inherits them:
 None of the numbers are balance, on exactly the terms §3's combat numbers are not: #9 decides
 what a hit is worth and what a module is worth at the same time.
 
+### The second frame, the Reel (interview 2026-10-05)
+
+Asked for because one sword makes every fight the same fight, and the roster (§6) now asks things
+a sword answers badly: a mortar that holds a firing band 7–11 m off, hounds that flank from both
+sides. The second frame is the **reach** one, and it is built to change how you *move*, not only
+what you hit.
+
+**Reel frame** — the tether's. **Five cells in a line**: four edges, the two ends touching one
+neighbour each and the three inside touching two. Next to the rhombus it is thin and ordered, where
+the rhombus is cramped and cross-wired: fewer fusions per module, and the order you lay a line in
+is the question.
+
+**The Reel** — hold to aim, and a line is drawn on the ground; release and a barbed tether flies
+up to 9 m along it.
+
+| Hits | What happens |
+| --- | --- |
+| A **light** target (a hound, most wildlife) | It is hauled to you and staggered. A lunge you stepped out of becomes a hound at your feet |
+| A **heavy** target (a sentry, a mortar) | The tether anchors and you are hauled to it, ending in a short strike. The answer to a mortar's range, and a way into a sentry's recovery from outside its reach |
+| Open ground or a prop | You are hauled there as a dash: a repositioning verb |
+
+**Weight is a property of the archetype**, not a number the tether compares. A haul is a dash along
+the ground through the same controller everything else uses, so **it stops at a ledge and never
+crosses a gap**: the movement budget (§3) is untouched, and no module can make the Reel a way over
+a canyon.
+
+| Decision | Choice |
+| --- | --- |
+| Carrying | **Two frames at once**, each with its own lattice |
+| Switching | **The scroll wheel** (unbound until now; zoom stays on its buttons), and **an on-screen button** for touch. Swapping is instant but not free of the committed rule: not during a swing or a dodge |
+| Modules | **One shared pool** across frames; each frame's layout decides which fusions are possible there. Knowing a recipe is per fusion, not per frame |
+| What a frame changes | **Only the attack.** Dodge, the jump and stamina stay universal (§3); a frame is a weapon, not a class |
+| Aim | **A player's own aimed attacks show a short line on the ground while aiming**, so a partner reads them the way anyone reads an enemy's. §6's rule applied to the players: danger is on the ground before it lands |
+| Friendly | A tether never hauls, hurts or anchors to a partner |
+
+Still open here, and for the build to settle against #9: the numbers (reach, stamina, cooldown, how
+long a miss takes to retract), whether a tether can be cut by anything, and what a haul that is
+interrupted by a hit does.
+
 ## 5. World and terrain
 
 **Four natural biomes**, in the climate field: Meadowlands · Redrock Mesa · Cloudpine
@@ -264,8 +303,8 @@ generator workstream in its own right — not a content pass.
 
 ## Still open
 
-- The other seven frames, and the rest of the modules and fusions. Nine and six are what one
-  frame needed; the set is not closed.
+- The other six frames, and the rest of the modules and fusions. Nine and six are what one
+  frame needed; the set is not closed. The Reel (§4) is the second.
 - Refinement, and the stash. Carried slots are limited and there is nowhere to put the overflow,
   because there is no camp.
 - Each archetype's numbers (health, damage, timings, ranges) — #9. The roster, tells and
