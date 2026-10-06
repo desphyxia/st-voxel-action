@@ -239,7 +239,7 @@ export function makeLootField(col, world, spoilCount, trad) {
         const o = items[q], it = o.item;
         for (let p = 0; p < players.length; p++) {
           const a = players[p];
-          if (!a || a.dead || !a.gear) continue;
+          if (!a || a.dead || a.down || !a.gear) continue;
           if (hyp(a.x - it.x, a.z - it.z) > PICKUP_R) continue;
           if (Math.abs(a.y - it.y) > PICKUP_Y) continue;
           if (!takeModule(a.gear, it.mod)) break;         /* full: leave it there */

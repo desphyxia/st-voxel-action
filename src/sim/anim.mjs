@@ -196,7 +196,7 @@ export function poseHero(a, look) {
   /* With the Reel in hand there is no blade: it is made too small to see, and
      the free hand is what points the tether (#112). */
   if (look.reel) { p.blade.sz = 0.02; p.blade.sy = 0.02; }
-  if (a.dead) {
+  if (a.dead || a.down) {
     /* Down on its back, and staying there. */
     p.root.rx = -1.45; p.root.py = R * 0.4;
     p.armL.rx = -0.6; p.armR.ry = 0.4;

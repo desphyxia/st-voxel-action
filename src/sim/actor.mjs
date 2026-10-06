@@ -27,6 +27,10 @@ import { advanceCombat, beginSwing, beginDodge, speedScale, sweep,
          statsOf, dodgeSpeed } from './combat.mjs';
 import { makeGear, gearWire, applyGearWire } from './lattice.mjs';
 import { isReel, reelIntent, trySwap, haulStep, tetherStep } from './reel.mjs';
+import { REVIVE_TIME } from './revive.mjs';
+
+/** What a downed player does: nothing, for as long as they lie there. */
+const NO_INPUT = Object.freeze({ mx: 0, mz: 0, aimX: 0, aimZ: 0, jump: false, attack: false, dodge: false, hold: false, swap: false });
 
 /** One simulation tick. Every constant below assumes it. */
 export const TICK = 1 / 60;
@@ -144,6 +148,9 @@ export function makeActor(x, y, z, rad) {
     aim: null, tether: null, haul: null,
     /** null while alive, else 'fall' | 'magma' | 'void' | 'struck'. */
     dead: null,
+    /** Seconds left lying downed, or 0 (#114, src/sim/revive.mjs). Not dead:
+        a partner can still stand you up. */
+    down: 0,
     /** Path length, summed per axis. Not displacement — see the soak. */
     travelled: 0, ticks: 0, blocked: false,
   };
@@ -175,7 +182,7 @@ export function snapshot(a) {
     grounded: a.grounded, apex: a.apex,
     airJumps: a.airJumps, jumps: a.jumps, airJumped: a.airJumped,
     inWater: a.inWater, swimming: a.swimming, kick: a.kick,
-    faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
+    faceX: a.faceX, faceZ: a.faceZ, dead: a.dead, down: a.down,
     hp: a.hp, maxHp: a.maxHp, hurtT: a.hurtT,
     stamina: a.stamina, staminaHold: a.staminaHold,
     /* Nine small numbers, and the stats are recomputed from them on the way
@@ -202,7 +209,7 @@ export function restore(a, s) {
   a.airJumps = s.airJumps === undefined ? 1 : s.airJumps;
   a.jumps = s.jumps || 0; a.airJumped = s.airJumped || 0;
   a.inWater = s.inWater; a.swimming = s.swimming; a.kick = !!s.kick;
-  a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
+  a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead; a.down = s.down || 0;
   if (s.gear) { applyGearWire(a.gear, s.gear); a.st = a.gear.st; }
   a.hp = s.hp; a.maxHp = s.maxHp === undefined ? a.st.maxHp : s.maxHp;
   a.hurtT = s.hurtT; a.picked = s.picked || 0;
@@ -230,6 +237,9 @@ export function display(a) {
   return {
     x: r3(a.x), y: r3(a.y), z: r3(a.z), fx: r3(a.faceX), fz: r3(a.faceZ),
     g: a.grounded ? 1 : 0, d: a.dead || 0, hp: a.hp, mh: a.maxHp,
+    /* Lying downed, with the seconds left, and how far a partner has got
+       standing them up: what the other window draws and the HUD counts. */
+    ...(a.down ? { dn: r3(a.down), rv: r3((a.reviveT || 0) / REVIVE_TIME) } : null),
     sw: a.swing ? Math.round(a.swing.t * 1000) / 1000 : -1,
     dv: a.dodge ? 1 : 0, u: Math.round(a.hurtT * 100) / 100,
     /* The arc is drawn at the reach it cuts at, so a partner who has socketed
@@ -247,6 +257,7 @@ export function display(a) {
 export function applyDisplay(a, m) {
   a.faceX = m.fx; a.faceZ = m.fz;
   a.grounded = !!m.g; a.dead = m.d || null; a.hp = m.hp; a.hurtT = m.u;
+  a.down = m.dn || 0; a.reviveT = (m.rv || 0) * REVIVE_TIME;
   if (m.mh !== undefined) a.maxHp = m.mh;
   /* A drawn-only actor's stats are its own object, so writing the one field
      that is sent does not reach anybody else's numbers. */
@@ -314,6 +325,9 @@ export function step(col, a, input, targets, dt = TICK) {
      page so that a guest predicts it exactly as its host runs it. */
   if (a.fly) return flyStep(a, input, dt);
   if (a.dead) return a;
+  /* Lying downed (#114): the body still falls and stands where it is, and
+     nothing a player does reaches it. */
+  if (a.down) input = NO_INPUT;
   a.ticks++;
   a.blocked = false;
   const r = a.rad, h = ACTOR.height;

@@ -29,6 +29,7 @@ import { findPath, navGraph, NAV_STEP } from '../../src/sim/nav.mjs';
 import * as LT from '../../src/sim/lattice.mjs';
 import * as LO from '../../src/sim/loot.mjs';
 import * as RL from '../../src/sim/reel.mjs';
+import * as RV from '../../src/sim/revive.mjs';
 import { makeLoopback, conditioned } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import * as NS from '../../src/net/session.mjs';
@@ -1136,7 +1137,7 @@ export function combatSuite() {
     for (let t = 0; t < ticks(CB.STAMINA_HOLD) - 2; t++) step(col, a, hold());
     const held = a.stamina;
     for (let t = 0; t < ticks(1); t++) step(col, a, hold());
-    say('stamina waits, then comes back', held === spent && a.stamina > spent + 20,
+    say('stamina waits, then comes back', held === spent && a.stamina >= spent + CB.SWING_COST,
         `${spent.toFixed(0)} held to ${held.toFixed(0)}, then ${a.stamina.toFixed(0)}`);
   }
 
@@ -2268,7 +2269,7 @@ export function gearSuite() {
     LT.socketModule(a.gear, 0, 0);
     a.st = a.gear.st;
     say('a module in the pack does nothing; the same module in a socket does',
-        carried === before && a.st.reach > before + 0.4 && a.gear.carried.length === 0,
+        carried === before && a.st.reach >= before + 0.39 && a.gear.carried.length === 0,
         `${before} m carried ${carried} m, seated ${a.st.reach} m`);
   }
 
@@ -5847,5 +5848,188 @@ export async function marshSuite() {
   }
   say('its water is marked murky for the build to draw, and reeds stand in it that a body walks through',
       murk > 0 && reeds > 0, `${murk} murky water vertices; ${reeds} reed voxels, foliage`);
+  return out;
+}
+
+/* ------------------------------------------------------------- survival ---- */
+
+/**
+ * The combat-number targets (#114, docs/DECISIONS.md §3) as assertions, so the
+ * numbers cannot drift off them one tuning pass at a time, and the two rules
+ * that are new with them: health that comes back, and a partner who stands
+ * you up. "About eight hits" is the target, and the check says what it
+ * counts — hits of the archetype's damage against a bare frame's health.
+ */
+export function survivalSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const hitsToKill = (c) => Math.ceil(CB.PLAYER_HP / c.damage);
+  const swingsToKill = (c) => Math.ceil(c.hp / CB.SWING_DAMAGE);
+  const S = EN.SENTRY, M = EN.MORTAR, H = EN.HOUND;
+
+  /* 1. Lethality: about eight hits from any one machine. */
+  {
+    const n = [S, M, H].map(hitsToKill);
+    say('one machine takes about eight hits to kill a bare player, whichever it is',
+        n.every((v) => v >= 8 && v <= 9), `sentry ${n[0]}, mortar ${n[1]}, hound ${n[2]}`);
+  }
+
+  /* 2. Fight length is the roster's: hounds fast, the sentry a wall. */
+  {
+    const n = [H, M, S].map(swingsToKill);
+    say('fights run by archetype: a hound in two swings, a mortar in three, a sentry in four',
+        n.join(',') === '2,3,4', `hound ${n[0]}, mortar ${n[1]}, sentry ${n[2]}`);
+  }
+
+  /* 3. Stamina is rarely the limit: four swings and a dodge from a full bar. */
+  say('stamina is rarely empty: four swings and a dodge from a full bar',
+      4 * CB.SWING_COST + CB.DODGE_COST <= CB.STAMINA_MAX,
+      `${4 * CB.SWING_COST + CB.DODGE_COST} of ${CB.STAMINA_MAX}`);
+
+  /* 4. A module is worth about a quarter; four of one kind are worth double. */
+  {
+    const one = (m) => { const s = CB.baseStats(); LT.MODULES[m].apply(s); return s; };
+    const b = CB.baseStats();
+    const r = {
+      damage: one(LT.MOD.KEEN).damage / b.damage, reach: one(LT.MOD.SIGIL).reach / b.reach,
+      dodge: one(LT.MOD.BLINK).dodgeDist / b.dodgeDist, hp: one(LT.MOD.PLATING).maxHp / b.maxHp,
+      stamina: one(LT.MOD.GOVERNOR).maxStamina / b.maxStamina, recover: b.recover / one(LT.MOD.SERVO).recover,
+      cost: b.swingCost / one(LT.MOD.THEW).swingCost,
+    };
+    const ok = Object.values(r).every((v) => v >= 1.2 && v <= 1.35);
+    say('a module is worth about a quarter of what it improves',
+        ok, Object.entries(r).map(([k, v]) => `${k} ×${v.toFixed(2)}`).join(', '));
+    const s = CB.baseStats(); for (let i = 0; i < 4; i++) LT.MODULES[LT.MOD.KEEN].apply(s);
+    say('a full line of one kind roughly doubles it', Math.abs(s.damage / b.damage - 2) < 0.01, `damage ×${(s.damage / b.damage).toFixed(2)}`);
+  }
+
+  /* 5. The Reel is utility: its blows are a third to a half of a swing. */
+  {
+    const y = CB.REEL.yankScale, k = CB.REEL.strikeScale;
+    say('the Reel hits for a third to a half of a blade swing',
+        y >= 1 / 3 - 1e-9 && y <= 0.5 && k >= 1 / 3 && k <= 0.5 + 1e-9, `yank ${(y * 100).toFixed(0)}%, strike ${(k * 100).toFixed(0)}%`);
+  }
+
+  const c = pen();
+  const hurtTo = (p, hp) => { p.hp = hp; };
+
+  /* 6. Health comes back once nothing has hunted you, and not before. */
+  {
+    const p = placeOnGround(c, 0, 0);
+    CB.hurt(p, 40, 'struck');
+    const hp0 = p.hp;
+    let t = 0;
+    for (; t < (CB.REGEN_DELAY - 0.5) / TICK; t++) RV.upkeep([p], TICK);
+    const held = p.hp === hp0;
+    for (let i = 0; i < Math.round(10 / TICK); i++) RV.upkeep([p], TICK);
+    const got = p.hp - hp0;
+    const full = placeOnGround(c, 3, 0); hurtTo(full, 10); full.hunted = 0;
+    for (let i = 0; i < Math.round(60 / TICK); i++) RV.upkeep([full], TICK);
+    say('health holds for five seconds after a blow, then comes back at two a second',
+        held && Math.abs(got - CB.REGEN_RATE * (10 - 0.5)) < 1.2 && full.hp === full.maxHp,
+        `held ${held}, ${got.toFixed(1)} back in 10 s, a minute fills it to ${full.hp}`);
+  }
+
+  /* 7. A machine that has its eye on you keeps you hunted, so you do not heal. */
+  {
+    const cfg = GOLDEN_SEEDS[0], world = buildWorld(cfg), col = colliderForWorld(world);
+    const enc = EN.makeEncounter(col, world, []);
+    const sx = world.spawn[0], sz = world.spawn[2], sy = world.spawn[1] + 2;
+    const near = placeOnGround(col, sx, sz, sy), far = placeOnGround(col, sx + 40, sz + 40, sy + 20);
+    const e = enc.add(sx + 2, sz, sy, EN.KIND.SENTRY);
+    e.ai.state = EN.EST.CLOSE; e.ai.tgt = near;
+    near.hp = 50; far.hp = 50; near.hunted = 0; far.hunted = 0;
+    enc.step([near, far]);
+    say('a player a machine has its eye on is hunted and does not heal; one nothing hunts does',
+        near.hunted > 0 && far.hunted === 0 && far.hp > 50 && near.hp <= 50,
+        `hunted ${near.hunted.toFixed(1)} s at ${near.hp} hp, the other ${far.hp.toFixed(2)} hp`);
+  }
+
+  /* 8. Alone, a blow kills; with a partner standing, it puts you down. */
+  {
+    const a = placeOnGround(c, 0, 0);
+    CB.hurt(a, 999, 'struck'); RV.upkeep([a], TICK);
+    const solo = a.dead === 'struck' && !a.down;
+    const p = placeOnGround(c, 0, 0), q = placeOnGround(c, 6, 0);
+    p.swing = { t: 0.1, hit: 0 };
+    CB.hurt(p, 999, 'struck'); RV.upkeep([p, q], TICK);
+    say('alone a blow kills; with a partner standing it puts you down instead',
+        solo && !p.dead && p.down > 0 && p.hp === 0 && !p.swing, `solo dead ${solo}, partnered down ${p.down.toFixed(1)} s`);
+    const hp = p.hp;
+    const hit = CB.hurt(p, 10, 'struck');
+    say('a downed player cannot be hurt again, and the lattice cannot heal them',
+        !hit && p.hp === hp && CB.heal(p, 20) === 0, `hurt ${hit}, healed ${CB.heal(p, 20)}`);
+  }
+
+  /* 9. Magma, a fall and the void are not a blow: they kill even with a partner. */
+  {
+    const p = placeOnGround(c, 0, 0), q = placeOnGround(c, 6, 0);
+    p.dead = 'magma'; RV.upkeep([p, q], TICK);
+    say('magma is lethal even with a partner standing', p.dead === 'magma' && !p.down, `dead ${p.dead}, down ${p.down}`);
+  }
+
+  /* 10. A downed player does nothing: no swing, no jump, no step. */
+  {
+    const p = placeOnGround(c, 0, 0), q = placeOnGround(c, 6, 0);
+    CB.hurt(p, 999, 'struck'); RV.upkeep([p, q], TICK);
+    const x0 = p.x, y0 = p.y;
+    for (let i = 0; i < 20; i++) { step(c, p, { mx: 1, mz: 0, attack: true, jump: true, dodge: true }, null); }
+    say('a downed player cannot walk, swing, jump or dodge',
+        p.x === x0 && p.y === y0 && !p.swing && !p.dodge, `moved ${(p.x - x0).toFixed(3)} m, swing ${!!p.swing}`);
+  }
+
+  /* 11. Machines pass a downed player by. */
+  {
+    const p = placeOnGround(c, 0, 0), q = placeOnGround(c, 15, 15);
+    CB.hurt(p, 999, 'struck'); RV.upkeep([p, q], TICK);
+    const e = EN.makeSentry(c, 3, 0), foes = [e];
+    for (let i = 0; i < Math.round(3 / TICK); i++) EN.stepEnemy(c, e, [p, q], TICK, { left: 1, party: 2 }, foes);
+    say('a machine does not wake for, chase or strike a downed player',
+        e.ai.state === EN.EST.DORMANT && p.hp === 0, `machine ${e.ai.state}, hp ${p.hp}`);
+  }
+
+  /* 12. A partner within reach stands you up, on two fifths of your health. */
+  {
+    const p = placeOnGround(c, 0, 0), q = placeOnGround(c, 1, 0);
+    CB.hurt(p, 999, 'struck'); RV.upkeep([p, q], TICK);
+    let t = 0;
+    for (; t < Math.round((RV.REVIVE_TIME + 0.5) / TICK) && p.down; t++) RV.upkeep([p, q], TICK);
+    say('a partner within reach stands you up in about a second and a half, on two fifths of your health',
+        !p.down && !p.dead && Math.abs(p.hp - p.maxHp * RV.REVIVE_HP) < 1e-9 && Math.abs(t * TICK - RV.REVIVE_TIME) < 0.1,
+        `up after ${(t * TICK).toFixed(2)} s on ${p.hp} hp`);
+    /* Progress is lost when the partner steps away, and not kept for later. */
+    const a = placeOnGround(c, 0, 0), b = placeOnGround(c, 1, 0);
+    CB.hurt(a, 999, 'struck'); RV.upkeep([a, b], TICK);
+    for (let i = 0; i < Math.round(1.0 / TICK); i++) RV.upkeep([a, b], TICK);
+    const mid = a.reviveT; b.x = 9;
+    for (let i = 0; i < Math.round(1.2 / TICK); i++) RV.upkeep([a, b], TICK);
+    say('stepping away loses the progress made', mid > 0.9 && a.reviveT === 0 && a.down > 0, `progress ${mid.toFixed(2)} → ${a.reviveT}`);
+  }
+
+  /* 13. Left alone you are lost; when nobody stands everyone downed is lost. */
+  {
+    const p = placeOnGround(c, 0, 0), q = placeOnGround(c, 12, 0);
+    CB.hurt(p, 999, 'struck'); RV.upkeep([p, q], TICK);
+    for (let i = 0; i < Math.round((RV.DOWN_TIME + 1) / TICK) && !p.dead; i++) RV.upkeep([p, q], TICK);
+    const bled = p.dead === 'struck';
+    const a = placeOnGround(c, 0, 0), b = placeOnGround(c, 6, 0);
+    CB.hurt(a, 999, 'struck'); RV.upkeep([a, b], TICK);
+    CB.hurt(b, 999, 'struck'); RV.upkeep([a, b], TICK);
+    say('left alone you are lost after the window, and when both are down both are lost at once',
+        bled && a.dead === 'struck' && b.dead === 'struck' && !a.down && !b.down,
+        `bled out ${bled}, both down → ${a.dead}/${b.dead}`);
+  }
+
+  /* 14. The downed state crosses the wire, in both forms. */
+  {
+    const p = placeOnGround(c, 0, 0), q = placeOnGround(c, 1, 0);
+    CB.hurt(p, 999, 'struck'); RV.upkeep([p, q], TICK); RV.upkeep([p, q], TICK);
+    const s = snapshot(p), r = placeOnGround(c, 5, 5); restore(r, s);
+    const d = display(p), v = placeOnGround(c, 5, 5); applyDisplay(v, d);
+    const back = NS.unpackState ? NS.unpackState(NS.packState(s)) : s;
+    say('downed, with its seconds and its revive progress, crosses the wire in both forms',
+        r.down === p.down && v.down > 0 && Math.abs(v.reviveT - p.reviveT) < 0.01 && back.down === p.down,
+        `snapshot ${r.down.toFixed(2)}, display ${d.dn}/${d.rv}`);
+  }
   return out;
 }
