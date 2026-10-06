@@ -2574,6 +2574,7 @@ if (BROWSER_HALF) {
            whatever stands near the spawn — and the cutaway check after this
            samples that very ground. */
         await bp.evaluate(() => window.QSPLAY.holdMachines(true));
+        const machinesBefore = await bp.evaluate(() => (window.QSPLAY.machines || []).map((e) => ({ x: e.x, y: e.y, z: e.z, hp: e.hp, dead: e.dead, st: e.ai && e.ai.state, t: e.ai && e.ai.t, vx: e.vx, vz: e.vz })));
         const guestHome = await peerPage.evaluate(() => { const g = window.QSPLAY.actor; return { x: g.x, y: g.y, z: g.z, fx: g.faceX, fz: g.faceZ }; });
         await peerPage.evaluate(() => { const P = window.QSPLAY; P.input.clearPointer(); P.input.press('KeyX'); P.run(2); P.input.release('KeyX'); P.run(2); P.input.press('KeyF'); P.run(2); });
         let hostSawAim = false, hostSawTether = false, hostSawReel = false;
@@ -2606,6 +2607,14 @@ if (BROWSER_HALF) {
           g.tether = null; g.aim = null; g.haul = null; P.run(2); }, guestHome);
         for (let q = 0; q < 6; q++) { await peerPage.evaluate(() => window.QSPLAY.run(3)); await bp.evaluate(() => window.QSPLAY.run(3)); }
         await bp.evaluate(() => window.QSPLAY.holdMachines(false));
+        const machineDiff = await bp.evaluate((was) => { const ms = window.QSPLAY.machines || [], out = [];
+          ms.forEach((e, i) => { const w = was[i]; if (!w) return;
+            if (e.hp !== w.hp || !!e.dead !== !!w.dead || (e.ai && e.ai.state) !== w.st || Math.abs(e.x - w.x) + Math.abs(e.z - w.z) > 0.01) {
+              out.push({ i, k: e.k, hp: [w.hp, e.hp], dead: [!!w.dead, !!e.dead], st: [w.st, e.ai && e.ai.state], dx: +(e.x - w.x).toFixed(2), dz: +(e.z - w.z).toFixed(2) });
+              e.hp = w.hp; e.dead = w.dead; e.x = w.x; e.y = w.y; e.z = w.z; e.vx = w.vx; e.vz = w.vz; if (e.ai) { e.ai.state = w.st; e.ai.t = w.t; }
+            } });
+          return out; }, machinesBefore);
+        console.log('  NET machines disturbed: ' + JSON.stringify(machineDiff));
         const peerEnd = await bp.evaluate(() => { const P = window.QSPLAY, o = P.peer; P.frameOnce();
           return { kind: o && (o.reelOut !== undefined ? o.reelOut : window.QS.isReel(o)), aim: !!(o && o.aim), th: !!(o && o.tether), haul: !!(o && o.haul),
                    d: o ? Math.hypot(o.x - P.actor.x, o.z - P.actor.z) : -1, draw: P.reelDraw }; });
