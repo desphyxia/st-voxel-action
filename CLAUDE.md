@@ -89,9 +89,10 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`ac3d57d`** (the Reel, a second frame, #112/PR #113)
-at **version 66**, stamped; it went straight through. Concept did not change and stays at
-**`b010ebc`**, **version 40**. Before that, play was **`e67fec2`** (the machines given weight and a repertoire, #110/PR #111)
+Play is published from **`fd654d8`** (combat-number targets, regen, downed and revive, #114/PR #115)
+at **version 67**, stamped; it went straight through. Concept did not change and stays at
+**`b010ebc`**, **version 40**. Before that, play was **`ac3d57d`** (the Reel, a second frame, #112/PR #113)
+at version 66, stamped. Before that, play was **`e67fec2`** (the machines given weight and a repertoire, #110/PR #111)
 at version 65, stamped. Before that, play was **`3638384`** (machines across a streamed
 world, #108/PR #109) at version 64, stamped. Before that, play was **`07a4913`** (the mortar crawler and the
 grafted hounds, #106/PR #107) at version 63, stamped. Before that, play was **`4015f68`** (heat shimmer over magma and puddles on wet ground, #102/PR #105) at
