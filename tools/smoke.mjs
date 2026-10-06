@@ -2598,6 +2598,10 @@ if (BROWSER_HALF) {
           g.tether = null; g.aim = null; g.haul = null; P.run(2); }, guestHome);
         for (let q = 0; q < 6; q++) { await peerPage.evaluate(() => window.QSPLAY.run(3)); await bp.evaluate(() => window.QSPLAY.run(3)); }
         await bp.evaluate(() => window.QSPLAY.holdMachines(false));
+        const peerEnd = await bp.evaluate(() => { const P = window.QSPLAY, o = P.peer; P.frameOnce();
+          return { kind: o && (o.reelOut !== undefined ? o.reelOut : window.QS.isReel(o)), aim: !!(o && o.aim), th: !!(o && o.tether), haul: !!(o && o.haul),
+                   d: o ? Math.hypot(o.x - P.actor.x, o.z - P.actor.z) : -1, draw: P.reelDraw }; });
+        console.log('  NET after-state: ' + JSON.stringify(peerEnd));
         check(hostSawReel && hostSawAim && hostSawTether,
               'NET: a partner\'s aim line and tether are drawn in the other window',
               `host saw the Reel in the guest's hand ${hostSawReel ? 'yes' : 'NO'}, the aim line ${hostSawAim ? 'yes' : 'NO'}, the tether ${hostSawTether ? 'yes' : 'NO'}`);
