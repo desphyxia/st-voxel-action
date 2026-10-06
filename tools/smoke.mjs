@@ -2574,6 +2574,7 @@ if (BROWSER_HALF) {
            whatever stands near the spawn — and the cutaway check after this
            samples that very ground. */
         await bp.evaluate(() => window.QSPLAY.holdMachines(true));
+        const guestHome = await peerPage.evaluate(() => { const g = window.QSPLAY.actor; return { x: g.x, y: g.y, z: g.z, fx: g.faceX, fz: g.faceZ }; });
         await peerPage.evaluate(() => { const P = window.QSPLAY; P.input.clearPointer(); P.input.press('KeyX'); P.run(2); P.input.release('KeyX'); P.run(2); P.input.press('KeyF'); P.run(2); });
         let hostSawAim = false, hostSawTether = false, hostSawReel = false;
         for (let q = 0; q < 8; q++) {
@@ -2591,6 +2592,11 @@ if (BROWSER_HALF) {
         }
         /* Back to the blade on the guest, and let it settle. */
         await peerPage.evaluate(() => { const P = window.QSPLAY; P.run(60); P.input.press('KeyX'); P.run(1); P.input.release('KeyX'); P.run(2); });
+        /* And back where it stood: the haul left it up to five metres off, beside
+           the ground the cutaway check below samples round the host. */
+        await peerPage.evaluate((h) => { const P = window.QSPLAY, g = P.actor; g.x = h.x; g.y = h.y; g.z = h.z; g.vx = g.vz = 0; g.faceX = h.fx; g.faceZ = h.fz;
+          g.tether = null; g.aim = null; g.haul = null; P.run(2); }, guestHome);
+        for (let q = 0; q < 6; q++) { await peerPage.evaluate(() => window.QSPLAY.run(3)); await bp.evaluate(() => window.QSPLAY.run(3)); }
         await bp.evaluate(() => window.QSPLAY.holdMachines(false));
         check(hostSawReel && hostSawAim && hostSawTether,
               'NET: a partner\'s aim line and tether are drawn in the other window',
