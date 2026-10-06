@@ -18,7 +18,7 @@
 /** Every action the prototype has. Adding a verb adds a row here. */
 export const ACTIONS = [
   'moveUp', 'moveDown', 'moveLeft', 'moveRight',
-  'jump', 'attack', 'dodge', 'rotateLeft', 'rotateRight', 'respawn',
+  'jump', 'attack', 'dodge', 'rotateLeft', 'rotateRight', 'respawn', 'swapFrame',
 ];
 
 export const DEFAULT_BINDINGS = {
@@ -32,6 +32,9 @@ export const DEFAULT_BINDINGS = {
   rotateLeft: ['KeyQ', 'Pad4', 'Touch3'],
   rotateRight: ['KeyE', 'Pad5', 'Touch4'],
   respawn: ['KeyR', 'Pad9'],
+  /* The other frame (#112). The scroll wheel does this too, and is the page's
+     own: a wheel is not a key, so it is not in a table of key codes. */
+  swapFrame: ['KeyX', 'Pad3', 'Touch5'],
 };
 
 /**

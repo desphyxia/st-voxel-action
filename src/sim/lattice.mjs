@@ -140,7 +140,7 @@ export function hexXY(cell) {
 
 /* ----------------------------------------------------------------- frame ---- */
 
-export const FRAME = { WARDEN: 0 };
+export const FRAME = { WARDEN: 0, REEL: 1 };
 
 /**
  * One of eight. A rhombus of four sockets — two triangles sharing an edge —
@@ -151,6 +151,11 @@ export const FRAME = { WARDEN: 0 };
 export const FRAMES = [
   { key: 'WARDEN', name: 'warden frame', blade: 'longblade',
     cells: [[0, 0], [1, 0], [0, 1], [1, 1]] },
+  /* The second (#112): five cells in a line, four edges. The two ends touch
+     one neighbour each and the three inside touch two, so next to the rhombus
+     it is thin and ordered where the rhombus is cramped and cross-wired. */
+  { key: 'REEL', name: 'reel frame', blade: 'tether',
+    cells: [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]] },
 ];
 
 for (let fi = 0; fi < FRAMES.length; fi++) {
@@ -168,10 +173,33 @@ export const CARRY = 4;
 
 export function makeGear(frameId) {
   const g = { frame: frameId === undefined ? FRAME.WARDEN : frameId,
-              slots: [], carried: [], known: 0, fused: [], st: null };
+              slots: [], carried: [], known: 0, fused: [], st: null, bench: null };
   for (let i = 0; i < FRAMES[g.frame].cells.length; i++) g.slots.push(-1);
+  /* Two frames are carried (#112). `frame` and `slots` are the one in hand;
+     `bench` is the other, with its own sockets seated as they were left. The
+     carried modules and what is known are shared by both, because there is
+     one pack and one body of knowledge: only where things are seated differs. */
+  const other = g.frame === FRAME.WARDEN ? FRAME.REEL : FRAME.WARDEN;
+  g.bench = { frame: other, slots: FRAMES[other].cells.map(() => -1) };
   recomputeGear(g);
   return g;
+}
+
+/** Which kind of attack the frame in hand makes: 'longblade' or 'tether'. */
+export function frameKind(g) { return FRAMES[g.frame].blade; }
+
+/**
+ * Put the frame in hand on the bench and take the other one up. The gear is
+ * changed in place — `frame`, `slots`, and the stats that follow — so every
+ * reference to it stays good and there is no second object to keep in step.
+ */
+export function swapFrame(g) {
+  if (!g || !g.bench) return false;
+  const was = { frame: g.frame, slots: g.slots };
+  g.frame = g.bench.frame; g.slots = g.bench.slots;
+  g.bench = was;
+  recomputeGear(g);
+  return true;
 }
 
 /**
@@ -280,13 +308,18 @@ export function pullFrom(a, slot) {
 }
 
 /**
- * The lattice on the wire: a frame, four small ints, at most four more, and a
- * bitmask of what you know. Nine numbers, not a stats block — the stats are
+ * The lattice on the wire: the frame in hand with its sockets, the modules
+ * carried, a bitmask of what you know, and the frame on the bench with its
+ * sockets. A dozen small numbers, not a stats block — the stats are
  * recomputed from it on arrival, so the two ends can never disagree about what
  * a lattice means without disagreeing about the lattice.
  */
 export function gearWire(g) {
-  return g ? { f: g.frame, s: g.slots.slice(), c: g.carried.slice(), k: g.known } : null;
+  if (!g) return null;
+  const w = { f: g.frame, s: g.slots.slice(), c: g.carried.slice(), k: g.known };
+  /* The frame on the bench: its own sockets, and nothing else of it. */
+  if (g.bench) w.b = [g.bench.frame, g.bench.slots.slice()];
+  return w;
 }
 
 export function applyGearWire(g, m) {
@@ -295,6 +328,7 @@ export function applyGearWire(g, m) {
   g.slots = m.s.slice();
   g.carried = m.c.slice();
   g.known = m.k;
+  if (m.b) g.bench = { frame: m.b[0], slots: m.b[1].slice() };
   recomputeGear(g);
   return g;
 }

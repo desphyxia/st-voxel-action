@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, reelSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, marshSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -277,6 +277,7 @@ if (NODE_HALF) for (const r of enemySuite()) check(r.ok, `ENEMY: ${r.label}`, r.
 if (NODE_HALF) for (const r of rosterSuite()) check(r.ok, `ROSTER: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of packSuite()) check(r.ok, `PACKS: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of dynamicsSuite()) check(r.ok, `DYNAMIC: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of reelSuite()) check(r.ok, `REEL: ${r.label}`, r.detail);
 
 /* ---------- GEAR: modules, sockets, fusion and what is on the ground ----------
    The spine of progression (§4), and the first reason this world has anywhere
@@ -1590,6 +1591,108 @@ if (BROWSER_HALF) {
               rh.none ? `${rh.none} (kinds ${roster.kinds.join(',')})` :
               `line ${rh.lit && rh.lit.line ? 'drawn' : 'MISSING'} after ${rh.n} ticks; ${rh.orange} px turn orange`);
 
+        /* ---------- BUILD: the Reel, the second frame (#112) ----------
+           Two frames carried and swapped — by the scroll wheel, by a key and by
+           the on-screen button — and the second one hauls. Staged on a clear
+           line of open ground with the machines held, so what is measured is
+           the tether and not whatever happens to be standing in its way. */
+        const reel = await bp.evaluate(async () => {
+          const P = window.QSPLAY, QS = window.QS, a = P.actor, col = P.collider, cv = document.querySelector('#cv');
+          P.input.clearPointer(); P.holdMachines(true); P.pause(false);
+          const wait = async () => { await new Promise((r) => setTimeout(r, 380)); P.frameOnce(); P.frameOnce(); };
+          const out = { start: P.frameKind };
+          const home = { x: a.x, y: a.y, z: a.z, fx: a.faceX, fz: a.faceZ };
+          /* The wheel, the key and the button, one swap each. */
+          cv.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true }));
+          P.run(2); out.wheel = P.frameKind;
+          await wait();
+          P.input.press('KeyX'); P.run(1); P.input.release('KeyX'); P.run(2); out.key = P.frameKind;
+          const btn = document.querySelector('#tSwap');
+          btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerType: 'touch' }));
+          btn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerType: 'touch' }));
+          P.run(2); out.button = P.frameKind; P.frameOnce();
+          out.chip = P.reelDraw.chip; out.atk = P.reelDraw.atk; out.swapLabel = P.reelDraw.swap;
+          /* A wheel notch is one swap however many events it makes. */
+          await wait();
+          const burst = P.frameKind;
+          for (let q = 0; q < 5; q++) cv.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true, cancelable: true }));
+          P.run(2); out.burst = [burst, P.frameKind];
+          if (P.frameKind !== 'tether') { await wait(); cv.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true, cancelable: true })); P.run(2); }
+          /* A clear line of ground, seven metres each way, near where it stands. */
+          const openLine = (c, dx, dz) => {
+            for (let s = 1; s <= 7; s += 0.5) {
+              const x = c.x + dx * s, z = c.z + dz * s, q = QS.placeOnGround(col, x, z, c.y + 1);
+              if (!q.grounded || Math.abs(q.y - c.y) > 0.3 || col.overlaps(x, z, 0.12, c.y + 0.7, c.y + 1.3)) return false;
+            }
+            return true;
+          };
+          let spot = null;
+          for (let r = 0; r <= 24 && !spot; r += 2) for (let k = 0; k < 12 && !spot; k++) {
+            const x = a.x + Math.cos(k * Math.PI / 6) * r, z = a.z + Math.sin(k * Math.PI / 6) * r;
+            const c = QS.placeOnGround(col, x, z, 40);
+            if (!c.grounded || QS.embedded(col, c)) continue;
+            for (let d = 0; d < 8 && !spot; d++) {
+              const dx = Math.cos(d * Math.PI / 4), dz = Math.sin(d * Math.PI / 4);
+              if (openLine(c, dx, dz)) spot = { x, y: c.y, z, dx, dz };
+            }
+          }
+          out.spot = !!spot;
+          if (spot) {
+            a.x = spot.x; a.z = spot.z; a.y = spot.y; a.vx = a.vz = 0; a.faceX = spot.dx; a.faceZ = spot.dz;
+            a.hp = QS.PLAYER_HP; a.dead = null; a.stamina = QS.STAMINA_MAX; a.swing = null; a.dodge = null;
+            QS.warpTo(P.cam, a.x, a.y, a.z); P.run(2);
+            const grab = () => { P.draw(); const g = document.createElement('canvas'); g.width = cv.width; g.height = cv.height;
+              const x = g.getContext('2d'); x.drawImage(cv, 0, 0); return x.getImageData(0, 0, g.width, g.height).data; };
+            const x0 = a.x, z0 = a.z, st0 = a.stamina;
+            /* Aiming: the line is on the ground, and costs nothing yet. */
+            const before = grab();
+            P.input.press('KeyF'); P.run(4); P.frameOnce();
+            out.aimLine = P.reelDraw.aim; out.aimCost = st0 - a.stamina;
+            const during = grab();
+            let px = 0;
+            for (let i = 0; i < during.length; i += 4) {
+              if (Math.abs(during[i] - before[i]) + Math.abs(during[i + 1] - before[i + 1]) + Math.abs(during[i + 2] - before[i + 2]) > 60) px++;
+            }
+            out.aimPixels = px;
+            /* Letting go fires: the tether is drawn, and the body is hauled. */
+            P.input.release('KeyF');
+            /* What it cost is read as it is fired: stamina starts coming back
+               half a second later, and a second of haul and retract is 15 of it. */
+            P.run(1); out.spent = st0 - a.stamina;
+            let sawTether = false, sawHaul = false;
+            for (let i = 0; i < 60; i++) {
+              P.run(1); if (i % 2 === 0) P.frameOnce();
+              if (P.reelDraw.tether) sawTether = true;
+              if (a.haul) sawHaul = true;
+            }
+            out.sawTether = sawTether; out.sawHaul = sawHaul;
+            out.hauled = Math.hypot(a.x - x0, a.z - z0);
+            out.grounded = a.grounded;
+          }
+          /* Put it back as found: the blade in hand, the machines let go, and
+             standing where it was — the checks after this one measure the
+             ground round the spawn. */
+          if (P.frameKind !== 'longblade') { await wait(); P.input.press('KeyX'); P.run(1); P.input.release('KeyX'); P.run(2); }
+          out.end = P.frameKind; P.holdMachines(false);
+          a.x = home.x; a.y = home.y; a.z = home.z; a.vx = a.vz = 0; a.faceX = home.fx; a.faceZ = home.fz;
+          a.stamina = QS.STAMINA_MAX; a.tether = null; a.aim = null; a.haul = null;
+          QS.warpTo(P.cam, a.x, a.y, a.z); P.run(2);
+          return out;
+        });
+        check(reel.start === 'longblade' && reel.wheel === 'tether' && reel.key === 'longblade' && reel.button === 'tether'
+              && reel.burst[0] !== reel.burst[1] && reel.chip.indexOf('Reel') >= 0 && reel.atk === 'Reel',
+              'BUILD: two frames are carried, and the wheel, a key and an on-screen button each swap them',
+              `${reel.start} → wheel ${reel.wheel} → key ${reel.key} → button ${reel.button}; a burst of five notches `
+              + `${reel.burst[0]} → ${reel.burst[1]}; chip "${reel.chip}", attack button "${reel.atk}", swap "${reel.swapLabel}"`);
+        check(reel.spot && reel.aimLine && reel.aimCost === 0 && reel.aimPixels > 150,
+              'BUILD: aiming the Reel draws a line on the ground and costs nothing',
+              reel.spot ? `${reel.aimLine ? 'line drawn' : 'NO LINE'}, ${reel.aimPixels} px differ from the frame without it, ${reel.aimCost} stamina`
+                        : 'no clear line of ground within 24 m of the spawn');
+        check(reel.spot && reel.sawTether && reel.sawHaul && reel.hauled > 3 && reel.hauled < 6.5 && reel.grounded && reel.spent >= 20 && reel.end === 'longblade',
+              'BUILD: and releasing hauls you along the ground on the tether',
+              reel.spot ? `tether ${reel.sawTether ? 'drawn' : 'NEVER DRAWN'}, haul ${reel.sawHaul ? 'seen' : 'NEVER'}, `
+                          + `hauled ${reel.hauled.toFixed(1)} m, ${reel.spent.toFixed(0)} stamina, back to ${reel.end}` : 'not staged');
+
         /* ---------- BUILD: the two terrain renderers (#12) ----------
            Both are in the page at once so the side-by-side the issue asks for is
            two shots of one camera rather than two runs that might differ. What
@@ -2794,6 +2897,67 @@ if (BROWSER_HALF) {
               'DEBUG: in a game of two the host runs the simulation controls, the guest cannot, and both draw and measure',
               `host: ${dbg.live.length} of ${dbg.sim} live; guest: ${gdbg.live.length ? 'LIVE ' + gdbg.live.join(', ') : 'all refused'}; `
               + `network rows ${dbg.net}/${gdbg.net}; borders drawn ${dbg.lines}/${gdbg.lines}`);
+
+        /* #112: (run after the checks that sample the ground round the host:
+           with it before the cutaway check, that check read 13 against its 12
+           where it reads 11 without. The guest left quiet, on the blade and
+           where it stood, and no machine touched — the cause was not traced.)
+           A partner's aim is on the ground for you to read, the way an
+           enemy's tell is, and their tether is drawn. The guest swaps to the
+           Reel, aims, and lets go; the host should see all three. */
+        /* The host's machines are held for it: the guest's tether is simulated
+           on the host with the encounter's targets, so it would hit and wake
+           whatever stands near the spawn — and the cutaway check after this
+           samples that very ground. */
+        await bp.evaluate(() => window.QSPLAY.holdMachines(true));
+        const machinesBefore = await bp.evaluate(() => (window.QSPLAY.machines || []).map((e) => ({ x: e.x, y: e.y, z: e.z, hp: e.hp, dead: e.dead, st: e.ai && e.ai.state, t: e.ai && e.ai.t, vx: e.vx, vz: e.vz })));
+        const guestHome = await peerPage.evaluate(() => { const g = window.QSPLAY.actor; return { x: g.x, y: g.y, z: g.z, fx: g.faceX, fz: g.faceZ }; });
+        await peerPage.evaluate(() => { const P = window.QSPLAY; P.input.clearPointer(); P.input.press('KeyX'); P.run(2); P.input.release('KeyX'); P.run(2); P.input.press('KeyF'); P.run(2); });
+        let hostSawAim = false, hostSawTether = false, hostSawReel = false;
+        for (let q = 0; q < 8; q++) {
+          await peerPage.evaluate(() => window.QSPLAY.run(3));
+          await bp.evaluate(() => window.QSPLAY.run(3));
+        }
+        const seen1 = await bp.evaluate(() => { const P = window.QSPLAY, o = P.peer; P.frameOnce();
+          return { aim: P.reelDraw.peerAim, kind: o && (o.reelOut !== undefined ? o.reelOut : window.QS.isReel(o)) }; });
+        hostSawAim = seen1.aim; hostSawReel = !!seen1.kind;
+        await peerPage.evaluate(() => window.QSPLAY.input.release('KeyF'));
+        for (let q = 0; q < 14 && !hostSawTether; q++) {
+          await peerPage.evaluate(() => window.QSPLAY.run(2));
+          await bp.evaluate(() => window.QSPLAY.run(2));
+          hostSawTether = await bp.evaluate(() => { window.QSPLAY.frameOnce(); return window.QSPLAY.reelDraw.peerTether; });
+        }
+        /* Back to the blade on the guest, and let it settle. */
+        /* A swap is refused while the tether is out, so it is asked for again each
+           time the guest has gone quiet, until the host sees the blade in its hand
+           and nothing in the air. */
+        for (let q = 0; q < 30; q++) {
+          await peerPage.evaluate(() => { const P = window.QSPLAY, g = P.actor; P.run(12);
+            if (P.frameKind !== 'longblade' && !g.tether && !g.haul && !g.aim) { P.input.press('KeyX'); P.run(1); P.input.release('KeyX'); P.run(2); } });
+          const quiet = await bp.evaluate(() => { const P = window.QSPLAY, o = P.peer; P.run(12); return !!o && !o.tether && !o.haul && !o.aim && !window.QS.isReel(o); });
+          if (quiet) break;
+        }
+        /* And back where it stood: the haul left it up to five metres off, beside
+           the ground the cutaway check below samples round the host. */
+        await peerPage.evaluate((h) => { const P = window.QSPLAY, g = P.actor; g.x = h.x; g.y = h.y; g.z = h.z; g.vx = g.vz = 0; g.faceX = h.fx; g.faceZ = h.fz;
+          g.tether = null; g.aim = null; g.haul = null; P.run(2); }, guestHome);
+        for (let q = 0; q < 6; q++) { await peerPage.evaluate(() => window.QSPLAY.run(3)); await bp.evaluate(() => window.QSPLAY.run(3)); }
+        await bp.evaluate(() => window.QSPLAY.holdMachines(false));
+        const machineDiff = await bp.evaluate((was) => { const ms = window.QSPLAY.machines || [], out = [];
+          ms.forEach((e, i) => { const w = was[i]; if (!w) return;
+            if (e.hp !== w.hp || !!e.dead !== !!w.dead || (e.ai && e.ai.state) !== w.st || Math.abs(e.x - w.x) + Math.abs(e.z - w.z) > 0.01) {
+              out.push({ i, k: e.k, hp: [w.hp, e.hp], dead: [!!w.dead, !!e.dead], st: [w.st, e.ai && e.ai.state], dx: +(e.x - w.x).toFixed(2), dz: +(e.z - w.z).toFixed(2) });
+              e.hp = w.hp; e.dead = w.dead; e.x = w.x; e.y = w.y; e.z = w.z; e.vx = w.vx; e.vz = w.vz; if (e.ai) { e.ai.state = w.st; e.ai.t = w.t; }
+            } });
+          return out; }, machinesBefore);
+        console.log('  NET machines disturbed: ' + JSON.stringify(machineDiff));
+        const peerEnd = await bp.evaluate(() => { const P = window.QSPLAY, o = P.peer; P.frameOnce();
+          return { kind: o && (o.reelOut !== undefined ? o.reelOut : window.QS.isReel(o)), aim: !!(o && o.aim), th: !!(o && o.tether), haul: !!(o && o.haul),
+                   d: o ? Math.hypot(o.x - P.actor.x, o.z - P.actor.z) : -1, draw: P.reelDraw }; });
+        console.log('  NET after-state: ' + JSON.stringify(peerEnd));
+        check(hostSawReel && hostSawAim && hostSawTether,
+              'NET: a partner\'s aim line and tether are drawn in the other window',
+              `host saw the Reel in the guest's hand ${hostSawReel ? 'yes' : 'NO'}, the aim line ${hostSawAim ? 'yes' : 'NO'}, the tether ${hostSawTether ? 'yes' : 'NO'}`);
 
         /* The host switches flight on, and the guest — holding jump — rises,
            on its own screen and on the host's. */

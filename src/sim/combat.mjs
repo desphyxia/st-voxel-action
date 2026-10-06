@@ -71,6 +71,31 @@ export const HURT_TIME = 0.25;
 
 export const PHASE = { NONE: 0, WINDUP: 1, ACTIVE: 2, RECOVER: 3 };
 
+/* ---- the Reel, the second frame (#112) ----
+   Placeholders on the same terms as everything above: #9 decides what a haul
+   is worth. What is built here is the shape — a tether that pulls — and the
+   one rule that keeps it honest: a haul is a dash along the ground through the
+   same controller, so it stops at a ledge and never crosses a gap. */
+export const REEL = {
+  /** How far the tether flies, and how fast. */
+  range: 9, speed: 40,
+  /** What firing costs, and how long a tether takes to come back in. */
+  cost: 30, retract: 0.45,
+  /** How fast you are hauled, and how far an open-ground haul goes. */
+  haul: 20, ground: 5,
+  /** How close a haul stops to a target, and to a wall. */
+  stopTarget: 1.5, stopWall: 0.8,
+  /** A light target is hauled this fast and stops this far from you. */
+  yank: 16, yankStop: 1.4,
+  /** Share of your damage a yank does, and the strike at the end of a haul. */
+  yankScale: 0.3, strikeScale: 0.6,
+  /** How much of running speed you keep aiming, with the tether out, and
+      while it is coming back. */
+  aimSpeed: 0.6, outSpeed: 0.3, backSpeed: 0.5,
+};
+/** The tether's phases: flying out, hauling, and coming back in. */
+export const TETHER = { OUT: 1, HAUL: 2, BACK: 3 };
+
 /* ---- the numbers, as a value rather than as constants ----
    An empty frame plays exactly the game the constants above describe. A
    socketed one plays a different one, and everything that reads a rule reads
@@ -116,7 +141,9 @@ export function invulnerable(a) { return !!a.dodge && a.dodge.t < statsOf(a).ifr
 
 /** What fraction of running speed this actor is allowed right now. */
 export function speedScale(a) {
-  if (a.dodge) return 0;                       /* the dash sets velocity itself */
+  if (a.dodge || a.haul) return 0;             /* the dash sets velocity itself */
+  if (a.tether) return a.tether.ph === TETHER.BACK ? REEL.backSpeed : REEL.outSpeed;
+  if (a.aim) return REEL.aimSpeed;
   switch (phase(a)) {
     case PHASE.WINDUP: return WINDUP_SPEED;
     case PHASE.ACTIVE: return ACTIVE_SPEED;
@@ -126,7 +153,8 @@ export function speedScale(a) {
 }
 
 export function canSwing(a) {
-  return !a.swing && !a.dodge && !a.swimming && a.stamina >= statsOf(a).swingCost;
+  return !a.swing && !a.dodge && !a.swimming && !a.aim && !a.tether && !a.haul
+    && a.stamina >= statsOf(a).swingCost;
 }
 
 /**
@@ -135,7 +163,10 @@ export function canSwing(a) {
  * "committed": once the blade is moving you are going to finish the motion.
  */
 export function canDodge(a) {
-  if (a.dodge || a.swimming || a.stamina < statsOf(a).dodgeCost) return false;
+  if (a.dodge || a.haul || a.swimming || a.stamina < statsOf(a).dodgeCost) return false;
+  /* Out of aiming, or a tether coming back in, the way a swing's recovery is
+     left; never while it is flying or hauling. */
+  if (a.tether && a.tether.ph !== TETHER.BACK) return false;
   return !a.swing || phase(a) === PHASE.RECOVER;
 }
 
@@ -157,6 +188,7 @@ export function beginDodge(a, dx, dz) {
   else { ux /= l; uz /= l; }
   const st = statsOf(a);
   a.swing = null;                              /* cancels recovery, never active */
+  a.aim = null; a.tether = null;
   a.dodge = { t: 0, dx: ux, dz: uz };
   a.stamina -= st.dodgeCost;
   a.staminaHold = st.staminaHold;
@@ -172,7 +204,7 @@ export function beginDodge(a, dx, dz) {
  */
 export function advanceCombat(a, dt) {
   const st = statsOf(a);
-  a.hits = 0;
+  a.hits = 0; a.hitScale = 1;
   if (a.hurtT > 0) a.hurtT = Math.max(0, a.hurtT - dt);
   if (a.swing) { a.swing.t += dt; if (a.swing.t >= WINDUP + ACTIVE + st.recover) a.swing = null; }
   if (a.dodge) { a.dodge.t += dt; if (a.dodge.t >= DODGE_TIME) a.dodge = null; }
@@ -232,7 +264,7 @@ export function hurt(a, amount, cause) {
 export function applyHits(a, targets, damage) {
   if (!a.hits || !targets) return 0;
   const st = statsOf(a);
-  const dmg = damage === undefined ? st.damage : damage;
+  const dmg = damage === undefined ? st.damage * (a.hitScale || 1) : damage;
   let n = 0;
   for (let i = 0; i < targets.length && i < 32; i++) {
     if ((a.hits & (1 << i)) && hurt(targets[i], dmg, 'struck')) n++;

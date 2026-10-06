@@ -276,6 +276,17 @@ needs were missing, the host's picture would break too. On the network it
 travels packed as arrays (`packFoes`), which is what kept nine machines inside
 the wire budget.
 
+`reel.mjs` is the second frame (#112): hold to aim, release to fire a tether up to
+9 m. A light target (`weight` 1, a hound) is hauled to you and staggered; a heavy one
+(a sentry, a mortar, a post) anchors you and you are hauled to it, ending in a strike;
+a wall or open ground hauls you there as a dash. **A haul is a dash through the same
+controller, so it ends at a ledge, at magma, at a wall, or when the feet leave the
+ground: it never crosses a gap**, and a module cannot make it one. Two frames are carried
+and `swapFrame` trades the one in hand with the one on the bench *in place*, so
+every reference to the gear stays good; the pack and the recipes known are shared. The
+guest replays a haul without targets and predicts its flight, and what the tether *met*
+is the host's, put right by the next snapshot — the same split as a swing's damage.
+
 `lattice.mjs` is the spine of progression: a frame is a list of axial hex cells,
 and everything else falls out of the adjacency that implies. One frame of eight —
 four sockets in a rhombus, five edges — nine modules and six fusions. A module
