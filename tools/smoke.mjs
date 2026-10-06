@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, reelSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, reelSuite, survivalSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, marshSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -278,6 +278,7 @@ if (NODE_HALF) for (const r of rosterSuite()) check(r.ok, `ROSTER: ${r.label}`, 
 if (NODE_HALF) for (const r of packSuite()) check(r.ok, `PACKS: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of dynamicsSuite()) check(r.ok, `DYNAMIC: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of reelSuite()) check(r.ok, `REEL: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of survivalSuite()) check(r.ok, `SURVIVAL: ${r.label}`, r.detail);
 
 /* ---------- GEAR: modules, sockets, fusion and what is on the ground ----------
    The spine of progression (§4), and the first reason this world has anywhere
@@ -2958,6 +2959,42 @@ if (BROWSER_HALF) {
         check(hostSawReel && hostSawAim && hostSawTether,
               'NET: a partner\'s aim line and tether are drawn in the other window',
               `host saw the Reel in the guest's hand ${hostSawReel ? 'yes' : 'NO'}, the aim line ${hostSawAim ? 'yes' : 'NO'}, the tether ${hostSawTether ? 'yes' : 'NO'}`);
+
+        /* #114: a blow that would kill a partner puts them down while the other
+           still stands. Both windows say so, and the one standing, walking up to
+           them, stands them up. The host's machines are held so that nothing but
+           this check hurts anyone, and everything is put back after. */
+        await bp.evaluate(() => window.QSPLAY.holdMachines(true));
+        const downSt = await bp.evaluate(() => { const P = window.QSPLAY, QS = window.QS, o = P.peer, a = P.actor;
+          const home = { x: a.x, y: a.y, z: a.z };
+          QS.hurt(o, 999, 'struck'); P.run(3);
+          const out = { down: o.down, dead: o.dead, hp: o.hp, home }; P.frameOnce();
+          out.chip = document.getElementById('peerwho').textContent;
+          return out; });
+        for (let q = 0; q < 6; q++) { await bp.evaluate(() => window.QSPLAY.run(3)); await peerPage.evaluate(() => window.QSPLAY.run(3)); }
+        const guestDown = await peerPage.evaluate(() => { const P = window.QSPLAY; P.frameOnce();
+          const el = document.getElementById('dead');
+          return { down: P.actor.down, shown: getComputedStyle(el).display !== 'none', msg: document.getElementById('deadmsg').textContent }; });
+        /* The host walks up to the guest and stands there. */
+        await bp.evaluate(() => { const P = window.QSPLAY, o = P.peer, a = P.actor;
+          a.x = o.x + 1; a.z = o.z; a.y = o.y; a.vx = a.vz = 0; });
+        for (let q = 0; q < 12; q++) { await bp.evaluate(() => window.QSPLAY.run(10)); await peerPage.evaluate(() => window.QSPLAY.run(10)); }
+        const stood = await bp.evaluate(() => { const o = window.QSPLAY.peer; return { down: o.down, dead: o.dead, hp: o.hp, mh: o.maxHp }; });
+        const guestUp = await peerPage.evaluate(() => { const P = window.QSPLAY; P.frameOnce();
+          return { down: P.actor.down, hp: P.actor.hp, shown: getComputedStyle(document.getElementById('dead')).display !== 'none' }; });
+        /* Back as found: the host where it was, the partner whole. */
+        await bp.evaluate((h) => { const P = window.QSPLAY, a = P.actor, o = P.peer;
+          a.x = h.x; a.y = h.y; a.z = h.z; a.vx = a.vz = 0; o.hp = o.maxHp; window.QSPLAY.holdMachines(false); P.run(2); }, downSt.home);
+        await peerPage.evaluate(() => { const g = window.QSPLAY.actor; g.hp = g.maxHp; });
+        check(downSt.down > 0 && !downSt.dead && downSt.hp === 0 && /down/.test(downSt.chip)
+              && guestDown.down > 0 && guestDown.shown && /down/.test(guestDown.msg),
+              'NET: a partner a blow would kill is put down, and both windows say so (#114)',
+              `host: down ${downSt.down} s, hp ${downSt.hp}, chip "${downSt.chip}"; guest: down ${(guestDown.down || 0).toFixed(1)} s, `
+              + `${guestDown.shown ? 'overlay "' + guestDown.msg + '"' : 'NO OVERLAY'}`);
+        check(!stood.down && !stood.dead && stood.hp > 0 && stood.hp <= stood.mh * 0.5 && !guestUp.down && !guestUp.shown,
+              'NET: and the one standing walks up to them and stands them up, in both windows (#114)',
+              `host sees ${stood.dead ? 'dead' : (stood.down ? 'still down' : 'up')} at ${stood.hp} hp; guest ${guestUp.down ? 'still down' : 'up'}, `
+              + `${guestUp.shown ? 'overlay still shown' : 'overlay gone'}`);
 
         /* The host switches flight on, and the guest — holding jump — rises,
            on its own screen and on the host's. */

@@ -144,7 +144,7 @@ function applyAct(a, m) {
    which is what made room for a streamed world's machines (#108). */
 const STATE_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'apex', 'airJumps', 'jumps',
   'airJumped', 'inWater', 'swimming', 'kick', 'faceX', 'faceZ', 'dead', 'hp', 'maxHp', 'hurtT',
-  'stamina', 'staminaHold', 'gear', 'picked', 'swing', 'dodge', 'hits', 'ticks', 'travelled', 'blocked'];
+  'stamina', 'staminaHold', 'gear', 'picked', 'swing', 'dodge', 'hits', 'ticks', 'travelled', 'blocked', 'down'];
 
 export function packState(s) {
   const a = STATE_KEYS.map((k) => (s[k] === undefined ? null : s[k]));

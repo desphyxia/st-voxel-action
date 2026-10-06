@@ -65,13 +65,14 @@ import { MOVE, CHUNK } from '../gen/constants.mjs';
 import { hyp, cos, sin } from '../gen/exact.mjs';
 import { EPS, LIQUID } from './collider.mjs';
 import { TICK, placeOnGround, step } from './actor.mjs';
-import { inArc, hurt, applyHits, WINDUP } from './combat.mjs';
+import { inArc, hurt, applyHits, WINDUP, REGEN_DELAY } from './combat.mjs';
+import { upkeep } from './revive.mjs';
 import { TRAD } from './lattice.mjs';
 import { makeLootField } from './loot.mjs';
 import { findPath } from './nav.mjs';
 
 export const SENTRY = {
-  hp: 60,
+  hp: 80,
   /** How far it notices you. Deliberately short: it holds a position. */
   sight: 13,
   /** Where it decides you are close enough to be worth swinging at. */
@@ -80,7 +81,7 @@ export const SENTRY = {
   reach: 2.4,
   arc: 1.4,
   span: 2.0,
-  damage: 18,
+  damage: 13,
   /** Fraction of the player's run speed. It should never simply outrun you. */
   speed: 0.58,
   /** Half its drawn width (1.35 m): it collides as wide as it looks (#37),
@@ -94,7 +95,7 @@ const COS_HALF = cos(SENTRY.arc / 2);
 
 /** The mortar crawler (#106). Every number here is a placeholder for #9. */
 export const MORTAR = {
-  hp: 40,
+  hp: 50,
   /** It sees further than the sentry: it is the one that shoots first. */
   sight: 16,
   /** It fires at anything between `near` and `range`, and backs away from
@@ -106,7 +107,7 @@ export const MORTAR = {
   spread: 1.8,
   /** The ring each shell lands in, and what landing in it costs. */
   ringR: 1.3,
-  damage: 14,
+  damage: 13,
   speed: 0.45,
   rad: 0.55,
   leash: 14,
@@ -114,7 +115,7 @@ export const MORTAR = {
 
 /** The grafted hounds (#106). Placeholders for #9 too. */
 export const HOUND = {
-  hp: 30,
+  hp: 25,
   sight: 14,
   /** It circles at about this distance before it commits. */
   circle: 3.2,
@@ -125,7 +126,7 @@ export const HOUND = {
   lunge: 3.5,
   /** Whatever the lunge passes within this of, it hits. */
   bite: 0.75,
-  damage: 10,
+  damage: 12,
   /** Faster than a player at a run: you cannot simply walk away from hounds. */
   speed: 1.05,
   rad: 0.45,
@@ -347,7 +348,7 @@ function pick(e, players, foes) {
     const d = hyp(p.x - e.x, p.z - e.z);
     if (d < bd) { bd = d; best = p; }
   };
-  for (const p of players) if (p && !p.dead) consider(p);
+  for (const p of players) if (p && !p.dead && !p.down) consider(p);
   if (foes) {
     for (const m of foes) {
       if (m === e || !upright(m) || m.trad === e.trad) continue;
@@ -367,7 +368,7 @@ function strayed(e) {
 /** Everything this machine's blow may land on: players, and rival machines. */
 function victims(e, players, foes) {
   const out = [];
-  for (const p of players) if (p && !p.dead) out.push(p);
+  for (const p of players) if (p && !p.dead && !p.down) out.push(p);
   if (foes) for (const m of foes) if (m !== e && upright(m) && m.trad !== e.trad) out.push(m);
   return out;
 }
@@ -1079,7 +1080,7 @@ export function makeEncounter(col, world, posts) {
 
     /** One tick: the machines act, then whatever the players cut takes it. */
     step(players, dt = TICK) {
-      if (this.held) return loot.collect(players);
+      if (this.held) { upkeep(players, dt); return loot.collect(players); }
       if (streamed && ticks++ % STREAM_ENC.every === 0) sync(players);
       let party = 0;
       for (const p of players) if (p) party++;
@@ -1087,6 +1088,11 @@ export function makeEncounter(col, world, posts) {
       if (party > 1) for (const e of enemies) if (e.reserve) e.reserve = false;
       const budget = { left: 1, party };
       for (const e of enemies) if (grounded(e)) stepEnemy(col, e, players, dt, budget, enemies);
+      /* Whoever a machine has its eye on is hunted, and does not heal (#114). */
+      for (const e of enemies) {
+        const g = e.ai && e.ai.tgt;
+        if (g && !e.dead && !e.reserve && awake(e) && players.indexOf(g) >= 0) g.hunted = REGEN_DELAY;
+      }
       for (const p of players) {
         if (!p || !p.hits) continue;
         const mask = p.hits;
@@ -1099,6 +1105,7 @@ export function makeEncounter(col, world, posts) {
       }
       /* What is left of a machine, and then whoever walks over it. */
       for (const e of enemies) if (e.dead && !e.fell) { e.fell = 1; fell(e); }
+      upkeep(players, dt);
       return loot.collect(players);
     },
 

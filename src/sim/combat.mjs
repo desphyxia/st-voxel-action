@@ -29,8 +29,8 @@ import { hyp, cos } from '../gen/exact.mjs';
 
 /* ---- stamina: the thing that makes a swing a decision ---- */
 export const STAMINA_MAX = 100;
-export const SWING_COST = 25;
-export const DODGE_COST = 20;
+export const SWING_COST = 20;
+export const DODGE_COST = 15;
 /** Per second, once it starts coming back. */
 export const STAMINA_REGEN = 30;
 /** Seconds of nothing after spending, so a pool cannot be drip-fed. */
@@ -69,6 +69,12 @@ export const SWING_DAMAGE = 20;
 /** Seconds of flinch after taking a hit. Read by the renderer, nothing else. */
 export const HURT_TIME = 0.25;
 
+/* ---- staying alive (#114): the rules are in src/sim/revive.mjs ---- */
+/** Seconds without a blow or a hunter before health starts coming back, and
+    how fast it does: a full bar in a minute, not a heal item. */
+export const REGEN_DELAY = 5;
+export const REGEN_RATE = 2;
+
 export const PHASE = { NONE: 0, WINDUP: 1, ACTIVE: 2, RECOVER: 3 };
 
 /* ---- the Reel, the second frame (#112) ----
@@ -80,7 +86,7 @@ export const REEL = {
   /** How far the tether flies, and how fast. */
   range: 9, speed: 40,
   /** What firing costs, and how long a tether takes to come back in. */
-  cost: 30, retract: 0.45,
+  cost: 25, retract: 0.45,
   /** How fast you are hauled, and how far an open-ground haul goes. */
   haul: 20, ground: 5,
   /** How close a haul stops to a target, and to a wall. */
@@ -88,7 +94,7 @@ export const REEL = {
   /** A light target is hauled this fast and stops this far from you. */
   yank: 16, yankStop: 1.4,
   /** Share of your damage a yank does, and the strike at the end of a haul. */
-  yankScale: 0.3, strikeScale: 0.6,
+  yankScale: 0.35, strikeScale: 0.5,
   /** How much of running speed you keep aiming, with the tether out, and
       while it is coming back. */
   aimSpeed: 0.6, outSpeed: 0.3, backSpeed: 0.5,
@@ -241,7 +247,7 @@ export function inArc(a, t, reach, arc, span, cosHalf) {
  */
 /** Put hit points back, never past the ceiling the frame allows. */
 export function heal(a, amount) {
-  if (!a || a.dead || a.hp === undefined) return 0;
+  if (!a || a.dead || a.down || a.hp === undefined) return 0;
   const cap = a.maxHp === undefined ? statsOf(a).maxHp : a.maxHp;
   const before = a.hp;
   a.hp = Math.min(cap, a.hp + amount);
@@ -250,9 +256,10 @@ export function heal(a, amount) {
 
 export function hurt(a, amount, cause) {
   /* `invincible` is the debug dialog's (#92), for one player alone. */
-  if (!a || a.dead || a.hp === undefined || invulnerable(a) || a.invincible) return false;
+  if (!a || a.dead || a.down || a.hp === undefined || invulnerable(a) || a.invincible) return false;
   a.hp -= amount;
   a.hurtT = HURT_TIME;
+  a.hunted = REGEN_DELAY;
   if (a.hp <= 0) { a.hp = 0; a.dead = cause || 'struck'; }
   return true;
 }

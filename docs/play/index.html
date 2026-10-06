@@ -7116,8 +7116,8 @@ function makeStream(field, opts) {
 
 /* ---- stamina: the thing that makes a swing a decision ---- */
 const STAMINA_MAX = 100;
-const SWING_COST = 25;
-const DODGE_COST = 20;
+const SWING_COST = 20;
+const DODGE_COST = 15;
 /** Per second, once it starts coming back. */
 const STAMINA_REGEN = 30;
 /** Seconds of nothing after spending, so a pool cannot be drip-fed. */
@@ -7156,6 +7156,12 @@ const SWING_DAMAGE = 20;
 /** Seconds of flinch after taking a hit. Read by the renderer, nothing else. */
 const HURT_TIME = 0.25;
 
+/* ---- staying alive (#114): the rules are in src/sim/revive.mjs ---- */
+/** Seconds without a blow or a hunter before health starts coming back, and
+    how fast it does: a full bar in a minute, not a heal item. */
+const REGEN_DELAY = 5;
+const REGEN_RATE = 2;
+
 const PHASE = { NONE: 0, WINDUP: 1, ACTIVE: 2, RECOVER: 3 };
 
 /* ---- the Reel, the second frame (#112) ----
@@ -7167,7 +7173,7 @@ const REEL = {
   /** How far the tether flies, and how fast. */
   range: 9, speed: 40,
   /** What firing costs, and how long a tether takes to come back in. */
-  cost: 30, retract: 0.45,
+  cost: 25, retract: 0.45,
   /** How fast you are hauled, and how far an open-ground haul goes. */
   haul: 20, ground: 5,
   /** How close a haul stops to a target, and to a wall. */
@@ -7175,7 +7181,7 @@ const REEL = {
   /** A light target is hauled this fast and stops this far from you. */
   yank: 16, yankStop: 1.4,
   /** Share of your damage a yank does, and the strike at the end of a haul. */
-  yankScale: 0.3, strikeScale: 0.6,
+  yankScale: 0.35, strikeScale: 0.5,
   /** How much of running speed you keep aiming, with the tether out, and
       while it is coming back. */
   aimSpeed: 0.6, outSpeed: 0.3, backSpeed: 0.5,
@@ -7328,7 +7334,7 @@ function inArc(a, t, reach, arc, span, cosHalf) {
  */
 /** Put hit points back, never past the ceiling the frame allows. */
 function heal(a, amount) {
-  if (!a || a.dead || a.hp === undefined) return 0;
+  if (!a || a.dead || a.down || a.hp === undefined) return 0;
   const cap = a.maxHp === undefined ? statsOf(a).maxHp : a.maxHp;
   const before = a.hp;
   a.hp = Math.min(cap, a.hp + amount);
@@ -7337,9 +7343,10 @@ function heal(a, amount) {
 
 function hurt(a, amount, cause) {
   /* `invincible` is the debug dialog's (#92), for one player alone. */
-  if (!a || a.dead || a.hp === undefined || invulnerable(a) || a.invincible) return false;
+  if (!a || a.dead || a.down || a.hp === undefined || invulnerable(a) || a.invincible) return false;
   a.hp -= amount;
   a.hurtT = HURT_TIME;
+  a.hunted = REGEN_DELAY;
   if (a.hp <= 0) { a.hp = 0; a.dead = cause || 'struck'; }
   return true;
 }
@@ -7460,22 +7467,22 @@ const MOD = {
  * edges you can close.
  */
 const MODULES = [
-  { key: 'GOVERNOR', name: 'governor', trad: TRAD.TECH, says: '+30 stamina',
-    apply(s) { s.maxStamina += 30; } },
-  { key: 'SERVO', name: 'servo', trad: TRAD.TECH, says: 'recovery −30%',
-    apply(s) { s.recover *= 0.70; } },
-  { key: 'PLATING', name: 'plating', trad: TRAD.TECH, says: '+40 hp',
-    apply(s) { s.maxHp += 40; } },
-  { key: 'KEEN', name: 'keening edge', trad: TRAD.MAGIC, says: '+8 damage',
-    apply(s) { s.damage += 8; } },
-  { key: 'SIGIL', name: 'lengthening sigil', trad: TRAD.MAGIC, says: '+0.5 m reach',
-    apply(s) { s.reach += 0.5; } },
-  { key: 'BLINK', name: 'blink rune', trad: TRAD.MAGIC, says: '+1 m dodge',
-    apply(s) { s.dodgeDist += 1.0; } },
+  { key: 'GOVERNOR', name: 'governor', trad: TRAD.TECH, says: '+25 stamina',
+    apply(s) { s.maxStamina += 25; } },
+  { key: 'SERVO', name: 'servo', trad: TRAD.TECH, says: 'recovery −25%',
+    apply(s) { s.recover *= 0.75; } },
+  { key: 'PLATING', name: 'plating', trad: TRAD.TECH, says: '+25 hp',
+    apply(s) { s.maxHp += 25; } },
+  { key: 'KEEN', name: 'keening edge', trad: TRAD.MAGIC, says: '+5 damage',
+    apply(s) { s.damage += 5; } },
+  { key: 'SIGIL', name: 'lengthening sigil', trad: TRAD.MAGIC, says: '+0.4 m reach',
+    apply(s) { s.reach += 0.4; } },
+  { key: 'BLINK', name: 'blink rune', trad: TRAD.MAGIC, says: '+0.8 m dodge',
+    apply(s) { s.dodgeDist += 0.8; } },
   { key: 'SINEW', name: 'sinew', trad: TRAD.BIO, says: '+12% run',
     apply(s) { s.speed += 0.12; } },
-  { key: 'THEW', name: 'thewed cord', trad: TRAD.BIO, says: '−8 swing cost',
-    apply(s) { s.swingCost -= 8; } },
+  { key: 'THEW', name: 'thewed cord', trad: TRAD.BIO, says: '−5 swing cost',
+    apply(s) { s.swingCost -= 5; } },
   { key: 'BLOOM', name: 'bloom', trad: TRAD.BIO, says: '+1.5 hp/s',
     apply(s) { s.regen += 1.5; } },
 ];
@@ -7498,7 +7505,7 @@ const FUS = {
  */
 const FUSIONS = [
   { key: 'REGULATED', name: 'regulated edge', pair: [MOD.GOVERNOR, MOD.KEEN],
-    says: '+6 damage, −5 swing cost', apply(s) { s.damage += 6; s.swingCost -= 5; } },
+    says: '+6 damage, −3 swing cost', apply(s) { s.damage += 6; s.swingCost -= 3; } },
   { key: 'SLIPDRIVE', name: 'slipdrive', pair: [MOD.SERVO, MOD.BLINK],
     says: '+0.06 s i-frames, +0.6 m dodge',
     apply(s) { s.iframes += 0.06; s.dodgeDist += 0.6; } },
@@ -7931,6 +7938,89 @@ function tetherStep(col, a, targets, dt) {
   }
   if (T.t >= reelRetract(a)) a.tether = null;
 }
+/* ---------- src/sim/revive.mjs ---------- */
+/**
+ * Staying alive together (#114, docs/DECISIONS.md §3, "Combat numbers").
+ *
+ * Three rules, all of them the host's. None runs on a guest: a guest takes its
+ * health and its downed state from the snapshot, the way it takes a machine's.
+ *
+ *   regen     Health comes back slowly once nothing has hunted you for
+ *             `REGEN_DELAY` seconds. A machine that has noticed you keeps you
+ *             hunted; a blow resets it. Spoils do not heal.
+ *   downed    A machine's blow that would kill a player puts them down instead
+ *             — if a partner is still standing. Alone, it kills, as it did.
+ *             Magma, a fall and the void are not a blow and still kill.
+ *   revive    A partner within `REVIVE_RANGE` for `REVIVE_TIME` stands you up
+ *             on `REVIVE_HP` of your health. Left alone for `DOWN_TIME` you are
+ *             gone. When nobody is standing, everyone downed is gone at once.
+ *
+ * A downed player is not a target and cannot act (`step` reads `a.down`), and
+ * the lattice's own regrowth does not reach them (`heal`).
+ */
+
+
+
+/** Seconds a player lies there before they are lost. */
+const DOWN_TIME = 25;
+/** How close a partner must be, and for how long, to stand you up. */
+const REVIVE_RANGE = 1.8;
+const REVIVE_TIME = 1.5;
+/** The share of your health you get up with. */
+const REVIVE_HP = 0.4;
+/** How far above or below a partner may be and still reach you. */
+const REVIVE_SPAN = 1.5;
+
+/** On their feet: not dead, and not down. */
+function onFeet(p) { return !!p && !p.dead && !p.down; }
+
+/** Put a player down: stopped, nothing in the air, and a clock running. */
+function lieDown(p) {
+  p.dead = null; p.hp = 0; p.down = DOWN_TIME; p.reviveT = 0;
+  p.swing = null; p.dodge = null; p.aim = null; p.tether = null; p.haul = null;
+  p.vx = 0; p.vz = 0;
+}
+
+/** One tick of all three rules over the players the host is simulating. */
+function upkeep(players, dt) {
+  let up = 0;
+  for (const p of players) if (onFeet(p)) up++;
+
+  for (const p of players) {
+    if (!p) continue;
+    /* A blow killed them. Somebody left on their feet makes it a fall. */
+    if (p.dead === 'struck' && !p.down) {
+      let other = false;
+      for (const q of players) if (q && q !== p && onFeet(q)) other = true;
+      if (other) { lieDown(p); }
+    }
+  }
+
+  up = 0;
+  for (const p of players) if (onFeet(p)) up++;
+
+  for (const p of players) {
+    if (!p || !p.down) continue;
+    if (up === 0) { p.down = 0; p.dead = 'struck'; p.reviveT = 0; continue; }
+    let near = false;
+    for (const q of players) {
+      if (q && q !== p && onFeet(q) && hyp(q.x - p.x, q.z - p.z) <= REVIVE_RANGE
+          && Math.abs(q.y - p.y) <= REVIVE_SPAN) near = true;
+    }
+    p.reviveT = near ? p.reviveT + dt : Math.max(0, p.reviveT - dt);
+    p.down -= dt;
+    if (p.reviveT >= REVIVE_TIME) {
+      p.down = 0; p.reviveT = 0; p.hp = Math.max(1, p.maxHp * REVIVE_HP);
+      p.hunted = REGEN_DELAY; p.hurtT = 0;
+    } else if (p.down <= 0) { p.down = 0; p.dead = 'struck'; p.reviveT = 0; }
+  }
+
+  for (const p of players) {
+    if (!onFeet(p) || p.hp === undefined) continue;
+    if (p.hunted > 0) p.hunted = Math.max(0, p.hunted - dt);
+    else if (p.hp < p.maxHp) heal(p, REGEN_RATE * dt);
+  }
+}
 /* ---------- src/sim/loot.mjs ---------- */
 /**
  * Where modules come from, and the first reason to walk anywhere.
@@ -8173,7 +8263,7 @@ function makeLootField(col, world, spoilCount, trad) {
         const o = items[q], it = o.item;
         for (let p = 0; p < players.length; p++) {
           const a = players[p];
-          if (!a || a.dead || !a.gear) continue;
+          if (!a || a.dead || a.down || !a.gear) continue;
           if (hyp(a.x - it.x, a.z - it.z) > PICKUP_R) continue;
           if (Math.abs(a.y - it.y) > PICKUP_Y) continue;
           if (!takeModule(a.gear, it.mod)) break;         /* full: leave it there */
@@ -8233,6 +8323,10 @@ function makeLootField(col, world, spoilCount, trad) {
 
 
 
+
+
+/** What a downed player does: nothing, for as long as they lie there. */
+const NO_INPUT = Object.freeze({ mx: 0, mz: 0, aimX: 0, aimZ: 0, jump: false, attack: false, dodge: false, hold: false, swap: false });
 
 /** One simulation tick. Every constant below assumes it. */
 const TICK = 1 / 60;
@@ -8350,6 +8444,9 @@ function makeActor(x, y, z, rad) {
     aim: null, tether: null, haul: null,
     /** null while alive, else 'fall' | 'magma' | 'void' | 'struck'. */
     dead: null,
+    /** Seconds left lying downed, or 0 (#114, src/sim/revive.mjs). Not dead:
+        a partner can still stand you up. */
+    down: 0,
     /** Path length, summed per axis. Not displacement — see the soak. */
     travelled: 0, ticks: 0, blocked: false,
   };
@@ -8381,7 +8478,7 @@ function snapshot(a) {
     grounded: a.grounded, apex: a.apex,
     airJumps: a.airJumps, jumps: a.jumps, airJumped: a.airJumped,
     inWater: a.inWater, swimming: a.swimming, kick: a.kick,
-    faceX: a.faceX, faceZ: a.faceZ, dead: a.dead,
+    faceX: a.faceX, faceZ: a.faceZ, dead: a.dead, down: a.down,
     hp: a.hp, maxHp: a.maxHp, hurtT: a.hurtT,
     stamina: a.stamina, staminaHold: a.staminaHold,
     /* Nine small numbers, and the stats are recomputed from them on the way
@@ -8408,7 +8505,7 @@ function restore(a, s) {
   a.airJumps = s.airJumps === undefined ? 1 : s.airJumps;
   a.jumps = s.jumps || 0; a.airJumped = s.airJumped || 0;
   a.inWater = s.inWater; a.swimming = s.swimming; a.kick = !!s.kick;
-  a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead;
+  a.faceX = s.faceX; a.faceZ = s.faceZ; a.dead = s.dead; a.down = s.down || 0;
   if (s.gear) { applyGearWire(a.gear, s.gear); a.st = a.gear.st; }
   a.hp = s.hp; a.maxHp = s.maxHp === undefined ? a.st.maxHp : s.maxHp;
   a.hurtT = s.hurtT; a.picked = s.picked || 0;
@@ -8436,6 +8533,9 @@ function display(a) {
   return {
     x: r3(a.x), y: r3(a.y), z: r3(a.z), fx: r3(a.faceX), fz: r3(a.faceZ),
     g: a.grounded ? 1 : 0, d: a.dead || 0, hp: a.hp, mh: a.maxHp,
+    /* Lying downed, with the seconds left, and how far a partner has got
+       standing them up: what the other window draws and the HUD counts. */
+    ...(a.down ? { dn: r3(a.down), rv: r3((a.reviveT || 0) / REVIVE_TIME) } : null),
     sw: a.swing ? Math.round(a.swing.t * 1000) / 1000 : -1,
     dv: a.dodge ? 1 : 0, u: Math.round(a.hurtT * 100) / 100,
     /* The arc is drawn at the reach it cuts at, so a partner who has socketed
@@ -8453,6 +8553,7 @@ function display(a) {
 function applyDisplay(a, m) {
   a.faceX = m.fx; a.faceZ = m.fz;
   a.grounded = !!m.g; a.dead = m.d || null; a.hp = m.hp; a.hurtT = m.u;
+  a.down = m.dn || 0; a.reviveT = (m.rv || 0) * REVIVE_TIME;
   if (m.mh !== undefined) a.maxHp = m.mh;
   /* A drawn-only actor's stats are its own object, so writing the one field
      that is sent does not reach anybody else's numbers. */
@@ -8520,6 +8621,9 @@ function step(col, a, input, targets, dt = TICK) {
      page so that a guest predicts it exactly as its host runs it. */
   if (a.fly) return flyStep(a, input, dt);
   if (a.dead) return a;
+  /* Lying downed (#114): the body still falls and stands where it is, and
+     nothing a player does reaches it. */
+  if (a.down) input = NO_INPUT;
   a.ticks++;
   a.blocked = false;
   const r = a.rad, h = ACTOR.height;
@@ -9003,8 +9107,9 @@ function navGraph(col, box, options) {
 
 
 
+
 const SENTRY = {
-  hp: 60,
+  hp: 80,
   /** How far it notices you. Deliberately short: it holds a position. */
   sight: 13,
   /** Where it decides you are close enough to be worth swinging at. */
@@ -9013,7 +9118,7 @@ const SENTRY = {
   reach: 2.4,
   arc: 1.4,
   span: 2.0,
-  damage: 18,
+  damage: 13,
   /** Fraction of the player's run speed. It should never simply outrun you. */
   speed: 0.58,
   /** Half its drawn width (1.35 m): it collides as wide as it looks (#37),
@@ -9027,7 +9132,7 @@ const COS_HALF = cos(SENTRY.arc / 2);
 
 /** The mortar crawler (#106). Every number here is a placeholder for #9. */
 const MORTAR = {
-  hp: 40,
+  hp: 50,
   /** It sees further than the sentry: it is the one that shoots first. */
   sight: 16,
   /** It fires at anything between `near` and `range`, and backs away from
@@ -9039,7 +9144,7 @@ const MORTAR = {
   spread: 1.8,
   /** The ring each shell lands in, and what landing in it costs. */
   ringR: 1.3,
-  damage: 14,
+  damage: 13,
   speed: 0.45,
   rad: 0.55,
   leash: 14,
@@ -9047,7 +9152,7 @@ const MORTAR = {
 
 /** The grafted hounds (#106). Placeholders for #9 too. */
 const HOUND = {
-  hp: 30,
+  hp: 25,
   sight: 14,
   /** It circles at about this distance before it commits. */
   circle: 3.2,
@@ -9058,7 +9163,7 @@ const HOUND = {
   lunge: 3.5,
   /** Whatever the lunge passes within this of, it hits. */
   bite: 0.75,
-  damage: 10,
+  damage: 12,
   /** Faster than a player at a run: you cannot simply walk away from hounds. */
   speed: 1.05,
   rad: 0.45,
@@ -9280,7 +9385,7 @@ function pick(e, players, foes) {
     const d = hyp(p.x - e.x, p.z - e.z);
     if (d < bd) { bd = d; best = p; }
   };
-  for (const p of players) if (p && !p.dead) consider(p);
+  for (const p of players) if (p && !p.dead && !p.down) consider(p);
   if (foes) {
     for (const m of foes) {
       if (m === e || !upright(m) || m.trad === e.trad) continue;
@@ -9300,7 +9405,7 @@ function strayed(e) {
 /** Everything this machine's blow may land on: players, and rival machines. */
 function victims(e, players, foes) {
   const out = [];
-  for (const p of players) if (p && !p.dead) out.push(p);
+  for (const p of players) if (p && !p.dead && !p.down) out.push(p);
   if (foes) for (const m of foes) if (m !== e && upright(m) && m.trad !== e.trad) out.push(m);
   return out;
 }
@@ -10012,7 +10117,7 @@ function makeEncounter(col, world, posts) {
 
     /** One tick: the machines act, then whatever the players cut takes it. */
     step(players, dt = TICK) {
-      if (this.held) return loot.collect(players);
+      if (this.held) { upkeep(players, dt); return loot.collect(players); }
       if (streamed && ticks++ % STREAM_ENC.every === 0) sync(players);
       let party = 0;
       for (const p of players) if (p) party++;
@@ -10020,6 +10125,11 @@ function makeEncounter(col, world, posts) {
       if (party > 1) for (const e of enemies) if (e.reserve) e.reserve = false;
       const budget = { left: 1, party };
       for (const e of enemies) if (grounded(e)) stepEnemy(col, e, players, dt, budget, enemies);
+      /* Whoever a machine has its eye on is hunted, and does not heal (#114). */
+      for (const e of enemies) {
+        const g = e.ai && e.ai.tgt;
+        if (g && !e.dead && !e.reserve && awake(e) && players.indexOf(g) >= 0) g.hunted = REGEN_DELAY;
+      }
       for (const p of players) {
         if (!p || !p.hits) continue;
         const mask = p.hits;
@@ -10032,6 +10142,7 @@ function makeEncounter(col, world, posts) {
       }
       /* What is left of a machine, and then whoever walks over it. */
       for (const e of enemies) if (e.dead && !e.fell) { e.fell = 1; fell(e); }
+      upkeep(players, dt);
       return loot.collect(players);
     },
 
@@ -10308,7 +10419,7 @@ function poseHero(a, look) {
   /* With the Reel in hand there is no blade: it is made too small to see, and
      the free hand is what points the tether (#112). */
   if (look.reel) { p.blade.sz = 0.02; p.blade.sy = 0.02; }
-  if (a.dead) {
+  if (a.dead || a.down) {
     /* Down on its back, and staying there. */
     p.root.rx = -1.45; p.root.py = R * 0.4;
     p.armL.rx = -0.6; p.armR.ry = 0.4;
@@ -11372,7 +11483,7 @@ function applyAct(a, m) {
    which is what made room for a streamed world's machines (#108). */
 const STATE_KEYS = ['x', 'y', 'z', 'vx', 'vy', 'vz', 'grounded', 'apex', 'airJumps', 'jumps',
   'airJumped', 'inWater', 'swimming', 'kick', 'faceX', 'faceZ', 'dead', 'hp', 'maxHp', 'hurtT',
-  'stamina', 'staminaHold', 'gear', 'picked', 'swing', 'dodge', 'hits', 'ticks', 'travelled', 'blocked'];
+  'stamina', 'staminaHold', 'gear', 'picked', 'swing', 'dodge', 'hits', 'ticks', 'travelled', 'blocked', 'down'];
 
 function packState(s) {
   const a = STATE_KEYS.map((k) => (s[k] === undefined ? null : s[k]));
@@ -15594,7 +15705,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var a=QS.placeOnGround(col,built.data.spawn[0],built.data.spawn[2]);
     if(session){ session.me.x=a.x; session.me.y=a.y; session.me.z=a.z;
                  session.me.vx=session.me.vy=session.me.vz=0;
-                 session.me.dead=null; session.me.grounded=a.grounded; session.me.apex=a.y; }
+                 session.me.dead=null; session.me.down=0; session.me.grounded=a.grounded; session.me.apex=a.y;
+                 if(session.me.hp<=0) session.me.hp=session.me.maxHp; }
     else solo=a;
     var b=player();
     QS.warpTo(cam,b.x,b.y,b.z);
@@ -16783,8 +16895,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     peerEl.style.display='block';
     peerHp.style.width=(100*Math.max(0,o.hp)/mh).toFixed(1)+'%';
     peerSt.style.width=(100*Math.max(0,o.stamina||0)/ms).toFixed(1)+'%';
-    peerEl.classList.toggle('down',!!o.dead);
-    peerWho.textContent=session.lost?'partner · lost':(o.dead?'partner · down':'partner');
+    peerEl.classList.toggle('down',!!(o.dead||o.down));
+    peerWho.textContent=session.lost?'partner · lost':(o.dead?'partner · down':(o.down?'partner · down · stand them up':'partner'));
     var sp=QS.project(cam,{x:o.x,y:o.y+1,z:o.z},vp), m=18;
     var off=sp.x<m||sp.y<m||sp.x>vp.w-m||sp.y>vp.h-m;
     peerPin.style.display=off?'block':'none';
@@ -17333,7 +17445,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
           :(b.dead==='struck'?'the machine got you':'out of the world'));
       deadEl.style.display='grid';
     }
-    if(!b.dead) deadEl.style.display='none';
+    /* Lying downed (#114): not the end, so not the dead screen — a line that
+       says what is wanted of the partner, and how long there is. */
+    if(b.down){ deadMsg.textContent='down · your partner can stand you up ('+Math.ceil(b.down)+' s)'; deadEl.style.display='grid'; }
+    else if(!b.dead) deadEl.style.display='none';
     QS.follow(cam,b.x,b.y,b.z);
   }
 
