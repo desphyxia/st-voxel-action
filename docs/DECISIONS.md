@@ -306,6 +306,19 @@ arena are still to decide (below).
 | Finding a site | **Visible from afar, and the holdouts point.** The furnace's vent plume, the engine's frozen eye and the core's glow are landmarks across the scar, and the holdouts say which way. No marker, journal or map |
 | When one goes down | **That scar calms, and the others press harder.** Haze clears and its machines go dormant; the two remaining sites lose a check, so their scars grow harsher. It builds the pressure toward the glasslands and makes the order you choose matter |
 
+**The arena, the climb and the consequence (second round, same day).**
+
+| Decision | Choice |
+| --- | --- |
+| Arena boundary | **A bowl you are held in until it ends.** Walls or terrain close it once the guardian wakes, so the fight is a place and not a chase. The way out is winning or a wipe |
+| What the terrain does | **It changes with the phases, by tradition.** Each tradition's arena has its own hazard that the guardian's phases move: vents and magma rising in the furnace, ice closing in the engine, spores thickening in the core. You reposition with the jump, the dodge and the Reel. The fight is partly the room |
+| Guardian scale | **A big mobile machine, about three or four sentries wide** (four to five metres across). It walks the arena floor, reads at a distance in the isometric view, and leaves room to move |
+| Phases | **Four phases, a move each as health falls.** It opens with one move and each quarter of its health unlocks the next; earlier moves stay in play and layer up. The seed's order is the fight's story |
+| Guardian look | **Left to the art pass.** Recorded: what it does and how big it is. How it looks is decided when the model is made |
+| The approach's shape | **Three escalating beats with a breather between.** A first beat of groups, a second that mixes archetypes and brings the scar's harder terrain, a third that is the heaviest, with a short quiet stretch after each so the climb has a shape and the party can recover |
+| "Harsher" | **Turn up what already exists.** The remaining scars' fields spread and strengthen: more haze, stronger weather, hazards on more of the ground, denser and mixed machine groups. It reuses the scar and weather systems and is measurable in the gate |
+| The last landmark | **A holding, or a rest point at the foot of a site's approach once you have walked up to it.** A wipe at the core costs the walk back up and not across the world. No rest point inside a site |
+
 **The risk this takes on, written down.** A fusion gate can stall a player who has not found a
 recipe or the two modules it needs. Four recipes satisfy each gate, the approach's drops lean
 toward them, and the glyph says which pairs work; whether that is enough is a thing to find out
@@ -359,8 +372,10 @@ the rime and the spore bloom grow harsher.
   are decided (§6, #6).
 - What the glasslands releases once all three weapons are down.
 - The set-piece grammar's parts — what an approach, a gate, an arena and a core are made of
-  and how each tradition's parts differ. Their shape is decided (§6, 2026-10-06); the part lists,
-  the assembly rules, the arena, the guardian move pools, and how "harsher" is expressed are not.
+  and how each tradition's parts differ. Their shape is decided (§6, 2026-10-06, two rounds);
+  the part lists, the assembly rules, the guardian move pools (about six a tradition), the
+  numbers (how many machines a beat, how fast an arena closes), and what a co-op partner changes
+  in the guardian fight are not.
 - Quest and objective plumbing (minimal, given the drive is self-evident).
 - Damage types, status stacking rules, and the exact regen delay and revive time.
 - Accessibility.
