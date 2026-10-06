@@ -319,6 +319,32 @@ arena are still to decide (below).
 | "Harsher" | **Turn up what already exists.** The remaining scars' fields spread and strengthen: more haze, stronger weather, hazards on more of the ground, denser and mixed machine groups. It reuses the scar and weather systems and is measurable in the gate |
 | The last landmark | **A holding, or a rest point at the foot of a site's approach once you have walked up to it.** A wipe at the core costs the walk back up and not across the world. No rest point inside a site |
 
+**Footprint, parts, moves and co-op (third round, same day).**
+
+| Decision | Choice |
+| --- | --- |
+| Footprint | **About 300 to 400 m from the foot of the approach to the core**, roughly ten chunks, with the arena bowl about 40 m across at the far end. Bigger than the 64 m region the generator decides things in today, so a site is a larger unit than any it has made |
+| What a part is | **Shaped terrain plus stamped dressing.** The generator carves and grades the terrain itself (the climb, the gate cut, the arena bowl, the core dais) and places stamps and props for the walls, the vents and the glyph. Terrain parts carry the gameplay, stamps carry the look |
+| Guardian move pools | **About six a tradition, and every pool holds each of four kinds:** a melee slam or sweep, a ranged volley, area denial or moving the tradition's hazard, and summons. The seed picks four, so a fight always has a close threat, a far one, a shrinking floor and a crowd, in an order the seed chose |
+| Co-op | **Some moves split attention between the players.** Alone it targets you; with two, certain moves go to each player separately or need both answered at once. Health scales a little and damage not at all, as for every machine (§6) |
+
+**Draft part lists: a proposal derived from the answers above, not decided.** The issue's "done
+when" asks for part lists and assembly rules; this is the first pass to react to. Each stage is
+terrain the generator carves, then stamps and props over it.
+
+| Stage | Terrain parts | Dressing | Seeded choices |
+| --- | --- | --- | --- |
+| Approach | A graded climb of three beats and two breathers (level terraces); encounter pads where the groups stand; patches of the scar's hazard | The landmark seen from afar; ruined plating, ribs or growth along the way; a rest stone at the foot | Route line; how many groups each beat; which packs (`PACKS`); where the hazard patches fall |
+| Gate | A cut through the bowl's rim, one door wide | A sealed door with the glyph of the four pairs that open it | Door style within the tradition; where in the rim |
+| Arena | A bowl about 40 m across with a rim wall of 3 m or more; two to four raised footholds; a floor the hazard can fill | The hazard's source (vents, an engine, a bloom); props for the rim | Bowl shape; foothold count and place; which four moves, and their order |
+| Core | A dais at the far side, sealed until the guardian is down; breaches where the last wave comes from | The core itself, lit; its shutdown glow | Dais height; breach count (scaled to party size) |
+
+| Tradition | Site, in its scar | The hazard the arena moves | Reads as |
+| --- | --- | --- | --- |
+| Tech | The furnace, in the ashfall's basalt | Vents and magma rising across the floor (the scar's burn and smoke) | Plate, pipe and heat |
+| Magic | The rime engine, in the rimewaste | Ice closing in and the cold draining stamina (the scar's chill) | Carved stone and frost |
+| Biological | The spore core, in the sporeverge | Spores thickening and infecting (the scar's bloom) | Bone, vine and fungus |
+
 **The risk this takes on, written down.** A fusion gate can stall a player who has not found a
 recipe or the two modules it needs. Four recipes satisfy each gate, the approach's drops lean
 toward them, and the glyph says which pairs work; whether that is enough is a thing to find out
@@ -373,9 +399,8 @@ the rime and the spore bloom grow harsher.
 - What the glasslands releases once all three weapons are down.
 - The set-piece grammar's parts — what an approach, a gate, an arena and a core are made of
   and how each tradition's parts differ. Their shape is decided (§6, 2026-10-06, two rounds);
-  the part lists, the assembly rules, the guardian move pools (about six a tradition), the
-  numbers (how many machines a beat, how fast an arena closes), and what a co-op partner changes
-  in the guardian fight are not.
+  the guardian moves themselves, the assembly rules and the numbers (how many machines a beat,
+  how fast an arena closes, how large a core wave) are not, and the part lists above are a draft.
 - Quest and objective plumbing (minimal, given the drive is self-evident).
 - Damage types, status stacking rules, and the exact regen delay and revive time.
 - Accessibility.
