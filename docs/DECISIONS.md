@@ -289,6 +289,37 @@ collision produced, which the other three were holding in check.
 authored dungeons. The set-piece grammar is what makes that possible, and it is a substantial
 generator workstream in its own right — not a content pass.
 
+### The set-piece grammar, the shape (interview 2026-10-06, #7)
+
+What a weapon site is, before what it is made of. The part lists, the assembly rules and the
+arena are still to decide (below).
+
+| Decision | Choice |
+| --- | --- |
+| Scale | **A long set-piece, about 20 to 30 minutes in one sitting**, from the first step of the approach to the core going dark. The place the forty hours were for, not a boss room and not a dungeon |
+| Approach | **A route of escalating encounters in the scar.** The tradition's machine groups get denser and mix archetypes as the site nears, and the scar's own terrain features and hazards get harder. The groups, packs and traversal features already built do the work; the grammar chooses and orders them |
+| Gate | **A requirement you carry: a fusion that crosses into the site's tradition.** Any seated fusion that includes that school opens it, on either frame. Tech: regulated edge, slipdrive, ironthew, deep well. Magic: regulated edge, slipdrive, reaching vine, bloodedge. Biological: ironthew, reaching vine, deep well, bloodedge. The gate shows a glyph for the pairs that would work and the approach's drops lean toward them, so there is always a way in. The lattice is the gate, which ties the climax to progression |
+| Guardian | **Entirely new moves per tradition, authored,** with conventional telegraphs, openings and positioning (§6 above). Not assembled from the roster's verbs |
+| What varies by seed | **The setting and which moves.** Each tradition authors a pool of about six guardian moves; the seed picks four and their phase order, and shapes the approach and the arena round them. Two seeds give two fights of the same family |
+| Core | **Hold it while it shuts down, defended.** About two minutes standing at the core while the site throws its machines at you in waves. A partner guards while the other holds; alone you do both, so the wave scales to party size |
+| Failure | **Progress holds, the guardian heals.** A wipe respawns you at the last landmark; the gate stays open and the cleared approach stays cleared, but the guardian returns at full health. A wipe costs the walk back and the fight, never the whole site |
+| Finding a site | **Visible from afar, and the holdouts point.** The furnace's vent plume, the engine's frozen eye and the core's glow are landmarks across the scar, and the holdouts say which way. No marker, journal or map |
+| When one goes down | **That scar calms, and the others press harder.** Haze clears and its machines go dormant; the two remaining sites lose a check, so their scars grow harsher. It builds the pressure toward the glasslands and makes the order you choose matter |
+
+**The risk this takes on, written down.** A fusion gate can stall a player who has not found a
+recipe or the two modules it needs. Four recipes satisfy each gate, the approach's drops lean
+toward them, and the glyph says which pairs work; whether that is enough is a thing to find out
+by playing it, not by arguing it.
+
+**Sketch of one site, derived only from the above, to react to.** The tech furnace: the vent
+plume is seen from the ashfall's edge; holdouts say it is a day's walk. The approach is a long
+climb through basalt where sentry and mortar groups thicken into mixed packs and the magma
+causeways run longer. The gate is a sealed vent door whose glyph names the tech pairs; with a
+fusion seated it opens. The arena is the furnace floor, where a guardian with four of the tech
+pool's moves, in an order the seed picked, is fought conventionally. The core is behind it:
+two minutes at the vent while the furnace sends everything it has left. The ashfall quiets, and
+the rime and the spore bloom grow harsher.
+
 ## 7. Technical
 
 | Decision | Choice |
@@ -327,8 +358,9 @@ generator workstream in its own right — not a content pass.
   decided (§3, 2026-10-06); landing them is the tuning issue. The roster, tells and counters
   are decided (§6, #6).
 - What the glasslands releases once all three weapons are down.
-- The set-piece grammar's actual vocabulary — what an approach, a gate, an arena and a core
-  are made of, and how each tradition's parts differ.
+- The set-piece grammar's parts — what an approach, a gate, an arena and a core are made of
+  and how each tradition's parts differ. Their shape is decided (§6, 2026-10-06); the part lists,
+  the assembly rules, the arena, the guardian move pools, and how "harsher" is expressed are not.
 - Quest and objective plumbing (minimal, given the drive is self-evident).
 - Damage types, status stacking rules, and the exact regen delay and revive time.
 - Accessibility.
@@ -354,6 +386,11 @@ generator workstream in its own right — not a content pass.
 
 5. **Materials without crafting.** Materials serve audio, carving, fire and conduction only.
    Coherent, but harvesting has no purpose unless crafting returns.
+
+6. **A calmed scar versus repopulation.** Shutting a weapon down makes its scar's machines go
+   dormant (§6, 2026-10-06), but everything repopulates over days (§2). A calmed scar needs an
+   exemption from repopulation, or the weapon's shutdown means nothing a day later. It is the
+   same shape as tension 2, and the answer may be the same one.
 
 ## What the current concept plate contradicts
 
