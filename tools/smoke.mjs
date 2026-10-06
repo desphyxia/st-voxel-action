@@ -2591,7 +2591,15 @@ if (BROWSER_HALF) {
           hostSawTether = await bp.evaluate(() => { window.QSPLAY.frameOnce(); return window.QSPLAY.reelDraw.peerTether; });
         }
         /* Back to the blade on the guest, and let it settle. */
-        await peerPage.evaluate(() => { const P = window.QSPLAY; P.run(60); P.input.press('KeyX'); P.run(1); P.input.release('KeyX'); P.run(2); });
+        /* A swap is refused while the tether is out, so it is asked for again each
+           time the guest has gone quiet, until the host sees the blade in its hand
+           and nothing in the air. */
+        for (let q = 0; q < 30; q++) {
+          await peerPage.evaluate(() => { const P = window.QSPLAY, g = P.actor; P.run(12);
+            if (P.frameKind !== 'longblade' && !g.tether && !g.haul && !g.aim) { P.input.press('KeyX'); P.run(1); P.input.release('KeyX'); P.run(2); } });
+          const quiet = await bp.evaluate(() => { const P = window.QSPLAY, o = P.peer; P.run(12); return !!o && !o.tether && !o.haul && !o.aim && !window.QS.isReel(o); });
+          if (quiet) break;
+        }
         /* And back where it stood: the haul left it up to five metres off, beside
            the ground the cutaway check below samples round the host. */
         await peerPage.evaluate((h) => { const P = window.QSPLAY, g = P.actor; g.x = h.x; g.y = h.y; g.z = h.z; g.vx = g.vz = 0; g.faceX = h.fx; g.faceZ = h.fz;
