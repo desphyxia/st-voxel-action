@@ -54,6 +54,22 @@ same world — not credits.
 | What is drawn vs what is dangerous | **Different questions.** The hitbox is the active window; the arc on screen outlives it and fades. At 45° the active window is an eighth of a second and the character is forty pixels tall — a visual that lasted exactly as long as the hitbox would not be seen |
 | Character physics | **Solved from the budget, not tuned.** Run speed and the jump's height are the chosen numbers; gravity, jump speed and airtime follow from them so that a jump clears exactly `MOVE.jump` and no more. A jump that quietly cleared more would stop canyons being obstacles, and nobody would notice for months |
 
+### Combat numbers, the targets (interview 2026-10-06, #9)
+
+These are targets to tune toward, not constants. The numbers in `combat.mjs`, `enemy.mjs`,
+`reel.mjs` and `lattice.mjs` stay placeholders until the tuning issue lands them.
+
+| Decision | Choice |
+| --- | --- |
+| One machine against a careful player | **Forgiving: about eight hits to kill you.** A lone machine is a puzzle you win; danger comes from groups, terrain and mistakes stacking. Placeholder today is six (sentry 18 against 100) |
+| Groups | **The real fights.** A pack of three is much harder than three singles, because they flank and overlap tells (#110). Singles are the warm-up. A second player still adds a member and a little health, never damage (§6) |
+| Fight length | **Mixed by archetype.** Hounds die fast, the sentry is a slow wall, the mortar sits between. The roster sets the pace, not one rule. Today: sentry 3 swings, mortar 2, hound 2 |
+| Stamina | **Rarely empty.** A few swings and a dodge before you wait; it stops button-mashing and is never the thing you manage. Modules that cut cost are a smaller win than ones that add reach or damage |
+| Module power | **Noticeable, about +25% per module.** You feel the first one, and a full line or lattice roughly doubles you. Fusion stays the larger step |
+| The Reel against the blade | **Utility, not damage.** The Reel's yank and arrival strike are worth a third to a half of a blade swing; it earns its slot by moving things and you. The blade stays the killer |
+| Recovery | **Regen when nothing is hunting you, and a partner revive.** Health refills slowly out of combat, which keeps a long streamed world playable with no heal item. Spoils do not heal |
+| Death | **Downed; the partner stands you up** (§2 already decides this). If both fall, respawn at the last landmark and your carried modules stay where you fell |
+
 ## 4. Gear and progression
 
 **Modules and sockets are the spine.** Character stats, unlocked movement verbs and module
@@ -307,13 +323,14 @@ generator workstream in its own right — not a content pass.
   frame needed; the set is not closed. The Reel (§4) is the second.
 - Refinement, and the stash. Carried slots are limited and there is nowhere to put the overflow,
   because there is no camp.
-- Each archetype's numbers (health, damage, timings, ranges) — #9. The roster, tells and
-  counters are decided (§6, #6); the numbers are not.
+- Each archetype's actual numbers (health, damage, timings, ranges) — #9. The targets are
+  decided (§3, 2026-10-06); landing them is the tuning issue. The roster, tells and counters
+  are decided (§6, #6).
 - What the glasslands releases once all three weapons are down.
 - The set-piece grammar's actual vocabulary — what an approach, a gate, an arena and a core
   are made of, and how each tradition's parts differ.
 - Quest and objective plumbing (minimal, given the drive is self-evident).
-- Stamina numbers, damage types, status stacking rules.
+- Damage types, status stacking rules, and the exact regen delay and revive time.
 - Accessibility.
 
 ## Tensions to resolve
