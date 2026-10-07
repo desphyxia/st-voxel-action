@@ -26,7 +26,7 @@ export const END = '/* QS-BUNDLE-END */';
 
 /** Dependency order, per directory. A module may only use names above it. */
 const MODULES = {
-  'src/gen': ['constants', 'exact', 'materials', 'palette', 'rng', 'biomes', 'field', 'erosion', 'region', 'ground', 'routes',
+  'src/gen': ['constants', 'exact', 'materials', 'palette', 'rng', 'biomes', 'site', 'field', 'erosion', 'region', 'ground', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index', 'chunk'],
   'src/mesh': ['greedy', 'carve', 'propmesh', 'vox'],
   'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'reel', 'revive', 'loot', 'actor', 'nav', 'enemy', 'anim', 'sky', 'camera', 'input'],

@@ -15,6 +15,8 @@ import { BIOMES, CLIMATE_N, BIO } from './biomes.mjs';
 import { xmur3, makeNoise, posRand, placeRand, placeStream } from './rng.mjs';
 import { V, CEIL, DIRS4, clamp } from './constants.mjs';
 import { exp } from './exact.mjs';
+import { planSite, shapeSite, siteBoost } from './site.mjs';
+import { cellKey } from './region.mjs';
 
 /* Frequency, octaves and how many voxel steps the sub-metre relief spans. See
    `detail` below for what each one was measured at. DETAIL_LEVELS is an odd
@@ -25,6 +27,11 @@ import { exp } from './exact.mjs';
 const SCAR_FREQ = 0.0052, SCAR_AT = 0.66, SCAR_GAIN = 6, SCAR_MAX = 0.85;
 
 export const DETAIL_FREQ = 0.16, DETAIL_OCT = 2, DETAIL_LEVELS = 3;
+
+/* The weapon site's centre, once per seed (#7). Planning reads the ground, and
+   the ground reads the plan, so what it found is kept: a world is rebuilt from
+   its seed far more often than a seed is drawn. */
+var SITE_PLANS=new Map(), SITE_SHAPES=new Map();
 
 export function makeGen(seedStr,force){
   var h=xmur3(String(seedStr));
@@ -60,6 +67,7 @@ export function makeGen(seedStr,force){
    * forced scar leaves the climate to the seed and lays that one scar over
    * nearly everything, holed where its noise dips so the land shows through.
    */
+  var SITE0=null, SITE=null;
   function climate(x,z){
     var t,m,i,w=[],s=0,sc=[],S=0;
     if(force!=null&&force<CLIMATE_N){
@@ -74,6 +82,8 @@ export function makeGen(seedStr,force){
     for(i=0;i<CLIMATE_N;i++)w[i]/=s;
     for(i=CLIMATE_N;i<BIOMES.length;i++){
       var v=0, f=NS[i-CLIMATE_N].fbm(x*SCAR_FREQ+11*i,z*SCAR_FREQ-7*i,3);
+      /* The furnace raises the ashfall round itself (#7). */
+      if(force==null&&i===CLIMATE_N&&SITE0) f=siteBoost(SITE0,x,z,f);
       if(force==null) v=clamp((f-SCAR_AT)*SCAR_GAIN,0,1);
       else if(force===i) v=clamp(0.9+(f-0.5)*2.4,0,1);
       sc.push(v); S+=v;
@@ -1155,7 +1165,36 @@ export function makeGen(seedStr,force){
       }
     return n;
   }
-  return {cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,mesasNear:mesasNear,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,thornOver:thornOver,thornIn:thornIn,rimeOver:rimeOver,rimeIn:rimeIn,sporeOver:sporeOver,sporeIn:sporeIn,glassOver:glassOver,glassIn:glassIn,meadowOver:meadowOver,meadowIn:meadowIn,rimeFrame:rimeFrame,cliffFrame:cliffFrame,
+  /* The weapon site (#7). Only a world with its scars as the seed lays them has
+     one; a plate forced to a biome is the biome and nothing else. Planned here,
+     at the end, so that every function above exists — and planning reads the
+     *unboosted* ground, so the cache it fills is let go before anyone else asks. */
+  if(force==null){
+    var plan=SITE_PLANS.get(String(seedStr));
+    if(plan===undefined){
+      plan=planSite(function(x,z){ return NS[0].fbm(x*SCAR_FREQ+11*CLIMATE_N,z*SCAR_FREQ-7*CLIMATE_N,3); },
+                    function(x,z){ return cell(x,z).water; },
+                    prand);
+      SITE_PLANS.set(String(seedStr),plan);
+      CELLS.clear(); MARSH_Z.clear();
+    }
+    SITE0=plan;
+  }
+  /** The site, shaped, or null. Shaped on first use, from the boosted ground. */
+  function site(){
+    if(!SITE0) return null;
+    if(SITE===null){
+      var kept=SITE_SHAPES.get(String(seedStr));
+      if(kept===undefined){
+        kept=shapeSite(SITE0,function(x,z){ return cachedCell(x,z).H; },
+                       function(x,z){ var c=cachedCell(x,z); return c.water?c.wl:-1; },cellKey);
+        SITE_SHAPES.set(String(seedStr),kept);
+      }
+      SITE=kept;
+    }
+    return SITE;
+  }
+  return {site:site,cell:cachedCell,detail:detail,climate:climate,canyonAt:canyonAt,wsum:wsum,spansFor:spansFor,mesaOver:mesaOver,mesasIn:mesasIn,mesasNear:mesasNear,basaltOver:basaltOver,basaltIn:basaltIn,cliffOver:cliffOver,cliffIn:cliffIn,thornOver:thornOver,thornIn:thornIn,rimeOver:rimeOver,rimeIn:rimeIn,sporeOver:sporeOver,sporeIn:sporeIn,glassOver:glassOver,glassIn:glassIn,meadowOver:meadowOver,meadowIn:meadowIn,rimeFrame:rimeFrame,cliffFrame:cliffFrame,
           sw:sw,prand:prand,prandIn:prandIn,pstream:pstream,forget:forget};
 }
 

@@ -33,6 +33,7 @@
 import { MOVE, DIRS4, CEIL, clamp } from './constants.mjs';
 import { erodeAt } from './erosion.mjs';
 import { BIO } from './biomes.mjs';
+import { SITE_K } from './site.mjs';
 
 /** Region edge, metres. */
 export const REGION = 64;
@@ -51,6 +52,10 @@ const WET_BONUS = 30;
 const MAX_CROSSINGS = 4;
 /** How far along the trail a port's height is held, in cells. */
 const HOLD = 16;
+/** What a cell the weapon site owns is cleared of (#7): water, magma and every
+    feature the scars and biomes stand on the ground. */
+export const SITE_CLEAR = { water: false, pond: false, marsh: false, magma: false, mesa: 0, basalt: 0, cliff: 0,
+                   thorn: 0, rime: 0, spore: 0, glass: 0, hedge: 0, hold: 0 };
 /** The eight cells around one. */
 const AROUND = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 
@@ -836,6 +841,28 @@ function buildRegion(G, rx, rz) {
   }
   repairReach();
 
+  /* ---- the weapon site (#7) ----
+     The site is larger than a region, so its descriptor is the world's and
+     each region takes the cells of it that it owns: graded to the site's
+     heights, cleared of water, magma and the scar's own features, and the
+     floor and the road marked as paved road so that nothing grows on them. */
+  var siteMap = null, SS = G.site ? G.site() : null;
+  if (SS) {
+    siteMap = new Map();
+    SS.cells.forEach(function (v, k) {
+      var si = keyX(k) - x0, sj = keyZ(k) - z0;
+      if (si < 0 || sj < 0 || si >= N || sj >= N || !own(si, sj)) return;
+      var ix = si * N + sj;
+      cells[ix] = Object.assign({}, cells[ix], SITE_CLEAR, { H: v.h, paved: true, site: v.k });
+      paved.set(k, v.h);
+      siteMap.set(k, v.k);
+      if (v.k !== SITE_K.WALL && v.k !== SITE_K.GATE) {
+        if (!trail.has(k)) { trail.add(k); order.push([x0 + si, z0 + sj]); }
+        roads.add(k);
+      }
+    });
+  }
+
   recordGrades();
 
   /* ---- lamps along the route (#47) ----
@@ -962,7 +989,7 @@ function buildRegion(G, rx, rz) {
     rx: rx, rz: rz, x0: x0, z0: z0, affordances: aff, roads: roads, lamps: lamps, paved: paved, stones: stones,
     /* World-coordinate keys, every one of them. A window converts on the way in
        and on the way out; nothing in here knows a window exists. */
-    trail: trail, order: order, grade: grade, bridges: bridges, landmark: lm,
+    trail: trail, order: order, grade: grade, bridges: bridges, landmark: lm, site: siteMap,
     sites: sites.map(function (s) { return [x0 + s[0], z0 + s[1]]; }),
     ports: ports.map(function (p) { return [x0 + p[0], z0 + p[1]]; }),
   };

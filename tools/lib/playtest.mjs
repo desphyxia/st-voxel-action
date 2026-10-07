@@ -30,6 +30,7 @@ import * as LT from '../../src/sim/lattice.mjs';
 import * as LO from '../../src/sim/loot.mjs';
 import * as RL from '../../src/sim/reel.mjs';
 import * as RV from '../../src/sim/revive.mjs';
+import * as ST from '../../src/gen/site.mjs';
 import { makeLoopback, conditioned } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import * as NS from '../../src/net/session.mjs';
@@ -6030,6 +6031,128 @@ export function survivalSuite() {
     say('downed, with its seconds and its revive progress, crosses the wire in both forms',
         r.down === p.down && v.down > 0 && Math.abs(v.reviveT - p.reviveT) < 0.01 && back.down === p.down,
         `snapshot ${r.down.toFixed(2)}, display ${d.dn}/${d.rv}`);
+  }
+  return out;
+}
+
+/* ----------------------------------------------------------------- site ---- */
+
+/**
+ * The weapon site's ground (#7, first slice: the tech furnace): where it
+ * stands, that it is the same ground however it is asked for, and that it is
+ * the shape the record says — a floor in a wall, a gate that is a plug until
+ * it is opened, a core, footholds, and a road that a body can walk.
+ */
+export function siteSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const SEEDS = ['QUARTERSTONE', 'ALDER-RUN', 'DRY-KETTLE', 'CLOUDPINE-2', 'BRIARWICK', 'FEN-BARROW-75', 'RED-REACH-65', 'NORTHWIND-1'];
+
+  /* 1. One furnace to a seed, a long way out; a plate forced to a biome has none. */
+  {
+    const found = SEEDS.map((sd) => makeGen(sd, null).site());
+    const far = found.every((S) => S && hyp(S.cx, S.cz) >= ST.MIN_DIST && hyp(S.cx, S.cz) <= ST.MAX_DIST + 1);
+    const plate = makeGen('CINDERWAKE', 4).site();
+    say('every seed lays one furnace, 430 to 1300 m from the origin, and a plate lays none',
+        far && plate === null,
+        found.map((S, i) => `${SEEDS[i].slice(0, 5)} ${S ? Math.round(hyp(S.cx, S.cz)) : 'none'}`).join(', ') + `; plate ${plate}`);
+  }
+
+  /* 2. Pure: a second generator, with no caches, answers with the same site. */
+  {
+    const sig = (S) => { let h = 0; S.cells.forEach((v, k) => { h = (h * 31 + k * 7 + v.h * 13 + v.k) % 1000000007; }); return `${S.cx},${S.cz},${S.hf},${S.cells.size},${h}`; };
+    const a = sig(makeGen('QUARTERSTONE', null).site());
+    clearRegionCache();
+    const b = sig(makeGen('QUARTERSTONE', null).site());
+    say('the site is a pure function of the seed', a === b, a);
+  }
+
+  /* 3. The arena, in a built window centred on it. */
+  const sd = 'QUARTERSTONE', S = makeGen(sd, null).site(), hf = S.hf;
+  const build = (ox, oz) => buildWorld({ seed: sd, force: null, size: 64, ox, oz });
+  const win = (w) => (x, z) => w.cells[(x - w.OX + w.half) * w.M + (z - w.OZ + w.half)];
+  const w0 = build(S.cx, S.cz), at0 = win(w0);
+  {
+    let floor = 0, flat = 0, dry = 0, bare = 0, wall = 0, tall = 0, gate = 0, plug = 0;
+    const cosG = Math.cos(ST.GATE_HALF / (ST.ARENA_R + ST.WALL_W / 2));
+    for (let x = S.cx - 25; x <= S.cx + 25; x++) for (let z = S.cz - 25; z <= S.cz + 25; z++) {
+      const c = at0(x, z), r = hyp(x - S.cx, z - S.cz);
+      if (r <= ST.ARENA_R && (c.site === ST.SITE_K.FLOOR)) { floor++; if (c.H === hf) flat++; if (!c.water && !c.magma) dry++; if (!c.basalt && !c.cliff && !c.mesa) bare++; }
+      if (c.site === ST.SITE_K.WALL) { wall++; if (c.H - hf >= ST.WALL_H) tall++; }
+      if (c.site === ST.SITE_K.GATE) { gate++; if (c.H - hf >= ST.WALL_H) plug++; }
+    }
+    say('the floor is level, dry and bare, and the wall round it stands four metres over it',
+        floor > 1000 && flat === floor && dry === floor && bare === floor && wall > 300 && tall === wall,
+        `${floor} floor cells (${flat} at ${hf} m, ${dry} dry, ${bare} bare), ${wall} wall cells (${tall} tall)`);
+    say('the gate is a four-metre plug in the wall until it is opened',
+        gate >= 10 && plug === gate && S.gateCells.length === gate, `${gate} cells, ${plug} as tall as the wall, ${S.gateCells.length} listed`);
+    const core = at0(S.core.x, S.core.z), stones = S.stones.map((p) => at0(p[0], p[1]).H);
+    say('the core stands a metre over the floor on the far side from the gate, with four footholds on the floor',
+        core.H === hf + ST.CORE_H && core.site === ST.SITE_K.CORE && stones.length === 4 && stones.every((h) => h === hf + ST.STONE_H)
+          && (S.core.x - S.cx) * S.ux + (S.core.z - S.cz) * S.uz < 0,
+        `core ${core.H}, footholds ${stones.join(',')} over a floor of ${hf}`);
+  }
+
+  /* 4. A bowl: nothing on foot leaves it while the gate is shut, and opening
+        the gate lets a body out to the road. A flood over the window's cells
+        with the budget's own rule, a metre a step. */
+  {
+    const flood = (open) => {
+      const seen = new Set(), key = (x, z) => x * 100000 + z, q = [[S.cx, S.cz]];
+      seen.add(key(S.cx, S.cz));
+      const gateSet = new Set(S.gateCells.map((p) => key(p[0], p[1])));
+      let escaped = 0, reachedRoad = 0, far = 0;
+      while (q.length) {
+        const [x, z] = q.pop(); const c = at0(x, z);
+        for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx, nz = z + dz;
+          if (Math.abs(nx - S.cx) > 30 || Math.abs(nz - S.cz) > 30 || seen.has(key(nx, nz))) continue;
+          const n = at0(nx, nz);
+          if (n.water || n.magma) continue;
+          const nh = open && gateSet.has(key(nx, nz)) ? hf : n.H;
+          if (Math.abs(nh - c.H) > MOVE.climb) continue;
+          seen.add(key(nx, nz)); q.push([nx, nz]);
+          const r = hyp(nx - S.cx, nz - S.cz);
+          if (r > ST.ARENA_R + ST.WALL_W + 0.5) { escaped++; if (n.site === ST.SITE_K.ROAD) reachedRoad++; }
+          far = Math.max(far, r);
+        }
+      }
+      return { escaped, reachedRoad, far };
+    };
+    const shut = flood(false), open = flood(true);
+    say('the arena is a bowl: nothing on foot leaves it with the gate shut, and opening it lets a body out to the road',
+        shut.escaped === 0 && open.reachedRoad > 0, `shut: ${shut.escaped} cells out, reached ${shut.far.toFixed(1)} m; open: ${open.reachedRoad} road cells reached`);
+  }
+
+  /* 5. Two windows that overlap agree on every cell of the site they share. */
+  {
+    const w1 = build(S.cx + 24, S.cz + 10), at1 = win(w1);
+    let shared = 0, same = 0;
+    for (let x = S.cx - 8; x <= S.cx + 56 - 32; x++) for (let z = S.cz - 20; z <= S.cz + 40 - 2; z++) {
+      const a = at0(x, z), b = at1(x, z);
+      if (!a || !b || a.site === undefined) continue;
+      shared++; if (a.H === b.H && a.site === b.site && a.water === b.water) same++;
+    }
+    say('two windows that overlap agree on every cell of the site they share', shared > 500 && same === shared, `${same} of ${shared} cells`);
+  }
+
+  /* 6. The road, a metre at a time along its whole length: every step is
+        ground a body can take, dry and bare, in windows that each see a part. */
+  {
+    const wins = new Map(), key2 = (x, z) => `${Math.round(x / 48)},${Math.round(z / 48)}`;
+    let steps = 0, ok = 0, bad = '';
+    let prev = null;
+    for (let t = 0; t < S.path.length; t += 3) {
+      const [px, pz, ph] = S.path[t], k = key2(px, pz);
+      if (!wins.has(k)) wins.set(k, build(Math.round(px / 48) * 48, Math.round(pz / 48) * 48));
+      const w = wins.get(k), c = win(w)(px, pz);
+      steps++;
+      const good = c && c.site === ST.SITE_K.ROAD && Math.abs(c.H - ph) <= 1 && !c.water && !c.magma && (!prev || Math.abs(ph - prev) <= 2);
+      if (good) ok++; else if (!bad) bad = `t=${t} at ${px},${pz}: ${c ? `site ${c.site} H ${c.H} want ${ph}` : 'outside'}`;
+      prev = ph;
+    }
+    say('the road runs the whole 330 m, on the heights it says to a metre, dry, and never steeper than a metre a step',
+        steps > 100 && ok === steps, `${ok} of ${steps} sampled points${bad ? '; first bad ' + bad : ''}; ${wins.size} windows`);
   }
   return out;
 }

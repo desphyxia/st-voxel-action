@@ -31,5 +31,6 @@ export function groundCellAt(w, x, z) {
   var pv = rg.paved && rg.paved.get(kk);
   if (pv !== undefined) H = pv;
   if (g !== undefined) H = g;
-  return { H: H, water: c.water, magma: c.magma && pv === undefined, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa, basalt: c.basalt, cliff: c.cliff, thorn: c.thorn, rime: c.rime, spore: c.spore, glass: c.glass, hedge: c.hedge };
+  var sk = rg.site && rg.site.get(kk);
+  return { H: H, water: sk ? false : c.water, magma: c.magma && pv === undefined, dom: c.dom, w: c.w, hold: c.hold, mesa: c.mesa, basalt: c.basalt, cliff: c.cliff, thorn: c.thorn, rime: c.rime, spore: c.spore, glass: c.glass, hedge: c.hedge };
 }
