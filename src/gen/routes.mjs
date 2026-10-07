@@ -15,7 +15,7 @@
  * A site is [i, j, role]: window cell indices, plus its index within the
  * region, which is what props.mjs builds a ruin or a holding from.
  */
-import { regionAt, regionsFor, keyX, keyZ, cellKey } from './region.mjs';
+import { regionAt, regionsFor, keyX, keyZ, cellKey, SITE_CLEAR } from './region.mjs';
 
 export function layRoutes(w) {
   var M = w.M, cells = w.cells, half = w.half, OX = w.OX, OZ = w.OZ, G = w.G;
@@ -46,6 +46,16 @@ export function layRoutes(w) {
     regions[q].paved.forEach(function (h, key) {
       var at = idx(keyX(key), keyZ(key));
       if (at >= 0) cells[at] = Object.assign({}, cells[at], { magma: false, H: h, paved: true });
+    });
+  }
+
+  /* 0b. The weapon site (#7): its cells are cleared of water, magma and the
+        scars' features, and say what they are for whoever stamps them. */
+  for (q = 0; q < regions.length; q++) {
+    if (!regions[q].site) continue;
+    regions[q].site.forEach(function (kind, key) {
+      var at = idx(keyX(key), keyZ(key));
+      if (at >= 0) cells[at] = Object.assign({}, cells[at], SITE_CLEAR, { site: kind });
     });
   }
 
