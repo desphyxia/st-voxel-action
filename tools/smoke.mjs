@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, reelSuite, survivalSuite, siteSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, reelSuite, survivalSuite, siteSuite, furnaceSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, marshSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -280,6 +280,7 @@ if (NODE_HALF) for (const r of dynamicsSuite()) check(r.ok, `DYNAMIC: ${r.label}
 if (NODE_HALF) for (const r of reelSuite()) check(r.ok, `REEL: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of survivalSuite()) check(r.ok, `SURVIVAL: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of siteSuite()) check(r.ok, `SITE: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of furnaceSuite()) check(r.ok, `FURNACE: ${r.label}`, r.detail);
 
 /* ---------- GEAR: modules, sockets, fusion and what is on the ground ----------
    The spine of progression (§4), and the first reason this world has anywhere
@@ -3229,7 +3230,7 @@ if (BROWSER_HALF) {
               + `${streamed.end.grounded ? 'standing' : 'in the air'}`);
         /* #7: the furnace, a long way out, stands as its descriptor says in the
            world the build grows: a level floor, a wall a body cannot walk through,
-           a plug for a gate, and a dais. */
+           a gap for a gate (the door across it is the collider's), and a dais. */
         const furnace = await sp.evaluate(() => {
           const P = window.QSPLAY, QS = window.QS, S = P.site;
           if (!S) return { none: true };
@@ -3250,9 +3251,9 @@ if (BROWSER_HALF) {
           return out;
         });
         check(!furnace.none && furnace.standing && Math.abs(furnace.floor - furnace.hf) < 0.3
-              && Math.abs(furnace.wall - furnace.hf - 4) < 0.3 && Math.abs(furnace.gate - furnace.hf - 4) < 0.3
+              && Math.abs(furnace.wall - furnace.hf - 4) < 0.3 && Math.abs(furnace.gate - furnace.hf) < 0.3
               && Math.abs(furnace.core - furnace.hf - 1) < 0.3 && furnace.far > 17 && furnace.far < 21,
-              'STREAM: the furnace stands where it says, a level floor in a wall with a plug for a gate (#7)',
+              'STREAM: the furnace stands where it says, a level floor in a wall with a gap for a gate (#7)',
               furnace.none ? 'NO SITE' : `floor ${furnace.hf} m: ground ${furnace.floor.toFixed(2)}, wall ${furnace.wall.toFixed(2)}, gate ${furnace.gate.toFixed(2)}, `
                 + `core ${furnace.core.toFixed(2)}; a body pushing at the wall got ${furnace.far.toFixed(1)} m from the middle`);
         check(streamed.chunks.dropped > 0 && streamed.chunks.built > streamed.chunks.loaded
