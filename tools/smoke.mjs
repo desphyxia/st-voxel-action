@@ -3230,7 +3230,7 @@ if (BROWSER_HALF) {
               + `${streamed.end.grounded ? 'standing' : 'in the air'}`);
         /* #7: the furnace, a long way out, stands as its descriptor says in the
            world the build grows: a level floor, a wall a body cannot walk through,
-           a plug for a gate, and a dais. */
+           a gap for a gate (the door across it is the collider's), and a dais. */
         const furnace = await sp.evaluate(() => {
           const P = window.QSPLAY, QS = window.QS, S = P.site;
           if (!S) return { none: true };
@@ -3251,9 +3251,9 @@ if (BROWSER_HALF) {
           return out;
         });
         check(!furnace.none && furnace.standing && Math.abs(furnace.floor - furnace.hf) < 0.3
-              && Math.abs(furnace.wall - furnace.hf - 4) < 0.3 && Math.abs(furnace.gate - furnace.hf - 4) < 0.3
+              && Math.abs(furnace.wall - furnace.hf - 4) < 0.3 && Math.abs(furnace.gate - furnace.hf) < 0.3
               && Math.abs(furnace.core - furnace.hf - 1) < 0.3 && furnace.far > 17 && furnace.far < 21,
-              'STREAM: the furnace stands where it says, a level floor in a wall with a plug for a gate (#7)',
+              'STREAM: the furnace stands where it says, a level floor in a wall with a gap for a gate (#7)',
               furnace.none ? 'NO SITE' : `floor ${furnace.hf} m: ground ${furnace.floor.toFixed(2)}, wall ${furnace.wall.toFixed(2)}, gate ${furnace.gate.toFixed(2)}, `
                 + `core ${furnace.core.toFixed(2)}; a body pushing at the wall got ${furnace.far.toFixed(1)} m from the middle`);
         check(streamed.chunks.dropped > 0 && streamed.chunks.built > streamed.chunks.loaded
