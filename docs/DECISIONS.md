@@ -328,6 +328,17 @@ arena are still to decide (below).
 | Guardian move pools | **About six a tradition, and every pool holds each of four kinds:** a melee slam or sweep, a ranged volley, area denial or moving the tradition's hazard, and summons. The seed picks four, so a fight always has a close threat, a far one, a shrinking floor and a crowd, in an order the seed chose |
 | Co-op | **Some moves split attention between the players.** Alone it targets you; with two, certain moves go to each player separately or need both answered at once. Health scales a little and damage not at all, as for every machine (§6) |
 
+**The guardians' signatures (fourth round, same day).** What each is remembered by. The six
+moves of each pool are to be written round these, one in each of the four kinds (slam or sweep,
+volley, area denial or hazard, summons).
+
+| Tradition | Guardian | Signature |
+| --- | --- | --- |
+| Tech | The furnace's warden, in the ashfall | **Pressure: it builds, then vents.** A great pistoned machine whose slams and slag volleys quicken through the four phases. Each big move ends in a long venting opening, the sentry's recovery at scale, which a well-timed dodge turns into a free hit |
+| Magic | The rime engine's warden, in the rimewaste | **A closing winter.** A carved stone figure that drives the cold in: frost creeps along the ground toward where it will strike, ice walls close the bowl, and your stamina drains in the cold. The fight is about staying warm in the right places |
+| Biological | The spore core's warden, in the sporeverge | **Bloom and infection.** A grown thing that swells and bursts: spore clouds that infect over time, caps that swell with a circle on the ground. You manage infection as well as hits, which is the scar's own hazard turned up |
+| Split move (all three) | A move that splits attention between players | **It marks both and strikes each on its own clock.** Two tells appear at once, one on each player, with different timings, so each of you dodges your own while watching your partner's. Alone you get only your own mark, and the fight stays readable |
+
 **Draft part lists: a proposal derived from the answers above, not decided.** The issue's "done
 when" asks for part lists and assembly rules; this is the first pass to react to. Each stage is
 terrain the generator carves, then stamps and props over it.
@@ -399,7 +410,7 @@ the rime and the spore bloom grow harsher.
 - What the glasslands releases once all three weapons are down.
 - The set-piece grammar's parts — what an approach, a gate, an arena and a core are made of
   and how each tradition's parts differ. Their shape is decided (§6, 2026-10-06, two rounds);
-  the guardian moves themselves, the assembly rules and the numbers (how many machines a beat,
+  the guardian moves themselves (their signatures are decided), the assembly rules and the numbers (how many machines a beat,
   how fast an arena closes, how large a core wave) are not, and the part lists above are a draft.
 - Quest and objective plumbing (minimal, given the drive is self-evident).
 - Damage types, status stacking rules, and the exact regen delay and revive time.
