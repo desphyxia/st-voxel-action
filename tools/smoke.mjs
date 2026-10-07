@@ -3256,6 +3256,35 @@ if (BROWSER_HALF) {
               'STREAM: the furnace stands where it says, a level floor in a wall with a gap for a gate (#7)',
               furnace.none ? 'NO SITE' : `floor ${furnace.hf} m: ground ${furnace.floor.toFixed(2)}, wall ${furnace.wall.toFixed(2)}, gate ${furnace.gate.toFixed(2)}, `
                 + `core ${furnace.core.toFixed(2)}; a body pushing at the wall got ${furnace.far.toFixed(1)} m from the middle`);
+        /* #7, drawn: the door a person sees, the line the gate says, and a guardian
+           that is there when it has been woken and marks that tell what is coming. */
+        const seen = await sp.evaluate(async () => {
+          const P = window.QSPLAY, QS = window.QS, S = P.site, run = P.furnaceRun;
+          if (!S || !run) return { none: true };
+          const frames = async (n) => { for (let i = 0; i < n; i++) { P.frameOnce(); await new Promise((r) => setTimeout(r, 30)); } };
+          const a = P.actor; a.invincible = true; P.holdMachines(false);
+          P.teleport(S.gate.x + S.ux * 8, S.gate.z + S.uz * 8); P.run(10); await frames(3);
+          const sealed = P.siteLook;
+          run.stage = QS.FSTAGE.OPEN; run.stirT = 0;
+          P.teleport(S.cx + 0.5, S.cz + 0.5); P.run(10); await frames(24);
+          const opened = P.siteLook;
+          P.run(300); await frames(3);
+          const fight = P.siteLook, g = run.g;
+          if (g) { g.st = 'tell'; g.t = 0; g.move = QS.FMOVE.SLAM; run.marks.push({ k: QS.FMARK.WEDGE, x: g.x, z: g.z, r: 5, at: 1, born: 0.5, fx: 1, fz: 0 }, { k: QS.FMARK.RING, x: S.cx + 3, z: S.cz, r: 1.8, at: 1.3, born: 0.4 }); }
+          await frames(2);
+          const marked = P.siteLook;
+          P.teleport(S.cx + 60, S.cz + 60); P.run(30); await frames(3);
+          const after = P.siteLook;
+          a.invincible = undefined;
+          return { sealed, opened, fight, marked, after, stage: run.stage };
+        });
+        check(!seen.none && seen.sealed && seen.sealed.doorShown && seen.sealed.glyph && /sealed/.test(seen.sealed.hud)
+              && seen.opened && seen.opened.doorK > 0.9 && !seen.opened.glyph
+              && seen.fight && seen.fight.guard && seen.fight.bar && /guardian/.test(seen.fight.hud)
+              && seen.marked && seen.marked.wedge && seen.marked.marks >= 1
+              && seen.after && !seen.after.guard && seen.after.marks === 0,
+              'STREAM: the furnace is drawn: a door that sinks, a line that says what the gate asks, a guardian and the marks it makes (#7)',
+              seen.none ? 'NO SITE' : JSON.stringify(seen));
         check(streamed.chunks.dropped > 0 && streamed.chunks.built > streamed.chunks.loaded
               && streamed.nodesMatch,
               'STREAM: and the world behind is let go rather than kept',

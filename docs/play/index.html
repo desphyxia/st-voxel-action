@@ -140,6 +140,12 @@
   .vitals i{display:block;height:100%;width:100%;transition:width .06s linear}
   .vitals .hp i{background:#c9563a}
   .vitals .st i{background:var(--sand)}
+  /* The furnace (#7): what the weapon site is asking, and how the fight stands. */
+  .furn{position:absolute;left:0;right:0;top:44px;margin:0 auto;width:fit-content;max-width:min(520px,calc(100% - 32px));
+        display:none;text-align:center;pointer-events:none;font:500 11px/1.4 var(--mono,monospace);letter-spacing:.1em;
+        text-transform:uppercase;color:#ffd7a0;background:rgba(10,13,17,.72);border:1px solid #6b4a30;padding:6px 12px}
+  .furn .fbar{display:none;height:8px;margin:5px 0 0;border:1px solid #6b4a30;background:rgba(10,13,17,.6)}
+  .furn .fbar i{display:block;height:100%;width:100%;background:#d9a25e;transition:width .06s linear}
   .dead{position:absolute;inset:0;display:none;place-items:center;background:rgba(40,8,8,.42)}
   .dead span{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;
              color:#ffd7cf;background:rgba(10,13,17,.8);border:1px solid #6b3030;padding:10px 16px}
@@ -340,6 +346,7 @@
         <div class="bar hp"><i id="hpfill"></i></div>
         <div class="bar st"><i id="staminafill"></i></div>
       </div>
+      <div class="furn" id="furn"><span id="furnmsg"></span><div class="fbar" id="furnbar"><i id="furnfill"></i></div></div>
       <div class="dead" id="dead"><span id="deadmsg">dead</span></div>
       <div class="toast" id="toast"></div>
       <div class="gfx crash" id="crash" hidden>
@@ -12955,7 +12962,7 @@ const ASSETS={
   'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
   'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP8AAAD/'
 };
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,REEL:REEL,TETHER:TETHER,isReel:isReel,reelRange:reelRange,reelCost:reelCost,trySwap:trySwap,swapFrame:swapFrame,frameKind:frameKind,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SPOILS_MAX:SPOILS_MAX,STREAM_ENC:STREAM_ENC,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,MORTAR:MORTAR,HOUND:HOUND,KIND:KIND,KIND_NAMES:KIND_NAMES,ARCHETYPES:ARCHETYPES,makeMortar:makeMortar,makeHound:makeHound,MORTAR_AIM_TIME:MORTAR_AIM_TIME,MORTAR_FLIGHT_TIME:MORTAR_FLIGHT_TIME,MORTAR_VENT_TIME:MORTAR_VENT_TIME,HOUND_TELL_TIME:HOUND_TELL_TIME,LUNGE_TIME:LUNGE_TIME,STUMBLE_TIME:STUMBLE_TIME,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,MORTAR_RIG:MORTAR_RIG,HOUND_RIG:HOUND_RIG,MACHINE_RIGS:MACHINE_RIGS,MACHINE_STRIDES:MACHINE_STRIDES,poseMachine:poseMachine,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,lightningAt:lightningAt,FLASH_SECONDS:FLASH_SECONDS,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,REEL:REEL,TETHER:TETHER,isReel:isReel,reelRange:reelRange,reelCost:reelCost,trySwap:trySwap,swapFrame:swapFrame,frameKind:frameKind,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SPOILS_MAX:SPOILS_MAX,STREAM_ENC:STREAM_ENC,FSTAGE:FSTAGE,FMOVE:FMOVE,FMARK:FMARK,FURNACE:FURNACE,opensGate:opensGate,fusionsOfSchool:fusionsOfSchool,seatedFusions:seatedFusions,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,MORTAR:MORTAR,HOUND:HOUND,KIND:KIND,KIND_NAMES:KIND_NAMES,ARCHETYPES:ARCHETYPES,makeMortar:makeMortar,makeHound:makeHound,MORTAR_AIM_TIME:MORTAR_AIM_TIME,MORTAR_FLIGHT_TIME:MORTAR_FLIGHT_TIME,MORTAR_VENT_TIME:MORTAR_VENT_TIME,HOUND_TELL_TIME:HOUND_TELL_TIME,LUNGE_TIME:LUNGE_TIME,STUMBLE_TIME:STUMBLE_TIME,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,MORTAR_RIG:MORTAR_RIG,HOUND_RIG:HOUND_RIG,MACHINE_RIGS:MACHINE_RIGS,MACHINE_STRIDES:MACHINE_STRIDES,poseMachine:poseMachine,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,lightningAt:lightningAt,FLASH_SECONDS:FLASH_SECONDS,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -16230,6 +16237,102 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     return (((ar+(br-ar)*t)|0)<<16)|(((ag+(bg-ag)*t)|0)<<8)|((ab+(bb-ab)*t)|0);
   }
 
+  /* ---------- the furnace (#7) ----------
+     The run is the host's and a guest's copy is observed from the wire; both
+     are `encounter.site`. What is drawn here is only ever read from it: the door
+     that opens, the guardian (a scaled sentry until the art pass), the marks
+     on the ground, and one line of HUD saying what is being asked. */
+  var siteView=null, furnEl=document.getElementById('furn'), furnMsg=document.getElementById('furnmsg'),
+      furnBar=document.getElementById('furnbar'), furnFill=document.getElementById('furnfill'), furnSay='';
+  function dropSiteView(){
+    if(!siteView) return;
+    built.scene.remove(siteView.g); freeObject(siteView.g);
+    if(siteView.guard) dropFoe(siteView.guard);
+    siteView=null;
+  }
+  function makeSiteView(S){
+    var F=QS.FURNACE, D=S.door, g=new THREE.Group(), H=D.y1-D.y0;
+    var door=new THREE.Mesh(new THREE.BoxGeometry(D.hw*2,H,D.ht*2),new THREE.MeshLambertMaterial({color:0x4a3b30}));
+    door.userData.keep=true;
+    /* The glyph on the face that looks out: a plate that pulses while the gate is sealed. */
+    var glyph=new THREE.Mesh(new THREE.PlaneGeometry(D.hw*1.2,H*0.5),new THREE.MeshBasicMaterial({color:0xd9a25e,transparent:true,opacity:0.5,depthWrite:false,toneMapped:false}));
+    glyph.position.set(0,H*0.1,D.ht+0.03); glyph.userData.keep=true;
+    var pivot=new THREE.Group(); pivot.add(door); pivot.add(glyph);
+    pivot.rotation.y=Math.atan2(D.ux,D.uz);
+    g.add(pivot);
+    var guard=makeFoe(QS.KIND.SENTRY); guard.g.scale.setScalar(F.rad/1.0); guard.g.visible=false; addFoe(guard);
+    /* The marks: a wedge in front of the guardian, and discs for rings and vents. */
+    var arc=2*Math.acos(F.slam.cosArc), marks=[];
+    var wedge=new THREE.Mesh(new THREE.RingGeometry(0.6,F.slam.reach,24,1,Math.PI/2-arc/2,arc),
+      new THREE.MeshBasicMaterial({color:0xff8a3c,transparent:true,opacity:0,side:THREE.DoubleSide,depthWrite:false,toneMapped:false}));
+    wedge.rotation.x=Math.PI/2; var wp=new THREE.Group(); wp.add(wedge); wp.visible=false; wp.renderOrder=3; wedge.userData.keep=true; wedge.userData.kind='tell';
+    g.add(wp);
+    for(var q=0;q<8;q++){
+      var d=new THREE.Mesh(new THREE.CircleGeometry(1,28),new THREE.MeshBasicMaterial({color:0xff8a3c,transparent:true,opacity:0,side:THREE.DoubleSide,depthWrite:false,toneMapped:false}));
+      d.rotation.x=-Math.PI/2; d.visible=false; d.renderOrder=3; d.userData.keep=true; d.userData.kind='tell';
+      g.add(d); marks.push(d);
+    }
+    built.scene.add(g);
+    return {g:g,S:S,pivot:pivot,door:door,glyph:glyph,guard:guard,wp:wp,wedge:wedge,marks:marks,k:0,at:undefined};
+  }
+  /** What the gate asks for, as the names of the fusions that would open it. */
+  function glyphLine(){
+    return QS.fusionsOfSchool(QS.TRAD.TECH).map(function(f){ return QS.FUSIONS[f].name; }).join(' · ');
+  }
+  function poseSite(a){
+    var run=encounter&&encounter.site;
+    if(!run||plateMode){ if(siteView) dropSiteView(); furnEl.style.display='none'; return; }
+    if(!siteView){
+      var desc=null; try{ var gg=built.data&&built.data.G; desc=gg&&gg.site?gg.site():null; }catch(e){ desc=null; }
+      if(!desc){ furnEl.style.display='none'; return; }
+      siteView=makeSiteView(desc);
+    }
+    var V=siteView, S=V.S, F=QS.FURNACE, FS=QS.FSTAGE, D=S.door, H=D.y1-D.y0;
+    /* The door sinks into the ground when the gate opens, and rises when it shuts. */
+    var dt=V.at===undefined?0:Math.min(0.1,Math.max(0,tm-V.at)); V.at=tm;
+    var want=run.gateOpen()?1:0; V.k+=(want-V.k)*Math.min(1,dt*3.5);
+    if(Math.abs(want-V.k)<0.01) V.k=want;
+    V.door.parent.position.set(D.x,D.y0+H/2-V.k*(H+0.4),D.z);
+    V.pivot.visible=V.k<1;
+    V.glyph.visible=run.stage===FS.SEALED; V.glyph.material.opacity=0.35+0.25*Math.sin(tm*2.2);
+    /* The guardian. */
+    var g=run.g, fight=run.stage===FS.FIGHT&&!!g, EST=QS.EST;
+    V.guard.g.visible=fight;
+    if(fight){
+      var s=g.st, es=s==='wake'?EST.WAKE:(s==='tell'?EST.TELEGRAPH:(s==='open'?EST.RECOVER:(s==='beat'?EST.STAGGER:(s==='close'?EST.CLOSE:EST.CLOSE))));
+      poseFoe(V.guard,{x:g.x,y:S.hf,z:g.z,fx:g.faceX,fz:g.faceZ,s:es,t:g.t,h:g.hp,mh:g.maxHp,u:g.hurtT||0,r:0,k:QS.KIND.SENTRY,i:-9000});
+      V.guard.g.scale.setScalar(F.rad); V.guard.bar.visible=false; if(V.guard.wedge) V.guard.wedge.visible=false;
+    }
+    /* The marks, each on its own clock: a stain that fills in until it lands. */
+    var wedgeOn=false, n=0;
+    for(var q=0;q<V.marks.length;q++) V.marks[q].visible=false;
+    if(fight||run.marks.length){
+      for(var m=0;m<run.marks.length;m++){
+        var mk=run.marks[m], k=Math.min(1,mk.born/Math.max(0.01,mk.at));
+        if(mk.k===QS.FMARK.WEDGE){
+          wedgeOn=true; V.wp.position.set(mk.x,S.hf+0.3,mk.z); V.wp.rotation.y=Math.atan2(mk.fx,mk.fz);
+          V.wedge.material.opacity=0.2+0.7*k; continue;
+        }
+        if(n>=V.marks.length) continue;
+        var d=V.marks[n++]; d.visible=true; d.position.set(mk.x,S.hf+0.3,mk.z); d.scale.set(mk.r,mk.r,1);
+        var burning=mk.burning>0;
+        d.material.color.setHex(mk.k===QS.FMARK.VENT?(burning?0xff3a14:0xff6a2c):0xff8a3c);
+        d.material.opacity=burning?0.55+0.2*Math.sin(tm*14):0.14+0.62*k*k;
+      }
+    }
+    V.wp.visible=wedgeOn;
+    /* The line: what is being asked, near the gate; how the fight stands in it. */
+    var say='', frac=-1;
+    if(a&&run.stage===FS.SEALED&&Math.sqrt((a.x-S.gate.x)*(a.x-S.gate.x)+(a.z-S.gate.z)*(a.z-S.gate.z))<14) say='sealed · seat a tech fusion: '+glyphLine();
+    else if(run.stage===FS.OPEN&&run.stirT>0) say='something stirs…';
+    else if(fight){ say=g.invincible?'it changes':'the furnace’s guardian · '+(g.phase+1)+' of 4'; frac=g.hp/g.maxHp; }
+    else if(run.stage===FS.CORE){ var left=Math.max(0,Math.ceil(F.hold-run.hold)); say='hold the core · '+Math.floor(left/60)+':'+('0'+(left%60)).slice(-2); frac=1-run.hold/F.hold; }
+    else if(run.stage===FS.DONE&&a&&Math.sqrt((a.x-S.cx)*(a.x-S.cx)+(a.z-S.cz)*(a.z-S.cz))<40) say='the furnace is dark';
+    if(say!==furnSay){ furnSay=say; furnMsg.textContent=say; furnEl.style.display=say?'block':'none'; }
+    furnBar.style.display=frac>=0?'block':'none';
+    if(frac>=0) furnFill.style.width=Math.max(0,Math.min(1,frac))*100+'%';
+  }
+
   /** Seconds the swing trail takes to fade out, well past the 0.12 s hitbox. */
   var SWEEP_FADE=0.22;
   var avatar=makeAvatar(0x2f6f7a,0xc99a6e), peerAvatar=makeAvatar(0xa5642a,0xb5855c);
@@ -16619,6 +16722,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Models follow the machines on the wire, by id (#108): a streamed world's
        list changes as groups come and go. */
     foeMeshes.forEach(dropFoe); foeMeshes=[]; foeById={};
+    dropSiteView();
     eachLoot(function(m){ if(m.parent) m.parent.remove(m); freeObject(m); });
     var nc=encounter.loot.caches.length;
     loot=makeLoot(nc+QS.SPOILS_MAX,nc); loot.sil=lootSil(loot.cube);
@@ -18316,6 +18420,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        coming into reach (#108): whatever the wire says is there gets a model. */
     syncFoes(foes);
     for(var fq=0;fq<foeMeshes.length;fq++) poseFoe(foeMeshes[fq],foes[fq]);
+    poseSite(a);
     poseLoot();
     for(var q=0;q<postLit.length;q++) setPost(q,postFlash[q]>0);
     /* Issue #29: a look baseline is of the *world*. A character mid-stride, a
@@ -19997,6 +20102,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     teleport:function(x,z){ return dbgTeleport(x,z); },
     /** The weapon site this seed lays (#7), or null. */
     get site(){ try{ var g=built&&built.data&&built.data.G; return g&&g.site?g.site():null; }catch(e){ return null; } },
+    /* The furnace's run, and what the page is showing of it (#7). */
+    get furnaceRun(){ return encounter&&encounter.site||null; },
+    get siteLook(){ var V=siteView; if(!V) return null;
+      var marks=0; V.marks.forEach(function(m){ if(m.visible) marks++; });
+      return {doorShown:V.pivot.visible,doorK:V.k,glyph:V.glyph.visible,guard:V.guard.g.visible,wedge:V.wp.visible,marks:marks,
+              hud:furnEl.style.display==='none'?'':furnMsg.textContent,bar:furnBar.style.display!=='none'}; },
     /* #106: which tell each machine's model is showing, as drawn. */
     get foeTells(){ return foeMeshes.map(function(f){
       return {k:f.k,shown:f.g.visible,wedge:!!(f.wedge&&f.wedge.visible),line:!!(f.line&&f.line.visible),
