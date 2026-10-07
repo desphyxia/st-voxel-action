@@ -16268,9 +16268,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     wedge.rotation.x=Math.PI/2; var wp=new THREE.Group(); wp.add(wedge); wp.visible=false; wp.renderOrder=3; wedge.userData.keep=true; wedge.userData.kind='tell';
     g.add(wp);
     for(var q=0;q<8;q++){
-      var d=new THREE.Mesh(new THREE.CircleGeometry(1,28),new THREE.MeshBasicMaterial({color:0xff8a3c,transparent:true,opacity:0,side:THREE.DoubleSide,depthWrite:false,toneMapped:false}));
-      d.rotation.x=-Math.PI/2; d.visible=false; d.renderOrder=3; d.userData.keep=true; d.userData.kind='tell';
-      g.add(d); marks.push(d);
+      var dk=new THREE.Mesh(new THREE.CircleGeometry(1,28),new THREE.MeshBasicMaterial({color:0xff8a3c,transparent:true,opacity:0,side:THREE.DoubleSide,depthWrite:false,toneMapped:false}));
+      dk.rotation.x=-Math.PI/2; dk.visible=false; dk.renderOrder=3; dk.userData.keep=true; dk.userData.kind='tell';
+      g.add(dk); marks.push(dk);
     }
     built.scene.add(g);
     return {g:g,S:S,pivot:pivot,door:door,glyph:glyph,guard:guard,wp:wp,wedge:wedge,marks:marks,k:0,at:undefined};
@@ -16314,10 +16314,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
           V.wedge.material.opacity=0.2+0.7*k; continue;
         }
         if(n>=V.marks.length) continue;
-        var d=V.marks[n++]; d.visible=true; d.position.set(mk.x,S.hf+0.3,mk.z); d.scale.set(mk.r,mk.r,1);
+        var dk=V.marks[n++]; dk.visible=true; dk.position.set(mk.x,S.hf+0.3,mk.z); dk.scale.set(mk.r,mk.r,1);
         var burning=mk.burning>0;
-        d.material.color.setHex(mk.k===QS.FMARK.VENT?(burning?0xff3a14:0xff6a2c):0xff8a3c);
-        d.material.opacity=burning?0.55+0.2*Math.sin(tm*14):0.14+0.62*k*k;
+        dk.material.color.setHex(mk.k===QS.FMARK.VENT?(burning?0xff3a14:0xff6a2c):0xff8a3c);
+        dk.material.opacity=burning?0.55+0.2*Math.sin(tm*14):0.14+0.62*k*k;
       }
     }
     V.wp.visible=wedgeOn;
