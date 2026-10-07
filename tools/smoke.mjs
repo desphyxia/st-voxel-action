@@ -3230,7 +3230,7 @@ if (BROWSER_HALF) {
         /* #7: the furnace, a long way out, stands as its descriptor says in the
            world the build grows: a level floor, a wall a body cannot walk through,
            a plug for a gate, and a dais. */
-        const furnace = await page.evaluate(() => {
+        const furnace = await sp.evaluate(() => {
           const P = window.QSPLAY, QS = window.QS, S = P.site;
           if (!S) return { none: true };
           P.holdMachines(true);
@@ -3241,17 +3241,17 @@ if (BROWSER_HALF) {
           out.wall = gy(S.cx - S.ux * 21.5, S.cz - S.uz * 21.5);
           out.gate = gy(S.gate.x, S.gate.z);
           out.core = gy(S.core.x, S.core.z);
-          /* Walk into the wall opposite the gate for three seconds. */
+          /* Walk into the wall, along the line between the footholds, for seven seconds (running is 4 m/s, the wall is 20 m out). */
           a.x = S.cx + 0.5; a.z = S.cz + 0.5; a.vx = a.vz = 0; a.y = S.hf; a.grounded = true;
           let far = 0;
-          for (let i = 0; i < 180; i++) { QS.step(col, a, { mx: -S.ux, mz: -S.uz }, null); far = Math.max(far, Math.hypot(a.x - S.cx, a.z - S.cz)); }
+          for (let i = 0; i < 420; i++) { QS.step(col, a, { mx: -S.uz, mz: S.ux }, null); far = Math.max(far, Math.hypot(a.x - S.cx, a.z - S.cz)); }
           out.far = far;
           P.holdMachines(false);
           return out;
         });
         check(!furnace.none && furnace.standing && Math.abs(furnace.floor - furnace.hf) < 0.3
               && Math.abs(furnace.wall - furnace.hf - 4) < 0.3 && Math.abs(furnace.gate - furnace.hf - 4) < 0.3
-              && Math.abs(furnace.core - furnace.hf - 1) < 0.3 && furnace.far < 21,
+              && Math.abs(furnace.core - furnace.hf - 1) < 0.3 && furnace.far > 17 && furnace.far < 21,
               'STREAM: the furnace stands where it says, a level floor in a wall with a plug for a gate (#7)',
               furnace.none ? 'NO SITE' : `floor ${furnace.hf} m: ground ${furnace.floor.toFixed(2)}, wall ${furnace.wall.toFixed(2)}, gate ${furnace.gate.toFixed(2)}, `
                 + `core ${furnace.core.toFixed(2)}; a body pushing at the wall got ${furnace.far.toFixed(1)} m from the middle`);
