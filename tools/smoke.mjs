@@ -3517,7 +3517,7 @@ if (BROWSER_HALF) {
              neither come nor act; they are let go after. */
           P.holdMachines(true);
           P.frameOnce(); P.frameOnce();
-          const a0 = { x: P.actor.x, z: P.actor.z }, prog0 = P.programs, why0 = P.shadowWhy, lights = new Set();
+          const a0 = { x: P.actor.x, z: P.actor.z }, prog0 = P.programs, names0 = P.programNames, why0 = P.shadowWhy, lights = new Set();
           const keys = ['KeyW', 'KeyD', 'KeyW', 'KeyA'];
           for (let i = 0; i < 60; i++) {
             if (i % 15 === 14) { P.input.releaseAll(); P.input.press(keys[((i + 1) / 15) % 4]); }
@@ -3527,11 +3527,12 @@ if (BROWSER_HALF) {
           P.holdMachines(false);
           for (const k of new Set([...Object.keys(why0), ...Object.keys(why1)])) d[k] = (why1[k] || 0) - (why0[k] || 0);
           return { turn: P.sunTurn, walked: Math.hypot(P.actor.x - a0.x, P.actor.z - a0.z), linked: P.programs - prog0,
+                   newPrograms: P.programNames.filter((n) => names0.indexOf(n) < 0).map((n) => `${n} used by ${Object.keys(P.programUsers()[n.split('#')[1]] || {}).join('+') || 'nothing now'}`),
                    lights: [...lights], why: d, redraws: Object.values(d).reduce((s, v) => s + v, 0) };
         });
         check(walk.walked > 40 && walk.lights.length === 1 && walk.lights[0] === 4 && walk.linked === 0,
               'PERF: a streamed walk holds its lights and compiles no program (#70)',
-              `${walk.walked.toFixed(0)} m walked; point lights ${walk.lights.join('/')}; ${walk.linked} programs linked after the first frame`);
+              `${walk.walked.toFixed(0)} m walked; point lights ${walk.lights.join('/')}; ${walk.linked} programs linked after the first frame${walk.newPrograms.length ? ' (' + walk.newPrograms.join(', ') + ')' : ''}`);
         check((walk.why.chunk || 0) <= 10 && (walk.why.sun || 0) <= Math.ceil(60 / walk.turn) + 1 && !walk.why.world,
               'PERF: and redraws the shadow map for ground coming into view a handful of times a minute, and once a sun step',
               `${walk.redraws} redraws in 60 s: ${Object.entries(walk.why).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'}`);

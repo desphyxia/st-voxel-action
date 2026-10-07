@@ -13001,10 +13001,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     cap.tex.needsUpdate=true; cap.uHO.value.set(x0,z0,base,CAP_S);
     cap.at={x:a.x,y:a.y,z:a.z}; cap.age=0;
   }
+  /* The cut's caps, made and put in the scene hidden. The warm-up needs them
+     there too: a material is linked the first time something drawn with it is
+     visible, and a cap shown for the first time in the middle of a walk linked
+     its program then (#70) — whenever the route first went behind ground. */
+  function capsEnsure(){
+    if(!built||built.caps) return;
+    built.caps=[makeCap(),makeCap()];
+    built.caps.forEach(function(c){ c.meshes.forEach(function(me){ built.scene.add(me); }); });
+  }
   function capFrame(q,a,s){
     if(!built) return;
-    if(!built.caps){ built.caps=[makeCap(),makeCap()];
-      built.caps.forEach(function(c){ c.meshes.forEach(function(me){ built.scene.add(me); }); }); }
+    capsEnsure();
     var cap=built.caps[q], show=!!a&&s>0&&!capOff;
     cap.meshes.forEach(function(me){ me.visible=show; });
     if(!show) return;
@@ -16558,6 +16566,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        tell's programs in the middle of a walk. */
     var warmFoes=[0,1,2].map(function(k){ var f=makeFoe(k); g.add(f.g); if(f.rings) g.add(f.rings); return f; });
     built.scene.add(g);
+    capsEnsure();
     renderer.compile(built.scene,camera);
     built.scene.remove(g); g.children.forEach(function(o){ if(o.isInstancedMesh) o.dispose(); }); box.dispose(); hg.dispose();
     /* Their geometry goes; their materials stay, because disposing one lets go
@@ -19580,6 +19589,11 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Programs linked so far, and the scene's point lights: the two numbers a
        streamed walk must hold still (#70). */
     get programs(){ return renderer.info.programs?renderer.info.programs.length:0; },
+    /** What those programs are, by their shaders' names, for a report that says which one linked. */
+    /** Which kinds of object use each program, by program id, for the same report. */
+    programUsers:function(){ var out={}; try{ built.scene.traverse(function(o){ var ms=o.material; if(!ms) return; if(!Array.isArray(ms)) ms=[ms];
+      ms.forEach(function(m){ var pr=renderer.properties.get(m), cp=pr&&pr.currentProgram; if(!cp) return; (out[cp.id]=out[cp.id]||{})[(o.userData&&o.userData.kind)||(o.isPoints?'points':o.type)]=1; }); }); }catch(e){} return out; },
+    get programNames(){ return renderer.info.programs?renderer.info.programs.map(function(p){ return (p.name||'?')+'#'+p.id; }):[]; },
     get pointLights(){ var n=0; if(built) built.scene.traverse(function(o){ if(o.isPointLight) n++; }); return n; },
     /* Why the map was drawn again, by cause, since the page loaded (#70). */
     get shadowWhy(){ return Object.assign({},shadowWhy); },
