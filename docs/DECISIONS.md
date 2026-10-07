@@ -339,6 +339,21 @@ volley, area denial or hazard, summons).
 | Biological | The spore core's warden, in the sporeverge | **Bloom and infection.** A grown thing that swells and bursts: spore clouds that infect over time, caps that swell with a circle on the ground. You manage infection as well as hits, which is the scar's own hazard turned up |
 | Split move (all three) | A move that splits attention between players | **It marks both and strikes each on its own clock.** Two tells appear at once, one on each player, with different timings, so each of you dodges your own while watching your partner's. Alone you get only your own mark, and the fight stays readable |
 
+**The guardian's pacing (fifth round, same day).**
+
+| Decision | Choice |
+| --- | --- |
+| Fight length | **About five minutes,** from the gate opening to the guardian down. Around a quarter of the site; the approach and the core's last wave carry the rest |
+| Big hit | **A quarter of your health: four hits.** Its heavy moves (the slam, the volley's centre) take about 25 against your 100, clearly deadlier than a sentry's 13, while its ordinary hits stay near a sentry's |
+| Phase change | **A short beat that changes the arena.** At each quarter of its health the guardian stops for two or three seconds, untouchable, and the arena shifts: the hazard advances and the next move is shown. A breath, a marker of progress, and a place to revive |
+| Summons | **A few of its tradition's roster, capped.** Two or three machines of its own school at a time, never more than three alive at once, and none while its recovery is open: a crowd to handle, never a flood |
+
+*A starting number, derived and not decided.* Five minutes against about nine damage a second a
+player (a 20-damage swing every 0.77 s at roughly a third uptime, the rest spent dodging and
+repositioning) is about 2,000 health for a guardian met by one player with a couple of modules,
+500 a phase. A second player adds the usual 15% and fights faster, because their damage adds
+and the guardian's does not (§6). It is to be measured and tuned by playing it, not argued.
+
 **Draft part lists: a proposal derived from the answers above, not decided.** The issue's "done
 when" asks for part lists and assembly rules; this is the first pass to react to. Each stage is
 terrain the generator carves, then stamps and props over it.
