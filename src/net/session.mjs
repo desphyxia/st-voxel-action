@@ -310,6 +310,8 @@ export function makeHost(opts) {
           lt: encounter && encounter.loot ? encounter.loot.wire() : 0,
           /* What machines have left on the ground, while it lies there (#108). */
           sp: encounter && encounter.loot && encounter.loot.spoils.length ? encounter.loot.spoilWire() : undefined,
+          /* The weapon site's run, once there is anything to say of it (#7). */
+          st: encounter && encounter.siteWire ? (encounter.siteWire() || undefined) : undefined,
           /* The last lattice change applied, so the guest stops sending it. */
           ak: acted,
         });
@@ -426,6 +428,7 @@ export function makeGuest(opts) {
       lootBits = m.lt || 0;
       while (acts.length && acts[0].a <= (m.ak || 0)) acts.shift();
       if (encounter && encounter.observeWire) encounter.observeWire(foes, lootBits, m.sp || []);
+      if (encounter && encounter.observeSite) encounter.observeSite(m.st || null);
     }
   });
 

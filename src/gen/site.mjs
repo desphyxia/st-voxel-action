@@ -186,12 +186,18 @@ export function shapeSite(S0, heightAt, waterLevelAt, key) {
     if (r <= ARENA_R) put(x, z, SITE_K.FLOOR, S.hf);
     else if (r <= edge) {
       const inGate = (dx * ux + dz * uz) / r >= cosGate;
-      put(x, z, inGate ? SITE_K.GATE : SITE_K.WALL, S.hf + WALL_H);
+      /* The gate is a gap in the ground, level with the floor. What shuts it is a
+         door in the collider (src/sim/furnace.mjs), because ground does not open. */
+      put(x, z, inGate ? SITE_K.GATE : SITE_K.WALL, inGate ? S.hf : S.hf + WALL_H);
       if (inGate) gate.push([x, z]);
     }
   }
   S.gateCells = gate;
   S.gate = { x: rnd(cx + ux * (ARENA_R + WALL_W / 2)), z: rnd(cz + uz * (ARENA_R + WALL_W / 2)) };
+  /* The door that fills it: an oriented slab across the gap, centred on the
+     wall, in the frame of the gate's direction (`ux`, `uz`) and its sideways. */
+  S.door = { x: cx + ux * (ARENA_R + WALL_W / 2), z: cz + uz * (ARENA_R + WALL_W / 2), ux, uz,
+             ht: WALL_W / 2 + 0.3, hw: GATE_HALF + 0.3, y0: S.hf - 1, y1: S.hf + WALL_H };
 
   /* The core's dais on the far side from the gate. */
   const kx = rnd(cx - ux * CORE_AT), kz = rnd(cz - uz * CORE_AT);

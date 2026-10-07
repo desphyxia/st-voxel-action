@@ -31,6 +31,7 @@ import * as LO from '../../src/sim/loot.mjs';
 import * as RL from '../../src/sim/reel.mjs';
 import * as RV from '../../src/sim/revive.mjs';
 import * as ST from '../../src/gen/site.mjs';
+import * as FN from '../../src/sim/furnace.mjs';
 import { makeLoopback, conditioned } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import * as NS from '../../src/net/session.mjs';
@@ -6079,13 +6080,14 @@ export function siteSuite() {
       const c = at0(x, z), r = hyp(x - S.cx, z - S.cz);
       if (r <= ST.ARENA_R && (c.site === ST.SITE_K.FLOOR)) { floor++; if (c.H === hf) flat++; if (!c.water && !c.magma) dry++; if (!c.basalt && !c.cliff && !c.mesa) bare++; }
       if (c.site === ST.SITE_K.WALL) { wall++; if (c.H - hf >= ST.WALL_H) tall++; }
-      if (c.site === ST.SITE_K.GATE) { gate++; if (c.H - hf >= ST.WALL_H) plug++; }
+      if (c.site === ST.SITE_K.GATE) { gate++; if (c.H === hf) plug++; }
     }
     say('the floor is level, dry and bare, and the wall round it stands four metres over it',
         floor > 1000 && flat === floor && dry === floor && bare === floor && wall > 300 && tall === wall,
         `${floor} floor cells (${flat} at ${hf} m, ${dry} dry, ${bare} bare), ${wall} wall cells (${tall} tall)`);
-    say('the gate is a four-metre plug in the wall until it is opened',
-        gate >= 10 && plug === gate && S.gateCells.length === gate, `${gate} cells, ${plug} as tall as the wall, ${S.gateCells.length} listed`);
+    say('the gate is a four-metre gap in the wall, level with the floor, with a door across it',
+        gate >= 10 && plug === gate && S.gateCells.length === gate && !!S.door && S.door.y1 - S.door.y0 >= ST.WALL_H,
+        `${gate} gate cells, ${plug} level with the floor, ${S.gateCells.length} listed, door ${S.door ? (S.door.hw * 2).toFixed(1) + ' m wide' : 'none'}`);
     const core = at0(S.core.x, S.core.z), stones = S.stones.map((p) => at0(p[0], p[1]).H);
     say('the core stands a metre over the floor on the far side from the gate, with four footholds on the floor',
         core.H === hf + ST.CORE_H && core.site === ST.SITE_K.CORE && stones.length === 4 && stones.every((h) => h === hf + ST.STONE_H)
@@ -6109,8 +6111,8 @@ export function siteSuite() {
           if (Math.abs(nx - S.cx) > 30 || Math.abs(nz - S.cz) > 30 || seen.has(key(nx, nz))) continue;
           const n = at0(nx, nz);
           if (n.water || n.magma) continue;
-          const nh = open && gateSet.has(key(nx, nz)) ? hf : n.H;
-          if (Math.abs(nh - c.H) > MOVE.climb) continue;
+          if (!open && gateSet.has(key(nx, nz))) continue;     /* the door */
+          if (Math.abs(n.H - c.H) > MOVE.climb) continue;
           seen.add(key(nx, nz)); q.push([nx, nz]);
           const r = hyp(nx - S.cx, nz - S.cz);
           if (r > ST.ARENA_R + ST.WALL_W + 0.5) { escaped++; if (n.site === ST.SITE_K.ROAD) reachedRoad++; }
@@ -6120,7 +6122,7 @@ export function siteSuite() {
       return { escaped, reachedRoad, far };
     };
     const shut = flood(false), open = flood(true);
-    say('the arena is a bowl: nothing on foot leaves it with the gate shut, and opening it lets a body out to the road',
+    say('the arena is a bowl: nothing on foot leaves it with the door shut, and opening it lets a body out to the road',
         shut.escaped === 0 && open.reachedRoad > 0, `shut: ${shut.escaped} cells out, reached ${shut.far.toFixed(1)} m; open: ${open.reachedRoad} road cells reached`);
   }
 
@@ -6154,5 +6156,225 @@ export function siteSuite() {
     say('the road runs the whole 330 m, on the heights it says to a metre, dry, and never steeper than a metre a step',
         steps > 100 && ok === steps, `${ok} of ${steps} sampled points${bad ? '; first bad ' + bad : ''}; ${wins.size} windows`);
   }
+  return out;
+}
+
+/* ------------------------------------------------------------- furnace ---- */
+
+/**
+ * The furnace's run (#7): a gate that reads what you carry, a guardian that
+ * wakes when someone has stood inside long enough, four moves that arrive a
+ * quarter of its health at a time, a wipe that heals it, a core that is held
+ * while the site sends its waves, and a scar that goes quiet. Staged on a flat
+ * pen with a site descriptor of the same shape as the generator's, because the
+ * run reads only where things are.
+ */
+export function furnaceSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const F = FN.FURNACE;
+  const S = { cx: 0, cz: 0, ux: 1, uz: 0, hf: 0, gate: { x: 21.5, z: 0 }, core: { x: -11, z: 0, h: 1, r: 3.5 }, stones: [], gateCells: [] };
+
+  const stage = () => {
+    const c = pen();
+    const targets = [{ x: 99, y: 0, z: 99, r: 0.5 }];   /* a post, so indices start after it */
+    const log = { drops: [], calm: [], spawns: [], door: null };
+    const ctx = {
+      kinds: { sentry: EN.KIND.SENTRY, mortar: EN.KIND.MORTAR, hound: EN.KIND.HOUND },
+      spawn(kind, x, z) { const e = [EN.makeSentry, EN.makeMortar, EN.makeHound][kind](c, Math.max(-18, Math.min(18, x)), Math.max(-18, Math.min(18, z)), 1); log.spawns.push(kind); return e; },
+      alive(list) { return list.filter((e) => !e.dead).length; },
+      hold(t) { if (targets.indexOf(t) < 0) targets.splice(1, 0, t); },
+      release(t) { const i = targets.indexOf(t); if (i >= 0) targets.splice(i, 1); },
+      drop(k, t) { log.drops.push(k); },
+      calm(x, z, r) { log.calm.push([x, z, r]); },
+      door(shut) { log.door = shut; },
+    };
+    return { c, targets, log, run: FN.makeFurnaceRun(S, ctx) };
+  };
+  /* A player standing at (x, z), carrying a fusion of the given school or none. */
+  const player = (c, x, z, fuse) => {
+    const p = placeOnGround(c, x, z);
+    if (fuse === 'tech') {
+      /* A governor (tech) beside a keening edge (magic) is regulated edge. */
+      LT.takeModule(p.gear, LT.MOD.GOVERNOR); LT.takeModule(p.gear, LT.MOD.KEEN);
+      LT.socketModule(p.gear, 0, 0); LT.socketModule(p.gear, 1, 0);
+      LT.learnFusion(p.gear, LT.FUS.REGULATED);
+    } else if (fuse === 'other') {
+      /* A sigil (magic) beside a sinew (bio) is the reaching vine: no tech in it. */
+      LT.takeModule(p.gear, LT.MOD.SIGIL); LT.takeModule(p.gear, LT.MOD.SINEW);
+      LT.socketModule(p.gear, 0, 0); LT.socketModule(p.gear, 1, 0);
+      LT.learnFusion(p.gear, LT.FUS.VINE);
+    }
+    return p;
+  };
+  const tick = (run, players, secs) => { for (let i = 0, n = Math.round(secs / TICK); i < n; i++) run.step(players, TICK); };
+  const dt = TICK;
+
+  /* 1. The gate reads what you carry. */
+  {
+    const { c, run } = stage();
+    const bare = player(c, 18, 0), other = player(c, 18, 1, 'other');
+    tick(run, [bare, other], 1);
+    const shut = run.stage === FN.FSTAGE.SEALED;
+    const tech = player(c, 18, 0, 'tech');
+    tick(run, [tech], 0.2);
+    /* The same fusion on the frame in the bench opens it too. */
+    const s2 = stage(), benchP = player(s2.c, 18, 0, 'tech'); LT.swapFrame(benchP.gear);
+    tick(s2.run, [benchP], 0.2);
+    /* And standing across the room is not at the gate. */
+    const s3 = stage(), far = player(s3.c, 0, 0, 'tech'); tick(s3.run, [far], 1);
+    say('the gate stays shut for no fusion and for one without tech in it, and opens for a tech fusion, on either frame, at the gate',
+        shut && run.stage === FN.FSTAGE.OPEN && s2.run.stage === FN.FSTAGE.OPEN && s3.run.stage === FN.FSTAGE.SEALED,
+        `bare/other ${shut ? 'shut' : 'OPEN'}, tech ${run.stage === 1 ? 'open' : 'SHUT'}, on the bench ${s2.run.stage === 1 ? 'open' : 'SHUT'}, from across the room ${s3.run.stage === 0 ? 'shut' : 'OPEN'}`);
+    const d = stage(), dp = player(d.c, 0, 0);
+    d.run.step([dp], dt);
+    const shutAtFirst = d.log.door === true;
+    say('the door is shut in the sealed stage, and the run tells its collider so every tick',
+        shutAtFirst && run.gateOpen() === true && stage().run.gateOpen() === false, `door ${d.log.door}`);
+    say('the glyph on the gate names the four fusions that open it',
+        run.glyph().length === 4 && run.glyph().every((f) => [LT.FUS.REGULATED, LT.FUS.SLIPDRIVE, LT.FUS.IRONTHEW, LT.FUS.WELL].indexOf(f) >= 0),
+        run.glyph().map((f) => LT.FUSIONS[f].name).join(', '));
+  }
+
+  /* 2. The guardian wakes four seconds after someone has stood inside, and the gate closes. */
+  {
+    const { c, run, targets, log } = stage();
+    const p = player(c, 18, 0, 'tech'); tick(run, [p], 0.2);
+    p.x = 4; p.z = 0;
+    tick(run, [p], F.stir - 0.5);
+    const early = run.stage;
+    tick(run, [p], 1);
+    const g = run.g;
+    say('the guardian stirs for four seconds with someone inside, then wakes, and the gate closes behind them',
+        early === FN.FSTAGE.OPEN && run.stage === FN.FSTAGE.FIGHT && g && g.hp === F.hp && !run.gateOpen() && targets[1] === g && log.door === true,
+        `at 3.5 s ${early === 1 ? 'open' : 'stage ' + early}, then stage ${run.stage}; guardian ${g ? g.hp : 'none'} hp, gate ${run.gateOpen() ? 'OPEN' : 'closed'}, a target at index ${targets.indexOf(g)}`);
+    const pair = stage(), a = player(pair.c, 18, 0, 'tech'), b = player(pair.c, 4, 4);
+    tick(pair.run, [a], 0.2); a.x = 4;
+    tick(pair.run, [a, b], F.stir + 0.5);
+    say('a second player in the room scales its health as every machine\'s is', pair.run.g && Math.abs(pair.run.g.hp - F.hp * F.party) < 1e-6, `${pair.run.g ? pair.run.g.hp : 'none'} hp`);
+  }
+
+  /* 3. A new move at each quarter of its health, a beat between that nothing can hurt it in. */
+  {
+    const { c, run } = stage();
+    const p = player(c, 18, 0, 'tech'); p.invincible = true; tick(run, [p], 0.2); p.x = 4;
+    tick(run, [p], F.stir + 0.2);
+    const g = run.g, moves0 = new Set(), moves = (set) => { if (g.move >= 0) set.add(g.move); };
+    for (let i = 0; i < Math.round(20 / dt); i++) { run.step([p], dt); moves(moves0); }
+    const phase0 = g.phase;
+    const hp = g.hp; g.hp = g.maxHp * 0.74;
+    run.step([p], dt);
+    const beat = g.st === 'beat' && g.invincible && run.hazard === 1;
+    const before = g.hp; const hit = CB.hurt(g, 500, 'struck');
+    tick(run, [p], F.beat + 0.1);
+    const after = g.st !== 'beat' && !g.invincible;
+    const moves1 = new Set(moves0);
+    for (let i = 0; i < Math.round(30 / dt); i++) { run.step([p], dt); moves(moves1); }
+    say('a new move arrives at each quarter of its health, with a beat that nothing can hurt it in and the arena shifting',
+        phase0 === 0 && moves0.size === 1 && beat && !hit && g.hp === before && after && g.phase === 1 && moves1.size === 2,
+        `phase ${phase0} used ${moves0.size} move; at 74% a beat (${beat ? 'invincible' : 'NOT'}), a hit in it ${hit ? 'LANDED' : 'refused'}; then phase ${g.phase} with ${moves1.size} moves`);
+    void hp;
+  }
+
+  /* 4. Its blows land only where they were marked, on a clock the mark shows. */
+  {
+    /* Volley first by finding the seed's order, and standing still in the ring. */
+    const hits = (stand) => {
+      const { c, run } = stage();
+      const p = player(c, 18, 0, 'tech'); p.hp = 1000; p.maxHp = 1000; tick(run, [p], 0.2); p.x = 0; p.z = 0;
+      run.step([p], dt); tick(run, [p], F.stir + 0.2);
+      run.g.phase = 3;             /* every move open */
+      run.g.n = 0;
+      let first = null, damage = 0, seen = 0;
+      for (let i = 0; i < Math.round(30 / dt); i++) {
+        const hp0 = p.hp;
+        run.step([p], dt);
+        if (run.marks.length && !first) first = run.marks.map((m) => m.k);
+        if (run.marks.length) seen++;
+        if (stand === 'away' && run.marks.length) { p.x = -14; p.z = 12; }   /* out of every mark */
+        damage += hp0 - p.hp;
+      }
+      return { damage, first, seen };
+    };
+    const still = hits('still'), away = hits('away');
+    say('every blow is marked on the ground first, and a player who is elsewhere when it lands is not hurt by it',
+        still.seen > 0 && still.damage >= F.big && away.damage < still.damage,
+        `standing still ${still.damage.toFixed(0)} damage in 30 s over ${still.seen} marked ticks; stepping away ${away.damage.toFixed(0)}`);
+  }
+
+  /* 5. A wipe opens the gate again and the guardian is whole next time; what it had spent is kept. */
+  {
+    const { c, run, targets } = stage();
+    const p = player(c, 18, 0, 'tech'); tick(run, [p], 0.2); p.x = 4;
+    tick(run, [p], F.stir + 0.2);
+    run.g.hp = run.g.maxHp * 0.3;
+    p.dead = 'struck';
+    tick(run, [p], 0.5);
+    const opened = run.stage === FN.FSTAGE.OPEN && run.gateOpen() && run.g === null && targets.length === 1;
+    const q = player(c, 4, 0); tick(run, [q], F.stir + 0.5);
+    say('a wipe opens the gate again and the guardian comes back whole, taking its place among the things a swing can hit',
+        opened && run.stage === FN.FSTAGE.FIGHT && run.g.hp === F.hp && run.wipes === 1 && targets.indexOf(run.g) === 1,
+        `after the wipe stage ${opened ? 'open' : 'NOT open'}; next fight ${run.g ? run.g.hp : 'none'} hp, ${run.wipes} wipe`);
+  }
+
+  /* 6. Down, the core: held for two minutes, with waves while it is, and then the scar is quiet. */
+  {
+    const { c, run, log } = stage();
+    const p = player(c, 18, 0, 'tech'); p.invincible = true; tick(run, [p], 0.2); p.x = 4;
+    tick(run, [p], F.stir + 0.2);
+    CB.hurt(run.g, 99999, 'struck');
+    run.step([p], dt);
+    const core = run.stage === FN.FSTAGE.CORE && log.drops.length === 1 && run.gateOpen();
+    /* Away from it, nothing runs. */
+    tick(run, [p], 30);
+    const idle = run.hold === 0 && log.spawns.length === 0;
+    p.x = S.core.x + 1; p.z = 0;
+    tick(run, [p], 61);
+    const midway = run.hold > 60 && log.spawns.length >= 2;
+    tick(run, [p], 60);
+    say('with the guardian down the core is held two minutes with waves coming, and then the furnace is dark and its scar goes quiet',
+        core && idle && midway && run.stage === FN.FSTAGE.DONE && log.calm.length === 1 && log.calm[0][2] === ST.BOOST_R,
+        `core ${core ? 'reached' : 'NOT'}, idle away ${idle ? 'yes' : 'NO'}, ${log.spawns.length} machines sent by the end, ${run.stage === 4 ? 'dark' : 'stage ' + run.stage}, calmed ${JSON.stringify(log.calm[0] || null)}`);
+  }
+
+  /* 7. The run crosses the wire: a copy kept by the other end agrees on what it was told. */
+  {
+    const { c, run } = stage();
+    const p = player(c, 18, 0, 'tech'); tick(run, [p], 0.2); p.x = 4;
+    tick(run, [p], F.stir + 3);
+    const w = JSON.parse(JSON.stringify(run.wire()));
+    const { run: copy } = stage();
+    copy.observe(w);
+    const again = JSON.stringify(copy.wire());
+    say('the run as the host sends it is what a guest holds, marks and all, and nothing is sent while the gate is shut',
+        stage().run.wire() === null && again === JSON.stringify(w) && copy.stage === FN.FSTAGE.FIGHT && !!copy.g && Math.abs(copy.g.hp - run.g.hp) < 0.01,
+        `${JSON.stringify(w).length} bytes in the fight; guest stage ${copy.stage}`);
+  }
+
+  /* 8. No randomness: two runs given the same players give the same fight. */
+  {
+    const fight = () => {
+      const { c, run } = stage();
+      const p = player(c, 18, 0, 'tech'); p.hp = 5000; p.maxHp = 5000; tick(run, [p], 0.2); p.x = 3; p.z = 2;
+      tick(run, [p], F.stir + 25);
+      return JSON.stringify([run.wire(), p.hp]);
+    };
+    say('the same players give the same fight', fight() === fight(), 'two runs of 29 s agree to the byte');
+  }
+  /* 9. A shut door stops a body, and an open one lets it by: in the collider, so
+        every end that walks it meets the same door. */
+  {
+    const c = pen(); FN.installDoors(c); FN.installDoors(c);
+    const box = { x: 4, z: 0, ux: 1, uz: 0, ht: 1.8, hw: 2.3, y0: -1, y1: 4 };
+    c.setDoor(box, true);
+    const walk = () => { const p = placeOnGround(c, -2, 0); for (let i = 0; i < 180; i++) step(c, p, { mx: 1, mz: 0 }, null); return p.x; };
+    const shut = walk(); c.setDoor(box, false); const open = walk();
+    c.setDoor(box, true);
+    const beside = placeOnGround(c, 3, 6); for (let i = 0; i < 90; i++) step(c, beside, { mx: 1, mz: 0 }, null);
+    say('a shut door stops a body at its face, an open one lets it by, and beside it is open ground',
+        shut < 4 - 1.8 && open > 8 && beside.x > 8 && c.doors.length === 1,
+        `shut: stopped at ${shut.toFixed(2)} m; open: reached ${open.toFixed(2)} m; walking past beside it ${beside.x.toFixed(2)} m`);
+  }
+
   return out;
 }

@@ -67,6 +67,7 @@ import { EPS, LIQUID } from './collider.mjs';
 import { TICK, placeOnGround, step } from './actor.mjs';
 import { inArc, hurt, applyHits, WINDUP, REGEN_DELAY } from './combat.mjs';
 import { upkeep } from './revive.mjs';
+import { makeFurnaceRun, installDoors } from './furnace.mjs';
 import { TRAD } from './lattice.mjs';
 import { makeLootField } from './loot.mjs';
 import { findPath } from './nav.mjs';
@@ -537,6 +538,8 @@ export function stepEnemy(col, e, players, dt = TICK, budget, foes) {
     return e;
   }
   if (e.reserve) return e;
+  /* A machine of a scar that has been put out stays where it is (#7). */
+  if (e.calmed) return e;
 
   ai.t += dt;
   const target = pick(e, players, foes);
@@ -805,7 +808,8 @@ export function stepSentry(col, e, players, dt = TICK, budget, foes) {
 
 /** Tell it that it has been hit — staggering it if it was not already committed. */
 export function jolt(e) {
-  if (e.dead) return;
+  /* The furnace's guardian is a target and not a machine: it has no clock to stagger (#7). */
+  if (e.dead || !e.ai) return;
   if (staggerable(e.ai.state)) { e.ai.state = EST.STAGGER; e.ai.t = 0; e.ai.marks = null; }
 }
 
@@ -985,10 +989,41 @@ export function makeEncounter(col, world, posts) {
   const groups = new Map(), posted = new Map();
   let made = 0, putAway = 0;
 
+  /* ---- the furnace (#7): the weapon site of a streamed world, if it has one ----
+     The run is the host's. It is lent what it needs of the encounter and nothing
+     more: a place to put machines, to hold the guardian among the things a swing
+     can hit, a spoil to lay, and a way to put a scar out. */
+  const siteDesc = streamed && world && world.G && world.G.site ? world.G.site() : null;
+  let calmZone = null;
+  if (siteDesc) { installDoors(col); col.setDoor(siteDesc.door, true); }
+  const furnace = siteDesc ? makeFurnaceRun(siteDesc, {
+    kinds: { sentry: KIND.SENTRY, mortar: KIND.MORTAR, hound: KIND.HOUND },
+    spawn(kind, x, z) {
+      const e = (MAKE[kind] || makeSentry)(col, x, z, siteDesc.hf + 1);
+      e.id = nextId--;
+      enemies.push(e); targets.push(e);
+      return e;
+    },
+    alive(list) { let n = 0; for (const e of list) if (!e.dead) n++; return n; },
+    /* The gate's door, in the collider every end walks (#7). */
+    door(shut) { col.setDoor(siteDesc.door, shut); },
+    /* Just after the posts, so that it keeps a place in the first thirty-two
+       things a swing can reach however many machines are standing. */
+    hold(t) { if (targets.indexOf(t) < 0) targets.splice(postCount, 0, t); },
+    release(t) { const i = targets.indexOf(t); if (i >= 0) targets.splice(i, 1); },
+    drop(key, t) { loot.drop(key, t); },
+    calm(x, z, r) {
+      calmZone = { x, z, r };
+      for (const e of enemies) if (hyp(e.x - x, e.z - z) <= r) { e.calmed = true; e.ai.state = EST.DORMANT; e.ai.t = 0; e.ai.marks = null; }
+    },
+  }) : null;
+
   function remove(e) {
     const i = enemies.indexOf(e);
     if (i < 0) return;
-    enemies.splice(i, 1); targets.splice(postCount + i, 1);
+    enemies.splice(i, 1);
+    const ti = targets.indexOf(e);
+    if (ti >= 0) targets.splice(ti, 1);
   }
 
   function sync(players) {
@@ -1027,7 +1062,10 @@ export function makeEncounter(col, world, posts) {
       if (y === null) continue;
       const all = placeGroup(col, world.spawn, [g.post.x, g.post.z, y], g.pack, g.gid * 4);
       g.members = all.filter((e, i) => !(g.dead & (1 << i)));
-      for (const e of g.members) { e.group = g; enemies.push(e); targets.push(e); }
+      for (const e of g.members) {
+        e.group = g; enemies.push(e); targets.push(e);
+        if (calmZone && hyp(e.x - calmZone.x, e.z - calmZone.z) <= calmZone.r) e.calmed = true;
+      }
       made++;
     }
   }
@@ -1061,6 +1099,13 @@ export function makeEncounter(col, world, posts) {
     /** While set, no group comes or goes and no machine acts: for a gate
         that walks a streamed world to measure the streaming, not a fight. */
     held: false,
+
+    /** The furnace's run (#7), or null where the world has no weapon site. */
+    get site() { return furnace; },
+    /** Host: the run as it crosses the wire, or null while there is nothing to say. */
+    siteWire() { return furnace ? furnace.wire() : null; },
+    /** Guest: the host's record of the run. */
+    observeSite(w) { if (furnace) furnace.observe(w); },
 
     /** How a streamed world's groups stand, for tests and the readout. */
     get groups() {
@@ -1105,6 +1150,7 @@ export function makeEncounter(col, world, posts) {
       }
       /* What is left of a machine, and then whoever walks over it. */
       for (const e of enemies) if (e.dead && !e.fell) { e.fell = 1; fell(e); }
+      if (furnace) furnace.step(players, dt);
       upkeep(players, dt);
       return loot.collect(players);
     },

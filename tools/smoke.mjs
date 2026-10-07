@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, reelSuite, survivalSuite, siteSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, reelSuite, survivalSuite, siteSuite, furnaceSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, marshSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -280,6 +280,7 @@ if (NODE_HALF) for (const r of dynamicsSuite()) check(r.ok, `DYNAMIC: ${r.label}
 if (NODE_HALF) for (const r of reelSuite()) check(r.ok, `REEL: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of survivalSuite()) check(r.ok, `SURVIVAL: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of siteSuite()) check(r.ok, `SITE: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of furnaceSuite()) check(r.ok, `FURNACE: ${r.label}`, r.detail);
 
 /* ---------- GEAR: modules, sockets, fusion and what is on the ground ----------
    The spine of progression (§4), and the first reason this world has anywhere

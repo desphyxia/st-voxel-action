@@ -209,25 +209,52 @@ export function swapFrame(g) {
  */
 export function recomputeGear(g) {
   const s = baseStats();
-  const frame = FRAMES[g.frame];
   for (let i = 0; i < g.slots.length; i++) if (g.slots[i] >= 0) MODULES[g.slots[i]].apply(s);
 
-  const fused = [];
-  for (let e = 0; e < frame.edges.length; e++) {
-    const a = g.slots[frame.edges[e][0]], b = g.slots[frame.edges[e][1]];
-    if (a < 0 || b < 0) continue;
-    /* The three schools never combined. Two of a kind side by side is two
-       modules, not a fusion, however good each one is on its own. */
-    if (MODULES[a].trad === MODULES[b].trad) continue;
-    const r = recipeFor(a, b);
-    if (r < 0 || !(g.known & (1 << r))) continue;
-    fused.push(r);
-  }
+  const fused = seatedFusions(g.frame, g.slots, g.known);
   for (let i = 0; i < fused.length; i++) FUSIONS[fused[i]].apply(s);
 
   g.fused = fused;
   g.st = s;
   return s;
+}
+
+/**
+ * The fusions a frame's sockets make, given what is known: one for each edge
+ * between two modules of different schools that has a recipe. A frame that is
+ * not the one in hand has them too, which is what a gate asks (#7).
+ */
+export function seatedFusions(frameIdx, slots, known) {
+  const frame = FRAMES[frameIdx], fused = [];
+  for (let e = 0; e < frame.edges.length; e++) {
+    const a = slots[frame.edges[e][0]], b = slots[frame.edges[e][1]];
+    if (a < 0 || b < 0) continue;
+    /* The three schools never combined. Two of a kind side by side is two
+       modules, not a fusion, however good each one is on its own. */
+    if (MODULES[a].trad === MODULES[b].trad) continue;
+    const r = recipeFor(a, b);
+    if (r < 0 || !(known & (1 << r))) continue;
+    fused.push(r);
+  }
+  return fused;
+}
+
+/** The fusions that include a module of this school: the ones a gate of that
+    school's site will open for (#7). */
+export function fusionsOfSchool(trad) {
+  const out = [];
+  for (let f = 0; f < FUSIONS.length; f++) {
+    if (MODULES[FUSIONS[f].pair[0]].trad === trad || MODULES[FUSIONS[f].pair[1]].trad === trad) out.push(f);
+  }
+  return out;
+}
+
+/** Does this gear carry a seated fusion of that school, on either frame? */
+export function opensGate(g, trad) {
+  if (!g) return false;
+  const open = fusionsOfSchool(trad), seated = seatedFusions(g.frame, g.slots, g.known);
+  if (g.bench) for (const f of seatedFusions(g.bench.frame, g.bench.slots, g.known)) seated.push(f);
+  return seated.some((f) => open.indexOf(f) >= 0);
 }
 
 /** An adjacency you could close if you knew how. What the HUD nags you with. */

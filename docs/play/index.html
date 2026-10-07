@@ -1315,12 +1315,18 @@ function shapeSite(S0, heightAt, waterLevelAt, key) {
     if (r <= ARENA_R) put(x, z, SITE_K.FLOOR, S.hf);
     else if (r <= edge) {
       const inGate = (dx * ux + dz * uz) / r >= cosGate;
-      put(x, z, inGate ? SITE_K.GATE : SITE_K.WALL, S.hf + WALL_H);
+      /* The gate is a gap in the ground, level with the floor. What shuts it is a
+         door in the collider (src/sim/furnace.mjs), because ground does not open. */
+      put(x, z, inGate ? SITE_K.GATE : SITE_K.WALL, inGate ? S.hf : S.hf + WALL_H);
       if (inGate) gate.push([x, z]);
     }
   }
   S.gateCells = gate;
   S.gate = { x: rnd(cx + ux * (ARENA_R + WALL_W / 2)), z: rnd(cz + uz * (ARENA_R + WALL_W / 2)) };
+  /* The door that fills it: an oriented slab across the gap, centred on the
+     wall, in the frame of the gate's direction (`ux`, `uz`) and its sideways. */
+  S.door = { x: cx + ux * (ARENA_R + WALL_W / 2), z: cz + uz * (ARENA_R + WALL_W / 2), ux, uz,
+             ht: WALL_W / 2 + 0.3, hw: GATE_HALF + 0.3, y0: S.hf - 1, y1: S.hf + WALL_H };
 
   /* The core's dais on the far side from the gate. */
   const kx = rnd(cx - ux * CORE_AT), kz = rnd(cz - uz * CORE_AT);
@@ -7957,25 +7963,52 @@ function swapFrame(g) {
  */
 function recomputeGear(g) {
   const s = baseStats();
-  const frame = FRAMES[g.frame];
   for (let i = 0; i < g.slots.length; i++) if (g.slots[i] >= 0) MODULES[g.slots[i]].apply(s);
 
-  const fused = [];
-  for (let e = 0; e < frame.edges.length; e++) {
-    const a = g.slots[frame.edges[e][0]], b = g.slots[frame.edges[e][1]];
-    if (a < 0 || b < 0) continue;
-    /* The three schools never combined. Two of a kind side by side is two
-       modules, not a fusion, however good each one is on its own. */
-    if (MODULES[a].trad === MODULES[b].trad) continue;
-    const r = recipeFor(a, b);
-    if (r < 0 || !(g.known & (1 << r))) continue;
-    fused.push(r);
-  }
+  const fused = seatedFusions(g.frame, g.slots, g.known);
   for (let i = 0; i < fused.length; i++) FUSIONS[fused[i]].apply(s);
 
   g.fused = fused;
   g.st = s;
   return s;
+}
+
+/**
+ * The fusions a frame's sockets make, given what is known: one for each edge
+ * between two modules of different schools that has a recipe. A frame that is
+ * not the one in hand has them too, which is what a gate asks (#7).
+ */
+function seatedFusions(frameIdx, slots, known) {
+  const frame = FRAMES[frameIdx], fused = [];
+  for (let e = 0; e < frame.edges.length; e++) {
+    const a = slots[frame.edges[e][0]], b = slots[frame.edges[e][1]];
+    if (a < 0 || b < 0) continue;
+    /* The three schools never combined. Two of a kind side by side is two
+       modules, not a fusion, however good each one is on its own. */
+    if (MODULES[a].trad === MODULES[b].trad) continue;
+    const r = recipeFor(a, b);
+    if (r < 0 || !(known & (1 << r))) continue;
+    fused.push(r);
+  }
+  return fused;
+}
+
+/** The fusions that include a module of this school: the ones a gate of that
+    school's site will open for (#7). */
+function fusionsOfSchool(trad) {
+  const out = [];
+  for (let f = 0; f < FUSIONS.length; f++) {
+    if (MODULES[FUSIONS[f].pair[0]].trad === trad || MODULES[FUSIONS[f].pair[1]].trad === trad) out.push(f);
+  }
+  return out;
+}
+
+/** Does this gear carry a seated fusion of that school, on either frame? */
+function opensGate(g, trad) {
+  if (!g) return false;
+  const open = fusionsOfSchool(trad), seated = seatedFusions(g.frame, g.slots, g.known);
+  if (g.bench) for (const f of seatedFusions(g.bench.frame, g.bench.slots, g.known)) seated.push(f);
+  return seated.some((f) => open.indexOf(f) >= 0);
 }
 
 /** An adjacency you could close if you knew how. What the HUD nags you with. */
@@ -9367,6 +9400,426 @@ function navGraph(col, box, options) {
   }
   return { nodes, links, step: NAV_STEP, rad: o.rad };
 }
+/* ---------- src/sim/furnace.mjs ---------- */
+/**
+ * The furnace, run (#7, docs/DECISIONS.md §6): what happens in the arena that
+ * src/gen/site.mjs lays out as ground.
+ *
+ * One state machine, the host's, stepped once a tick by the encounter:
+ *
+ *   SEALED  the gate is a plug until a player at it carries a seated fusion
+ *           of the tech school, on either frame
+ *   OPEN    the gate is a gap; the first player inside starts the guardian's
+ *           stir, and when it ends the gate closes behind them
+ *   FIGHT   the guardian: four moves, a new one at each quarter of its health,
+ *           a beat between that changes the arena
+ *   CORE    it is down, and the core shuts down while someone stands at it,
+ *           with the site's machines coming in waves meanwhile
+ *   DONE    the furnace is dark, and its scar's machines go quiet
+ *
+ * A wipe — nobody on their feet — opens the gate again and heals the guardian.
+ * What the fight has done to the floor holds: a gate opened stays open, a
+ * guardian's death stays, and the core's progress is kept.
+ *
+ * The guardian is a *target*, not a machine: it stands in the encounter's
+ * list of things a swing can hit, as a practice post does, with the few
+ * numbers a swing and a tether read (`r`, `hp`, `weight`, `invincible`). It
+ * has no archetype in the roster and no wire record of a machine's; what
+ * crosses the network is `wire()`, the run's own small record.
+ *
+ * Every number here is a first value, and the guardian's health is an
+ * estimate from the pacing in the record, not a decision. No randomness: the
+ * seed picks the order the moves arrive in, and everything after is a clock.
+ */
+
+
+
+
+
+
+/** The run's stages. */
+const FSTAGE = { SEALED: 0, OPEN: 1, FIGHT: 2, CORE: 3, DONE: 4 };
+/** The guardian's moves, in the order a seed may unlock them. */
+const FMOVE = { SLAM: 0, VOLLEY: 1, VENT: 2, SUMMON: 3 };
+/** What a mark on the ground is: a wedge in front of the guardian, a ring on a
+    player, a vent that will erupt and burn. */
+const FMARK = { WEDGE: 0, RING: 1, VENT: 2 };
+
+const FURNACE = {
+  /** How near the gate a player must stand for it to read what they carry. */
+  gateReach: 5,
+  /** Seconds a player inside the arena, past the gate, before the guardian wakes. */
+  stir: 4,
+  /** The guardian: health (an estimate: five minutes at about nine damage a
+      second a player, §6), its body's radius, its walk, and the beat between phases. */
+  hp: 2000, rad: 2.4, speed: 3.0, beat: 2.5,
+  /** Hit points of a party of two, as for every machine (§6). */
+  party: 1.15,
+  /** A heavy blow, and what standing in a burning vent costs each half second. */
+  big: 25, burn: 4, burnTick: 0.5,
+  /** The moves' clocks, in seconds: the tell, then the opening it leaves. */
+  slam: { tell: 1.0, open: 2.5, reach: 5.0, cosArc: 0.5 },
+  volley: { tell: 1.3, second: 0.4, open: 2.2, ring: 1.8 },
+  vent: { tell: 1.4, open: 2.0, ring: 2.6, burn: 4.0, count: 3 },
+  summon: { open: 3.0, cap: 3, count: 2 },
+  /** A breath between one move's end and the next. */
+  gap: 0.6,
+  /** The core: seconds a player must stand at it, the wave's spacing and size,
+      and how many of the site's machines may stand at once. */
+  hold: 120, wave: 20, waveSize: 2, waveCap: 5,
+};
+
+/**
+ * Does a door stop a body? The door is an oriented slab (`gen/site.mjs`): the
+ * body's circle is tested against it grown by the radius, in the door's own
+ * frame, and its height against the slab's.
+ */
+function doorBlocks(d, x, z, r, lo, hi) {
+  if (hi < d.y0 || lo > d.y1) return false;
+  const dx = x - d.x, dz = z - d.z;
+  const along = dx * d.ux + dz * d.uz, across = -dx * d.uz + dz * d.ux;
+  return Math.abs(along) <= d.ht + r && Math.abs(across) <= d.hw + r;
+}
+
+/**
+ * Give a collider a layer of doors, in place: wherever it is asked whether
+ * something is solid, a shut door answers first. A door is what ground cannot
+ * be, which is shut and then not, and every end of the game asks the same
+ * collider, so a guest predicting its own walk meets the same door the host
+ * does. Idempotent.
+ */
+function installDoors(col) {
+  if (!col || col.doors) return col;
+  const was = col.overlaps;
+  col.doors = [];
+  col.overlaps = function (x, z, r, lo, hi) {
+    for (let i = 0; i < col.doors.length; i++) {
+      const d = col.doors[i];
+      if (d.shut && doorBlocks(d.box, x, z, r, lo, hi)) return true;
+    }
+    return was.call(col, x, z, r, lo, hi);
+  };
+  col.setDoor = function (box, shut) {
+    for (const d of col.doors) if (d.box === box) { d.shut = !!shut; return; }
+    col.doors.push({ box, shut: !!shut });
+  };
+  return col;
+}
+
+/** The guardian's health thresholds, as shares of its most: a new move at each. */
+const PHASES = [0.75, 0.5, 0.25];
+
+/** The order the seed unlocks the moves in: a slam or a volley opens it, and
+    never a summons alone. A fixed sequence from the site's place. */
+function unlockOrder(S) {
+  let h = (Math.imul(S.cx | 0, 73856093) ^ Math.imul(S.cz | 0, 19349663)) >>> 0;
+  const next = () => { h = (Math.imul(h, 1664525) + 1013904223) >>> 0; return h / 4294967296; };
+  const first = next() < 0.5 ? FMOVE.SLAM : FMOVE.VOLLEY;
+  const rest = [FMOVE.SLAM, FMOVE.VOLLEY, FMOVE.VENT, FMOVE.SUMMON].filter((m) => m !== first);
+  for (let i = rest.length - 1; i > 0; i--) { const j = (next() * (i + 1)) | 0; const t = rest[i]; rest[i] = rest[j]; rest[j] = t; }
+  return [first, ...rest];
+}
+
+/**
+ * Make the run for a site. `ctx` is what the encounter lends it: `spawn(kind,
+ * x, z)` puts a machine of a kind in the arena and returns it (or null),
+ * `kinds` names the ones it may use, `drop(key, thing)` lays a spoil, `calm(x,
+ * z, r)` quiets the machines in a circle, and `alive(list)` counts the ones of
+ * `list` still standing.
+ */
+function makeFurnaceRun(S, ctx) {
+  const F = FURNACE, order = unlockOrder(S);
+  const cx = S.cx, cz = S.cz, ux = S.ux, uz = S.uz, hf = S.hf;
+  const home = { x: cx - ux * 5, z: cz - uz * 5 };
+  const R = ARENA_R - F.rad - 0.4;
+  const kx = S.core.x, kz = S.core.z;
+
+  const run = {
+    stage: FSTAGE.SEALED,
+    /** Seconds the stir has run, and what opened the gate (a player's index, for the page). */
+    stirT: 0, openedBy: -1,
+    /** The core's progress in seconds, and the wave clock. */
+    hold: 0, waveT: 0, waves: 0,
+    /** The guardian, once it has been woken; null before. */
+    g: null,
+    /** How the arena's hazard stands: one more at each phase. */
+    hazard: 0,
+    marks: [],
+    spawned: [],
+    wipes: 0,
+  };
+
+  const standing = (players) => players.filter((p) => onFeet(p));
+  const inArena = (p, slack) => hyp(p.x - cx, p.z - cz) <= ARENA_R + (slack || 0) && Math.abs(p.y - hf) < 3.5;
+
+  /** The guardian as a target: what a swing and a tether read. */
+  function makeGuardian(party) {
+    const mh = F.hp * (party > 1 ? F.party : 1);
+    return {
+      guardian: true, x: home.x, y: hf, z: home.z, r: F.rad, rad: F.rad,
+      hp: mh, maxHp: mh, dead: null, weight: 2, hurtT: 0, reserve: false,
+      trad: TRAD.TECH, id: -9000,
+      faceX: ux, faceZ: uz,
+      /* The clock: a state, the seconds in it, and the move it is on. */
+      st: 'wake', t: 0, move: -1, n: 0, phase: 0,
+      invincible: false,
+      aim: null,
+    };
+  }
+
+  /** The glyph on the gate: the fusions that would open it. */
+  run.glyph = () => fusionsOfSchool(TRAD.TECH);
+
+  /** Is the plug out of the gate? Open until the fight, and after it. */
+  run.gateOpen = () => run.stage === FSTAGE.OPEN || run.stage === FSTAGE.CORE || run.stage === FSTAGE.DONE;
+
+  /* ---------------------------------------------------------------- moves -- */
+
+  /** The marks that are only warnings go; a vent that is burning stays until it is out. */
+  function clearMarks() { run.marks = run.marks.filter((m) => m.burning > 0); }
+
+  function startMove(g, who) {
+    const unlocked = order.slice(0, g.phase + 1);
+    let m = unlocked[g.n % unlocked.length];
+    g.n++;
+    /* A summons that cannot be made (they are all still up) is a volley. */
+    if (m === FMOVE.SUMMON && ctx.alive(run.spawned) >= F.summon.cap) m = unlocked.find((x) => x !== FMOVE.SUMMON) ?? FMOVE.SLAM;
+    g.move = m; g.t = 0;
+    clearMarks();
+    const target = nearest(g, who);
+    if (m === FMOVE.SLAM) {
+      g.st = target && hyp(target.x - g.x, target.z - g.z) > F.slam.reach + 1.5 ? 'close' : 'tell';
+      if (g.st === 'tell') aimAt(g, target);
+    } else if (m === FMOVE.VOLLEY) {
+      g.st = 'tell';
+      who.forEach((p, i) => run.marks.push({ k: FMARK.RING, x: p.x, z: p.z, r: F.volley.ring, at: F.volley.tell + i * F.volley.second, born: 0, who: i }));
+    } else if (m === FMOVE.VENT) {
+      g.st = 'tell';
+      who.forEach((p) => run.marks.push({ k: FMARK.VENT, x: p.x, z: p.z, r: F.vent.ring, at: F.vent.tell, born: 0 }));
+      const extra = F.vent.count - who.length;
+      for (let q = 0; q < extra; q++) {
+        /* The rest where the floor is least likely to be safe: a ring round
+           the middle of the room, turned a little each time. */
+        const a = (g.n * 2.1 + q * 2.3), rr = 6 + 4 * ((q + g.n) % 2);
+        run.marks.push({ k: FMARK.VENT, x: cx + rr * cos(a), z: cz + rr * sin(a), r: F.vent.ring, at: F.vent.tell, born: 0 });
+      }
+    } else {
+      g.st = 'open'; g.t = 0;
+      for (let q = 0; q < F.summon.count && ctx.alive(run.spawned) < F.summon.cap; q++) {
+        const a = 1.0 + q * 2.1 + g.n, e = ctx.spawn(q % 2 ? ctx.kinds.hound : ctx.kinds.sentry, cx + 15 * cos(a), cz + 15 * sin(a));
+        if (e) run.spawned.push(e);
+      }
+    }
+  }
+
+  function aimAt(g, p) {
+    if (!p) return;
+    const dx = p.x - g.x, dz = p.z - g.z, l = hyp(dx, dz) || 1;
+    g.faceX = dx / l; g.faceZ = dz / l;
+    clearMarks();
+    run.marks.push({ k: FMARK.WEDGE, x: g.x, z: g.z, r: F.slam.reach, at: F.slam.tell, born: 0, fx: g.faceX, fz: g.faceZ });
+  }
+
+  function nearest(g, who) {
+    let best = null, bd = Infinity;
+    for (const p of who) { const d = hyp(p.x - g.x, p.z - g.z); if (d < bd) { bd = d; best = p; } }
+    return best;
+  }
+
+  /** The strike of the move, once its tell has run. */
+  function strike(g, who) {
+    const big = F.big;
+    if (g.move === FMOVE.SLAM) {
+      for (const p of who) {
+        const dx = p.x - g.x, dz = p.z - g.z, d = hyp(dx, dz);
+        if (d <= F.slam.reach + 0.5 && d > 0 && (dx * g.faceX + dz * g.faceZ) / d >= F.slam.cosArc) hurt(p, big, 'struck');
+      }
+    } else if (g.move === FMOVE.VOLLEY) {
+      /* Each ring lands on its own clock, so the strike is the mark's, below. */
+    } else if (g.move === FMOVE.VENT) {
+      /* Ditto: each vent erupts, and burns. */
+    }
+  }
+
+  /** Marks that are due: a ring or a vent whose clock has run lands. */
+  function landMarks(g, who, dt) {
+    for (const m of run.marks) {
+      if (m.k === FMARK.WEDGE) continue;
+      const was = m.born; m.born += dt;
+      if (was < m.at && m.born >= m.at) {
+        for (const p of who) if (hyp(p.x - m.x, p.z - m.z) <= m.r) hurt(p, F.big, 'struck');
+        m.landed = true;
+        if (m.k === FMARK.VENT) { m.burning = F.vent.burn; m.tick = 0; }
+      }
+      if (m.burning > 0) {
+        m.burning -= dt; m.tick += dt;
+        while (m.tick >= F.burnTick) {
+          m.tick -= F.burnTick;
+          for (const p of who) if (hyp(p.x - m.x, p.z - m.z) <= m.r) hurt(p, F.burn, 'struck');
+        }
+      }
+    }
+    /* A ring that has landed is spent, and so is a vent that has burned out. */
+    run.marks = run.marks.filter((m) => m.k === FMARK.WEDGE || !m.landed || m.burning > 0);
+  }
+
+  /* ------------------------------------------------------------ the fight -- */
+
+  function stepGuardian(players, dt) {
+    const g = run.g, who = standing(players).filter((p) => inArena(p, 1));
+    if (g.hurtT > 0) g.hurtT = Math.max(0, g.hurtT - dt);
+    g.t += dt;
+    landMarks(g, who, dt);
+
+    /* A new phase at each quarter, and a beat in which the arena changes. */
+    if (g.st !== 'beat' && g.phase < PHASES.length && g.hp <= g.maxHp * PHASES[g.phase]) {
+      g.phase++; run.hazard = g.phase; g.st = 'beat'; g.t = 0; g.invincible = true; clearMarks();
+      return;
+    }
+    if (g.st === 'beat') {
+      if (g.t >= F.beat) { g.invincible = false; g.st = 'gap'; g.t = 0; }
+      return;
+    }
+    if (g.st === 'wake') { if (g.t >= 1.5) { g.st = 'gap'; g.t = 0; } return; }
+    if (g.st === 'gap') { if (g.t >= F.gap && who.length) startMove(g, who); return; }
+    if (g.st === 'close') {
+      const p = nearest(g, who);
+      if (!p) { g.st = 'gap'; g.t = 0; return; }
+      const dx = p.x - g.x, dz = p.z - g.z, d = hyp(dx, dz) || 1;
+      g.faceX = dx / d; g.faceZ = dz / d;
+      if (d > F.slam.reach - 0.5 && g.t < 3) {
+        const step = Math.min(F.speed * dt, d - (F.slam.reach - 1));
+        g.x += g.faceX * step; g.z += g.faceZ * step;
+        const rr = hyp(g.x - cx, g.z - cz);
+        if (rr > R) { g.x = cx + (g.x - cx) * R / rr; g.z = cz + (g.z - cz) * R / rr; }
+      } else { g.st = 'tell'; g.t = 0; aimAt(g, p); }
+      return;
+    }
+    if (g.st === 'tell') {
+      const tell = g.move === FMOVE.SLAM ? F.slam.tell : g.move === FMOVE.VOLLEY ? F.volley.tell + (who.length > 1 ? F.volley.second : 0) : F.vent.tell;
+      if (g.t >= tell) {
+        strike(g, who);
+        g.st = 'open'; g.t = 0;
+      }
+      return;
+    }
+    if (g.st === 'open') {
+      const open = g.move === FMOVE.SLAM ? F.slam.open : g.move === FMOVE.VOLLEY ? F.volley.open : g.move === FMOVE.VENT ? F.vent.open : F.summon.open;
+      if (g.t >= open) { g.st = 'gap'; g.t = 0; if (g.move === FMOVE.SLAM || g.move === FMOVE.SUMMON) clearMarks(); }
+    }
+  }
+
+  /* ---------------------------------------------------------------- the run -- */
+
+  function wipe() {
+    run.wipes++;
+    clearMarks();
+    if (run.stage === FSTAGE.FIGHT) {
+      run.stage = FSTAGE.OPEN; run.stirT = 0; run.hazard = 0;
+      ctx.release(run.g);
+      run.g = null;
+    }
+  }
+
+  run.step = function (players, dt) {
+    advance(players, dt);
+    ctx.door(!run.gateOpen());
+  };
+
+  function advance(players, dt) {
+    const live = players.filter((p) => p);
+    const up = standing(live);
+
+    if (run.stage === FSTAGE.SEALED) {
+      for (let i = 0; i < live.length; i++) {
+        const p = live[i];
+        if (!onFeet(p) || hyp(p.x - S.gate.x, p.z - S.gate.z) > F.gateReach) continue;
+        if (opensGate(p.gear, TRAD.TECH)) { run.stage = FSTAGE.OPEN; run.openedBy = i; break; }
+      }
+      return;
+    }
+
+    if (run.stage === FSTAGE.OPEN) {
+      /* The stir runs while someone stands inside, past the gate. */
+      const inside = up.some((p) => inArena(p, -2) && hyp(p.x - S.gate.x, p.z - S.gate.z) > 5);
+      run.stirT = inside ? run.stirT + dt : Math.max(0, run.stirT - dt);
+      if (run.stirT >= F.stir) {
+        run.stage = FSTAGE.FIGHT;
+        run.g = makeGuardian(live.length);
+        ctx.hold(run.g);
+      }
+      return;
+    }
+
+    if (run.stage === FSTAGE.FIGHT) {
+      if (!up.some((p) => inArena(p, 1))) { wipe(); return; }
+      if (run.g.hp <= 0) {
+        run.g.dead = 'struck'; run.g.st = 'dead'; clearMarks();
+        ctx.drop(run.g.id, run.g);
+        ctx.release(run.g);
+        run.stage = FSTAGE.CORE; run.waveT = 0;
+        return;
+      }
+      stepGuardian(live, dt);
+      return;
+    }
+
+    if (run.stage === FSTAGE.CORE) {
+      const at = up.filter((p) => hyp(p.x - kx, p.z - kz) <= CORE_R + 1.5);
+      if (at.length) {
+        run.hold += dt; run.waveT += dt;
+        if (run.waveT >= F.wave) {
+          run.waveT -= F.wave; run.waves++;
+          const n = F.waveSize + (live.length > 1 ? 1 : 0);
+          for (let q = 0; q < n && ctx.alive(run.spawned) < F.waveCap; q++) {
+            const a = 1.9 * (q % 2 ? -1 : 1) + q * 0.35 + run.waves, kind = [ctx.kinds.sentry, ctx.kinds.hound, ctx.kinds.mortar][(run.waves + q) % 3];
+            const e = ctx.spawn(kind, cx + (ARENA_R - 4) * cos(a), cz + (ARENA_R - 4) * sin(a));
+            if (e) run.spawned.push(e);
+          }
+        }
+        if (run.hold >= F.hold) {
+          run.stage = FSTAGE.DONE;
+          ctx.calm(cx, cz, BOOST_R);
+        }
+      }
+      return;
+    }
+  }
+
+  /** The run as it crosses the wire: only when there is something to say. */
+  run.wire = function () {
+    if (run.stage === FSTAGE.SEALED) return null;
+    const r2 = (v) => Math.round(v * 100) / 100;
+    const o = { s: run.stage, hz: run.hazard };
+    if (run.stage === FSTAGE.OPEN && run.stirT > 0) o.sr = r2(run.stirT);
+    if (run.stage >= FSTAGE.CORE) o.hd = r2(run.hold);
+    if (run.stage === FSTAGE.CORE) o.wv = run.waves;
+    const g = run.g;
+    if (g && run.stage === FSTAGE.FIGHT) {
+      o.g = { x: r2(g.x), z: r2(g.z), fx: Math.round(g.faceX * 10) / 10, fz: Math.round(g.faceZ * 10) / 10,
+              h: r2(g.hp), mh: r2(g.maxHp), p: g.phase, s: g.st, t: r2(g.t), m: g.move };
+      if (g.hurtT > 0) o.g.u = r2(g.hurtT);
+      if (g.invincible) o.g.iv = 1;
+      if (run.marks.length) o.mk = run.marks.map((m) => [m.k, r2(m.x), r2(m.z), r2(m.r), r2(m.at), r2(m.born), m.k === FMARK.WEDGE ? m.fx : (m.burning > 0 ? 1 : 0), m.k === FMARK.WEDGE ? m.fz : 0]);
+    }
+    return o;
+  };
+
+  /** A guest's copy: take the host's record as it stands. */
+  run.observe = function (w) {
+    if (!w) return;
+    run.stage = w.s; run.hazard = w.hz || 0; run.stirT = w.sr || 0; run.hold = w.hd || 0; run.waves = w.wv || 0;
+    if (w.g && w.s === FSTAGE.FIGHT) {
+      const g = run.g || (run.g = makeGuardian(1));
+      g.x = w.g.x; g.z = w.g.z; g.faceX = w.g.fx; g.faceZ = w.g.fz; g.hp = w.g.h; g.maxHp = w.g.mh;
+      g.phase = w.g.p; g.st = w.g.s; g.t = w.g.t; g.move = w.g.m; g.hurtT = w.g.u || 0; g.invincible = !!w.g.iv;
+    } else if (run.stage !== FSTAGE.FIGHT) run.g = null;
+    ctx.door(!run.gateOpen());
+    run.marks = (w.mk || []).map((m) => ({ k: m[0], x: m[1], z: m[2], r: m[3], at: m[4], born: m[5], burning: m[0] !== FMARK.WEDGE ? m[6] : 0, fx: m[6], fz: m[7] }));
+  };
+
+  return run;
+}
 /* ---------- src/sim/enemy.mjs ---------- */
 /**
  * The war machines: tech, magic and biological weapons still holding positions
@@ -9431,6 +9884,7 @@ function navGraph(col, box, options) {
  * No AI architecture — a state machine and a steering direction per machine,
  * stepped in a fixed order so a host and a replay agree.
  */
+
 
 
 
@@ -9907,6 +10361,8 @@ function stepEnemy(col, e, players, dt = TICK, budget, foes) {
     return e;
   }
   if (e.reserve) return e;
+  /* A machine of a scar that has been put out stays where it is (#7). */
+  if (e.calmed) return e;
 
   ai.t += dt;
   const target = pick(e, players, foes);
@@ -10175,7 +10631,8 @@ function stepSentry(col, e, players, dt = TICK, budget, foes) {
 
 /** Tell it that it has been hit — staggering it if it was not already committed. */
 function jolt(e) {
-  if (e.dead) return;
+  /* The furnace's guardian is a target and not a machine: it has no clock to stagger (#7). */
+  if (e.dead || !e.ai) return;
   if (staggerable(e.ai.state)) { e.ai.state = EST.STAGGER; e.ai.t = 0; e.ai.marks = null; }
 }
 
@@ -10355,10 +10812,41 @@ function makeEncounter(col, world, posts) {
   const groups = new Map(), posted = new Map();
   let made = 0, putAway = 0;
 
+  /* ---- the furnace (#7): the weapon site of a streamed world, if it has one ----
+     The run is the host's. It is lent what it needs of the encounter and nothing
+     more: a place to put machines, to hold the guardian among the things a swing
+     can hit, a spoil to lay, and a way to put a scar out. */
+  const siteDesc = streamed && world && world.G && world.G.site ? world.G.site() : null;
+  let calmZone = null;
+  if (siteDesc) { installDoors(col); col.setDoor(siteDesc.door, true); }
+  const furnace = siteDesc ? makeFurnaceRun(siteDesc, {
+    kinds: { sentry: KIND.SENTRY, mortar: KIND.MORTAR, hound: KIND.HOUND },
+    spawn(kind, x, z) {
+      const e = (MAKE[kind] || makeSentry)(col, x, z, siteDesc.hf + 1);
+      e.id = nextId--;
+      enemies.push(e); targets.push(e);
+      return e;
+    },
+    alive(list) { let n = 0; for (const e of list) if (!e.dead) n++; return n; },
+    /* The gate's door, in the collider every end walks (#7). */
+    door(shut) { col.setDoor(siteDesc.door, shut); },
+    /* Just after the posts, so that it keeps a place in the first thirty-two
+       things a swing can reach however many machines are standing. */
+    hold(t) { if (targets.indexOf(t) < 0) targets.splice(postCount, 0, t); },
+    release(t) { const i = targets.indexOf(t); if (i >= 0) targets.splice(i, 1); },
+    drop(key, t) { loot.drop(key, t); },
+    calm(x, z, r) {
+      calmZone = { x, z, r };
+      for (const e of enemies) if (hyp(e.x - x, e.z - z) <= r) { e.calmed = true; e.ai.state = EST.DORMANT; e.ai.t = 0; e.ai.marks = null; }
+    },
+  }) : null;
+
   function remove(e) {
     const i = enemies.indexOf(e);
     if (i < 0) return;
-    enemies.splice(i, 1); targets.splice(postCount + i, 1);
+    enemies.splice(i, 1);
+    const ti = targets.indexOf(e);
+    if (ti >= 0) targets.splice(ti, 1);
   }
 
   function sync(players) {
@@ -10397,7 +10885,10 @@ function makeEncounter(col, world, posts) {
       if (y === null) continue;
       const all = placeGroup(col, world.spawn, [g.post.x, g.post.z, y], g.pack, g.gid * 4);
       g.members = all.filter((e, i) => !(g.dead & (1 << i)));
-      for (const e of g.members) { e.group = g; enemies.push(e); targets.push(e); }
+      for (const e of g.members) {
+        e.group = g; enemies.push(e); targets.push(e);
+        if (calmZone && hyp(e.x - calmZone.x, e.z - calmZone.z) <= calmZone.r) e.calmed = true;
+      }
       made++;
     }
   }
@@ -10431,6 +10922,13 @@ function makeEncounter(col, world, posts) {
     /** While set, no group comes or goes and no machine acts: for a gate
         that walks a streamed world to measure the streaming, not a fight. */
     held: false,
+
+    /** The furnace's run (#7), or null where the world has no weapon site. */
+    get site() { return furnace; },
+    /** Host: the run as it crosses the wire, or null while there is nothing to say. */
+    siteWire() { return furnace ? furnace.wire() : null; },
+    /** Guest: the host's record of the run. */
+    observeSite(w) { if (furnace) furnace.observe(w); },
 
     /** How a streamed world's groups stand, for tests and the readout. */
     get groups() {
@@ -10475,6 +10973,7 @@ function makeEncounter(col, world, posts) {
       }
       /* What is left of a machine, and then whoever walks over it. */
       for (const e of enemies) if (e.dead && !e.fell) { e.fell = 1; fell(e); }
+      if (furnace) furnace.step(players, dt);
       upkeep(players, dt);
       return loot.collect(players);
     },
@@ -11982,6 +12481,8 @@ function makeHost(opts) {
           lt: encounter && encounter.loot ? encounter.loot.wire() : 0,
           /* What machines have left on the ground, while it lies there (#108). */
           sp: encounter && encounter.loot && encounter.loot.spoils.length ? encounter.loot.spoilWire() : undefined,
+          /* The weapon site's run, once there is anything to say of it (#7). */
+          st: encounter && encounter.siteWire ? (encounter.siteWire() || undefined) : undefined,
           /* The last lattice change applied, so the guest stops sending it. */
           ak: acted,
         });
@@ -12098,6 +12599,7 @@ function makeGuest(opts) {
       lootBits = m.lt || 0;
       while (acts.length && acts[0].a <= (m.ak || 0)) acts.shift();
       if (encounter && encounter.observeWire) encounter.observeWire(foes, lootBits, m.sp || []);
+      if (encounter && encounter.observeSite) encounter.observeSite(m.st || null);
     }
   });
 
