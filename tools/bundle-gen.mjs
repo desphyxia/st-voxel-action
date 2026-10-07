@@ -69,6 +69,7 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'colliderF
                  'takeModule', 'learnFusion', 'socketModule', 'unsocketModule',
                  'gearWire', 'applyGearWire', 'refitGear', 'seatOn', 'pullFrom',
                  'PICKUP_R', 'CACHES', 'makeLootField', 'cacheSites', 'spoilModule', 'SPOILS_MAX', 'STREAM_ENC',
+                 'FSTAGE', 'FMOVE', 'FMARK', 'FURNACE', 'opensGate', 'fusionsOfSchool', 'seatedFusions',
                  'SENTRY', 'EST', 'makeSentry', 'stepSentry', 'makeEncounter',
                  'MORTAR', 'HOUND', 'KIND', 'KIND_NAMES', 'ARCHETYPES', 'makeMortar', 'makeHound',
                  'MORTAR_AIM_TIME', 'MORTAR_FLIGHT_TIME', 'MORTAR_VENT_TIME',
