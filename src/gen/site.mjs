@@ -34,7 +34,7 @@ import { sin, cos, hyp } from './exact.mjs';
 export const ARENA_R = 20;
 export const WALL_W = 3;
 export const WALL_H = 4;
-/** Half the gate's width in metres: a four-metre opening. */
+/** Half the gate's width in cells either side of its middle: five cells across. */
 export const GATE_HALF = 2;
 /** The core's dais, how far from the middle it stands on the far side from
     the gate, how wide it is, and how far it stands over the floor. */
@@ -97,11 +97,13 @@ export function planSite(ashNoise, waterAt, rand) {
   const tries = Math.min(80, cands.length);
   for (let q = 0; q < tries && bestWet > 0; q++) {
     const c = cands[q];
-    /* Out towards where a player comes from, a little off true so that two
-       seeds do not all face the origin. */
-    const a = (rand(c.x, c.z, 0x5171) - 0.5) * 0.8, ca = cos(a), sa = sin(a);
+    /* Out towards where a player comes from, along the nearer of the four axes:
+       the wall is voxels, and a gate that faces any other way is a notch with
+       stair-stepped sides that no door fits (#7). Seeds still differ by where the
+       site stands and by the road's sway. */
     const bx = -c.x / c.d, bz = -c.z / c.d;
-    const S0 = { cx: c.x, cz: c.z, ux: bx * ca - bz * sa, uz: bx * sa + bz * ca,
+    const ax = Math.abs(bx) >= Math.abs(bz) ? [bx < 0 ? -1 : 1, 0] : [0, bz < 0 ? -1 : 1];
+    const S0 = { cx: c.x, cz: c.z, ux: ax[0], uz: ax[1],
                  sway: 18 + 14 * rand(c.x, c.z, 0x5172), phase: rand(c.x, c.z, 0x5173) * 6.283185307179586 };
     if (!dryArena(S0, waterAt)) continue;
     const wet = wetRoad(S0, waterAt);
@@ -181,16 +183,15 @@ export function shapeSite(S0, heightAt, waterLevelAt, key) {
 
   const cells = new Map(), gate = [];
   const edge = ARENA_R + WALL_W;
-  /* The gate's half-angle as the cosine a cell's bearing must beat, taken at
-     the wall's middle radius. */
-  const cosGate = cos(GATE_HALF / (ARENA_R + WALL_W / 2));
   const put = (x, z, k, h) => cells.set(key(x, z), { k, h });
 
   for (let x = cx - edge; x <= cx + edge; x++) for (let z = cz - edge; z <= cz + edge; z++) {
     const dx = x - cx, dz = z - cz, r = hyp(dx, dz);
     if (r <= ARENA_R) put(x, z, SITE_K.FLOOR, S.hf);
     else if (r <= edge) {
-      const inGate = (dx * ux + dz * uz) / r >= cosGate;
+      /* The gap is a rectangle of cells: across the gate within GATE_HALF of its
+         middle, on the side the gate faces. (`ux`, `uz` is an axis.) */
+      const inGate = dx * ux + dz * uz > 0 && Math.abs(-dx * uz + dz * ux) <= GATE_HALF;
       /* The gate is a gap in the ground, level with the floor. What shuts it is a
          door in the collider (src/sim/furnace.mjs), because ground does not open. */
       put(x, z, inGate ? SITE_K.GATE : SITE_K.WALL, inGate ? S.hf : S.hf + WALL_H);
@@ -198,11 +199,13 @@ export function shapeSite(S0, heightAt, waterLevelAt, key) {
     }
   }
   S.gateCells = gate;
-  S.gate = { x: rnd(cx + ux * (ARENA_R + WALL_W / 2)), z: rnd(cz + uz * (ARENA_R + WALL_W / 2)) };
-  /* The door that fills it: an oriented slab across the gap, centred on the
-     wall, in the frame of the gate's direction (`ux`, `uz`) and its sideways. */
-  S.door = { x: cx + ux * (ARENA_R + WALL_W / 2), z: cz + uz * (ARENA_R + WALL_W / 2), ux, uz,
-             ht: WALL_W / 2 + 0.3, hw: GATE_HALF + 0.3, y0: S.hf - 1, y1: S.hf + WALL_H };
+  /* In world metres: a cell (x, z) covers x..x+1, so the arena's middle is half a
+     cell in from (cx, cz), and the gate's cells run 21 to 23 out from it, which
+     is 22 m to their middle and three deep. The door fills that exactly. */
+  const mx = cx + 0.5, mz = cz + 0.5, gd = ARENA_R + (WALL_W + 1) / 2;
+  S.gate = { x: mx + ux * gd, z: mz + uz * gd };
+  S.door = { x: mx + ux * gd, z: mz + uz * gd, ux, uz,
+             ht: WALL_W / 2, hw: GATE_HALF + 0.5, y0: S.hf - 1, y1: S.hf + WALL_H };
 
   /* The core's dais on the far side from the gate. */
   const kx = rnd(cx - ux * CORE_AT), kz = rnd(cz - uz * CORE_AT);

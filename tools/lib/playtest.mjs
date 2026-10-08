@@ -6086,7 +6086,7 @@ export function siteSuite() {
     say('the floor is level, dry and bare, and the wall round it stands four metres over it',
         floor > 1000 && flat === floor && dry === floor && bare === floor && wall > 300 && tall === wall,
         `${floor} floor cells (${flat} at ${hf} m, ${dry} dry, ${bare} bare), ${wall} wall cells (${tall} tall)`);
-    say('the gate is a four-metre gap in the wall, level with the floor, with a door across it',
+    say('the gate is a five-metre gap in the wall, square to the grid, level with the floor, with a door across it',
         gate >= 10 && plug === gate && S.gateCells.length === gate && !!S.door && S.door.y1 - S.door.y0 >= ST.WALL_H,
         `${gate} gate cells, ${plug} level with the floor, ${S.gateCells.length} listed, door ${S.door ? (S.door.hw * 2).toFixed(1) + ' m wide' : 'none'}`);
     const core = at0(S.core.x, S.core.z), stones = S.stones.map((p) => at0(p[0], p[1]).H);
@@ -6150,7 +6150,7 @@ export function siteSuite() {
       if (!wins.has(k)) wins.set(k, build(Math.round(px / 48) * 48, Math.round(pz / 48) * 48));
       const w = wins.get(k), c = win(w)(px, pz);
       steps++;
-      const good = c && c.site === ST.SITE_K.ROAD && Math.abs(c.H - ph) <= 1 && !c.water && !c.magma && (!prev || Math.abs(ph - prev) <= 2);
+      const good = c && (c.site === ST.SITE_K.ROAD || (t === 0 && c.site === ST.SITE_K.GATE)) && Math.abs(c.H - ph) <= 1 && !c.water && !c.magma && (!prev || Math.abs(ph - prev) <= 2);
       if (good) ok++; else if (!bad) bad = `t=${t} at ${px},${pz}: ${c ? `site ${c.site} H ${c.H} want ${ph}` : 'outside'}`;
       prev = ph;
     }
