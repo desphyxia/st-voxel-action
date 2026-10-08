@@ -385,6 +385,45 @@ pool's moves, in an order the seed picked, is fought conventionally. The core is
 two minutes at the vent while the furnace sends everything it has left. The ashfall quiets, and
 the rime and the spore bloom grow harsher.
 
+### Build order after the first set-piece (proposal, 2026-10-08 — not an interview)
+
+Recorded as a **proposal to be argued with**, not a decision: it is an ordering of work, drawn
+from what depends on what, and the first thing it asks for is a person's verdict.
+
+Where things stand: the furnace is playable end to end (#116–#120) — three of twelve
+archetypes (sentry, mortar, hound), two of eight frames (the Warden and the Reel), and no
+magic war machine at all, so magic modules come only from caches.
+
+What depends on what:
+
+- The furnace's gate wants a seated tech fusion, and a fusion needs modules of two schools. A
+  machine drops its own school's modules (§6), so the loop that feeds a gate needs machines
+  from the other schools.
+- A set-piece's approach and summons draw on its own tradition's roster; the other two sites
+  will be thin with only the tech and biological machines.
+- Scar-born creatures carry the fusion recipe fragments, which is how recipes are learned from
+  the world and not only found in caches. They belong with a scar's harder terrain and with the
+  other scars pressing harder when a weapon goes dark.
+- Wildlife drops trade goods, which have no use until the holdout traders exist, and those are
+  deferred.
+
+The order proposed:
+
+1. **Play the furnace.** Nobody has. Its numbers (the guardian's ~2,000 health, the beats'
+   group counts, the two-minute core) are first values, and everything built next stands on
+   them.
+2. **The magic war machine**, and the other war machines as the sites need them, so all three
+   schools can drop and the second site has something to be built from.
+3. **The second set-piece**, with its scar-born creature and the scar-hardening work. A second
+   one shows which parts of the grammar generalise and which were the furnace's alone.
+4. **New frames, roughly one per set-piece**, each with the modules and fusions it needs; a
+   cleared site is a natural place for one to be found. (This pairing is a suggestion.)
+5. **Wildlife last**, once there is somewhere to trade what it drops.
+
+The roster (§6) and the frames (§4) stay as decided; this is only when. Revisit it after step 1.
+
+---
+
 ## 7. Technical
 
 | Decision | Choice |
