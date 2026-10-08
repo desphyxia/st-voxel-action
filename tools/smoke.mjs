@@ -1596,6 +1596,34 @@ if (BROWSER_HALF) {
               rh.none ? `${rh.none} (kinds ${roster.kinds.join(',')})` :
               `line ${rh.lit && rh.lit.line ? 'drawn' : 'MISSING'} after ${rh.n} ticks; ${rh.orange} px turn orange`);
 
+        /* ---------- BUILD: the warden's dome, runes and ring ----------
+           Staged by state, since a warden is only ever drawn from its kind and
+           its state: the dome is there while it is up and gone for the pulse
+           and the pause, the runes light through the tell, and the ring runs
+           out along the ground only during the pulse. */
+        const ward = await bp.evaluate(async () => {
+          const P = window.QSPLAY, QS = window.QS, a = P.actor, S = QS.EST;
+          P.pause(true);
+          const w = P.spawnFoe(QS.KIND.WARDEN, a.x + 8, a.z);
+          if (!w) return { none: 'no encounter to spawn into' };
+          w.reserve = false;
+          const view = async (state, t) => {
+            w.ai.state = state; w.ai.t = t;
+            for (let i = 0; i < 3; i++) { P.draw(); await new Promise((r) => setTimeout(r, 20)); }
+            return P.foeTells.find((f) => f.k === QS.KIND.WARDEN && f.shown && f.ward);
+          };
+          const out = { close: await view(S.CLOSE, 0), early: await view(S.TELEGRAPH, 0.2),
+                        late: await view(S.TELEGRAPH, QS.WARDEN_TELL_TIME * 0.95), pulse: await view(S.STRIKE, 0.4),
+                        open: await view(S.RECOVER, 0.5) };
+          w.dead = 'struck'; w.hp = 0; P.pause(false);
+          return out;
+        });
+        const wv = (k) => (ward[k] && ward[k].ward) || {};
+        check(!ward.none && wv('close').dome && !wv('close').reach && wv('early').dome && wv('early').reach && wv('early').runes === 0
+              && wv('late').runes >= 3 && wv('late').dome && !wv('pulse').dome && wv('pulse').pulse && !wv('open').dome && !wv('open').pulse,
+              'BUILD: a warden draws its dome while it is up, lights its runes through the tell, and runs the ring out only as it pulses',
+              ward.none || `close ${JSON.stringify(wv('close'))}; tell ${JSON.stringify(wv('late'))}; pulse ${JSON.stringify(wv('pulse'))}; open ${JSON.stringify(wv('open'))}`);
+
         /* ---------- BUILD: the Reel, the second frame (#112) ----------
            Two frames carried and swapped — by the scroll wheel, by a key and by
            the on-screen button — and the second one hauls. Staged on a clear

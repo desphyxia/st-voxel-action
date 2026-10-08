@@ -16295,13 +16295,55 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     {bar:1.7,blob:0.95,tint:'plate',step:'sentry',spark:0xffc466},
     {bar:1.35,blob:0.85,tint:'muzzle',step:'sentry',spark:0xffc466},
     {bar:1.1,blob:0.6,tint:'graft',step:'hound',spark:0xb8d06a},
+    {bar:3.5,blob:1.2,tint:'shaft',step:'sentry',spark:0xb9a8ff},
   ];
+  /* The warden's shapes are the same for all of them, so they are made once:
+     the dome (a half sphere standing on the ground), and the two rings. */
+  var wardenGeo=null;
+  function wardenShapes(){
+    if(wardenGeo) return wardenGeo;
+    var R=QS.DOME_R, Q=QS.WARDEN.ring;
+    return wardenGeo={
+      dome:new THREE.SphereGeometry(R,28,12,0,Math.PI*2,0,Math.PI/2),
+      rim:new THREE.RingGeometry(R-0.14,R,40),
+      reach:new THREE.RingGeometry(Q-0.14,Q,56),
+      /* Scaled out to its radius, so its width grows with it, to about the band it hurts in. */
+      pulse:new THREE.RingGeometry(0.76,1,56),
+    };
+  }
+  function wardenMat(color,opacity,extra){
+    var m=new THREE.MeshBasicMaterial({color:color,transparent:true,opacity:opacity,side:THREE.DoubleSide,
+                                       depthWrite:false,toneMapped:false});
+    if(extra) for(var q in extra) m[q]=extra[q];
+    return m;
+  }
   function makeFoe(k){
     k=k|0;
     var g=new THREE.Group(), look=FOE_LOOK[k]||FOE_LOOK[0];
     var rig=buildRig(QS.MACHINE_RIGS[k]||QS.SENTRY_RIG,{}); g.add(rig.mesh);
-    var wedge=null, line=null, rings=null;
-    if(k===QS.KIND.MORTAR){
+    var wedge=null, line=null, rings=null, ward=null;
+    /* A stone the height of a doorway and a half, hanging in the air. */
+    if(k===QS.KIND.WARDEN) rig.mesh.scale.setScalar(1.5);
+    if(k===QS.KIND.WARDEN){
+      /* Where it matters is the ground, and the dome that says who is safe: a
+         pale shell over the circle, a rim where it meets the ground, the reach
+         of its pulse faint until it winds up, and the pulse itself running out. */
+      var ws=wardenShapes();
+      ward=new THREE.Group();
+      ward.userData.dome=new THREE.Mesh(ws.dome,wardenMat(0x9a86ff,0.13));
+      ward.userData.web=new THREE.Mesh(ws.dome,wardenMat(0xcfc4ff,0.22,{wireframe:true}));
+      ward.userData.rim=new THREE.Mesh(ws.rim,wardenMat(0xcfc4ff,0.7));
+      ward.userData.reach=new THREE.Mesh(ws.reach,wardenMat(0xff9a5a,0));
+      ward.userData.pulse=new THREE.Mesh(ws.pulse,wardenMat(0xffd9a8,0.9));
+      for(var wn in ward.userData){
+        var wm=ward.userData[wn]; ward.add(wm);
+        if(wn!=='dome'&&wn!=='web') wm.rotation.x=-Math.PI/2;
+        wm.userData.keep=true; wm.userData.kind='tell'; wm.renderOrder=3;
+      }
+      ward.userData.rim.position.y=ward.userData.reach.position.y=ward.userData.pulse.position.y=0.35;
+      ward.userData.pulse.visible=false; ward.userData.reach.visible=false;
+      g.add(ward);
+    }else if(k===QS.KIND.MORTAR){
       /* In the world, not on the crawler: where the shells land does not turn
          when it does. At the height the player's arc sits at — anything lower
          is lost in the voxels. */
@@ -16339,7 +16381,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var blob=makeBlob(look.blob); g.add(blob);
     g.traverse(function(o){ if(o.isMesh){ o.userData.keep=true; } });
     if(rings) g.userData.rings=rings;
-    return {g:g,k:k,look:look,rig:rig,wedge:wedge,line:line,rings:rings,bar:bar,blob:blob,walk:0,lastX:null,lastZ:null};
+    return {g:g,k:k,look:look,rig:rig,wedge:wedge,line:line,rings:rings,ward:ward,domeA:0,bar:bar,blob:blob,walk:0,lastX:null,lastZ:null};
   }
   /** Into the scene, with its rings beside it, and out again. */
   function addFoe(f){ built.scene.add(f.g); if(f.rings) built.scene.add(f.rings); return f; }
@@ -16472,7 +16514,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       if(ivx*ivx+ivz*ivz>400){ ivx=0; ivz=0; }        /* a teleport is not a run */
       var kv=Math.min(1,fdt*8); f.vx+=(ivx-f.vx)*kv; f.vz+=(ivz-f.vz)*kv;
     } else if(gap!==0){ f.vx=0; f.vz=0; }
-    f.px=m.x; f.pz=m.z; f.at=tm;
+    f.px=m.x; f.pz=m.z; f.at=tm; f.fdt=fdt;
     var sf=Math.sin(f.yaw), cf=Math.cos(f.yaw);
     if(dead) f.blob.visible=false; else seatBlob(f.blob,m.x,m.y,m.z);
     stride(f,m.x,m.z,QS.MACHINE_STRIDES[f.k]||QS.SENTRY_STRIDE);
@@ -16496,7 +16538,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         :(m.s===EST.RECOVER?0x4a2a18
           :(m.s===EST.STAGGER?0xffffff
             :(tell?mixHex(0xff9a3c,0xffffff,tell):0xc9722a))));
-    tintRig(f.rig,f.look.tint,mu>0?0xffd7cf:col);
+    if(f.k===K.WARDEN){
+      tintRig(f.rig,f.look.tint,mu>0?0xe4dcff:(dead?0x14110f:(m.s===EST.DORMANT?0x46435a:(m.s===EST.RECOVER?0x4c4660:0x58546a))));
+      drawWarden(f,m,dead);
+    }else tintRig(f.rig,f.look.tint,mu>0?0xffd7cf:col);
     var telling=!dead&&(m.s===EST.TELEGRAPH||m.s===EST.STRIKE);
     if(f.wedge){
       f.wedge.visible=telling;
@@ -16521,6 +16566,33 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     f.bar.scale.x=Math.max(0.02,m.h/mh);
     f.bar.position.x=-0.6*(1-f.bar.scale.x);
     f.bar.rotation.y=cam.yaw; f.bar.rotation.x=-Math.PI/4;
+  }
+  /**
+   * The warden's runes light one after another through its tell, and then the
+   * pulse runs out along the ground; the dome is up in every state but the
+   * pulse and the pause after it, and fades rather than blinks, so its going is
+   * a thing you see happen. Everything is read from the kind and the state.
+   */
+  function drawWarden(f,m,dead){
+    var EST=QS.EST, W=f.ward.userData, tellK=0, up=!dead&&QS.domeAt(m.k,m.s);
+    if(m.s===EST.TELEGRAPH) tellK=Math.min(1,m.t/QS.WARDEN_TELL_TIME);
+    else if(m.s===EST.STRIKE) tellK=1;
+    for(var q=0;q<4;q++){
+      var lit=!dead&&tellK>0&&tellK>=(q+1)/5+0.04;
+      tintRig(f.rig,'rune'+q,lit?(m.s===EST.STRIKE?0xffffff:0xc8b8ff):0x2a2838);
+    }
+    var gap=f.fdt||0;
+    /* No time passed — paused, or the gate drawing — goes straight there. */
+    if(gap>0) f.domeA+=((up?1:0)-f.domeA)*Math.min(1,gap*9); else f.domeA=up?1:0;
+    if(!up&&f.domeA<0.02) f.domeA=0;
+    W.dome.visible=W.web.visible=W.rim.visible=f.domeA>0;
+    W.dome.material.opacity=0.16*f.domeA; W.web.material.opacity=0.3*f.domeA; W.rim.material.opacity=0.7*f.domeA;
+    /* The reach of the pulse shows once it has begun to wind up, and the band runs out from under it. */
+    var reach=!dead&&(m.s===EST.TELEGRAPH||m.s===EST.STRIKE);
+    W.reach.visible=reach; W.reach.material.opacity=m.s===EST.STRIKE?0.5:0.1+0.5*tellK;
+    var pulse=!dead&&m.s===EST.STRIKE;
+    W.pulse.visible=pulse;
+    if(pulse){ var r=Math.max(0.2,QS.ringAt(m.t)); W.pulse.scale.set(r,r,1); }
   }
   /**
    * The mortar's rings: down from the moment it aims until the shells land,
@@ -20538,6 +20610,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get frameKind(){ var a=player(); return a&&a.gear?QS.frameKind(a.gear):null; },
     /* #108: machines that neither come nor act, for a walk that measures streaming. */
     holdMachines:function(on){ if(encounter) encounter.held=!!on; },
+    /** A machine of `kind` at (x, z) — the debug dialog's Spawn, for the gate to stage one. */
+    spawnFoe:function(kind,x,z){ if(!encounter) return null; var g=QS.placeOnGround(col,x,z,200); return encounter.add(x,z,g.y+3,kind|0); },
     get packs(){ return encounter&&encounter.groups?encounter.groups:null; },
     /** Stand the character somewhere, as the debug dialog's Go does. */
     teleport:function(x,z){ return dbgTeleport(x,z); },
@@ -20552,7 +20626,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* #106: which tell each machine's model is showing, as drawn. */
     get foeTells(){ return foeMeshes.map(function(f){
       return {k:f.k,shown:f.g.visible,wedge:!!(f.wedge&&f.wedge.visible),line:!!(f.line&&f.line.visible),
-              rings:f.rings&&f.rings.visible?f.rings.children.filter(function(o){ return o.visible; }).length:0};
+              rings:f.rings&&f.rings.visible?f.rings.children.filter(function(o){ return o.visible; }).length:0,
+              ward:f.ward?{dome:f.ward.userData.dome.visible,reach:f.ward.userData.reach.visible,pulse:f.ward.userData.pulse.visible,
+                           runes:[0,1,2,3].filter(function(q){ return f.rig.tint['rune'+q]!==0x2a2838; }).length}:null};
     }); },
     /** The lattice, what is still on the ground, and the two verbs over them. */
     get gear(){return gear();},
