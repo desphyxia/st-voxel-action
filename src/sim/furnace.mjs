@@ -33,6 +33,7 @@ import { ARENA_R, CORE_AT, CORE_R, BOOST_R } from '../gen/site.mjs';
 import { hurt } from './combat.mjs';
 import { TRAD, opensGate, fusionsOfSchool } from './lattice.mjs';
 import { onFeet } from './revive.mjs';
+import { REST_R } from './approach.mjs';
 
 /** The run's stages. */
 export const FSTAGE = { SEALED: 0, OPEN: 1, FIGHT: 2, CORE: 3, DONE: 4 };
@@ -144,6 +145,8 @@ export function makeFurnaceRun(S, ctx) {
     marks: [],
     spawned: [],
     wipes: 0,
+    /** Has anyone walked up to the rest stone? Then it is where a respawn goes. */
+    rest: false,
   };
 
   const standing = (players) => players.filter((p) => onFeet(p));
@@ -163,6 +166,9 @@ export function makeFurnaceRun(S, ctx) {
       aim: null,
     };
   }
+
+  /** Where a respawn goes once the rest stone has been walked up to, or null. */
+  run.restSpot = () => (run.rest && S.rest ? S.rest : null);
 
   /** The glyph on the gate: the fusions that would open it. */
   run.glyph = () => fusionsOfSchool(TRAD.TECH);
@@ -326,6 +332,7 @@ export function makeFurnaceRun(S, ctx) {
   function advance(players, dt) {
     const live = players.filter((p) => p);
     const up = standing(live);
+    if (!run.rest && S.rest) for (const p of up) if (hyp(p.x - S.rest.x, p.z - S.rest.z) <= REST_R) run.rest = true;
 
     if (run.stage === FSTAGE.SEALED) {
       for (let i = 0; i < live.length; i++) {
@@ -385,9 +392,10 @@ export function makeFurnaceRun(S, ctx) {
 
   /** The run as it crosses the wire: only when there is something to say. */
   run.wire = function () {
-    if (run.stage === FSTAGE.SEALED) return null;
+    if (run.stage === FSTAGE.SEALED && !run.rest) return null;
     const r2 = (v) => Math.round(v * 100) / 100;
     const o = { s: run.stage, hz: run.hazard };
+    if (run.rest) o.rf = 1;
     if (run.stage === FSTAGE.OPEN && run.stirT > 0) o.sr = r2(run.stirT);
     if (run.stage >= FSTAGE.CORE) o.hd = r2(run.hold);
     if (run.stage === FSTAGE.CORE) o.wv = run.waves;
@@ -405,6 +413,7 @@ export function makeFurnaceRun(S, ctx) {
   /** A guest's copy: take the host's record as it stands. */
   run.observe = function (w) {
     if (!w) return;
+    run.rest = !!w.rf;
     run.stage = w.s; run.hazard = w.hz || 0; run.stirT = w.sr || 0; run.hold = w.hd || 0; run.waves = w.wv || 0;
     if (w.g && w.s === FSTAGE.FIGHT) {
       const g = run.g || (run.g = makeGuardian(1));

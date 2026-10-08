@@ -68,6 +68,7 @@ import { TICK, placeOnGround, step } from './actor.mjs';
 import { inArc, hurt, applyHits, WINDUP, REGEN_DELAY } from './combat.mjs';
 import { upkeep } from './revive.mjs';
 import { makeFurnaceRun, installDoors } from './furnace.mjs';
+import { approachPads } from './approach.mjs';
 import { TRAD } from './lattice.mjs';
 import { makeLootField } from './loot.mjs';
 import { findPath } from './nav.mjs';
@@ -994,6 +995,12 @@ export function makeEncounter(col, world, posts) {
      more: a place to put machines, to hold the guardian among the things a swing
      can hit, a spoil to lay, and a way to put a scar out. */
   const siteDesc = streamed && world && world.G && world.G.site ? world.G.site() : null;
+  /* The road's pads, with their packs as kinds and the chunk each stands in. */
+  const LETTER = { S: KIND.SENTRY, M: KIND.MORTAR, H: KIND.HOUND };
+  const pads = approachPads(siteDesc).map((pd) => Object.assign({}, pd, {
+    pack: { members: pd.pack.members.map((c) => LETTER[c]), reserve: LETTER[pd.pack.reserve] },
+    ck: Math.floor(pd.offs[0].x / CHUNK + 0.5) + ',' + Math.floor(pd.offs[0].z / CHUNK + 0.5),
+  }));
   let calmZone = null;
   if (siteDesc) { installDoors(col); col.setDoor(siteDesc.door, true); }
   const furnace = siteDesc ? makeFurnaceRun(siteDesc, {
@@ -1035,6 +1042,14 @@ export function makeEncounter(col, world, posts) {
       return d;
     };
     const live = new Set(), want = [];
+    /* A group, however it came by its post: seen, and wanted when someone is near. */
+    const consider = (g) => {
+      const d = near(g.post.x, g.post.z);
+      if (g.members.length) {
+        const settled = g.members.every((e) => e.dead || e.reserve || e.ai.state === EST.DORMANT);
+        if ((d > STREAM_ENC.drop && settled) || d > STREAM_ENC.drop + 40) putAwayGroup(g);
+      } else if (!g.cleared && d < STREAM_ENC.active) want.push([d, g]);
+    };
     for (const c of col.live()) {
       const ck = c.cx + ',' + c.cz;
       live.add(ck);
@@ -1044,11 +1059,15 @@ export function makeEncounter(col, world, posts) {
       const gid = groupId(c.cx, c.cz);
       let g = groups.get(gid);
       if (!g) { g = { gid, ck, post, pack: packAt(c.cx, c.cz), members: [], dead: 0, cleared: false }; groups.set(gid, g); }
-      const d = near(post.x, post.z);
-      if (g.members.length) {
-        const settled = g.members.every((e) => e.dead || e.reserve || e.ai.state === EST.DORMANT);
-        if ((d > STREAM_ENC.drop && settled) || d > STREAM_ENC.drop + 40) putAwayGroup(g);
-      } else if (!g.cleared && d < STREAM_ENC.active) want.push([d, g]);
+      consider(g);
+    }
+    /* The approach's pads (#7): groups the road holds, wherever the chunk
+       under one is loaded. A pad finds its footing when it is wanted. */
+    for (const pd of pads) {
+      if (!live.has(pd.ck)) continue;
+      let g = groups.get(pd.gid);
+      if (!g) { g = { gid: pd.gid, ck: pd.ck, post: { x: pd.offs[0].x, z: pd.offs[0].z, h: pd.h }, pad: pd, pack: pd.pack, members: [], dead: 0, cleared: false }; groups.set(pd.gid, g); }
+      consider(g);
     }
     /* Ground that went is ground nothing can stand on. */
     for (const g of groups.values()) if (g.members.length && !live.has(g.ck)) putAwayGroup(g);
@@ -1058,7 +1077,14 @@ export function makeEncounter(col, world, posts) {
       let left = 0;
       for (let i = 0; i < kinds; i++) if (!(g.dead & (1 << i))) left++;
       if (enemies.length + left > STREAM_ENC.max) continue;
-      const y = roomAt(col, g.post.x, g.post.z, g.post.h, SENTRY.rad);
+      let y = roomAt(col, g.post.x, g.post.z, g.post.h, SENTRY.rad);
+      /* A pad tries the other side of the road, and then the road. */
+      if (y === null && g.pad) {
+        for (const o of g.pad.offs) {
+          const q = roomAt(col, o.x, o.z, g.post.h, SENTRY.rad);
+          if (q !== null) { g.post = { x: o.x, z: o.z, h: g.post.h }; y = q; break; }
+        }
+      }
       if (y === null) continue;
       const all = placeGroup(col, world.spawn, [g.post.x, g.post.z, y], g.pack, g.gid * 4);
       g.members = all.filter((e, i) => !(g.dead & (1 << i)));

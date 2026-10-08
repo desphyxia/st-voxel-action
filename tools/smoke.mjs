@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, reelSuite, survivalSuite, siteSuite, furnaceSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, reelSuite, survivalSuite, siteSuite, furnaceSuite, approachSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, marshSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -281,6 +281,7 @@ if (NODE_HALF) for (const r of reelSuite()) check(r.ok, `REEL: ${r.label}`, r.de
 if (NODE_HALF) for (const r of survivalSuite()) check(r.ok, `SURVIVAL: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of siteSuite()) check(r.ok, `SITE: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of furnaceSuite()) check(r.ok, `FURNACE: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of approachSuite()) check(r.ok, `APPROACH: ${r.label}`, r.detail);
 
 /* ---------- GEAR: modules, sockets, fusion and what is on the ground ----------
    The spine of progression (§4), and the first reason this world has anywhere
@@ -3275,15 +3276,22 @@ if (BROWSER_HALF) {
           const marked = P.siteLook;
           P.teleport(S.cx + 60, S.cz + 60); P.run(30); await frames(3);
           const after = P.siteLook;
-          a.invincible = undefined;
-          return { sealed, opened, fight, marked, after, stage: run.stage };
+          /* The last landmark: walked up to, lit, and where a respawn goes. */
+          const R = S.rest, before = { halo: P.siteLook.halo, spot: run.restSpot() };
+          P.teleport(R.x + 0.5, R.z + 0.5); P.run(30); await frames(3);
+          const lit = P.siteLook;
+          P.teleport(S.cx + 60, S.cz + 60); P.run(30); P.respawn(); P.run(10);
+          const b = P.actor, back = Math.hypot(b.x - (R.x + 0.5), b.z - (R.z + 0.5));
+          a.invincible = undefined; b.invincible = undefined;
+          return { sealed, opened, fight, marked, after, stage: run.stage, rest: { before, lit: lit.halo, hud: lit.hud, back } };
         });
         check(!seen.none && seen.sealed && seen.sealed.doorShown && seen.sealed.glyph && /sealed/.test(seen.sealed.hud)
               && seen.opened && seen.opened.doorK > 0.9 && !seen.opened.glyph
               && seen.fight && seen.fight.guard && seen.fight.bar && /guardian/.test(seen.fight.hud)
               && seen.marked && seen.marked.wedge && seen.marked.marks >= 1
-              && seen.after && !seen.after.guard && seen.after.marks === 0,
-              'STREAM: the furnace is drawn: a door that sinks, a line that says what the gate asks, a guardian and the marks it makes (#7)',
+              && seen.after && !seen.after.guard && seen.after.marks === 0
+              && seen.rest && !seen.rest.before.halo && !seen.rest.before.spot && seen.rest.lit && /rest stone found/.test(seen.rest.hud) && seen.rest.back < 3,
+              'STREAM: the furnace is drawn: a door that sinks, a line that says what the gate asks, a guardian, the marks it makes and a rest stone a respawn goes to (#7)',
               seen.none ? 'NO SITE' : JSON.stringify(seen));
         check(streamed.chunks.dropped > 0 && streamed.chunks.built > streamed.chunks.loaded
               && streamed.nodesMatch,
