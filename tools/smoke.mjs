@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, reelSuite, survivalSuite, siteSuite, furnaceSuite, approachSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, wardenSuite, packSuite, dynamicsSuite, reelSuite, survivalSuite, siteSuite, furnaceSuite, approachSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, marshSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -275,6 +275,7 @@ if (NODE_HALF) for (const r of combatSuite()) check(r.ok, `COMBAT: ${r.label}`, 
    assertions are about windows and openings, not about damage. */
 if (NODE_HALF) for (const r of enemySuite()) check(r.ok, `ENEMY: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of rosterSuite()) check(r.ok, `ROSTER: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of wardenSuite()) check(r.ok, `WARDEN: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of packSuite()) check(r.ok, `PACKS: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of dynamicsSuite()) check(r.ok, `DYNAMIC: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of reelSuite()) check(r.ok, `REEL: ${r.label}`, r.detail);
