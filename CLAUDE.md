@@ -5,13 +5,13 @@ terrain features are sized in whole metres on a 1 m grid and built from 25 cm vo
 
 **Status: move, fight and fuse.** Phase 0 is complete and Phase 1 has started. What exists is
 the seeded terrain generator (`src/gen/`), collision, a character controller, an isometric
-camera, a remappable input layer, one committed swing, a dodge, three enemy archetypes, a hex
+camera, a remappable input layer, one committed swing, a dodge, four enemy archetypes, a hex
 socket lattice with modules and fusion, and loot to fill it from (`src/sim/`),
 host-authoritative netcode with client prediction (`src/net/`), and a build you can open and
 fight in, with a second window if you want company (`docs/play/`) — plus the concept plate and
 a design decision record.
 
-What it still cannot tell you is whether the *game* is good: one frame of eight, three
+What it still cannot tell you is whether the *game* is good: one frame of eight, four
 archetypes of twelve, and no set-pieces. Check `docs/DECISIONS.md` before starting
 anything.
 
@@ -89,7 +89,7 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`dfb4558`** (the gate square to the grid: an axis-facing gap, a door that fits it, no lintel over it, #7/PR #121)
+Play is published from **`a272aa5`** (the warden obelisk, #6/PR #123) at **version 72**, stamped; it went straight through. Concept did not change and stays at **version 43** from `dfb4558`. Before that, play was **`d0bf5cc`** (the gate's door in voxels, so it sits in the wall, #7/PR #122) at **version 71**, stamped. Before that, play was **`dfb4558`** (the gate square to the grid: an axis-facing gap, a door that fits it, no lintel over it, #7/PR #121)
 at **version 70**, stamped, and concept from the same commit at **version 43**; both went straight through. Before that, play was **`cd35e4a`**
 (the approach: three beats along the road and a rest stone, #7/PR #119) at **version 69** and concept at **version 42**, both straight through. Before that, play was **`8d7a3d8`** (the furnace on the page: door, guardian, marks and the gate's line, #7 slice 3/PR #118)
 at **version 68**, stamped; it went straight through. Concept is from the same commit at **version 41**: it was refused as the session's first, its live
