@@ -32,6 +32,7 @@ import * as RL from '../../src/sim/reel.mjs';
 import * as RV from '../../src/sim/revive.mjs';
 import * as ST from '../../src/gen/site.mjs';
 import * as FN from '../../src/sim/furnace.mjs';
+import * as APPROACH from '../../src/sim/approach.mjs';
 import { makeLoopback, conditioned } from '../../src/net/transport.mjs';
 import { makeHost, makeGuest, ACT } from '../../src/net/session.mjs';
 import * as NS from '../../src/net/session.mjs';
@@ -6376,5 +6377,132 @@ export function furnaceSuite() {
         `shut: stopped at ${shut.toFixed(2)} m; open: reached ${open.toFixed(2)} m; walking past beside it ${beside.x.toFixed(2)} m`);
   }
 
+  return out;
+}
+
+/* ------------------------------------------------------------ approach ---- */
+
+/**
+ * The approach (#7): three beats of groups along the road with a breather
+ * after each, and a rest stone at its foot that a respawn goes to once it has
+ * been walked up to. The pads are asserted for every seed without a world; the
+ * machines on them, and what is remembered, in one streamed world.
+ */
+export function approachSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const AP = APPROACH;
+  const SEEDS = ['QUARTERSTONE', 'ALDER-RUN', 'DRY-KETTLE', 'CLOUDPINE-2', 'BRIARWICK', 'FEN-BARROW-75', 'RED-REACH-65', 'NORTHWIND-1'];
+
+  /* 1. The pads: beat by beat, spaced, in order, with the breathers empty. */
+  {
+    const bad = [];
+    const counts = [];
+    for (const sd of SEEDS) {
+      const S = makeGen(sd, null).site(), pads = AP.approachPads(S), again = AP.approachPads(S);
+      if (JSON.stringify(pads) !== JSON.stringify(again)) bad.push(sd + ' differs');
+      const perBeat = [0, 0, 0];
+      for (const p of pads) perBeat[p.beat]++;
+      counts.push(perBeat.join('/'));
+      if (perBeat[0] < 3 || perBeat[1] < 4 || perBeat[2] < 5 || perBeat[0] > 3 || perBeat[1] > 5 || perBeat[2] > 6) bad.push(`${sd} counts ${perBeat}`);
+      for (const p of pads) {
+        const B = AP.BEATS[p.beat];
+        if (p.t < B.lo || p.t > B.hi) bad.push(`${sd} pad at ${p.t} outside beat ${p.beat}`);
+        if (pads.some((q) => q !== p && q.beat === p.beat && Math.abs(q.t - p.t) < 9)) bad.push(`${sd} pads too close at ${p.t}`);
+      }
+      for (let i = 1; i < pads.length; i++) if (pads[i].t > pads[i - 1].t && pads[i].beat === pads[i - 1].beat) bad.push(`${sd} out of order`);
+      if (new Set(pads.map((p) => p.gid)).size !== pads.length || pads.some((p) => p.gid < AP.PAD_GID)) bad.push(sd + ' ids');
+      const b2 = pads.filter((p) => p.beat === 1).flatMap((p) => p.pack.members).map((k) => k).join('');
+      if (!/S/.test(b2) || !/H/.test(b2)) bad.push(sd + ' beat 2 does not mix');
+      /* The breathers: nothing between 204 and 236, or between 104 and 132. */
+      if (pads.some((p) => (p.t > 204 && p.t < 236) || (p.t > 104 && p.t < 132))) bad.push(sd + ' machines in a breather');
+    }
+    say('every seed has three beats of three, four or five, and five or six groups on the road, spaced, in order, with the breathers empty and the middle beat mixed',
+        bad.length === 0, bad.length ? bad.slice(0, 3).join('; ') : `groups per beat: ${counts.join(', ')}`);
+  }
+
+  /* 2. The rest stone: beside the road near its foot, a step above it. */
+  {
+    const bad = [];
+    for (const sd of SEEDS) {
+      const S = makeGen(sd, null).site(), foot = S.foot;
+      if (!S.rest) { bad.push(sd + ' none'); continue; }
+      const r = S.rest, d = hyp(r.x - foot.x, r.z - foot.z);
+      let n = 0;
+      S.cells.forEach((v) => { if (v.k === ST.SITE_K.REST) { n++; if (v.h !== r.h) bad.push(sd + ' height'); } });
+      if (n !== 9) bad.push(`${sd} ${n} cells`);
+      if (d > 14 || d < 4) bad.push(`${sd} ${d.toFixed(1)} m from the foot`);
+      if (Math.abs(r.h - S.foot.h) > 3) bad.push(`${sd} stands ${r.h - S.foot.h} over the foot`);
+    }
+    say('every seed has a rest stone of nine cells beside the foot of the road, a step above it',
+        bad.length === 0, bad.length ? bad.slice(0, 3).join('; ') : `${SEEDS.length} seeds`);
+  }
+
+  /* 3. In a streamed world: the groups are on the road, and what is cleared stays so. */
+  const sd = 'QUARTERSTONE', S = makeGen(sd, null).site(), pads = AP.approachPads(S);
+  const made = new Map();
+  const fieldAt = () => {
+    const f = makeChunkField(sd, null, 1);
+    f.around = (x, z) => {
+      const c = chunkAt(x, z), want = new Set();
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) want.add((c.cx + dx) + ',' + (c.cz + dz));
+      for (const e of f.live()) if (!want.has(e.cx + ',' + e.cz)) f.drop(e.cx, e.cz);
+      for (const k of want) {
+        const [cx, cz] = k.split(',').map(Number);
+        if (f.has(cx, cz)) continue;
+        if (!made.has(k)) made.set(k, chunkWorld(sd, cx, cz, null, 1));
+        f.adopt(cx, cz, made.get(k));
+      }
+    };
+    return f;
+  };
+  const f = fieldAt();
+  f.around(S.foot.x, S.foot.z);
+  const enc = EN.makeEncounter(f, f.chunk(chunkAt(S.foot.x, S.foot.z).cx, chunkAt(S.foot.x, S.foot.z).cz).w, []);
+  const p = placeOnGround(f, S.foot.x, S.foot.z, 80);
+  p.gear = LT.makeGear();
+  const visit = (x, z) => {
+    f.around(x, z);
+    const g = placeOnGround(f, x, z, 80);
+    p.x = g.x; p.y = g.y; p.z = g.z; p.vx = p.vy = p.vz = 0; p.invincible = true;
+    for (let t = 0; t < EN.STREAM_ENC.every; t++) enc.step([p]);
+  };
+  const first = (beat) => pads.filter((q) => q.beat === beat)[0];
+  const near = (q) => enc.enemies.filter((e) => Math.floor(e.id / 4) === q.gid);
+  const kinds = (es) => [...new Set(es.map((e) => e.k))].length;
+
+  const q1 = first(0), q3 = first(2);
+  visit(q1.offs[2].x, q1.offs[2].z);
+  const at1 = near(q1);
+  visit(q3.offs[2].x, q3.offs[2].z);
+  const at3 = near(q3);
+  say('a pad brings its group in when someone comes near, the pack its recipe says, and the last beat of several kinds',
+      at1.length === 3 && kinds(at1) === new Set(q1.pack.members.concat(q1.pack.reserve)).size && at3.length === 4 && kinds(at3) >= 2,
+      `beat 1: ${at1.length} machines of ${kinds(at1)} kind(s); beat 3: ${at3.length} of ${kinds(at3)}`);
+
+  for (const e of near(q3)) if (!e.reserve) { e.hp = 0; e.dead = 'struck'; }
+  enc.step([p]);
+  visit(q1.offs[2].x, q1.offs[2].z);   /* away: the group is put away */
+  visit(q3.offs[2].x, q3.offs[2].z);   /* and back */
+  const back = near(q3).filter((e) => !e.dead && !e.reserve);
+  say('and what is cleared on the road stays cleared when the road is left and come back to',
+      back.length === 0, `${back.length} standing after returning`);
+
+  /* 4. The rest stone is where a respawn goes, once it has been walked up to. */
+  {
+    const run = enc.site;
+    const f2 = fieldAt(), r = S.rest;
+    visit(S.foot.x - S.ux * 40, S.foot.z - S.uz * 40);
+    const before = run.restSpot();
+    const wireBefore = run.wire();
+    visit(r.x, r.z);
+    const after = run.restSpot(), w = run.wire();
+    const enc2 = EN.makeEncounter(f2, f.chunk(chunkAt(S.foot.x, S.foot.z).cx, chunkAt(S.foot.x, S.foot.z).cz).w, []);
+    enc2.observeSite(w);
+    say('a respawn goes to the rest stone only once someone has walked up to it, and a guest is told so even while the gate is shut',
+        before === null && wireBefore === null && after && after.x === r.x && w && w.rf === 1 && w.s === 0
+          && enc2.site.restSpot() && enc2.site.restSpot().x === r.x,
+        `before ${before}, wire ${wireBefore === null ? 'null' : 'SENT'}; after ${after ? 'the stone' : 'nothing'}, wire ${JSON.stringify(w)}`);
+  }
   return out;
 }

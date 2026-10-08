@@ -29,7 +29,7 @@ const MODULES = {
   'src/gen': ['constants', 'exact', 'materials', 'palette', 'rng', 'biomes', 'site', 'field', 'erosion', 'region', 'ground', 'routes',
               'spans', 'water', 'surface', 'props', 'grass', 'reach', 'index', 'chunk'],
   'src/mesh': ['greedy', 'carve', 'propmesh', 'vox'],
-  'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'reel', 'revive', 'loot', 'actor', 'nav', 'furnace', 'enemy', 'anim', 'sky', 'camera', 'input'],
+  'src/sim': ['collider', 'chunks', 'stream', 'combat', 'lattice', 'reel', 'revive', 'loot', 'actor', 'nav', 'approach', 'furnace', 'enemy', 'anim', 'sky', 'camera', 'input'],
   'src/net': ['transport', 'session', 'rtc'],
 };
 
@@ -69,7 +69,7 @@ const SIM_API = ['LIQUID', 'EPS', 'makeCollider', 'colliderForWorld', 'colliderF
                  'takeModule', 'learnFusion', 'socketModule', 'unsocketModule',
                  'gearWire', 'applyGearWire', 'refitGear', 'seatOn', 'pullFrom',
                  'PICKUP_R', 'CACHES', 'makeLootField', 'cacheSites', 'spoilModule', 'SPOILS_MAX', 'STREAM_ENC',
-                 'FSTAGE', 'FMOVE', 'FMARK', 'FURNACE', 'opensGate', 'fusionsOfSchool', 'seatedFusions',
+                 'FSTAGE', 'FMOVE', 'FMARK', 'FURNACE', 'BEATS', 'REST_R', 'approachPads', 'opensGate', 'fusionsOfSchool', 'seatedFusions',
                  'SENTRY', 'EST', 'makeSentry', 'stepSentry', 'makeEncounter',
                  'MORTAR', 'HOUND', 'KIND', 'KIND_NAMES', 'ARCHETYPES', 'makeMortar', 'makeHound',
                  'MORTAR_AIM_TIME', 'MORTAR_FLIGHT_TIME', 'MORTAR_VENT_TIME',

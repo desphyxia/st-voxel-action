@@ -49,6 +49,11 @@ export const STONE_H = 1;
 export const PATH_LEN = 330;
 export const PATH_HALF = 2.5;
 export const PATH_SLOPE = 0.5;
+/** The rest stone at the road's foot (the last landmark): how far up the road
+    from its end, how far to one side, and how far it stands over the road. */
+export const REST_AT = 6;
+export const REST_SIDE = 6;
+export const REST_H = 1;
 /** Where a site may stand, in metres from the world's origin. Far enough that
     no default window and no spawn's streamed ring ever reaches the ash it
     raises (the boost's outer edge is BOOST_R from the middle). */
@@ -62,7 +67,7 @@ export const BOOST_R = 260;
 const ASH_FULL = 0.95;
 
 /** What a cell the site owns is, as the code a window reads off it. */
-export const SITE_K = { FLOOR: 1, WALL: 2, GATE: 3, CORE: 4, STONE: 5, ROAD: 6 };
+export const SITE_K = { FLOOR: 1, WALL: 2, GATE: 3, CORE: 4, STONE: 5, ROAD: 6, REST: 7 };
 
 /** Whole metres of height, rounded half away from zero the same on every engine. */
 const rnd = (v) => Math.floor(v + 0.5);
@@ -253,6 +258,19 @@ export function shapeSite(S0, heightAt, waterLevelAt, key) {
       const k = key(x, z), cur = best.get(k);
       if (!cur || d < cur.d) best.set(k, { d, h });
     }
+  }
+  /* The rest stone: a raised square beside the road a few metres short of its
+     foot, on whichever side the ground is nearer the road's height. */
+  {
+    const rp = S.path[PATH_LEN - REST_AT], vx = -uz, vz = ux;
+    let side = 1, gap = Infinity;
+    for (const s of [1, -1]) {
+      const g = Math.abs(heightAt(rnd(rp[0] + vx * s * REST_SIDE), rnd(rp[1] + vz * s * REST_SIDE)) - rp[2]);
+      if (g < gap) { gap = g; side = s; }
+    }
+    const rx = rnd(rp[0] + vx * side * REST_SIDE), rz = rnd(rp[1] + vz * side * REST_SIDE);
+    S.rest = { x: rx, z: rz, h: rp[2] + REST_H };
+    for (let x = rx - 1; x <= rx + 1; x++) for (let z = rz - 1; z <= rz + 1; z++) put(x, z, SITE_K.REST, S.rest.h);
   }
   best.forEach((v, k) => { if (!cells.has(k)) cells.set(k, { k: SITE_K.ROAD, h: v.h }); });
   S.foot = { x: S.path[PATH_LEN][0], z: S.path[PATH_LEN][1], h: S.path[PATH_LEN][2] };

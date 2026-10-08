@@ -1185,6 +1185,11 @@ const STONE_H = 1;
 const PATH_LEN = 330;
 const PATH_HALF = 2.5;
 const PATH_SLOPE = 0.5;
+/** The rest stone at the road's foot (the last landmark): how far up the road
+    from its end, how far to one side, and how far it stands over the road. */
+const REST_AT = 6;
+const REST_SIDE = 6;
+const REST_H = 1;
 /** Where a site may stand, in metres from the world's origin. Far enough that
     no default window and no spawn's streamed ring ever reaches the ash it
     raises (the boost's outer edge is BOOST_R from the middle). */
@@ -1198,7 +1203,7 @@ const BOOST_R = 260;
 const ASH_FULL = 0.95;
 
 /** What a cell the site owns is, as the code a window reads off it. */
-const SITE_K = { FLOOR: 1, WALL: 2, GATE: 3, CORE: 4, STONE: 5, ROAD: 6 };
+const SITE_K = { FLOOR: 1, WALL: 2, GATE: 3, CORE: 4, STONE: 5, ROAD: 6, REST: 7 };
 
 /** Whole metres of height, rounded half away from zero the same on every engine. */
 const rnd = (v) => Math.floor(v + 0.5);
@@ -1389,6 +1394,19 @@ function shapeSite(S0, heightAt, waterLevelAt, key) {
       const k = key(x, z), cur = best.get(k);
       if (!cur || d < cur.d) best.set(k, { d, h });
     }
+  }
+  /* The rest stone: a raised square beside the road a few metres short of its
+     foot, on whichever side the ground is nearer the road's height. */
+  {
+    const rp = S.path[PATH_LEN - REST_AT], vx = -uz, vz = ux;
+    let side = 1, gap = Infinity;
+    for (const s of [1, -1]) {
+      const g = Math.abs(heightAt(rnd(rp[0] + vx * s * REST_SIDE), rnd(rp[1] + vz * s * REST_SIDE)) - rp[2]);
+      if (g < gap) { gap = g; side = s; }
+    }
+    const rx = rnd(rp[0] + vx * side * REST_SIDE), rz = rnd(rp[1] + vz * side * REST_SIDE);
+    S.rest = { x: rx, z: rz, h: rp[2] + REST_H };
+    for (let x = rx - 1; x <= rx + 1; x++) for (let z = rz - 1; z <= rz + 1; z++) put(x, z, SITE_K.REST, S.rest.h);
   }
   best.forEach((v, k) => { if (!cells.has(k)) cells.set(k, { k: SITE_K.ROAD, h: v.h }); });
   S.foot = { x: S.path[PATH_LEN][0], z: S.path[PATH_LEN][1], h: S.path[PATH_LEN][2] };
@@ -9407,6 +9425,89 @@ function navGraph(col, box, options) {
   }
   return { nodes, links, step: NAV_STEP, rad: o.rad };
 }
+/* ---------- src/sim/approach.mjs ---------- */
+/**
+ * The approach (#7, docs/DECISIONS.md §6): the road up to the furnace as three
+ * escalating beats with a breather after each, and a rest stone at the foot.
+ *
+ * Only *where* is decided here, as a pure function of the site's descriptor:
+ * pads along the road where a group stands. Which machines they are and how
+ * they are brought in and put away is the encounter's (enemy.mjs), through the
+ * same machinery that holds a streamed world's groups, so a group cleared on
+ * the road stays cleared for the session.
+ *
+ * The road runs from the gate (t = 0) out to its foot (t = PATH_LEN), and a
+ * player comes the other way. In the order they are met:
+ *
+ *   foot   the rest stone, then
+ *   beat 1 a few small groups of one kind, then a breather,
+ *   beat 2 more of them, mixing archetypes, then a breather,
+ *   beat 3 the most and the heaviest, and the gate.
+ *
+ * The scar's harder terrain in the second beat is not here: it is the
+ * generator's (a later slice). No randomness: the seed picks the jitter, the
+ * side of the road and the order of the packs, as a hash of the site's place.
+ */
+
+
+/** Where each beat lies along the road, in metres from the gate, and how many
+    groups it holds at the least (the seed adds one to the later beats). The
+    breathers are the gaps between them. */
+const BEATS = [
+  { lo: 236, hi: 290, n: 3, packs: ['SM.S', 'HH.H'] },
+  { lo: 132, hi: 204, n: 4, packs: ['SMH.H', 'SHH.M', 'MSH.S'] },
+  { lo: 14, hi: 104, n: 5, packs: ['SMH.M', 'MHH.S', 'SSM.H', 'SMH.H'] },
+];
+
+/** How far from the foot the rest stone stands, how near to it a player has
+    to come for it to count as walked up to, and how far a pad stands to one
+    side of the road. */
+const REST_R = 6;
+const PAD_SIDE = 5;
+/** Group ids start above every id a chunk's post can make (encounter's `groupId`). */
+const PAD_GID = 1048576;
+
+/** A pack's recipe as `{ members, reserve }` of kind letters: S sentry, M mortar, H hound. */
+function packOf(code) {
+  const [m, r] = code.split('.');
+  return { members: m.split(''), reserve: r };
+}
+
+function seedUnit(S, n) {
+  let h = (Math.imul(S.cx | 0, 73856093) ^ Math.imul(S.cz | 0, 19349663) ^ Math.imul(n, 83492791)) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 3266489909) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/**
+ * The pads for a site, in the order they are met from the foot: `{ gid, beat,
+ * t, h, offs, pack }`, where `offs` is the places to try, the seed's side of
+ * the road first and the road's own middle last.
+ */
+function approachPads(S) {
+  const pads = [];
+  if (!S || !S.path) return pads;
+  const vx = -S.uz, vz = S.ux;
+  for (let b = BEATS.length - 1; b >= 0; b--) {
+    const B = BEATS[b];
+    const n = B.n + (b > 0 && seedUnit(S, 100 + b) < 0.5 ? 1 : 0);
+    const first = (seedUnit(S, 200 + b) * B.packs.length) | 0;
+    for (let i = 0; i < n; i++) {
+      /* From the far end in, each at the middle of its share of the beat. */
+      let t = B.hi - (B.hi - B.lo) * (i + 0.5) / n + (seedUnit(S, b * 16 + i) - 0.5) * 5;
+      t = Math.max(B.lo, Math.min(B.hi, Math.round(t)));
+      const p = S.path[Math.min(PATH_LEN, t)];
+      const side = ((i + (seedUnit(S, 300 + b) < 0.5 ? 1 : 0)) % 2 ? 1 : -1) * PAD_SIDE;
+      pads.push({
+        gid: PAD_GID + b * 8 + i, beat: b, t, h: p[2],
+        offs: [side, -side, 0].map((o) => ({ x: p[0] + vx * o, z: p[1] + vz * o })),
+        pack: packOf(B.packs[(first + i) % B.packs.length]),
+      });
+    }
+  }
+  return pads;
+}
 /* ---------- src/sim/furnace.mjs ---------- */
 /**
  * The furnace, run (#7, docs/DECISIONS.md §6): what happens in the arena that
@@ -9438,6 +9539,7 @@ function navGraph(col, box, options) {
  * estimate from the pacing in the record, not a decision. No randomness: the
  * seed picks the order the moves arrive in, and everything after is a clock.
  */
+
 
 
 
@@ -9554,6 +9656,8 @@ function makeFurnaceRun(S, ctx) {
     marks: [],
     spawned: [],
     wipes: 0,
+    /** Has anyone walked up to the rest stone? Then it is where a respawn goes. */
+    rest: false,
   };
 
   const standing = (players) => players.filter((p) => onFeet(p));
@@ -9573,6 +9677,9 @@ function makeFurnaceRun(S, ctx) {
       aim: null,
     };
   }
+
+  /** Where a respawn goes once the rest stone has been walked up to, or null. */
+  run.restSpot = () => (run.rest && S.rest ? S.rest : null);
 
   /** The glyph on the gate: the fusions that would open it. */
   run.glyph = () => fusionsOfSchool(TRAD.TECH);
@@ -9736,6 +9843,7 @@ function makeFurnaceRun(S, ctx) {
   function advance(players, dt) {
     const live = players.filter((p) => p);
     const up = standing(live);
+    if (!run.rest && S.rest) for (const p of up) if (hyp(p.x - S.rest.x, p.z - S.rest.z) <= REST_R) run.rest = true;
 
     if (run.stage === FSTAGE.SEALED) {
       for (let i = 0; i < live.length; i++) {
@@ -9795,9 +9903,10 @@ function makeFurnaceRun(S, ctx) {
 
   /** The run as it crosses the wire: only when there is something to say. */
   run.wire = function () {
-    if (run.stage === FSTAGE.SEALED) return null;
+    if (run.stage === FSTAGE.SEALED && !run.rest) return null;
     const r2 = (v) => Math.round(v * 100) / 100;
     const o = { s: run.stage, hz: run.hazard };
+    if (run.rest) o.rf = 1;
     if (run.stage === FSTAGE.OPEN && run.stirT > 0) o.sr = r2(run.stirT);
     if (run.stage >= FSTAGE.CORE) o.hd = r2(run.hold);
     if (run.stage === FSTAGE.CORE) o.wv = run.waves;
@@ -9815,6 +9924,7 @@ function makeFurnaceRun(S, ctx) {
   /** A guest's copy: take the host's record as it stands. */
   run.observe = function (w) {
     if (!w) return;
+    run.rest = !!w.rf;
     run.stage = w.s; run.hazard = w.hz || 0; run.stirT = w.sr || 0; run.hold = w.hd || 0; run.waves = w.wv || 0;
     if (w.g && w.s === FSTAGE.FIGHT) {
       const g = run.g || (run.g = makeGuardian(1));
@@ -9891,6 +10001,7 @@ function makeFurnaceRun(S, ctx) {
  * No AI architecture — a state machine and a steering direction per machine,
  * stepped in a fixed order so a host and a replay agree.
  */
+
 
 
 
@@ -10824,6 +10935,12 @@ function makeEncounter(col, world, posts) {
      more: a place to put machines, to hold the guardian among the things a swing
      can hit, a spoil to lay, and a way to put a scar out. */
   const siteDesc = streamed && world && world.G && world.G.site ? world.G.site() : null;
+  /* The road's pads, with their packs as kinds and the chunk each stands in. */
+  const LETTER = { S: KIND.SENTRY, M: KIND.MORTAR, H: KIND.HOUND };
+  const pads = approachPads(siteDesc).map((pd) => Object.assign({}, pd, {
+    pack: { members: pd.pack.members.map((c) => LETTER[c]), reserve: LETTER[pd.pack.reserve] },
+    ck: Math.floor(pd.offs[0].x / CHUNK + 0.5) + ',' + Math.floor(pd.offs[0].z / CHUNK + 0.5),
+  }));
   let calmZone = null;
   if (siteDesc) { installDoors(col); col.setDoor(siteDesc.door, true); }
   const furnace = siteDesc ? makeFurnaceRun(siteDesc, {
@@ -10865,6 +10982,14 @@ function makeEncounter(col, world, posts) {
       return d;
     };
     const live = new Set(), want = [];
+    /* A group, however it came by its post: seen, and wanted when someone is near. */
+    const consider = (g) => {
+      const d = near(g.post.x, g.post.z);
+      if (g.members.length) {
+        const settled = g.members.every((e) => e.dead || e.reserve || e.ai.state === EST.DORMANT);
+        if ((d > STREAM_ENC.drop && settled) || d > STREAM_ENC.drop + 40) putAwayGroup(g);
+      } else if (!g.cleared && d < STREAM_ENC.active) want.push([d, g]);
+    };
     for (const c of col.live()) {
       const ck = c.cx + ',' + c.cz;
       live.add(ck);
@@ -10874,11 +10999,15 @@ function makeEncounter(col, world, posts) {
       const gid = groupId(c.cx, c.cz);
       let g = groups.get(gid);
       if (!g) { g = { gid, ck, post, pack: packAt(c.cx, c.cz), members: [], dead: 0, cleared: false }; groups.set(gid, g); }
-      const d = near(post.x, post.z);
-      if (g.members.length) {
-        const settled = g.members.every((e) => e.dead || e.reserve || e.ai.state === EST.DORMANT);
-        if ((d > STREAM_ENC.drop && settled) || d > STREAM_ENC.drop + 40) putAwayGroup(g);
-      } else if (!g.cleared && d < STREAM_ENC.active) want.push([d, g]);
+      consider(g);
+    }
+    /* The approach's pads (#7): groups the road holds, wherever the chunk
+       under one is loaded. A pad finds its footing when it is wanted. */
+    for (const pd of pads) {
+      if (!live.has(pd.ck)) continue;
+      let g = groups.get(pd.gid);
+      if (!g) { g = { gid: pd.gid, ck: pd.ck, post: { x: pd.offs[0].x, z: pd.offs[0].z, h: pd.h }, pad: pd, pack: pd.pack, members: [], dead: 0, cleared: false }; groups.set(pd.gid, g); }
+      consider(g);
     }
     /* Ground that went is ground nothing can stand on. */
     for (const g of groups.values()) if (g.members.length && !live.has(g.ck)) putAwayGroup(g);
@@ -10888,7 +11017,14 @@ function makeEncounter(col, world, posts) {
       let left = 0;
       for (let i = 0; i < kinds; i++) if (!(g.dead & (1 << i))) left++;
       if (enemies.length + left > STREAM_ENC.max) continue;
-      const y = roomAt(col, g.post.x, g.post.z, g.post.h, SENTRY.rad);
+      let y = roomAt(col, g.post.x, g.post.z, g.post.h, SENTRY.rad);
+      /* A pad tries the other side of the road, and then the road. */
+      if (y === null && g.pad) {
+        for (const o of g.pad.offs) {
+          const q = roomAt(col, o.x, o.z, g.post.h, SENTRY.rad);
+          if (q !== null) { g.post = { x: o.x, z: o.z, h: g.post.h }; y = q; break; }
+        }
+      }
       if (y === null) continue;
       const all = placeGroup(col, world.spawn, [g.post.x, g.post.z, y], g.pack, g.gid * 4);
       g.members = all.filter((e, i) => !(g.dead & (1 << i)));
@@ -12962,7 +13098,7 @@ const ASSETS={
   'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
   'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP8AAAD/'
 };
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,REEL:REEL,TETHER:TETHER,isReel:isReel,reelRange:reelRange,reelCost:reelCost,trySwap:trySwap,swapFrame:swapFrame,frameKind:frameKind,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SPOILS_MAX:SPOILS_MAX,STREAM_ENC:STREAM_ENC,FSTAGE:FSTAGE,FMOVE:FMOVE,FMARK:FMARK,FURNACE:FURNACE,opensGate:opensGate,fusionsOfSchool:fusionsOfSchool,seatedFusions:seatedFusions,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,MORTAR:MORTAR,HOUND:HOUND,KIND:KIND,KIND_NAMES:KIND_NAMES,ARCHETYPES:ARCHETYPES,makeMortar:makeMortar,makeHound:makeHound,MORTAR_AIM_TIME:MORTAR_AIM_TIME,MORTAR_FLIGHT_TIME:MORTAR_FLIGHT_TIME,MORTAR_VENT_TIME:MORTAR_VENT_TIME,HOUND_TELL_TIME:HOUND_TELL_TIME,LUNGE_TIME:LUNGE_TIME,STUMBLE_TIME:STUMBLE_TIME,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,MORTAR_RIG:MORTAR_RIG,HOUND_RIG:HOUND_RIG,MACHINE_RIGS:MACHINE_RIGS,MACHINE_STRIDES:MACHINE_STRIDES,poseMachine:poseMachine,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,lightningAt:lightningAt,FLASH_SECONDS:FLASH_SECONDS,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,REEL:REEL,TETHER:TETHER,isReel:isReel,reelRange:reelRange,reelCost:reelCost,trySwap:trySwap,swapFrame:swapFrame,frameKind:frameKind,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SPOILS_MAX:SPOILS_MAX,STREAM_ENC:STREAM_ENC,FSTAGE:FSTAGE,FMOVE:FMOVE,FMARK:FMARK,FURNACE:FURNACE,BEATS:BEATS,REST_R:REST_R,approachPads:approachPads,opensGate:opensGate,fusionsOfSchool:fusionsOfSchool,seatedFusions:seatedFusions,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,MORTAR:MORTAR,HOUND:HOUND,KIND:KIND,KIND_NAMES:KIND_NAMES,ARCHETYPES:ARCHETYPES,makeMortar:makeMortar,makeHound:makeHound,MORTAR_AIM_TIME:MORTAR_AIM_TIME,MORTAR_FLIGHT_TIME:MORTAR_FLIGHT_TIME,MORTAR_VENT_TIME:MORTAR_VENT_TIME,HOUND_TELL_TIME:HOUND_TELL_TIME,LUNGE_TIME:LUNGE_TIME,STUMBLE_TIME:STUMBLE_TIME,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,MORTAR_RIG:MORTAR_RIG,HOUND_RIG:HOUND_RIG,MACHINE_RIGS:MACHINE_RIGS,MACHINE_STRIDES:MACHINE_STRIDES,poseMachine:poseMachine,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,lightningAt:lightningAt,FLASH_SECONDS:FLASH_SECONDS,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -16272,8 +16408,18 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       dk.rotation.x=-Math.PI/2; dk.visible=false; dk.renderOrder=3; dk.userData.keep=true; dk.userData.kind='tell';
       g.add(dk); marks.push(dk);
     }
+    /* The rest stone's crystal: dull until someone has walked up to it, then lit. */
+    var crystal=null, halo=null;
+    if(S.rest){
+      crystal=new THREE.Mesh(new THREE.OctahedronGeometry(0.45),new THREE.MeshBasicMaterial({color:0x6b5a45,toneMapped:false}));
+      crystal.position.set(S.rest.x+0.5,S.rest.h+2.0,S.rest.z+0.5); crystal.userData.keep=true;
+      halo=new THREE.Mesh(new THREE.RingGeometry(1.0,1.35,24),new THREE.MeshBasicMaterial({color:0xd9a25e,transparent:true,opacity:0.6,side:THREE.DoubleSide,depthWrite:false,toneMapped:false}));
+      halo.rotation.x=-Math.PI/2; halo.position.set(S.rest.x+0.5,S.rest.h+0.2,S.rest.z+0.5); halo.visible=false; halo.userData.keep=true; halo.userData.kind='tell';
+      g.add(crystal); g.add(halo);
+    }
     built.scene.add(g);
-    return {g:g,S:S,pivot:pivot,door:door,glyph:glyph,guard:guard,wp:wp,wedge:wedge,marks:marks,k:0,at:undefined};
+    return {g:g,S:S,pivot:pivot,door:door,glyph:glyph,guard:guard,wp:wp,wedge:wedge,marks:marks,k:0,at:undefined,
+            crystal:crystal,halo:halo,found:false,foundAt:-99};
   }
   /** What the gate asks for, as the names of the fusions that would open it. */
   function glyphLine(){
@@ -16321,9 +16467,17 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       }
     }
     V.wp.visible=wedgeOn;
+    /* The rest stone: turning, and lit once it has been walked up to. */
+    if(V.crystal){
+      V.crystal.rotation.y=tm*0.8; V.crystal.position.y=S.rest.h+2.0+Math.sin(tm*1.6)*0.12;
+      V.crystal.material.color.setHex(run.rest?0xffd9a0:0x6b5a45); V.halo.visible=!!run.rest;
+      if(run.rest&&!V.found){ V.found=true; V.foundAt=tm; }
+    }
     /* The line: what is being asked, near the gate; how the fight stands in it. */
     var say='', frac=-1;
-    if(a&&run.stage===FS.SEALED&&Math.sqrt((a.x-S.gate.x)*(a.x-S.gate.x)+(a.z-S.gate.z)*(a.z-S.gate.z))<14) say='sealed · seat a tech fusion: '+glyphLine();
+    if(V.crystal&&tm-V.foundAt<4) say='rest stone found · you come back here';
+    else if(V.crystal&&!run.rest&&a&&Math.sqrt((a.x-S.rest.x)*(a.x-S.rest.x)+(a.z-S.rest.z)*(a.z-S.rest.z))<14) say='a rest stone · walk up to it to be brought back here';
+    else if(a&&run.stage===FS.SEALED&&Math.sqrt((a.x-S.gate.x)*(a.x-S.gate.x)+(a.z-S.gate.z)*(a.z-S.gate.z))<14) say='sealed · seat a tech fusion: '+glyphLine();
     else if(run.stage===FS.OPEN&&run.stirT>0) say='something stirs…';
     else if(fight){ say=g.invincible?'it changes':'the furnace’s guardian · '+(g.phase+1)+' of 4'; frac=g.hp/g.maxHp; }
     else if(run.stage===FS.CORE){ var left=Math.max(0,Math.ceil(F.hold-run.hold)); say='hold the core · '+Math.floor(left/60)+':'+('0'+(left%60)).slice(-2); frac=1-run.hold/F.hold; }
@@ -16647,8 +16801,12 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* Streamed, the spawn's ground may have been let go by now: dead a few
        hundred metres off, a respawn stood the body on nothing and it fell
        out of the world. Grown first, as a place code's is. */
-    if(streaming) settleAround(built.data.spawn[0],built.data.spawn[2]);
-    var a=QS.placeOnGround(col,built.data.spawn[0],built.data.spawn[2]);
+    /* The last landmark (#7): once the rest stone at the foot of a site's road has
+       been walked up to, a respawn goes there and not across the world. */
+    var rs=encounter&&encounter.site?encounter.site.restSpot():null,
+        sx=rs?rs.x+0.5:built.data.spawn[0], sz=rs?rs.z+0.5:built.data.spawn[2];
+    if(streaming) settleAround(sx,sz);
+    var a=QS.placeOnGround(col,sx,sz);
     if(session){ session.me.x=a.x; session.me.y=a.y; session.me.z=a.z;
                  session.me.vx=session.me.vy=session.me.vz=0;
                  session.me.dead=null; session.me.down=0; session.me.grounded=a.grounded; session.me.apex=a.y;
@@ -19419,6 +19577,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
        road sixty metres from the gate, so the way in is the first thing seen. */
     var fs=null; try{ var gg=built.data&&built.data.G; fs=gg&&gg.site?gg.site():null; }catch(e){ fs=null; }
     var fb=gfxButton('Furnace',false,function(){ var p=fs.path[Math.min(60,fs.path.length-1)]; tx.value=p[0]; tz.value=p[1]; dbgTeleport(p[0],p[1]); });
+    var rb2=gfxButton('Rest stone',false,function(){ var r=fs.rest; tx.value=r.x; tz.value=r.z; dbgTeleport(r.x+0.5,r.z+0.5); });
+    rb2.disabled=s||!fs||!streaming||!fs.rest; rb2.title='The rest stone at the foot of the weapon site’s road'; seg.appendChild(rb2);
     fb.disabled=s||!fs||!streaming; fb.title=fs?'The weapon site, '+Math.round(Math.sqrt(fs.cx*fs.cx+fs.cz*fs.cz))+' m out':'This world has no weapon site'; seg.appendChild(fb);
     dbgToggle(rows,'Fall damage','fall','a drop of more than '+QS.MOVE.fall+' m kills',true);
     dbgToggle(rows,'Invincible','inv','no hurt, no magma, no fall',true);
@@ -20106,7 +20266,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get furnaceRun(){ return encounter&&encounter.site||null; },
     get siteLook(){ var V=siteView; if(!V) return null;
       var marks=0; V.marks.forEach(function(m){ if(m.visible) marks++; });
-      return {doorShown:V.pivot.visible,doorK:V.k,glyph:V.glyph.visible,guard:V.guard.g.visible,wedge:V.wp.visible,marks:marks,
+      return {doorShown:V.pivot.visible,doorK:V.k,glyph:V.glyph.visible,guard:V.guard.g.visible,wedge:V.wp.visible,marks:marks,halo:!!(V.halo&&V.halo.visible),
               hud:furnEl.style.display==='none'?'':furnMsg.textContent,bar:furnBar.style.display!=='none'}; },
     /* #106: which tell each machine's model is showing, as drawn. */
     get foeTells(){ return foeMeshes.map(function(f){
