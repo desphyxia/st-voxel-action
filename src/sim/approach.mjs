@@ -27,8 +27,8 @@ import { PATH_LEN } from '../gen/site.mjs';
     breathers are the gaps between them. */
 export const BEATS = [
   { lo: 236, hi: 290, n: 3, packs: ['SM.S', 'HH.H'] },
-  { lo: 132, hi: 204, n: 4, packs: ['SMH.H', 'SHH.M', 'MSH.S'] },
-  { lo: 14, hi: 104, n: 5, packs: ['SMH.M', 'MHH.S', 'SSM.H', 'SMH.H'] },
+  { lo: 132, hi: 204, n: 4, packs: ['SMH.H', 'SHH.M', 'MSW.S'] },
+  { lo: 14, hi: 104, n: 5, packs: ['SMW.M', 'MHH.S', 'SSW.H', 'SMH.H'] },
 ];
 
 /** How far from the foot the rest stone stands, how near to it a player has
@@ -39,7 +39,7 @@ export const PAD_SIDE = 5;
 /** Group ids start above every id a chunk's post can make (encounter's `groupId`). */
 export const PAD_GID = 1048576;
 
-/** A pack's recipe as `{ members, reserve }` of kind letters: S sentry, M mortar, H hound. */
+/** A pack's recipe as `{ members, reserve }` of kind letters: S sentry, M mortar, H hound, W warden. */
 export function packOf(code) {
   const [m, r] = code.split('.');
   return { members: m.split(''), reserve: r };

@@ -1,8 +1,8 @@
 /**
  * The war machines: tech, magic and biological weapons still holding positions
- * against an enemy that left (docs/DECISIONS.md §1, §6). Three are built — the
- * sentry (#24), the mortar crawler and the grafted hounds (#106) — of the four
- * the roster in §6 names; the warden obelisk is still to come.
+ * against an enemy that left (docs/DECISIONS.md §1, §6). Four are built — the
+ * sentry (#24), the mortar crawler and the grafted hounds (#106), and the warden
+ * obelisk — the four the roster in §6 names.
  *
  * Every archetype answers the four questions #6 asked, and inherits the rule
  * the sentry produced: **the tell goes on the surface the camera can see.**
@@ -45,6 +45,21 @@
  *   Movement     Faster than a player at a run, circles rather than closing
  *                head on, jumps a 1 m face like you do, and will not go into
  *                water too deep to wade: it cannot swim.
+ *
+ * **Warden obelisk** (magic, holds ground)
+ *   Silhouette   A carved stone that hovers, with a crown of four runes.
+ *   Telegraph    The crown runes light in sequence, one after another, and then
+ *                a ring pulses out along the ground from under it. The runes
+ *                are on its top, which is what the camera sees.
+ *   Opening      Its dome protects whoever stands inside it — machines of any
+ *                tradition, and players — and **drops while it pulses**. The
+ *                pulse and the pause after it are the window: strike then.
+ *   Movement     It does not walk. It holds its ground and floats, so what it
+ *                guards is where it is; a fight round one is a fight over who
+ *                stands in its dome. (It floats over what a player cannot cross;
+ *                nothing yet asks it to go anywhere.)
+ *   Counter      Jump the ring or dodge through it: it hurts only what is on the
+ *                ground when it passes, and a dodge's invulnerability counts.
  *
  * **The sources fight each other** (§6). A machine that is awake takes the
  * nearest target it can see — a player, or a machine of another tradition —
@@ -135,9 +150,27 @@ export const HOUND = {
   leash: 20,
 };
 
+/** The warden obelisk (the first magic machine). Placeholders for #9, like the rest. */
+export const WARDEN = {
+  hp: 60,
+  /** It wakes for what it sees, and pulses at anything within `range`. */
+  sight: 14,
+  range: 7,
+  /** Its dome: the radius within which whoever stands is protected while it is up. */
+  dome: 4.5,
+  /** The ring it pulses: how far it reaches, and how thick the band of it that hurts. */
+  ring: 7.5,
+  band: 0.9,
+  damage: 11,
+  /** It does not walk. */
+  speed: 0,
+  rad: 0.7,
+  leash: 30,
+};
+
 /** Which archetype a machine is, on the wire as one small integer. */
-export const KIND = { SENTRY: 0, MORTAR: 1, HOUND: 2 };
-export const KIND_NAMES = ['sentry', 'mortar', 'hound'];
+export const KIND = { SENTRY: 0, MORTAR: 1, HOUND: 2, WARDEN: 3 };
+export const KIND_NAMES = ['sentry', 'mortar', 'hound', 'warden'];
 
 export const EST = {
   DORMANT: 0, WAKE: 1, CLOSE: 2, TELEGRAPH: 3, STRIKE: 4, RECOVER: 5, STAGGER: 6, DEAD: 7,
@@ -158,6 +191,11 @@ export const MORTAR_AIM_TIME = 1.1;
 export const MORTAR_FLIGHT_TIME = 0.7;
 /** The vent: the mortar's opening, longer than two whole swings. */
 export const MORTAR_VENT_TIME = 2.0;
+/** The warden's runes light one after another for this long, then the ring goes
+    out for the pulse, and the dome stays down through the pause that follows. */
+export const WARDEN_TELL_TIME = 1.2;
+export const WARDEN_PULSE_TIME = 0.9;
+export const WARDEN_OPEN_TIME = 1.8;
 /** A hound's tell is short — it is a fast thing — but the line is on the
     ground for all of it. */
 export const HOUND_TELL_TIME = 0.6;
@@ -187,6 +225,8 @@ const SPEC = [
     tell: MORTAR_AIM_TIME, strike: MORTAR_FLIGHT_TIME, recover: MORTAR_VENT_TIME },
   { k: KIND.HOUND, c: HOUND, trad: TRAD.BIO, canJump: true, weight: 1,
     tell: HOUND_TELL_TIME, strike: LUNGE_TIME, recover: STUMBLE_TIME },
+  { k: KIND.WARDEN, c: WARDEN, trad: TRAD.MAGIC, canJump: false, weight: 2,
+    tell: WARDEN_TELL_TIME, strike: WARDEN_PULSE_TIME, recover: WARDEN_OPEN_TIME },
 ];
 const specOf = (e) => SPEC[e.k] || SPEC[0];
 
@@ -216,7 +256,29 @@ function makeMachine(col, k, x, z, fromY) {
 export function makeSentry(col, x, z, fromY) { return makeMachine(col, KIND.SENTRY, x, z, fromY); }
 export function makeMortar(col, x, z, fromY) { return makeMachine(col, KIND.MORTAR, x, z, fromY); }
 export function makeHound(col, x, z, fromY) { return makeMachine(col, KIND.HOUND, x, z, fromY); }
-const MAKE = [makeSentry, makeMortar, makeHound];
+export function makeWarden(col, x, z, fromY) { return makeMachine(col, KIND.WARDEN, x, z, fromY); }
+const MAKE = [makeSentry, makeMortar, makeHound, makeWarden];
+
+/**
+ * Is this warden's dome up? Raised from the moment it is awake, held through
+ * its tell, and down for the pulse and the pause after — which is the one
+ * window in which a warden, and whatever stands inside it, can be hurt. Asleep
+ * or dead, it protects nothing.
+ */
+export function domeUp(e) {
+  if (!e || e.dead || e.reserve || e.calmed) return false;
+  return domeAt(e.k, e.ai.state);
+}
+
+/** The same from a kind and a state alone, which is all a guest is sent. */
+export function domeAt(k, st) {
+  return k === KIND.WARDEN && (st === EST.WAKE || st === EST.CLOSE || st === EST.TELEGRAPH || st === EST.STAGGER);
+}
+
+/** The dome's radius, for a guest drawing it. */
+export const DOME_R = WARDEN.dome;
+/** How far the pulse's ring has gone at `t` seconds into it. */
+export const ringAt = (t) => WARDEN.ring * Math.min(1, Math.max(0, t / WARDEN_PULSE_TIME));
 
 /** Is it in a state where a hit should interrupt it? */
 function staggerable(st) {
@@ -354,6 +416,8 @@ function pick(e, players, foes) {
   if (foes) {
     for (const m of foes) {
       if (m === e || !upright(m) || m.trad === e.trad) continue;
+      /* The pack it was placed with is on its side, whatever it holds. */
+      if (e.pack && e.pack.indexOf(m) >= 0) continue;
       if (asleep && !awake(m)) continue;
       consider(m);
     }
@@ -396,6 +460,7 @@ export const MOTION = [
   { accel: 2.6, turn: 4.0 },
   { accel: 2.0, turn: 2.6 },
   { accel: 8.0, turn: 11 },
+  { accel: 2.0, turn: 3.0 },
 ];
 
 export const SENTRY_AI = {
@@ -670,6 +735,12 @@ export function stepEnemy(col, e, players, dt = TICK, budget, foes) {
         break;
       }
 
+      if (e.k === KIND.WARDEN) {
+        /* It holds its ground: faces you, and pulses when you are within its reach. */
+        if (d <= c.range && ai.t >= 0.5) { ai.state = EST.TELEGRAPH; ai.t = 0; ai.bit = 0; }
+        break;
+      }
+
       /* The sentry. */
       const S = SENTRY_AI;
       if (ai.backT > 0) {
@@ -709,7 +780,7 @@ export function stepEnemy(col, e, players, dt = TICK, budget, foes) {
       if (e.k === KIND.HOUND) {
         /* Facing its line, and not turning: the line is what you read. */
         face = { x: e.x + ai.lx, z: e.z + ai.lz };
-      } else if (target && e.k === KIND.SENTRY) {
+      } else if (target && (e.k === KIND.SENTRY || e.k === KIND.WARDEN)) {
         /* Stopped dead, and still turning to face you — at its own rate, which
            is what makes running round it during the wind-up worth doing. */
         face = target;
@@ -788,6 +859,18 @@ export function stepEnemy(col, e, players, dt = TICK, budget, foes) {
       if (inArc(e, v, SENTRY.reach, SENTRY.arc, SENTRY.span, COS_HALF)) land(v, SENTRY.damage, 'struck');
     }
   }
+  if (ai.state === EST.STRIKE && e.k === KIND.WARDEN) {
+    /* The ring: out along the ground from under it, hurting what it passes over
+       that is standing on the ground, once each. A jump clears it; so does a dodge,
+       which `hurt` already honours. */
+    const r = ringAt(ai.t), vs = victims(e, players, foes);
+    for (let i = 0; i < vs.length && i < 30; i++) {
+      const v = vs[i], id = 1 << i;
+      if (ai.bit & id || v.grounded === false) continue;
+      const dv = hyp(v.x - e.x, v.z - e.z);
+      if (Math.abs(dv - r) <= WARDEN.band && Math.abs(v.y - e.y) < 1.4) { ai.bit |= id; land(v, WARDEN.damage, 'pulsed'); }
+    }
+  }
   if (ai.state === EST.STRIKE && e.k === KIND.HOUND) {
     /* Whatever the lunge passes close to, once each. */
     const vs = victims(e, players, foes);
@@ -829,6 +912,8 @@ export const PACKS = [
   { members: [KIND.SENTRY, KIND.MORTAR], reserve: KIND.SENTRY },
   { members: [KIND.HOUND, KIND.HOUND], reserve: KIND.HOUND },
   { members: [KIND.SENTRY, KIND.MORTAR], reserve: KIND.SENTRY },
+  /* A magic post: a warden holding its ground, and a second to come out for a partner. */
+  { members: [KIND.WARDEN], reserve: KIND.WARDEN },
 ];
 
 /** Where a machine this wide can stand at (x, z), near ground height h, or null. */
@@ -996,7 +1081,7 @@ export function makeEncounter(col, world, posts) {
      can hit, a spoil to lay, and a way to put a scar out. */
   const siteDesc = streamed && world && world.G && world.G.site ? world.G.site() : null;
   /* The road's pads, with their packs as kinds and the chunk each stands in. */
-  const LETTER = { S: KIND.SENTRY, M: KIND.MORTAR, H: KIND.HOUND };
+  const LETTER = { S: KIND.SENTRY, M: KIND.MORTAR, H: KIND.HOUND, W: KIND.WARDEN };
   const pads = approachPads(siteDesc).map((pd) => Object.assign({}, pd, {
     pack: { members: pd.pack.members.map((c) => LETTER[c]), reserve: LETTER[pd.pack.reserve] },
     ck: Math.floor(pd.offs[0].x / CHUNK + 0.5) + ',' + Math.floor(pd.offs[0].z / CHUNK + 0.5),
@@ -1159,6 +1244,12 @@ export function makeEncounter(col, world, posts) {
       if (party > 1) for (const e of enemies) if (e.reserve) e.reserve = false;
       const budget = { left: 1, party };
       for (const e of enemies) if (grounded(e)) stepEnemy(col, e, players, dt, budget, enemies);
+      /* Who stands inside a raised dome (a warden's) cannot be hurt, and cannot
+         be hurt by: set here, so this tick's blows by players read it. */
+      const domes = enemies.filter(domeUp);
+      const inDome = (m) => domes.some((d) => hyp(m.x - d.x, m.z - d.z) <= DOME_R && Math.abs(m.y - d.y) < 3);
+      for (const m of enemies) m.shielded = domes.length ? inDome(m) : false;
+      for (const p of players) if (p) p.shielded = domes.length ? inDome(p) : false;
       /* Whoever a machine has its eye on is hunted, and does not heal (#114). */
       for (const e of enemies) {
         const g = e.ai && e.ai.tgt;

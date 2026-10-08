@@ -88,7 +88,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { ROOT, preparePage, launch, GOLDEN_SEEDS, measureSeeds, measureWorld, CDN, THREE_LOCAL,
          someTileDone, generateSeeds, diffMeasure, mathProbe } from './lib/harness.mjs';
-import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, packSuite, dynamicsSuite, reelSuite, survivalSuite, siteSuite, furnaceSuite, approachSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
+import { budgetSuite, viewSuite, combatSuite, enemySuite, rosterSuite, wardenSuite, packSuite, dynamicsSuite, reelSuite, survivalSuite, siteSuite, furnaceSuite, approachSuite, gearSuite, regionSuite, networkSuite, meshSuite, animSuite, skySuite, navSuite, canyonSuite, mesaSuite, basaltSuite, cliffSuite, thornSuite, rimeSuite, sporeSuite, glassSuite, meadowSuite, stampSuite,
          carveSuite, foliageSuite, trailSuite, chunkSuite, fieldSuite, streamSuite, seamSuite, propSuite, groundSuite, netSuite, rtcSuite, grassBiomeSuite, contactShadeSuite, crossingSuite, marshSuite, soak, SOAK_TICKS } from './lib/playtest.mjs';
 import { TARGETS, staleTargets } from './bundle-gen.mjs';
 import { buildWorld } from '../src/gen/index.mjs';
@@ -275,6 +275,7 @@ if (NODE_HALF) for (const r of combatSuite()) check(r.ok, `COMBAT: ${r.label}`, 
    assertions are about windows and openings, not about damage. */
 if (NODE_HALF) for (const r of enemySuite()) check(r.ok, `ENEMY: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of rosterSuite()) check(r.ok, `ROSTER: ${r.label}`, r.detail);
+if (NODE_HALF) for (const r of wardenSuite()) check(r.ok, `WARDEN: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of packSuite()) check(r.ok, `PACKS: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of dynamicsSuite()) check(r.ok, `DYNAMIC: ${r.label}`, r.detail);
 if (NODE_HALF) for (const r of reelSuite()) check(r.ok, `REEL: ${r.label}`, r.detail);
@@ -1594,6 +1595,34 @@ if (BROWSER_HALF) {
               'BUILD: a grafted hound draws the line it will lunge along',
               rh.none ? `${rh.none} (kinds ${roster.kinds.join(',')})` :
               `line ${rh.lit && rh.lit.line ? 'drawn' : 'MISSING'} after ${rh.n} ticks; ${rh.orange} px turn orange`);
+
+        /* ---------- BUILD: the warden's dome, runes and ring ----------
+           Staged by state, since a warden is only ever drawn from its kind and
+           its state: the dome is there while it is up and gone for the pulse
+           and the pause, the runes light through the tell, and the ring runs
+           out along the ground only during the pulse. */
+        const ward = await bp.evaluate(async () => {
+          const P = window.QSPLAY, QS = window.QS, a = P.actor, S = QS.EST;
+          P.pause(true);
+          const w = P.spawnFoe(QS.KIND.WARDEN, a.x + 8, a.z);
+          if (!w) return { none: 'no encounter to spawn into' };
+          w.reserve = false;
+          const view = async (state, t) => {
+            w.ai.state = state; w.ai.t = t;
+            for (let i = 0; i < 3; i++) { P.draw(); await new Promise((r) => setTimeout(r, 20)); }
+            return P.foeTells.find((f) => f.k === QS.KIND.WARDEN && f.shown && f.aura);
+          };
+          const out = { close: await view(S.CLOSE, 0), early: await view(S.TELEGRAPH, 0.2),
+                        late: await view(S.TELEGRAPH, QS.WARDEN_TELL_TIME * 0.95), pulse: await view(S.STRIKE, 0.4),
+                        open: await view(S.RECOVER, 0.5) };
+          w.dead = 'struck'; w.hp = 0; P.pause(false);
+          return out;
+        });
+        const wv = (k) => (ward[k] && ward[k].aura) || {};
+        check(!ward.none && wv('close').dome && !wv('close').reach && wv('early').dome && wv('early').reach && wv('early').runes === 0
+              && wv('late').runes >= 3 && wv('late').dome && !wv('pulse').dome && wv('pulse').pulse && !wv('open').dome && !wv('open').pulse,
+              'BUILD: a warden draws its dome while it is up, lights its runes through the tell, and runs the ring out only as it pulses',
+              ward.none || `close ${JSON.stringify(wv('close'))}; tell ${JSON.stringify(wv('late'))}; pulse ${JSON.stringify(wv('pulse'))}; open ${JSON.stringify(wv('open'))}`);
 
         /* ---------- BUILD: the Reel, the second frame (#112) ----------
            Two frames carried and swapped — by the scroll wheel, by a key and by

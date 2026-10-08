@@ -31,7 +31,8 @@ import { ACTOR, RUN } from './actor.mjs';
 import { WINDUP, ACTIVE, SWING_TIME, DODGE_TIME, HURT_TIME, REACH } from './combat.mjs';
 import { EST, TELEGRAPH_TIME, STRIKE_TIME, RECOVER_TIME, KIND,
          MORTAR_AIM_TIME, MORTAR_FLIGHT_TIME, MORTAR_VENT_TIME,
-         HOUND_TELL_TIME, LUNGE_TIME, STUMBLE_TIME } from './enemy.mjs';
+         HOUND_TELL_TIME, LUNGE_TIME, STUMBLE_TIME,
+         WARDEN_TELL_TIME, WARDEN_PULSE_TIME, WARDEN_OPEN_TIME } from './enemy.mjs';
 
 const PI = 3.141592653589793;
 
@@ -116,6 +117,34 @@ export const MORTAR_RIG = {
     { name: 'legR0', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.08, -0.16, 0.38], color: 0x2f2b27 },
     { name: 'legR1', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.1, -0.16, 0], color: 0x2f2b27 },
     { name: 'legR2', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.08, -0.16, -0.38], color: 0x2f2b27 },
+  ],
+};
+
+/* The warden obelisk: a carved stone that hovers, point down, with four runes
+   set round its crown. From above what reads is the crown — the runes are on
+   its top face and light one after another, which is the tell — and the stone
+   itself only rises and sinks. The fragments that circle it are its own bone,
+   so the page can spin them while the dome is up and let them fall when it
+   drops. The dome and the ring on the ground are the page's, not the rig's. */
+export const WARDEN_RIG = {
+  bones: [
+    { name: 'root', parent: null, at: [0, 0, 0] },
+    { name: 'body', parent: 'root', at: [0, 1.1, 0] },
+    { name: 'crown', parent: 'body', at: [0, 0.95, 0] },
+    { name: 'frags', parent: 'body', at: [0, 0.35, 0] },
+  ],
+  parts: [
+    { name: 'point', bone: 'body', size: [0.34, 0.4, 0.34], at: [0, -0.1, 0], color: 0x3d3a45 },
+    { name: 'shaft', bone: 'body', size: [0.7, 1.0, 0.7], at: [0, 0.5, 0], color: 0x58546a },
+    { name: 'crown', bone: 'crown', size: [0.9, 0.16, 0.9], at: [0, 0.08, 0], color: 0x474357 },
+    { name: 'rune0', bone: 'crown', size: [0.22, 0.05, 0.22], at: [0, 0.18, 0.28], color: 0x2a2838 },
+    { name: 'rune1', bone: 'crown', size: [0.22, 0.05, 0.22], at: [0.28, 0.18, 0], color: 0x2a2838 },
+    { name: 'rune2', bone: 'crown', size: [0.22, 0.05, 0.22], at: [0, 0.18, -0.28], color: 0x2a2838 },
+    { name: 'rune3', bone: 'crown', size: [0.22, 0.05, 0.22], at: [-0.28, 0.18, 0], color: 0x2a2838 },
+    { name: 'fragA', bone: 'frags', size: [0.2, 0.26, 0.2], at: [0.72, 0, 0], color: 0x474357 },
+    { name: 'fragB', bone: 'frags', size: [0.18, 0.22, 0.18], at: [-0.72, 0.1, 0], color: 0x474357 },
+    { name: 'fragC', bone: 'frags', size: [0.2, 0.24, 0.2], at: [0, -0.05, 0.72], color: 0x474357 },
+    { name: 'fragD', bone: 'frags', size: [0.16, 0.2, 0.16], at: [0, 0.12, -0.72], color: 0x474357 },
   ],
 };
 
@@ -375,6 +404,49 @@ export function poseMortar(m, look) {
 }
 
 /**
+ * The warden's pose. It floats and bobs; the fragments circle it while it is
+ * awake and the dome is up. The tell is the crown, which turns a little as the
+ * runes light (the page lights them, by `t`); the pulse drops the stone and
+ * flings the fragments out; and while the dome is down the stone sags — the
+ * opening, drawn.
+ */
+export function poseWarden(m, look) {
+  const p = blank(WARDEN_RIG), t = look.t || 0;
+  if (m.s === EST.DEAD) {
+    p.root.py = -0.9; p.body.rz = 0.5; p.body.rx = 0.3; p.frags.sy = 0.2; p.crown.ry = 0.4;
+    return p;
+  }
+  p.body.py = 0.08 * sin(t * 1.7);
+  if (m.s === EST.DORMANT) {
+    p.root.py = -0.35; p.frags.sy = 0.4;
+    return p;
+  }
+  p.frags.ry = t * 1.2;
+  if (m.s === EST.TELEGRAPH) {
+    const k = easeInOut((m.t || 0) / WARDEN_TELL_TIME);
+    p.body.py += 0.22 * k;                      /* rising to it */
+    p.crown.ry = 0.9 * k; p.frags.ry = t * 1.2 + 3 * k; p.frags.sy = 1 + 0.2 * k;
+  }
+  if (m.s === EST.STRIKE) {
+    const k = easeInOut((m.t || 0) / WARDEN_PULSE_TIME);
+    p.body.py = -0.3 + 0.1 * k;                 /* the stone drops as it pulses */
+    p.crown.ry = 0.9; p.frags.sy = 1 + 0.6 * (1 - k);
+    p.frags.ry = t * 3;
+  }
+  if (m.s === EST.RECOVER) {
+    const k = 1 - easeInOut((m.t || 0) / WARDEN_OPEN_TIME);
+    p.body.py = -0.2 * k; p.frags.sy = 0.5 + 0.5 * (1 - k); p.crown.rx = 0.18 * k;
+    p.frags.ry = t * 0.4;
+  }
+  if (m.s === EST.STAGGER) {
+    p.root.px = 0.04 * sin(t * 61);
+    p.body.rz = 0.14 * sin(t * 43);
+  }
+  if (m.u > 0) p.body.rx -= 0.2 * (m.u / HURT_TIME);
+  return p;
+}
+
+/**
  * A hound's pose. The crouch is the tell: hips down, head along the line. The
  * lunge stretches it out; the stumble after rolls it off its feet.
  */
@@ -438,16 +510,20 @@ export const SENTRY_STRIDE = 0.9;
 /** The crawler's legs are short; the hound lopes. */
 export const MORTAR_STRIDE = 0.7;
 export const HOUND_STRIDE = 1.7;
+/** The warden does not walk: a stride it never uses. */
+export const WARDEN_STRIDE = 1;
 
 /** Every machine's rig, pose and stride by its wire kind `k`. */
 export const MACHINE_RIGS = [];
 MACHINE_RIGS[KIND.SENTRY] = SENTRY_RIG;
 MACHINE_RIGS[KIND.MORTAR] = MORTAR_RIG;
 MACHINE_RIGS[KIND.HOUND] = HOUND_RIG;
+MACHINE_RIGS[KIND.WARDEN] = WARDEN_RIG;
 export const MACHINE_STRIDES = [];
 MACHINE_STRIDES[KIND.SENTRY] = SENTRY_STRIDE;
 MACHINE_STRIDES[KIND.MORTAR] = MORTAR_STRIDE;
 MACHINE_STRIDES[KIND.HOUND] = HOUND_STRIDE;
+MACHINE_STRIDES[KIND.WARDEN] = WARDEN_STRIDE;
 
 /* How far a body leans into its own motion (#110): radians per metre a second,
    and never more than `most`. Forward speed tips it forward, sideways speed
@@ -456,6 +532,7 @@ const LEAN = [
   { fwd: 0.05, side: 0.06, most: 0.22 },
   { fwd: 0.04, side: 0.05, most: 0.16 },
   { fwd: 0.035, side: 0.07, most: 0.3 },
+  { fwd: 0, side: 0, most: 0 },
 ];
 const clampLean = (v, m) => (v > m ? m : (v < -m ? -m : v));
 
@@ -464,7 +541,8 @@ const clampLean = (v, m) => (v > m ? m : (v < -m ? -m : v));
     page measures them from where it draws the machine, so a guest leans its
     machines exactly as the host does. */
 export function poseMachine(m, look) {
-  const p = m.k === KIND.MORTAR ? poseMortar(m, look) : (m.k === KIND.HOUND ? poseHound(m, look) : poseSentry(m, look));
+  const p = m.k === KIND.MORTAR ? poseMortar(m, look) : (m.k === KIND.HOUND ? poseHound(m, look)
+    : (m.k === KIND.WARDEN ? poseWarden(m, look) : poseSentry(m, look)));
   if (m.s !== EST.DEAD && m.s !== EST.DORMANT && (look.fwd || look.side)) {
     const L = LEAN[m.k] || LEAN[0];
     p.body.rx += clampLean((look.fwd || 0) * L.fwd, L.most);

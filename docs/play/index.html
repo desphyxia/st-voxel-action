@@ -7714,6 +7714,8 @@ function heal(a, amount) {
 function hurt(a, amount, cause) {
   /* `invincible` is the debug dialog's (#92), for one player alone. */
   if (!a || a.dead || a.down || a.hp === undefined || invulnerable(a) || a.invincible) return false;
+  /* Inside a warden's raised dome (enemy.mjs): nothing gets through, either way. */
+  if (a.shielded) return false;
   a.hp -= amount;
   a.hurtT = HURT_TIME;
   a.hunted = REGEN_DELAY;
@@ -9461,8 +9463,8 @@ function navGraph(col, box, options) {
     breathers are the gaps between them. */
 const BEATS = [
   { lo: 236, hi: 290, n: 3, packs: ['SM.S', 'HH.H'] },
-  { lo: 132, hi: 204, n: 4, packs: ['SMH.H', 'SHH.M', 'MSH.S'] },
-  { lo: 14, hi: 104, n: 5, packs: ['SMH.M', 'MHH.S', 'SSM.H', 'SMH.H'] },
+  { lo: 132, hi: 204, n: 4, packs: ['SMH.H', 'SHH.M', 'MSW.S'] },
+  { lo: 14, hi: 104, n: 5, packs: ['SMW.M', 'MHH.S', 'SSW.H', 'SMH.H'] },
 ];
 
 /** How far from the foot the rest stone stands, how near to it a player has
@@ -9473,7 +9475,7 @@ const PAD_SIDE = 5;
 /** Group ids start above every id a chunk's post can make (encounter's `groupId`). */
 const PAD_GID = 1048576;
 
-/** A pack's recipe as `{ members, reserve }` of kind letters: S sentry, M mortar, H hound. */
+/** A pack's recipe as `{ members, reserve }` of kind letters: S sentry, M mortar, H hound, W warden. */
 function packOf(code) {
   const [m, r] = code.split('.');
   return { members: m.split(''), reserve: r };
@@ -9946,9 +9948,9 @@ function makeFurnaceRun(S, ctx) {
 /* ---------- src/sim/enemy.mjs ---------- */
 /**
  * The war machines: tech, magic and biological weapons still holding positions
- * against an enemy that left (docs/DECISIONS.md §1, §6). Three are built — the
- * sentry (#24), the mortar crawler and the grafted hounds (#106) — of the four
- * the roster in §6 names; the warden obelisk is still to come.
+ * against an enemy that left (docs/DECISIONS.md §1, §6). Four are built — the
+ * sentry (#24), the mortar crawler and the grafted hounds (#106), and the warden
+ * obelisk — the four the roster in §6 names.
  *
  * Every archetype answers the four questions #6 asked, and inherits the rule
  * the sentry produced: **the tell goes on the surface the camera can see.**
@@ -9991,6 +9993,21 @@ function makeFurnaceRun(S, ctx) {
  *   Movement     Faster than a player at a run, circles rather than closing
  *                head on, jumps a 1 m face like you do, and will not go into
  *                water too deep to wade: it cannot swim.
+ *
+ * **Warden obelisk** (magic, holds ground)
+ *   Silhouette   A carved stone that hovers, with a crown of four runes.
+ *   Telegraph    The crown runes light in sequence, one after another, and then
+ *                a ring pulses out along the ground from under it. The runes
+ *                are on its top, which is what the camera sees.
+ *   Opening      Its dome protects whoever stands inside it — machines of any
+ *                tradition, and players — and **drops while it pulses**. The
+ *                pulse and the pause after it are the window: strike then.
+ *   Movement     It does not walk. It holds its ground and floats, so what it
+ *                guards is where it is; a fight round one is a fight over who
+ *                stands in its dome. (It floats over what a player cannot cross;
+ *                nothing yet asks it to go anywhere.)
+ *   Counter      Jump the ring or dodge through it: it hurts only what is on the
+ *                ground when it passes, and a dodge's invulnerability counts.
  *
  * **The sources fight each other** (§6). A machine that is awake takes the
  * nearest target it can see — a player, or a machine of another tradition —
@@ -10081,9 +10098,27 @@ const HOUND = {
   leash: 20,
 };
 
+/** The warden obelisk (the first magic machine). Placeholders for #9, like the rest. */
+const WARDEN = {
+  hp: 60,
+  /** It wakes for what it sees, and pulses at anything within `range`. */
+  sight: 14,
+  range: 7,
+  /** Its dome: the radius within which whoever stands is protected while it is up. */
+  dome: 4.5,
+  /** The ring it pulses: how far it reaches, and how thick the band of it that hurts. */
+  ring: 7.5,
+  band: 0.9,
+  damage: 11,
+  /** It does not walk. */
+  speed: 0,
+  rad: 0.7,
+  leash: 30,
+};
+
 /** Which archetype a machine is, on the wire as one small integer. */
-const KIND = { SENTRY: 0, MORTAR: 1, HOUND: 2 };
-const KIND_NAMES = ['sentry', 'mortar', 'hound'];
+const KIND = { SENTRY: 0, MORTAR: 1, HOUND: 2, WARDEN: 3 };
+const KIND_NAMES = ['sentry', 'mortar', 'hound', 'warden'];
 
 const EST = {
   DORMANT: 0, WAKE: 1, CLOSE: 2, TELEGRAPH: 3, STRIKE: 4, RECOVER: 5, STAGGER: 6, DEAD: 7,
@@ -10104,6 +10139,11 @@ const MORTAR_AIM_TIME = 1.1;
 const MORTAR_FLIGHT_TIME = 0.7;
 /** The vent: the mortar's opening, longer than two whole swings. */
 const MORTAR_VENT_TIME = 2.0;
+/** The warden's runes light one after another for this long, then the ring goes
+    out for the pulse, and the dome stays down through the pause that follows. */
+const WARDEN_TELL_TIME = 1.2;
+const WARDEN_PULSE_TIME = 0.9;
+const WARDEN_OPEN_TIME = 1.8;
 /** A hound's tell is short — it is a fast thing — but the line is on the
     ground for all of it. */
 const HOUND_TELL_TIME = 0.6;
@@ -10133,6 +10173,8 @@ const SPEC = [
     tell: MORTAR_AIM_TIME, strike: MORTAR_FLIGHT_TIME, recover: MORTAR_VENT_TIME },
   { k: KIND.HOUND, c: HOUND, trad: TRAD.BIO, canJump: true, weight: 1,
     tell: HOUND_TELL_TIME, strike: LUNGE_TIME, recover: STUMBLE_TIME },
+  { k: KIND.WARDEN, c: WARDEN, trad: TRAD.MAGIC, canJump: false, weight: 2,
+    tell: WARDEN_TELL_TIME, strike: WARDEN_PULSE_TIME, recover: WARDEN_OPEN_TIME },
 ];
 const specOf = (e) => SPEC[e.k] || SPEC[0];
 
@@ -10162,7 +10204,29 @@ function makeMachine(col, k, x, z, fromY) {
 function makeSentry(col, x, z, fromY) { return makeMachine(col, KIND.SENTRY, x, z, fromY); }
 function makeMortar(col, x, z, fromY) { return makeMachine(col, KIND.MORTAR, x, z, fromY); }
 function makeHound(col, x, z, fromY) { return makeMachine(col, KIND.HOUND, x, z, fromY); }
-const MAKE = [makeSentry, makeMortar, makeHound];
+function makeWarden(col, x, z, fromY) { return makeMachine(col, KIND.WARDEN, x, z, fromY); }
+const MAKE = [makeSentry, makeMortar, makeHound, makeWarden];
+
+/**
+ * Is this warden's dome up? Raised from the moment it is awake, held through
+ * its tell, and down for the pulse and the pause after — which is the one
+ * window in which a warden, and whatever stands inside it, can be hurt. Asleep
+ * or dead, it protects nothing.
+ */
+function domeUp(e) {
+  if (!e || e.dead || e.reserve || e.calmed) return false;
+  return domeAt(e.k, e.ai.state);
+}
+
+/** The same from a kind and a state alone, which is all a guest is sent. */
+function domeAt(k, st) {
+  return k === KIND.WARDEN && (st === EST.WAKE || st === EST.CLOSE || st === EST.TELEGRAPH || st === EST.STAGGER);
+}
+
+/** The dome's radius, for a guest drawing it. */
+const DOME_R = WARDEN.dome;
+/** How far the pulse's ring has gone at `t` seconds into it. */
+const ringAt = (t) => WARDEN.ring * Math.min(1, Math.max(0, t / WARDEN_PULSE_TIME));
 
 /** Is it in a state where a hit should interrupt it? */
 function staggerable(st) {
@@ -10300,6 +10364,8 @@ function pick(e, players, foes) {
   if (foes) {
     for (const m of foes) {
       if (m === e || !upright(m) || m.trad === e.trad) continue;
+      /* The pack it was placed with is on its side, whatever it holds. */
+      if (e.pack && e.pack.indexOf(m) >= 0) continue;
       if (asleep && !awake(m)) continue;
       consider(m);
     }
@@ -10342,6 +10408,7 @@ const MOTION = [
   { accel: 2.6, turn: 4.0 },
   { accel: 2.0, turn: 2.6 },
   { accel: 8.0, turn: 11 },
+  { accel: 2.0, turn: 3.0 },
 ];
 
 const SENTRY_AI = {
@@ -10616,6 +10683,12 @@ function stepEnemy(col, e, players, dt = TICK, budget, foes) {
         break;
       }
 
+      if (e.k === KIND.WARDEN) {
+        /* It holds its ground: faces you, and pulses when you are within its reach. */
+        if (d <= c.range && ai.t >= 0.5) { ai.state = EST.TELEGRAPH; ai.t = 0; ai.bit = 0; }
+        break;
+      }
+
       /* The sentry. */
       const S = SENTRY_AI;
       if (ai.backT > 0) {
@@ -10655,7 +10728,7 @@ function stepEnemy(col, e, players, dt = TICK, budget, foes) {
       if (e.k === KIND.HOUND) {
         /* Facing its line, and not turning: the line is what you read. */
         face = { x: e.x + ai.lx, z: e.z + ai.lz };
-      } else if (target && e.k === KIND.SENTRY) {
+      } else if (target && (e.k === KIND.SENTRY || e.k === KIND.WARDEN)) {
         /* Stopped dead, and still turning to face you — at its own rate, which
            is what makes running round it during the wind-up worth doing. */
         face = target;
@@ -10734,6 +10807,18 @@ function stepEnemy(col, e, players, dt = TICK, budget, foes) {
       if (inArc(e, v, SENTRY.reach, SENTRY.arc, SENTRY.span, COS_HALF)) land(v, SENTRY.damage, 'struck');
     }
   }
+  if (ai.state === EST.STRIKE && e.k === KIND.WARDEN) {
+    /* The ring: out along the ground from under it, hurting what it passes over
+       that is standing on the ground, once each. A jump clears it; so does a dodge,
+       which `hurt` already honours. */
+    const r = ringAt(ai.t), vs = victims(e, players, foes);
+    for (let i = 0; i < vs.length && i < 30; i++) {
+      const v = vs[i], id = 1 << i;
+      if (ai.bit & id || v.grounded === false) continue;
+      const dv = hyp(v.x - e.x, v.z - e.z);
+      if (Math.abs(dv - r) <= WARDEN.band && Math.abs(v.y - e.y) < 1.4) { ai.bit |= id; land(v, WARDEN.damage, 'pulsed'); }
+    }
+  }
   if (ai.state === EST.STRIKE && e.k === KIND.HOUND) {
     /* Whatever the lunge passes close to, once each. */
     const vs = victims(e, players, foes);
@@ -10775,6 +10860,8 @@ const PACKS = [
   { members: [KIND.SENTRY, KIND.MORTAR], reserve: KIND.SENTRY },
   { members: [KIND.HOUND, KIND.HOUND], reserve: KIND.HOUND },
   { members: [KIND.SENTRY, KIND.MORTAR], reserve: KIND.SENTRY },
+  /* A magic post: a warden holding its ground, and a second to come out for a partner. */
+  { members: [KIND.WARDEN], reserve: KIND.WARDEN },
 ];
 
 /** Where a machine this wide can stand at (x, z), near ground height h, or null. */
@@ -10942,7 +11029,7 @@ function makeEncounter(col, world, posts) {
      can hit, a spoil to lay, and a way to put a scar out. */
   const siteDesc = streamed && world && world.G && world.G.site ? world.G.site() : null;
   /* The road's pads, with their packs as kinds and the chunk each stands in. */
-  const LETTER = { S: KIND.SENTRY, M: KIND.MORTAR, H: KIND.HOUND };
+  const LETTER = { S: KIND.SENTRY, M: KIND.MORTAR, H: KIND.HOUND, W: KIND.WARDEN };
   const pads = approachPads(siteDesc).map((pd) => Object.assign({}, pd, {
     pack: { members: pd.pack.members.map((c) => LETTER[c]), reserve: LETTER[pd.pack.reserve] },
     ck: Math.floor(pd.offs[0].x / CHUNK + 0.5) + ',' + Math.floor(pd.offs[0].z / CHUNK + 0.5),
@@ -11105,6 +11192,12 @@ function makeEncounter(col, world, posts) {
       if (party > 1) for (const e of enemies) if (e.reserve) e.reserve = false;
       const budget = { left: 1, party };
       for (const e of enemies) if (grounded(e)) stepEnemy(col, e, players, dt, budget, enemies);
+      /* Who stands inside a raised dome (a warden's) cannot be hurt, and cannot
+         be hurt by: set here, so this tick's blows by players read it. */
+      const domes = enemies.filter(domeUp);
+      const inDome = (m) => domes.some((d) => hyp(m.x - d.x, m.z - d.z) <= DOME_R && Math.abs(m.y - d.y) < 3);
+      for (const m of enemies) m.shielded = domes.length ? inDome(m) : false;
+      for (const p of players) if (p) p.shielded = domes.length ? inDome(p) : false;
       /* Whoever a machine has its eye on is hunted, and does not heal (#114). */
       for (const e of enemies) {
         const g = e.ai && e.ai.tgt;
@@ -11320,6 +11413,34 @@ const MORTAR_RIG = {
     { name: 'legR0', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.08, -0.16, 0.38], color: 0x2f2b27 },
     { name: 'legR1', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.1, -0.16, 0], color: 0x2f2b27 },
     { name: 'legR2', bone: 'legsR', size: [0.3, 0.3, 0.14], at: [0.08, -0.16, -0.38], color: 0x2f2b27 },
+  ],
+};
+
+/* The warden obelisk: a carved stone that hovers, point down, with four runes
+   set round its crown. From above what reads is the crown — the runes are on
+   its top face and light one after another, which is the tell — and the stone
+   itself only rises and sinks. The fragments that circle it are its own bone,
+   so the page can spin them while the dome is up and let them fall when it
+   drops. The dome and the ring on the ground are the page's, not the rig's. */
+const WARDEN_RIG = {
+  bones: [
+    { name: 'root', parent: null, at: [0, 0, 0] },
+    { name: 'body', parent: 'root', at: [0, 1.1, 0] },
+    { name: 'crown', parent: 'body', at: [0, 0.95, 0] },
+    { name: 'frags', parent: 'body', at: [0, 0.35, 0] },
+  ],
+  parts: [
+    { name: 'point', bone: 'body', size: [0.34, 0.4, 0.34], at: [0, -0.1, 0], color: 0x3d3a45 },
+    { name: 'shaft', bone: 'body', size: [0.7, 1.0, 0.7], at: [0, 0.5, 0], color: 0x58546a },
+    { name: 'crown', bone: 'crown', size: [0.9, 0.16, 0.9], at: [0, 0.08, 0], color: 0x474357 },
+    { name: 'rune0', bone: 'crown', size: [0.22, 0.05, 0.22], at: [0, 0.18, 0.28], color: 0x2a2838 },
+    { name: 'rune1', bone: 'crown', size: [0.22, 0.05, 0.22], at: [0.28, 0.18, 0], color: 0x2a2838 },
+    { name: 'rune2', bone: 'crown', size: [0.22, 0.05, 0.22], at: [0, 0.18, -0.28], color: 0x2a2838 },
+    { name: 'rune3', bone: 'crown', size: [0.22, 0.05, 0.22], at: [-0.28, 0.18, 0], color: 0x2a2838 },
+    { name: 'fragA', bone: 'frags', size: [0.2, 0.26, 0.2], at: [0.72, 0, 0], color: 0x474357 },
+    { name: 'fragB', bone: 'frags', size: [0.18, 0.22, 0.18], at: [-0.72, 0.1, 0], color: 0x474357 },
+    { name: 'fragC', bone: 'frags', size: [0.2, 0.24, 0.2], at: [0, -0.05, 0.72], color: 0x474357 },
+    { name: 'fragD', bone: 'frags', size: [0.16, 0.2, 0.16], at: [0, 0.12, -0.72], color: 0x474357 },
   ],
 };
 
@@ -11579,6 +11700,49 @@ function poseMortar(m, look) {
 }
 
 /**
+ * The warden's pose. It floats and bobs; the fragments circle it while it is
+ * awake and the dome is up. The tell is the crown, which turns a little as the
+ * runes light (the page lights them, by `t`); the pulse drops the stone and
+ * flings the fragments out; and while the dome is down the stone sags — the
+ * opening, drawn.
+ */
+function poseWarden(m, look) {
+  const p = blank(WARDEN_RIG), t = look.t || 0;
+  if (m.s === EST.DEAD) {
+    p.root.py = -0.9; p.body.rz = 0.5; p.body.rx = 0.3; p.frags.sy = 0.2; p.crown.ry = 0.4;
+    return p;
+  }
+  p.body.py = 0.08 * sin(t * 1.7);
+  if (m.s === EST.DORMANT) {
+    p.root.py = -0.35; p.frags.sy = 0.4;
+    return p;
+  }
+  p.frags.ry = t * 1.2;
+  if (m.s === EST.TELEGRAPH) {
+    const k = easeInOut((m.t || 0) / WARDEN_TELL_TIME);
+    p.body.py += 0.22 * k;                      /* rising to it */
+    p.crown.ry = 0.9 * k; p.frags.ry = t * 1.2 + 3 * k; p.frags.sy = 1 + 0.2 * k;
+  }
+  if (m.s === EST.STRIKE) {
+    const k = easeInOut((m.t || 0) / WARDEN_PULSE_TIME);
+    p.body.py = -0.3 + 0.1 * k;                 /* the stone drops as it pulses */
+    p.crown.ry = 0.9; p.frags.sy = 1 + 0.6 * (1 - k);
+    p.frags.ry = t * 3;
+  }
+  if (m.s === EST.RECOVER) {
+    const k = 1 - easeInOut((m.t || 0) / WARDEN_OPEN_TIME);
+    p.body.py = -0.2 * k; p.frags.sy = 0.5 + 0.5 * (1 - k); p.crown.rx = 0.18 * k;
+    p.frags.ry = t * 0.4;
+  }
+  if (m.s === EST.STAGGER) {
+    p.root.px = 0.04 * sin(t * 61);
+    p.body.rz = 0.14 * sin(t * 43);
+  }
+  if (m.u > 0) p.body.rx -= 0.2 * (m.u / HURT_TIME);
+  return p;
+}
+
+/**
  * A hound's pose. The crouch is the tell: hips down, head along the line. The
  * lunge stretches it out; the stumble after rolls it off its feet.
  */
@@ -11642,16 +11806,20 @@ const SENTRY_STRIDE = 0.9;
 /** The crawler's legs are short; the hound lopes. */
 const MORTAR_STRIDE = 0.7;
 const HOUND_STRIDE = 1.7;
+/** The warden does not walk: a stride it never uses. */
+const WARDEN_STRIDE = 1;
 
 /** Every machine's rig, pose and stride by its wire kind `k`. */
 const MACHINE_RIGS = [];
 MACHINE_RIGS[KIND.SENTRY] = SENTRY_RIG;
 MACHINE_RIGS[KIND.MORTAR] = MORTAR_RIG;
 MACHINE_RIGS[KIND.HOUND] = HOUND_RIG;
+MACHINE_RIGS[KIND.WARDEN] = WARDEN_RIG;
 const MACHINE_STRIDES = [];
 MACHINE_STRIDES[KIND.SENTRY] = SENTRY_STRIDE;
 MACHINE_STRIDES[KIND.MORTAR] = MORTAR_STRIDE;
 MACHINE_STRIDES[KIND.HOUND] = HOUND_STRIDE;
+MACHINE_STRIDES[KIND.WARDEN] = WARDEN_STRIDE;
 
 /* How far a body leans into its own motion (#110): radians per metre a second,
    and never more than `most`. Forward speed tips it forward, sideways speed
@@ -11660,6 +11828,7 @@ const LEAN = [
   { fwd: 0.05, side: 0.06, most: 0.22 },
   { fwd: 0.04, side: 0.05, most: 0.16 },
   { fwd: 0.035, side: 0.07, most: 0.3 },
+  { fwd: 0, side: 0, most: 0 },
 ];
 const clampLean = (v, m) => (v > m ? m : (v < -m ? -m : v));
 
@@ -11668,7 +11837,8 @@ const clampLean = (v, m) => (v > m ? m : (v < -m ? -m : v));
     page measures them from where it draws the machine, so a guest leans its
     machines exactly as the host does. */
 function poseMachine(m, look) {
-  const p = m.k === KIND.MORTAR ? poseMortar(m, look) : (m.k === KIND.HOUND ? poseHound(m, look) : poseSentry(m, look));
+  const p = m.k === KIND.MORTAR ? poseMortar(m, look) : (m.k === KIND.HOUND ? poseHound(m, look)
+    : (m.k === KIND.WARDEN ? poseWarden(m, look) : poseSentry(m, look)));
   if (m.s !== EST.DEAD && m.s !== EST.DORMANT && (look.fwd || look.side)) {
     const L = LEAN[m.k] || LEAN[0];
     p.body.rx += clampLean((look.fwd || 0) * L.fwd, L.most);
@@ -13104,7 +13274,7 @@ const ASSETS={
   'gID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/'+
   'gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP+AgID/gICA/4CAgP8AAAD/'
 };
-globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,REEL:REEL,TETHER:TETHER,isReel:isReel,reelRange:reelRange,reelCost:reelCost,trySwap:trySwap,swapFrame:swapFrame,frameKind:frameKind,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SPOILS_MAX:SPOILS_MAX,STREAM_ENC:STREAM_ENC,FSTAGE:FSTAGE,FMOVE:FMOVE,FMARK:FMARK,FURNACE:FURNACE,BEATS:BEATS,REST_R:REST_R,approachPads:approachPads,opensGate:opensGate,fusionsOfSchool:fusionsOfSchool,seatedFusions:seatedFusions,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,MORTAR:MORTAR,HOUND:HOUND,KIND:KIND,KIND_NAMES:KIND_NAMES,ARCHETYPES:ARCHETYPES,makeMortar:makeMortar,makeHound:makeHound,MORTAR_AIM_TIME:MORTAR_AIM_TIME,MORTAR_FLIGHT_TIME:MORTAR_FLIGHT_TIME,MORTAR_VENT_TIME:MORTAR_VENT_TIME,HOUND_TELL_TIME:HOUND_TELL_TIME,LUNGE_TIME:LUNGE_TIME,STUMBLE_TIME:STUMBLE_TIME,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,MORTAR_RIG:MORTAR_RIG,HOUND_RIG:HOUND_RIG,MACHINE_RIGS:MACHINE_RIGS,MACHINE_STRIDES:MACHINE_STRIDES,poseMachine:poseMachine,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,lightningAt:lightningAt,FLASH_SECONDS:FLASH_SECONDS,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
+globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO:BIO,CLIMATE_N:CLIMATE_N,MAT:MAT,MATERIALS:MATERIALS,carvable:carvable,makeGen:makeGen,buildWorld:buildWorld,PALETTE:PALETTE,PAL:PAL,palR:palR,palG:palG,palB:palB,shadeValue:shadeValue,sin:sin,cos:cos,exp:exp,hyp:hyp,chunkWorld:chunkWorld,chunkCentre:chunkCentre,SKIRT:SKIRT,WINDOW:WINDOW,meshChunk:meshChunk,chunkOccupancy:chunkOccupancy,innerChunk:innerChunk,openAir:openAir,surfaceAt:surfaceAt,LEVELS:LEVELS,isCut:isCut,solidVox:solidVox,carve:carve,editedChunks:editedChunks,clearEdits:clearEdits,chunkGrid:chunkGrid,BITE:BITE,BITE_R:BITE_R,meshProps:meshProps,solidKeys:solidKeys,parseVox:parseVox,meshVox:meshVox,voxBytes:voxBytes,VOX_SCALE:VOX_SCALE,HERO_VOX_ROLES:HERO_VOX_ROLES,LIQUID:LIQUID,EPS:EPS,makeCollider:makeCollider,colliderForWorld:colliderForWorld,colliderFromPacked:colliderFromPacked,colliderForChunk:colliderForChunk,softProp:softProp,chunkAt:chunkAt,makeChunkField:makeChunkField,makeStream:makeStream,STREAM:STREAM,ACTOR:ACTOR,TICK:TICK,RUN:RUN,GRAVITY:GRAVITY,JUMP_V:JUMP_V,JUMP_APEX:JUMP_APEX,AIR_JUMP_V:AIR_JUMP_V,AIR_JUMP_COST:AIR_JUMP_COST,makeActor:makeActor,placeOnGround:placeOnGround,embedded:embedded,step:step,display:display,applyDisplay:applyDisplay,PHASE:PHASE,phase:phase,swingProgress:swingProgress,dodging:dodging,invulnerable:invulnerable,REEL:REEL,TETHER:TETHER,isReel:isReel,reelRange:reelRange,reelCost:reelCost,trySwap:trySwap,swapFrame:swapFrame,frameKind:frameKind,STAMINA_MAX:STAMINA_MAX,SWING_COST:SWING_COST,DODGE_COST:DODGE_COST,SWING_TIME:SWING_TIME,WINDUP:WINDUP,ACTIVE:ACTIVE,REACH:REACH,ARC:ARC,DODGE_TIME:DODGE_TIME,DODGE_DIST:DODGE_DIST,practicePosts:practicePosts,PLAYER_HP:PLAYER_HP,SWING_DAMAGE:SWING_DAMAGE,HURT_TIME:HURT_TIME,hurt:hurt,heal:heal,applyHits:applyHits,baseStats:baseStats,statsOf:statsOf,swingTime:swingTime,dodgeSpeed:dodgeSpeed,TRAD:TRAD,TRADITIONS:TRADITIONS,MOD:MOD,MODULES:MODULES,FUS:FUS,FUSIONS:FUSIONS,FRAME:FRAME,FRAMES:FRAMES,CARRY:CARRY,makeGear:makeGear,recomputeGear:recomputeGear,latentFusions:latentFusions,knows:knows,recipeFor:recipeFor,hexXY:hexXY,hexAdjacent:hexAdjacent,takeModule:takeModule,learnFusion:learnFusion,socketModule:socketModule,unsocketModule:unsocketModule,gearWire:gearWire,applyGearWire:applyGearWire,refitGear:refitGear,seatOn:seatOn,pullFrom:pullFrom,PICKUP_R:PICKUP_R,CACHES:CACHES,makeLootField:makeLootField,cacheSites:cacheSites,spoilModule:spoilModule,SPOILS_MAX:SPOILS_MAX,STREAM_ENC:STREAM_ENC,FSTAGE:FSTAGE,FMOVE:FMOVE,FMARK:FMARK,FURNACE:FURNACE,BEATS:BEATS,REST_R:REST_R,approachPads:approachPads,opensGate:opensGate,fusionsOfSchool:fusionsOfSchool,seatedFusions:seatedFusions,SENTRY:SENTRY,EST:EST,makeSentry:makeSentry,stepSentry:stepSentry,makeEncounter:makeEncounter,MORTAR:MORTAR,HOUND:HOUND,WARDEN:WARDEN,KIND:KIND,KIND_NAMES:KIND_NAMES,ARCHETYPES:ARCHETYPES,makeMortar:makeMortar,makeHound:makeHound,makeWarden:makeWarden,domeUp:domeUp,domeAt:domeAt,DOME_R:DOME_R,ringAt:ringAt,WARDEN_TELL_TIME:WARDEN_TELL_TIME,WARDEN_PULSE_TIME:WARDEN_PULSE_TIME,WARDEN_OPEN_TIME:WARDEN_OPEN_TIME,MORTAR_AIM_TIME:MORTAR_AIM_TIME,MORTAR_FLIGHT_TIME:MORTAR_FLIGHT_TIME,MORTAR_VENT_TIME:MORTAR_VENT_TIME,HOUND_TELL_TIME:HOUND_TELL_TIME,LUNGE_TIME:LUNGE_TIME,STUMBLE_TIME:STUMBLE_TIME,WAKE_TIME:WAKE_TIME,TELEGRAPH_TIME:TELEGRAPH_TIME,STRIKE_TIME:STRIKE_TIME,RECOVER_TIME:RECOVER_TIME,HERO_RIG:HERO_RIG,SENTRY_RIG:SENTRY_RIG,poseHero:poseHero,poseSentry:poseSentry,blendPose:blendPose,swingYaw:swingYaw,restPositions:restPositions,STRIDE:STRIDE,SENTRY_STRIDE:SENTRY_STRIDE,MORTAR_RIG:MORTAR_RIG,HOUND_RIG:HOUND_RIG,WARDEN_RIG:WARDEN_RIG,poseWarden:poseWarden,MACHINE_RIGS:MACHINE_RIGS,MACHINE_STRIDES:MACHINE_STRIDES,poseMachine:poseMachine,DAY_SECONDS:DAY_SECONDS,DAWN_START:DAWN_START,SPELL_SECONDS:SPELL_SECONDS,skyWord:skyWord,spellAt:spellAt,weatherAt:weatherAt,skyAt:skyAt,lightningAt:lightningAt,FLASH_SECONDS:FLASH_SECONDS,makeCamera:makeCamera,snap:snap,warpTo:warpTo,follow:follow,eye:eye,basis:basis,moveFrom:moveFrom,project:project,groundAt:groundAt,heading:heading,aimFromPointer:aimFromPointer,aimFromStick:aimFromStick,setView:setView,VIEW:VIEW,QUARTER:QUARTER,START_YAW:START_YAW,ACTIONS:ACTIONS,DEFAULT_BINDINGS:DEFAULT_BINDINGS,defaultBindings:defaultBindings,makeInput:makeInput,stickFromDrag:stickFromDrag,snapshot:snapshot,restore:restore,makeLoopback:makeLoopback,conditioned:conditioned,makeHost:makeHost,makeGuest:makeGuest,spawnNear:spawnNear,ACT:ACT,RULES:RULES,ICE_SERVERS:ICE_SERVERS,CHANNEL:CHANNEL,channelTransport:channelTransport,packCode:packCode,unpackCode:unpackCode,gathered:gathered,candidateKinds:candidateKinds,ASSETS:ASSETS};
 })();
 /* QS-BUNDLE-END */
 </script>
@@ -16125,13 +16295,55 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     {bar:1.7,blob:0.95,tint:'plate',step:'sentry',spark:0xffc466},
     {bar:1.35,blob:0.85,tint:'muzzle',step:'sentry',spark:0xffc466},
     {bar:1.1,blob:0.6,tint:'graft',step:'hound',spark:0xb8d06a},
+    {bar:3.5,blob:1.2,tint:'shaft',step:'sentry',spark:0xb9a8ff},
   ];
+  /* The warden's shapes are the same for all of them, so they are made once:
+     the dome (a half sphere standing on the ground), and the two rings. */
+  var wardenGeo=null;
+  function wardenShapes(){
+    if(wardenGeo) return wardenGeo;
+    var R=QS.DOME_R, Q=QS.WARDEN.ring;
+    return wardenGeo={
+      dome:new THREE.SphereGeometry(R,28,12,0,Math.PI*2,0,Math.PI/2),
+      rim:new THREE.RingGeometry(R-0.14,R,40),
+      reach:new THREE.RingGeometry(Q-0.14,Q,56),
+      /* Scaled out to its radius, so its width grows with it, to about the band it hurts in. */
+      pulse:new THREE.RingGeometry(0.76,1,56),
+    };
+  }
+  function wardenMat(color,opacity,extra){
+    var m=new THREE.MeshBasicMaterial({color:color,transparent:true,opacity:opacity,side:THREE.DoubleSide,
+                                       depthWrite:false,toneMapped:false});
+    if(extra) for(var q in extra) m[q]=extra[q];
+    return m;
+  }
   function makeFoe(k){
     k=k|0;
     var g=new THREE.Group(), look=FOE_LOOK[k]||FOE_LOOK[0];
     var rig=buildRig(QS.MACHINE_RIGS[k]||QS.SENTRY_RIG,{}); g.add(rig.mesh);
-    var wedge=null, line=null, rings=null;
-    if(k===QS.KIND.MORTAR){
+    var wedge=null, line=null, rings=null, aura=null;
+    /* A stone the height of a doorway and a half, hanging in the air. */
+    if(k===QS.KIND.WARDEN) rig.mesh.scale.setScalar(1.5);
+    if(k===QS.KIND.WARDEN){
+      /* Where it matters is the ground, and the dome that says who is safe: a
+         pale shell over the circle, a rim where it meets the ground, the reach
+         of its pulse faint until it winds up, and the pulse itself running out. */
+      var ws=wardenShapes();
+      aura=new THREE.Group();
+      aura.userData.dome=new THREE.Mesh(ws.dome,wardenMat(0x9a86ff,0.13));
+      aura.userData.web=new THREE.Mesh(ws.dome,wardenMat(0xcfc4ff,0.22,{wireframe:true}));
+      aura.userData.rim=new THREE.Mesh(ws.rim,wardenMat(0xcfc4ff,0.7));
+      aura.userData.reach=new THREE.Mesh(ws.reach,wardenMat(0xff9a5a,0));
+      aura.userData.pulse=new THREE.Mesh(ws.pulse,wardenMat(0xffd9a8,0.9));
+      for(var wn in aura.userData){
+        var wm=aura.userData[wn]; aura.add(wm);
+        if(wn!=='dome'&&wn!=='web') wm.rotation.x=-Math.PI/2;
+        wm.userData.keep=true; wm.userData.kind='tell'; wm.renderOrder=3;
+      }
+      aura.userData.rim.position.y=aura.userData.reach.position.y=aura.userData.pulse.position.y=0.35;
+      aura.userData.pulse.visible=false; aura.userData.reach.visible=false;
+      g.add(aura);
+    }else if(k===QS.KIND.MORTAR){
       /* In the world, not on the crawler: where the shells land does not turn
          when it does. At the height the player's arc sits at — anything lower
          is lost in the voxels. */
@@ -16169,7 +16381,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var blob=makeBlob(look.blob); g.add(blob);
     g.traverse(function(o){ if(o.isMesh){ o.userData.keep=true; } });
     if(rings) g.userData.rings=rings;
-    return {g:g,k:k,look:look,rig:rig,wedge:wedge,line:line,rings:rings,bar:bar,blob:blob,walk:0,lastX:null,lastZ:null};
+    return {g:g,k:k,look:look,rig:rig,wedge:wedge,line:line,rings:rings,aura:aura,domeA:0,bar:bar,blob:blob,walk:0,lastX:null,lastZ:null};
   }
   /** Into the scene, with its rings beside it, and out again. */
   function addFoe(f){ built.scene.add(f.g); if(f.rings) built.scene.add(f.rings); return f; }
@@ -16302,7 +16514,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       if(ivx*ivx+ivz*ivz>400){ ivx=0; ivz=0; }        /* a teleport is not a run */
       var kv=Math.min(1,fdt*8); f.vx+=(ivx-f.vx)*kv; f.vz+=(ivz-f.vz)*kv;
     } else if(gap!==0){ f.vx=0; f.vz=0; }
-    f.px=m.x; f.pz=m.z; f.at=tm;
+    f.px=m.x; f.pz=m.z; f.at=tm; f.fdt=fdt;
     var sf=Math.sin(f.yaw), cf=Math.cos(f.yaw);
     if(dead) f.blob.visible=false; else seatBlob(f.blob,m.x,m.y,m.z);
     stride(f,m.x,m.z,QS.MACHINE_STRIDES[f.k]||QS.SENTRY_STRIDE);
@@ -16326,7 +16538,10 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
         :(m.s===EST.RECOVER?0x4a2a18
           :(m.s===EST.STAGGER?0xffffff
             :(tell?mixHex(0xff9a3c,0xffffff,tell):0xc9722a))));
-    tintRig(f.rig,f.look.tint,mu>0?0xffd7cf:col);
+    if(f.k===K.WARDEN){
+      tintRig(f.rig,f.look.tint,mu>0?0xe4dcff:(dead?0x14110f:(m.s===EST.DORMANT?0x46435a:(m.s===EST.RECOVER?0x4c4660:0x58546a))));
+      drawWarden(f,m,dead);
+    }else tintRig(f.rig,f.look.tint,mu>0?0xffd7cf:col);
     var telling=!dead&&(m.s===EST.TELEGRAPH||m.s===EST.STRIKE);
     if(f.wedge){
       f.wedge.visible=telling;
@@ -16351,6 +16566,33 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     f.bar.scale.x=Math.max(0.02,m.h/mh);
     f.bar.position.x=-0.6*(1-f.bar.scale.x);
     f.bar.rotation.y=cam.yaw; f.bar.rotation.x=-Math.PI/4;
+  }
+  /**
+   * The warden's runes light one after another through its tell, and then the
+   * pulse runs out along the ground; the dome is up in every state but the
+   * pulse and the pause after it, and fades rather than blinks, so its going is
+   * a thing you see happen. Everything is read from the kind and the state.
+   */
+  function drawWarden(f,m,dead){
+    var EST=QS.EST, W=f.aura.userData, tellK=0, up=!dead&&QS.domeAt(m.k,m.s);
+    if(m.s===EST.TELEGRAPH) tellK=Math.min(1,m.t/QS.WARDEN_TELL_TIME);
+    else if(m.s===EST.STRIKE) tellK=1;
+    for(var q=0;q<4;q++){
+      var lit=!dead&&tellK>0&&tellK>=(q+1)/5+0.04;
+      tintRig(f.rig,'rune'+q,lit?(m.s===EST.STRIKE?0xffffff:0xc8b8ff):0x2a2838);
+    }
+    var gap=f.fdt||0;
+    /* No time passed — paused, or the gate drawing — goes straight there. */
+    if(gap>0) f.domeA+=((up?1:0)-f.domeA)*Math.min(1,gap*9); else f.domeA=up?1:0;
+    if(!up&&f.domeA<0.02) f.domeA=0;
+    W.dome.visible=W.web.visible=W.rim.visible=f.domeA>0;
+    W.dome.material.opacity=0.16*f.domeA; W.web.material.opacity=0.3*f.domeA; W.rim.material.opacity=0.7*f.domeA;
+    /* The reach of the pulse shows once it has begun to wind up, and the band runs out from under it. */
+    var reach=!dead&&(m.s===EST.TELEGRAPH||m.s===EST.STRIKE);
+    W.reach.visible=reach; W.reach.material.opacity=m.s===EST.STRIKE?0.5:0.1+0.5*tellK;
+    var pulse=!dead&&m.s===EST.STRIKE;
+    W.pulse.visible=pulse;
+    if(pulse){ var r=Math.max(0.2,QS.ringAt(m.t)); W.pulse.scale.set(r,r,1); }
   }
   /**
    * The mortar's rings: down from the moment it aims until the shells land,
@@ -20368,6 +20610,8 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get frameKind(){ var a=player(); return a&&a.gear?QS.frameKind(a.gear):null; },
     /* #108: machines that neither come nor act, for a walk that measures streaming. */
     holdMachines:function(on){ if(encounter) encounter.held=!!on; },
+    /** A machine of `kind` at (x, z) — the debug dialog's Spawn, for the gate to stage one. */
+    spawnFoe:function(kind,x,z){ if(!encounter) return null; var g=QS.placeOnGround(col,x,z,200); return encounter.add(x,z,g.y+3,kind|0); },
     get packs(){ return encounter&&encounter.groups?encounter.groups:null; },
     /** Stand the character somewhere, as the debug dialog's Go does. */
     teleport:function(x,z){ return dbgTeleport(x,z); },
@@ -20382,7 +20626,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     /* #106: which tell each machine's model is showing, as drawn. */
     get foeTells(){ return foeMeshes.map(function(f){
       return {k:f.k,shown:f.g.visible,wedge:!!(f.wedge&&f.wedge.visible),line:!!(f.line&&f.line.visible),
-              rings:f.rings&&f.rings.visible?f.rings.children.filter(function(o){ return o.visible; }).length:0};
+              rings:f.rings&&f.rings.visible?f.rings.children.filter(function(o){ return o.visible; }).length:0,
+              aura:f.aura?{dome:f.aura.userData.dome.visible,reach:f.aura.userData.reach.visible,pulse:f.aura.userData.pulse.visible,
+                           runes:[0,1,2,3].filter(function(q){ return f.rig.tint['rune'+q]!==0x2a2838; }).length}:null};
     }); },
     /** The lattice, what is still on the ground, and the two verbs over them. */
     get gear(){return gear();},

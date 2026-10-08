@@ -257,6 +257,8 @@ export function heal(a, amount) {
 export function hurt(a, amount, cause) {
   /* `invincible` is the debug dialog's (#92), for one player alone. */
   if (!a || a.dead || a.down || a.hp === undefined || invulnerable(a) || a.invincible) return false;
+  /* Inside a warden's raised dome (enemy.mjs): nothing gets through, either way. */
+  if (a.shielded) return false;
   a.hp -= amount;
   a.hurtT = HURT_TIME;
   a.hunted = REGEN_DELAY;

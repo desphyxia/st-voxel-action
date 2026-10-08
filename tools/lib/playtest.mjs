@@ -40,7 +40,7 @@ import * as RTC from '../../src/net/rtc.mjs';
 import { buildWorld, makeGen } from '../../src/gen/index.mjs';
 import { regionAt, clearRegionCache, portsOf, regionOf, REGION, cellKey, keyX, keyZ } from '../../src/gen/region.mjs';
 import { erodeAt } from '../../src/gen/erosion.mjs';
-import { HERO_RIG, SENTRY_RIG, MORTAR_RIG, HOUND_RIG, MACHINE_RIGS, poseHero, poseSentry, poseMortar, poseHound, poseMachine,
+import { HERO_RIG, SENTRY_RIG, MORTAR_RIG, HOUND_RIG, WARDEN_RIG, MACHINE_RIGS, poseHero, poseSentry, poseMortar, poseHound, poseWarden, poseMachine,
          swingYaw, restPositions } from '../../src/sim/anim.mjs';
 import * as SKY from '../../src/sim/sky.mjs';
 import { meshChunk, surfaceAt, isCut, innerChunk } from '../../src/mesh/greedy.mjs';
@@ -1643,9 +1643,9 @@ export function rosterSuite() {
     for (const e of enc.enemies) { e.hp = 0; e.dead = 'struck'; }
     enc.step([]);
     const by = new Map(enc.loot.spoils.map((sp) => [sp.of, LT.MODULES[sp.mod].trad]));
-    say('each machine drops its own tradition: hounds biological, the rest tech',
+    say('each machine drops its own tradition: hounds biological, wardens magic, the rest tech',
         by.size === enc.enemies.length
-          && enc.enemies.every((e) => by.get(e.id) === (e.k === EN.KIND.HOUND ? LT.TRAD.BIO : LT.TRAD.TECH)),
+          && enc.enemies.every((e) => by.get(e.id) === (e.k === EN.KIND.HOUND ? LT.TRAD.BIO : (e.k === EN.KIND.WARDEN ? LT.TRAD.MAGIC : LT.TRAD.TECH))),
         enc.enemies.map((e) => `${EN.KIND_NAMES[e.k]}:${LT.TRADITIONS[by.get(e.id)]}`).join(' '));
   }
   {
@@ -6503,6 +6503,139 @@ export function approachSuite() {
         before === null && wireBefore === null && after && after.x === r.x && w && w.rf === 1 && w.s === 0
           && enc2.site.restSpot() && enc2.site.restSpot().x === r.x,
         `before ${before}, wire ${wireBefore === null ? 'null' : 'SENT'}; after ${after ? 'the stone' : 'nothing'}, wire ${JSON.stringify(w)}`);
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------- warden ---- */
+
+/**
+ * The warden obelisk, the first magic machine: it holds its ground, its dome
+ * protects whoever stands inside it, and the dome drops while it pulses a ring
+ * along the ground. What is asserted is the one thing it was designed round:
+ * the window is real, and it is the only one.
+ */
+export function wardenSuite() {
+  const out = [];
+  const say = (label, ok, detail) => out.push({ label, ok, detail });
+  const S = EN.EST, ticks = (sec) => Math.round(sec / TICK);
+  const world = { spawn: [0, 0, 0], affordances: [] };
+  /* An encounter on a flat pen with its own machines taken away, for the ones a test adds. */
+  const arena = () => {
+    const c = pen(), enc = EN.makeEncounter(c, world, []);
+    enc.enemies.splice(0); enc.targets.splice(enc.postCount);
+    return { c, enc, add: (kind, x, z) => enc.add(x, z, 1, kind) };
+  };
+
+  /* 1. It holds its ground, wakes, and pulses when you are within its reach. */
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0), e = EN.makeWarden(c, 6, 0);
+    const x0 = e.x, z0 = e.z;
+    let tell = 0, pulse = 0, open = 0, dome = [];
+    brawl(c, [e], [p], 900, () => {
+      const st = e.ai.state;
+      if (st === S.TELEGRAPH) tell++;
+      if (st === S.STRIKE) pulse++;
+      if (st === S.RECOVER) open++;
+      dome.push(EN.domeUp(e) ? 1 : 0);
+      return st === S.CLOSE && open > 0;
+    });
+    const up = (a, b) => dome.slice(a, b).every((v) => v === 1);
+    say('a warden holds its ground and runs a tell, a pulse and an opening, with its dome down for the last two only',
+        hyp(e.x - x0, e.z - z0) < 0.05 && tell >= ticks(EN.WARDEN_TELL_TIME) - 1 && pulse >= ticks(EN.WARDEN_PULSE_TIME) - 1
+          && open >= ticks(EN.WARDEN_OPEN_TIME) - 1,
+        `moved ${hyp(e.x - x0, e.z - z0).toFixed(2)} m; ${tell} ticks of tell, ${pulse} of pulse, ${open} of opening`);
+    const tellAt = dome.length - open - pulse - 1;
+    say('and the dome is up through the tell, down through the pulse and the pause, and up again after',
+        up(Math.max(0, tellAt - 3), tellAt) && dome.slice(tellAt + 3, dome.length - 3).every((v) => v === 0) && EN.domeUp(e) === (e.ai.state !== S.RECOVER),
+        `dome ${dome.slice(tellAt - 3, tellAt + 3).join('')}… then ${dome.slice(-4).join('')}`);
+  }
+
+  /* 2. The ring: it hurts what is standing on the ground when it passes, and a jump clears it. */
+  {
+    const a = pen(), p = placeOnGround(a, 0, 0), e = EN.makeWarden(a, 5, 0);
+    brawl(a, [e], [p], 900, () => e.ai.state === S.RECOVER);
+    const lost = p.hp === p.maxHp ? 0 : p.maxHp - p.hp;
+    const b = pen(), q = placeOnGround(b, 0, 0), f = EN.makeWarden(b, 5, 0);
+    let jumped = false;
+    brawl(b, [f], [q], 900, () => f.ai.state === S.RECOVER, () => {
+      if (!jumped && f.ai.state === S.STRIKE && EN.ringAt(f.ai.t) >= 3.4) { jumped = true; return { jump: true }; }
+      return null;
+    });
+    say('the ring costs what is on the ground when it passes, and a jump clears it',
+        lost === EN.WARDEN.damage && jumped && q.hp === q.maxHp,
+        `${lost} of ${EN.WARDEN.damage} on the ground; ${q.maxHp - q.hp} after jumping`);
+  }
+
+  /* 3. The dome shields whoever is inside — machines and players — and only while it is up. */
+  {
+    /* The player stands outside the dome, within reach of the sentry inside it. */
+    const c2 = pen(), enc2 = EN.makeEncounter(c2, world, []);
+    enc2.enemies.splice(0); enc2.targets.splice(enc2.postCount);
+    const w2 = enc2.add(10, 0, 1, EN.KIND.WARDEN), s2 = enc2.add(14, 0, 1, EN.KIND.SENTRY);
+    const q = placeOnGround(c2, 15.5, 0); q.gear = LT.makeGear();
+    const hit = () => { q.hits = 1 << enc2.targets.indexOf(s2); enc2.step([q]); };
+    const hp0 = s2.hp;
+    w2.ai.state = S.CLOSE; w2.ai.t = 0; s2.ai.state = S.DORMANT;
+    hit();
+    const shielded = s2.hp === hp0 && s2.shielded === true;
+    w2.ai.state = S.RECOVER; w2.ai.t = 0.1;
+    hit();
+    const open = s2.hp < hp0 && s2.shielded === false;
+    /* A player standing in the dome is as safe as the machine: nothing of another tradition reaches them. */
+    const c3 = pen(), enc3 = EN.makeEncounter(c3, world, []);
+    enc3.enemies.splice(0); enc3.targets.splice(enc3.postCount);
+    const w3 = enc3.add(0, 0, 1, EN.KIND.WARDEN), s3 = enc3.add(3.5, 0, 1, EN.KIND.SENTRY);
+    const r = placeOnGround(c3, 1.8, 0); r.gear = LT.makeGear();
+    w3.ai.state = S.CLOSE; w3.ai.t = 0;
+    const rhp = r.hp;
+    s3.ai.state = S.TELEGRAPH; s3.ai.t = 0;
+    for (let i = 0; i < ticks(1.4); i++) { w3.ai.state = S.CLOSE; w3.ai.t = 0; enc3.step([r]); }
+    say('whoever is inside a raised dome cannot be hurt, from outside or in, and the same blow lands once it drops',
+        shielded && open && r.hp === rhp,
+        `sentry inside: ${shielded ? 'untouched' : 'HURT'} while up, ${open ? 'hurt' : 'UNTOUCHED'} once down; player inside: ${rhp - r.hp} hp lost`);
+  }
+
+  /* 4. A pack is on its own side; a warden's tradition drops magic. */
+  {
+    const c = pen(), p = placeOnGround(c, 0, 0);
+    const w = EN.makeWarden(c, 6, 0), s = EN.makeSentry(c, 8, 1);
+    w.pack = [w, s]; s.pack = [w, s];
+    brawl(c, [w, s], [p], 120);
+    const fought = (s.ai.tgt === w) || (w.ai.tgt === s);
+    const c2 = pen(), p2 = placeOnGround(c2, 0, 0), w2 = EN.makeWarden(c2, 6, 0), s2 = EN.makeSentry(c2, 8, 1);
+    brawl(c2, [w2, s2], [p2], 120);
+    const rival = (s2.ai.tgt === w2) || (w2.ai.tgt === s2);
+    const { enc, add } = arena();
+    const v = add(EN.KIND.WARDEN, 5, 5);
+    v.hp = 0; v.dead = 'struck'; enc.step([]);
+    const drop = enc.loot.spoils.length && LT.MODULES[enc.loot.spoils[0].mod].trad === LT.TRAD.MAGIC;
+    say('a pack does not fight itself, a rival warden and sentry do, and a warden drops a magic module',
+        !fought && rival && !!drop, `${fought ? 'PACK FOUGHT' : 'one side'}; apart: ${rival ? 'at each other' : 'ignored'}; ${drop ? 'magic drop' : 'NO MAGIC DROP'}`);
+  }
+
+  /* 5. The wire carries what a guest needs to draw the dome: kind and state. */
+  {
+    const { enc, add } = arena();
+    const w = add(EN.KIND.WARDEN, 5, 0);
+    w.ai.state = S.TELEGRAPH; w.ai.t = 0.4;
+    const rec = enc.wire()[0], back = EN.unpackFoes(EN.packFoes([rec]))[0];
+    say('a guest is sent a warden and its state, and from them alone can say whether its dome is up and how far the ring has gone',
+        back.k === EN.KIND.WARDEN && EN.domeAt(back.k, back.s) === true && EN.domeAt(back.k, S.RECOVER) === false
+          && Math.abs(EN.ringAt(EN.WARDEN_PULSE_TIME / 2) - EN.WARDEN.ring / 2) < 1e-9,
+        `kind ${back.k}, state ${back.s}, dome ${EN.domeAt(back.k, back.s)}`);
+  }
+
+  /* 6. The rig is whole and its tell reads: the crown turns, the stone rises, then drops for the pulse. */
+  {
+    const bad = [], seen = new Set();
+    for (const b of WARDEN_RIG.bones) { if (b.parent && !seen.has(b.parent)) bad.push(b.name); seen.add(b.name); }
+    for (const q of WARDEN_RIG.parts) if (!seen.has(q.bone)) bad.push('part ' + q.name);
+    const lo = poseWarden({ s: S.TELEGRAPH, t: 0.05, k: 3 }, { t: 1 }), hi = poseWarden({ s: S.TELEGRAPH, t: EN.WARDEN_TELL_TIME, k: 3 }, { t: 1 });
+    const pulse = poseWarden({ s: S.STRIKE, t: 0.2, k: 3 }, { t: 1 });
+    say('the warden rig is whole and its tell reads: the crown turns and the stone rises, then drops for the pulse',
+        bad.length === 0 && MACHINE_RIGS[EN.KIND.WARDEN] === WARDEN_RIG && hi.crown.ry > lo.crown.ry + 0.5 && hi.body.py > lo.body.py + 0.1 && pulse.body.py < lo.body.py,
+        bad.length ? bad.join(', ') : `crown ${lo.crown.ry.toFixed(2)} to ${hi.crown.ry.toFixed(2)} rad, stone ${lo.body.py.toFixed(2)} to ${hi.body.py.toFixed(2)} to ${pulse.body.py.toFixed(2)} m`);
   }
   return out;
 }
