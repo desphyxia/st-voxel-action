@@ -16392,13 +16392,118 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     if(siteView.guard) dropFoe(siteView.guard);
     siteView=null;
   }
+  /* The gate's door, built of the same quarter-metre voxels the wall round it is,
+     so it reads as part of the ground and not as a box set into it: a dark frame
+     with a proud lintel and posts, two leaves with a groove between them and
+     rusted ribs across, rivets, ash on its top and sand drifted up its foot, and
+     the glyph of the four pairs as embers in the recess. One mesh for the door
+     and one for the glyph, both with their colours in the vertices. Seeded by
+     nothing but its size, so it is the same door on every machine. */
+  function makeVoxelDoor(D){
+    var V=0.25, wv=Math.round((D.hw*2-0.1)/V), hv=Math.round((D.y1-D.y0)/V), dv=6, below=4;
+    var N=wv*hv*dv, solid=new Uint8Array(N), cr=new Float32Array(N), cg=new Float32Array(N), cb=new Float32Array(N);
+    function ix(x,y,z){ return (x*hv+y)*dv+z; }
+    function hash(a,b,c){ var h=Math.imul(a+1,73856093)^Math.imul(b+7,19349663)^Math.imul(c+13,83492791); h=Math.imul(h^(h>>>15),2246822507); h^=h>>>13; return ((Math.imul(h,3266489909)>>>0)/4294967296); }
+    function put(x,y,z,rgb,jit){
+      var k=ix(x,y,z), n=(hash(x,y,z)-0.5)*(jit===undefined?0.16:jit);
+      solid[k]=1; cr[k]=Math.min(1,Math.max(0,rgb[0]*(1+n))); cg[k]=Math.min(1,Math.max(0,rgb[1]*(1+n))); cb[k]=Math.min(1,Math.max(0,rgb[2]*(1+n)));
+    }
+    var IRON=[0.26,0.23,0.215], FRAME=[0.17,0.16,0.155], RUST=[0.40,0.24,0.15], RIVET=[0.52,0.46,0.40], SAND=[0.62,0.55,0.41], ASH=[0.40,0.40,0.41];
+    var ground=below;                       /* the voxel row the floor is level with */
+    var top=hv-1, midx=(wv-1)/2|0;
+    var postW=2, lintelH=3, x, y, z;
+    for(x=0;x<wv;x++){
+      /* A ragged top: the lintel is not a ruler's edge. */
+      var tx=top-(hash(x,0,99)<0.3?1:0)-(hash(x,1,98)<0.1?1:0);
+      for(y=0;y<=tx;y++){
+        var post=x<postW||x>=wv-postW, beam=y>tx-lintelH, seam=x===midx;
+        for(z=0;z<dv;z++){
+          var proud=z>=dv-1, back=z<=1;
+          if(post||beam){
+            /* Frame: the whole depth, a shade lighter at the edges that catch light. */
+            put(x,y,z,FRAME,0.22);
+          }else if(z<=dv-2){
+            /* The leaves are set back a voxel from the frame's face. */
+            put(x,y,z,IRON,0.2);
+          }
+        }
+        if(!post&&!beam){
+          /* The groove between the leaves, and ribs that stand out of them. */
+          if(seam){ solid[ix(x,y,dv-2)]=0; put(x,y,dv-3,FRAME,0.1); solid[ix(x,y,dv-2)]=0; }
+          var rib=(y===ground+4||y===ground+8||y===ground+12)&&!seam;
+          if(rib) put(x,y,dv-1,RUST,0.3);
+        }
+      }
+    }
+    /* Rivets along the posts and the lintel's underside. */
+    for(y=ground+1;y<hv-3;y+=3){ solid[ix(0,y,dv-1)]&&put(0,y,dv-1,RIVET,0.1); solid[ix(wv-1,y,dv-1)]&&put(wv-1,y,dv-1,RIVET,0.1);
+                                  solid[ix(postW-1,y,dv-1)]&&put(postW-1,y,dv-1,RIVET,0.1); solid[ix(wv-postW,y,dv-1)]&&put(wv-postW,y,dv-1,RIVET,0.1); }
+    for(x=2;x<wv-2;x+=3){ var ly=0; for(y=hv-1;y>=0;y--) if(solid[ix(x,y,dv-1)]){ ly=y; break; }
+                          solid[ix(x,ly,dv-1)]&&put(x,ly,dv-1,RIVET,0.1); }
+    /* Ash on what faces up, sand drifted against the foot. */
+    for(x=0;x<wv;x++) for(z=0;z<dv;z++){
+      for(y=hv-1;y>=0;y--) if(solid[ix(x,y,z)]){ if(hash(x,z,77)<0.65) put(x,y,z,ASH,0.2); break; }
+      for(y=ground;y<ground+3;y++){
+        var drift=hash(x,y,55)<(0.85-(y-ground)*0.3);
+        if(drift&&solid[ix(x,y,z)]&&z>=dv-3) put(x,y,z,SAND,0.18);
+      }
+    }
+    /* The faces: every one that looks at air, and never the ones that look down. */
+    var pos=[], nor=[], col=[], idx=[], D6=[[1,0,0],[-1,0,0],[0,1,0],[0,0,1],[0,0,-1]];
+    function quad(x,y,z,d,k){
+      var nx=D6[d][0], ny=D6[d][1], nz=D6[d][2], x0=x*V-wv*V/2, y0=y*V, z0=z*V-dv*V/2, a, b, c, e, base=pos.length/3;
+      var u, w;
+      if(nx){ u=[0,V,0]; w=[0,0,V]; x0+=nx>0?V:0; }
+      else if(ny){ u=[0,0,V]; w=[V,0,0]; y0+=V; }
+      else { u=[V,0,0]; w=[0,V,0]; z0+=nz>0?V:0; }
+      var P=[[x0,y0,z0],[x0+u[0],y0+u[1],z0+u[2]],[x0+u[0]+w[0],y0+u[1]+w[1],z0+u[2]+w[2]],[x0+w[0],y0+w[1],z0+w[2]]];
+      for(var q=0;q<4;q++){ pos.push(P[q][0],P[q][1],P[q][2]); nor.push(nx,ny,nz); col.push(cr[k],cg[k],cb[k]); }
+      /* Wound so the face looks along its normal. */
+      var flip=(nx>0||ny>0||nz>0)?false:true; if(nx&&ny===0&&nz===0) flip=nx<0; 
+      if(nx>0||nz>0) idx.push(base,base+1,base+2,base,base+2,base+3); else if(ny>0) idx.push(base,base+1,base+2,base,base+2,base+3); else idx.push(base,base+2,base+1,base,base+3,base+2);
+    }
+    for(x=0;x<wv;x++) for(y=0;y<hv;y++) for(z=0;z<dv;z++){
+      var k=ix(x,y,z); if(!solid[k]) continue;
+      for(var d=0;d<5;d++){
+        var xx=x+D6[d][0], yy=y+D6[d][1], zz=z+D6[d][2];
+        if(xx>=0&&xx<wv&&yy>=0&&yy<hv&&zz>=0&&zz<dv&&solid[ix(xx,yy,zz)]) continue;
+        quad(x,y,z,d,k);
+      }
+    }
+    var geo=new THREE.BufferGeometry();
+    geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));
+    geo.setAttribute('normal',new THREE.Float32BufferAttribute(nor,3));
+    geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3));
+    geo.setIndex(idx);
+    var door=new THREE.Mesh(geo,new THREE.MeshLambertMaterial({vertexColors:true}));
+    door.castShadow=true; door.receiveShadow=true; door.userData.keep=true;
+    /* The glyph: four marks for the four pairs, round a middle, joined to it. */
+    var gp=[], gn=[], gc=[], gi=[], cx0=midx, cy0=ground+10, marks=[], m, sx, sy;
+    [[-4,0],[4,0],[0,-4],[0,4]].forEach(function(o){ for(sx=-1;sx<=1;sx++) for(sy=-1;sy<=1;sy++) if(Math.abs(sx)+Math.abs(sy)<3) marks.push([cx0+o[0]+sx,cy0+o[1]+sy]); });
+    marks.push([cx0,cy0]);
+    [[-1,0],[-2,0],[1,0],[2,0],[0,-1],[0,-2],[0,1],[0,2]].forEach(function(o){ marks.push([cx0+o[0],cy0+o[1]]); });
+    var gz0=(dv-1)*V-dv*V/2;
+    marks.forEach(function(mk){
+      var x0=mk[0]*V-wv*V/2, y0=mk[1]*V, z=gz0+0.02, base=gp.length/3, hot=hash(mk[0],mk[1],5)<0.35;
+      var c=hot?[1.0,0.72,0.35]:[0.95,0.5,0.18];
+      [[0,0],[V,0],[V,V],[0,V]].forEach(function(q){ gp.push(x0+q[0],y0+q[1],z); gn.push(0,0,1); gc.push(c[0],c[1],c[2]); });
+      gi.push(base,base+1,base+2,base,base+2,base+3);
+    });
+    var ggeo=new THREE.BufferGeometry();
+    ggeo.setAttribute('position',new THREE.Float32BufferAttribute(gp,3));
+    ggeo.setAttribute('normal',new THREE.Float32BufferAttribute(gn,3));
+    ggeo.setAttribute('color',new THREE.Float32BufferAttribute(gc,3));
+    ggeo.setIndex(gi);
+    var glyph=new THREE.Mesh(ggeo,new THREE.MeshBasicMaterial({vertexColors:true,toneMapped:false}));
+    glyph.userData.keep=true;
+    /* In the middle of the gap's depth and a hair under the wall's top. */
+    door.position.set(0,-0.025,0); glyph.position.set(0,-0.025,0);
+    return {door:door,glyph:glyph};
+  }
   function makeSiteView(S){
     var F=QS.FURNACE, D=S.door, g=new THREE.Group(), H=D.y1-D.y0;
-    var door=new THREE.Mesh(new THREE.BoxGeometry(D.hw*2-0.1,H-0.05,D.ht*2-0.1),new THREE.MeshLambertMaterial({color:0x4a3b30}));
-    door.userData.keep=true;
-    /* The glyph on the face that looks out: a plate that pulses while the gate is sealed. */
-    var glyph=new THREE.Mesh(new THREE.PlaneGeometry(D.hw*1.2,H*0.5),new THREE.MeshBasicMaterial({color:0xd9a25e,transparent:true,opacity:0.5,depthWrite:false,toneMapped:false}));
-    glyph.position.set(0,H*0.1,D.ht-0.02); glyph.userData.keep=true;
+    var vd=makeVoxelDoor(D);
+    var door=vd.door, glyph=vd.glyph;
     var pivot=new THREE.Group(); pivot.add(door); pivot.add(glyph);
     pivot.rotation.y=Math.atan2(D.ux,D.uz);
     g.add(pivot);
@@ -16444,9 +16549,9 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var dt=V.at===undefined?0:Math.min(0.1,Math.max(0,tm-V.at)); V.at=tm;
     var want=run.gateOpen()?1:0; V.k+=(want-V.k)*Math.min(1,dt*3.5);
     if(Math.abs(want-V.k)<0.01) V.k=want;
-    V.door.parent.position.set(D.x,D.y0+H/2-V.k*(H+0.4),D.z);
+    V.pivot.position.set(D.x,D.y0-V.k*(H+0.4),D.z);
     V.pivot.visible=V.k<1;
-    V.glyph.visible=run.stage===FS.SEALED; V.glyph.material.opacity=0.35+0.25*Math.sin(tm*2.2);
+    V.glyph.visible=run.stage===FS.SEALED; V.glyph.material.color.setScalar(0.62+0.38*Math.sin(tm*2.2));
     /* The guardian. */
     var g=run.g, fight=run.stage===FS.FIGHT&&!!g, EST=QS.EST;
     V.guard.g.visible=fight;
