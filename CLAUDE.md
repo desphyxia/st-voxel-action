@@ -89,7 +89,9 @@ when the loop was run on 2026-09-19. On 2026-09-20 the loop found play at **`467
 concept at **`669c55e`** — two different shas again, and neither the one the note named. Run the
 loop; do not trust this line for which sha, only for the recipe.
 
-Play is published from **`8d7a3d8`** (the furnace on the page: door, guardian, marks and the gate's line, #7 slice 3/PR #118)
+Play is published from **`dfb4558`** (the gate square to the grid: an axis-facing gap, a door that fits it, no lintel over it, #7/PR #121)
+at **version 70**, stamped, and concept from the same commit at **version 43**; both went straight through. Before that, play was **`cd35e4a`**
+(the approach: three beats along the road and a rest stone, #7/PR #119) at **version 69** and concept at **version 42**, both straight through. Before that, play was **`8d7a3d8`** (the furnace on the page: door, guardian, marks and the gate's line, #7 slice 3/PR #118)
 at **version 68**, stamped; it went straight through. Concept is from the same commit at **version 41**: it was refused as the session's first, its live
 copy diffed identical to `b010ebc` (version 40), and it was forced on the user's word on 2026-10-07. Before that, play was **`fd654d8`** (combat-number targets, regen, downed and revive, #114/PR #115)
 at **version 67**, stamped; it went straight through. Concept did not change and stays at
