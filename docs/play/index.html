@@ -16408,7 +16408,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
       var k=ix(x,y,z), n=(hash(x,y,z)-0.5)*(jit===undefined?0.16:jit);
       solid[k]=1; cr[k]=Math.min(1,Math.max(0,rgb[0]*(1+n))); cg[k]=Math.min(1,Math.max(0,rgb[1]*(1+n))); cb[k]=Math.min(1,Math.max(0,rgb[2]*(1+n)));
     }
-    var IRON=[0.26,0.23,0.215], FRAME=[0.17,0.16,0.155], RUST=[0.40,0.24,0.15], RIVET=[0.52,0.46,0.40], SAND=[0.62,0.55,0.41], ASH=[0.40,0.40,0.41];
+    var IRON=[0.19,0.17,0.16], FRAME=[0.125,0.12,0.115], RUST=[0.26,0.165,0.115], RIVET=[0.40,0.36,0.32], SAND=[0.55,0.48,0.36], ASH=[0.25,0.25,0.26];
     var ground=below;                       /* the voxel row the floor is level with */
     var top=hv-1, midx=(wv-1)/2|0;
     var postW=2, lintelH=3, x, y, z;
@@ -16442,7 +16442,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
                           solid[ix(x,ly,dv-1)]&&put(x,ly,dv-1,RIVET,0.1); }
     /* Ash on what faces up, sand drifted against the foot. */
     for(x=0;x<wv;x++) for(z=0;z<dv;z++){
-      for(y=hv-1;y>=0;y--) if(solid[ix(x,y,z)]){ if(hash(x,z,77)<0.65) put(x,y,z,ASH,0.2); break; }
+      for(y=hv-1;y>=0;y--) if(solid[ix(x,y,z)]){ if(hash(x,z,77)<0.4) put(x,y,z,ASH,0.2); break; }
       for(y=ground;y<ground+3;y++){
         var drift=hash(x,y,55)<(0.85-(y-ground)*0.3);
         if(drift&&solid[ix(x,y,z)]&&z>=dv-3) put(x,y,z,SAND,0.18);
