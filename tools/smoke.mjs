@@ -1610,7 +1610,7 @@ if (BROWSER_HALF) {
           const view = async (state, t) => {
             w.ai.state = state; w.ai.t = t;
             for (let i = 0; i < 3; i++) { P.draw(); await new Promise((r) => setTimeout(r, 20)); }
-            return P.foeTells.find((f) => f.k === QS.KIND.WARDEN && f.shown && f.ward);
+            return P.foeTells.find((f) => f.k === QS.KIND.WARDEN && f.shown && f.aura);
           };
           const out = { close: await view(S.CLOSE, 0), early: await view(S.TELEGRAPH, 0.2),
                         late: await view(S.TELEGRAPH, QS.WARDEN_TELL_TIME * 0.95), pulse: await view(S.STRIKE, 0.4),
@@ -1618,7 +1618,7 @@ if (BROWSER_HALF) {
           w.dead = 'struck'; w.hp = 0; P.pause(false);
           return out;
         });
-        const wv = (k) => (ward[k] && ward[k].ward) || {};
+        const wv = (k) => (ward[k] && ward[k].aura) || {};
         check(!ward.none && wv('close').dome && !wv('close').reach && wv('early').dome && wv('early').reach && wv('early').runes === 0
               && wv('late').runes >= 3 && wv('late').dome && !wv('pulse').dome && wv('pulse').pulse && !wv('open').dome && !wv('open').pulse,
               'BUILD: a warden draws its dome while it is up, lights its runes through the tell, and runs the ring out only as it pulses',

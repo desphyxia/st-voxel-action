@@ -16321,7 +16321,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     k=k|0;
     var g=new THREE.Group(), look=FOE_LOOK[k]||FOE_LOOK[0];
     var rig=buildRig(QS.MACHINE_RIGS[k]||QS.SENTRY_RIG,{}); g.add(rig.mesh);
-    var wedge=null, line=null, rings=null, ward=null;
+    var wedge=null, line=null, rings=null, aura=null;
     /* A stone the height of a doorway and a half, hanging in the air. */
     if(k===QS.KIND.WARDEN) rig.mesh.scale.setScalar(1.5);
     if(k===QS.KIND.WARDEN){
@@ -16329,20 +16329,20 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
          pale shell over the circle, a rim where it meets the ground, the reach
          of its pulse faint until it winds up, and the pulse itself running out. */
       var ws=wardenShapes();
-      ward=new THREE.Group();
-      ward.userData.dome=new THREE.Mesh(ws.dome,wardenMat(0x9a86ff,0.13));
-      ward.userData.web=new THREE.Mesh(ws.dome,wardenMat(0xcfc4ff,0.22,{wireframe:true}));
-      ward.userData.rim=new THREE.Mesh(ws.rim,wardenMat(0xcfc4ff,0.7));
-      ward.userData.reach=new THREE.Mesh(ws.reach,wardenMat(0xff9a5a,0));
-      ward.userData.pulse=new THREE.Mesh(ws.pulse,wardenMat(0xffd9a8,0.9));
-      for(var wn in ward.userData){
-        var wm=ward.userData[wn]; ward.add(wm);
+      aura=new THREE.Group();
+      aura.userData.dome=new THREE.Mesh(ws.dome,wardenMat(0x9a86ff,0.13));
+      aura.userData.web=new THREE.Mesh(ws.dome,wardenMat(0xcfc4ff,0.22,{wireframe:true}));
+      aura.userData.rim=new THREE.Mesh(ws.rim,wardenMat(0xcfc4ff,0.7));
+      aura.userData.reach=new THREE.Mesh(ws.reach,wardenMat(0xff9a5a,0));
+      aura.userData.pulse=new THREE.Mesh(ws.pulse,wardenMat(0xffd9a8,0.9));
+      for(var wn in aura.userData){
+        var wm=aura.userData[wn]; aura.add(wm);
         if(wn!=='dome'&&wn!=='web') wm.rotation.x=-Math.PI/2;
         wm.userData.keep=true; wm.userData.kind='tell'; wm.renderOrder=3;
       }
-      ward.userData.rim.position.y=ward.userData.reach.position.y=ward.userData.pulse.position.y=0.35;
-      ward.userData.pulse.visible=false; ward.userData.reach.visible=false;
-      g.add(ward);
+      aura.userData.rim.position.y=aura.userData.reach.position.y=aura.userData.pulse.position.y=0.35;
+      aura.userData.pulse.visible=false; aura.userData.reach.visible=false;
+      g.add(aura);
     }else if(k===QS.KIND.MORTAR){
       /* In the world, not on the crawler: where the shells land does not turn
          when it does. At the height the player's arc sits at — anything lower
@@ -16381,7 +16381,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     var blob=makeBlob(look.blob); g.add(blob);
     g.traverse(function(o){ if(o.isMesh){ o.userData.keep=true; } });
     if(rings) g.userData.rings=rings;
-    return {g:g,k:k,look:look,rig:rig,wedge:wedge,line:line,rings:rings,ward:ward,domeA:0,bar:bar,blob:blob,walk:0,lastX:null,lastZ:null};
+    return {g:g,k:k,look:look,rig:rig,wedge:wedge,line:line,rings:rings,aura:aura,domeA:0,bar:bar,blob:blob,walk:0,lastX:null,lastZ:null};
   }
   /** Into the scene, with its rings beside it, and out again. */
   function addFoe(f){ built.scene.add(f.g); if(f.rings) built.scene.add(f.rings); return f; }
@@ -16574,7 +16574,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
    * a thing you see happen. Everything is read from the kind and the state.
    */
   function drawWarden(f,m,dead){
-    var EST=QS.EST, W=f.ward.userData, tellK=0, up=!dead&&QS.domeAt(m.k,m.s);
+    var EST=QS.EST, W=f.aura.userData, tellK=0, up=!dead&&QS.domeAt(m.k,m.s);
     if(m.s===EST.TELEGRAPH) tellK=Math.min(1,m.t/QS.WARDEN_TELL_TIME);
     else if(m.s===EST.STRIKE) tellK=1;
     for(var q=0;q<4;q++){
@@ -20627,7 +20627,7 @@ globalThis.QS={V:V,CEIL:CEIL,CHUNK:CHUNK,MOVE:MOVE,clamp:clamp,BIOMES:BIOMES,BIO
     get foeTells(){ return foeMeshes.map(function(f){
       return {k:f.k,shown:f.g.visible,wedge:!!(f.wedge&&f.wedge.visible),line:!!(f.line&&f.line.visible),
               rings:f.rings&&f.rings.visible?f.rings.children.filter(function(o){ return o.visible; }).length:0,
-              ward:f.ward?{dome:f.ward.userData.dome.visible,reach:f.ward.userData.reach.visible,pulse:f.ward.userData.pulse.visible,
+              aura:f.aura?{dome:f.aura.userData.dome.visible,reach:f.aura.userData.reach.visible,pulse:f.aura.userData.pulse.visible,
                            runes:[0,1,2,3].filter(function(q){ return f.rig.tint['rune'+q]!==0x2a2838; }).length}:null};
     }); },
     /** The lattice, what is still on the ground, and the two verbs over them. */
