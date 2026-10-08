@@ -1622,9 +1622,13 @@ if (BROWSER_HALF) {
           for (let q = 0; q < 5; q++) cv.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true, cancelable: true }));
           P.run(2); out.burst = [burst, P.frameKind];
           if (P.frameKind !== 'tether') { await wait(); cv.dispatchEvent(new WheelEvent('wheel', { deltaY: 40, bubbles: true, cancelable: true })); P.run(2); }
-          /* A clear line of ground, seven metres each way, near where it stands. */
+          /* A clear line of ground, as far as the tether reaches, near where it stands.
+             Sampled the way the tether is: from half a metre out, every quarter of
+             one. A line looked at every half metre from one missed a post between
+             two samples, and the tether met it, hauled the body no distance at all
+             and left the check failing on whichever spot the walk before it ended near. */
           const openLine = (c, dx, dz) => {
-            for (let s = 1; s <= 7; s += 0.5) {
+            for (let s = 0.5; s <= QS.REEL.range + 0.5; s += 0.25) {
               const x = c.x + dx * s, z = c.z + dz * s, q = QS.placeOnGround(col, x, z, c.y + 1);
               if (!q.grounded || Math.abs(q.y - c.y) > 0.3 || col.overlaps(x, z, 0.12, c.y + 0.7, c.y + 1.3)) return false;
             }
