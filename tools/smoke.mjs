@@ -3245,7 +3245,8 @@ if (BROWSER_HALF) {
           const out = { hf: S.hf, standing: a.grounded, y: a.y, chunks: P.chunks.loaded };
           out.floor = gy(S.cx + 0.5 + 4, S.cz + 0.5 + 3);
           out.wall = gy(S.cx - S.ux * 21.5, S.cz - S.uz * 21.5);
-          out.gate = gy(S.gate.x, S.gate.z);
+          /* The door fills the gap exactly, so the ground in it is read with the door open. */
+          col.setDoor(S.door, false); out.gate = gy(S.gate.x, S.gate.z); col.setDoor(S.door, true);
           out.core = gy(S.core.x, S.core.z);
           /* Walk into the wall, along the line between the footholds, for seven seconds (running is 4 m/s, the wall is 20 m out). */
           a.x = S.cx + 0.5; a.z = S.cz + 0.5; a.vx = a.vz = 0; a.y = S.hf; a.grounded = true;
